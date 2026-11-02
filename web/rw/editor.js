@@ -26,7 +26,8 @@ import * as assetsTab from "./tabs/assets.js";
 import * as castTab from "./tabs/cast.js";
 import * as renderTab from "./tabs/render.js";
 import * as globalTab from "./tabs/global.js";
-import { createPreviewView } from "./preview.js"; // added 2026-11-02 v0.3.8
+// [OLD 2026-11-02 v0.3.8->v0.3.9] import { createPreviewView } from "./preview.js"; // added 2026-11-02 v0.3.8
+import { createPreviewView, imageBlob } from "./preview.js"; // added 2026-11-02 v0.3.8; imageBlob added v0.3.9
 
 const TABS = {
   timeline: { label: "Timeline", icon: "timeline", mod: timeline },
@@ -550,9 +551,23 @@ export function mountEditor(container, host) {
     setPreview({ image: url, objectUrl: url, scene_id: cur.scene_id, pass: cur.pass, passes: cur.passes, step: cur.step, steps: cur.steps });
   }
   [/OLD] */
+  /* [OLD 2026-11-02 v0.3.8->v0.3.9] the blob was shown as it came; VideoHelperSuite's animated previews put a header before the JPEG
   function showComfyPreview(blob) {
     const cur = Object.values(store.eph.progress).find(x => !["done", "cached", "error"].includes(x.phase)) || {};
     setPreview({ blob, scene_id: cur.scene_id, pass: cur.pass, passes: cur.passes, step: cur.step, steps: cur.steps });
+  }
+  [/OLD] */
+  // added 2026-11-02 v0.3.9
+  let comfySeq = 0;
+  function showComfyPreview(blob) {
+    // the scene of this run that is sampling (an older, unfinished progress entry can belong to another scene)
+    const cur = runProgress()?.current || Object.values(store.eph.progress).find(x => !["done", "cached", "error"].includes(x.phase)) || {};
+    const meta = { scene_id: cur.scene_id, pass: cur.pass, passes: cur.passes, step: cur.step, steps: cur.steps };
+    const seq = ++comfySeq;
+    imageBlob(blob).catch(() => blob).then(b => {
+      if (seq !== comfySeq || !store.eph.running) return; // a newer one is on its way, or the run is over
+      setPreview({ ...meta, blob: b });
+    });
   }
   host.on("reelwright.run", d => {
     if (d.slug !== store.project.slug) return;

@@ -23,6 +23,19 @@ export function dataUrlToBlob(url) {
   return new Blob([bytes], { type: mime });
 }
 
+// added 2026-11-02 v0.3.9: the picture inside a preview message. VideoHelperSuite's animated latent previews send
+// each frame as a normal preview message with 24 bytes of their own (frame index, node id) before the JPEG; shown as
+// is, that is "a render preview could not be decoded". Any bytes before a JPEG, PNG or WebP signature are dropped.
+const SIGNATURES = [[0xff, 0xd8, 0xff], [0x89, 0x50, 0x4e, 0x47], [0x52, 0x49, 0x46, 0x46]];
+export async function imageBlob(blob) {
+  const head = new Uint8Array(await blob.slice(0, 64).arrayBuffer());
+  const at = i => SIGNATURES.some(sig => sig.every((b, k) => head[i + k] === b));
+  if (at(0)) return blob;
+  for (let i = 1; i < head.length - 3; i++) if (at(i)) return blob.slice(i, blob.size, blob.type);
+  return blob; // no image signature: let the decoder report it
+}
+const hexHead = async blob => [...new Uint8Array(await blob.slice(0, 12).arrayBuffer())].map(b => b.toString(16).padStart(2, "0")).join(" ");
+
 // captionFor(meta) -> text under the picture; onVisible() is called when the window first has something to show
 export function createPreviewView({ captionFor, onVisible }) {
   const img = h("img", { alt: "" });
@@ -78,7 +91,11 @@ export function createPreviewView({ captionFor, onVisible }) {
       release(bad);
       if (!warned) {
         warned = true;
-        console.warn(`Reelwright: a render preview could not be decoded (${bad.kind}, ${bad.size} bytes); keeping the last one that worked`);
+        // [OLD 2026-11-02 v0.3.8->v0.3.9] console.warn(`Reelwright: a render preview could not be decoded (${bad.kind}, ${bad.size} bytes); keeping the last one that worked`);
+        // added 2026-11-02 v0.3.9: the first bytes tell what was sent instead of an image
+        const say = head => console.warn(`Reelwright: a render preview could not be decoded (${bad.kind}, ${bad.size} bytes${head ? ", starts " + head : ""}); keeping the last one that worked`);
+        if (p.blob instanceof Blob) hexHead(p.blob).then(say, () => say(""));
+        else say(typeof p.image === "string" ? JSON.stringify(p.image.slice(0, 30)) : "");
       }
       if (!shown && !figure.classList.contains("failed")) { // nothing to keep: an empty frame and a note
         figure.classList.add("failed");

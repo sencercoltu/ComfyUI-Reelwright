@@ -670,6 +670,21 @@ def main():
         page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [] })")
         page.wait_for_timeout(300)
         check(page.locator(".rw-run-preview").count() == 0, "preview stayed after the run ended (v0.3.8)")
+
+        # ---- added 2026-11-02 v0.3.9 ----
+        # A frame from VideoHelperSuite's animated previews (24 header bytes, then the JPEG) is shown, not "could not be decoded".
+        st = page.evaluate("""async () => { const h = window.__host;
+          h.emit('reelwright.run', { slug: 'harbor_lights', phase: 'start', targets: ['s_02'], reused: [] });
+          h.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: 3, steps: 6, phase: 'sample' });
+          const c = document.createElement('canvas'); c.width = 46; c.height = 26; c.getContext('2d').fillRect(0, 0, 46, 26);
+          const jpeg = await new Promise(r => c.toBlob(r, 'image/jpeg'));
+          const head = new Uint8Array(24); head[3] = 1; head[7] = 2; head[8] = 2; head[9] = 0x31; head[10] = 0x32;
+          window.__editor.showComfyPreview(new Blob([head, jpeg], { type: 'image/jpeg' }));
+          await new Promise(r => setTimeout(r, 500));
+          const f = document.querySelector('.rw-run-preview');
+          return f && { failed: f.classList.contains('failed'), w: f.querySelector('img').naturalWidth, cap: f.querySelector('figcaption').textContent }; }""")
+        check(st is not None and not st["failed"] and st["w"] == 46 and st["cap"].endswith("3/6"), f"VHS-style preview frame: {st}")
+        page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [] })")
         browser.close()
     httpd.shutdown()
 

@@ -278,3 +278,39 @@ def test_preview_jpeg_handles_nested_latents(comfy):
     import base64, io
     img = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
     assert max(img.size) == render.PREVIEW_MAX_SIDE
+
+
+# added 2026-11-02 v0.3.9: VideoHelperSuite's animated previews wrap latent_preview.get_previewer; Reelwright uses the
+# original underneath (VHS's previewer sends its own frames under the node and returns no image)
+def test_stock_previewer_skips_wrappers(comfy, monkeypatch):
+    import functools
+    import latent_preview
+    render, _ = comfy
+    seen = []
+
+    def original(device, latent_format):
+        seen.append("original")
+        return "stock"
+
+    def vhs_like(device, latent_format, *a, **k):
+        seen.append("wrapper")
+        return "wrapped"
+    functools.update_wrapper(vhs_like, original)
+
+    def outer(device, latent_format):
+        seen.append("outer")
+        return "outer"
+    functools.update_wrapper(outer, vhs_like)
+    monkeypatch.setattr(latent_preview, "get_previewer", outer)
+    assert render.stock_previewer("cpu", None) == "stock" and seen == ["original"]
+
+
+def test_preview_jpeg_explains_a_previewer_without_image(comfy):
+    render, _ = comfy
+
+    class WrappedPreviewer:  # like VHS's: sends frames itself, returns None
+        def decode_latent_to_preview_image(self, fmt, x0):
+            return None
+    import torch
+    with pytest.raises(RuntimeError, match="WrappedPreviewer.*no image"):
+        render.preview_jpeg(WrappedPreviewer(), torch.zeros(1, 4, 2, 8, 8))

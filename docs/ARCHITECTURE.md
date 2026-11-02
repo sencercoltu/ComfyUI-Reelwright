@@ -170,7 +170,7 @@ File previews use ComfyUI's own `/view?filename=&subfolder=&type=output|input`.
 |---|---|
 | `reelwright.progress` | `{slug, scene_id, pass: 1, passes: 3, step, steps, phase: "encode"\|"sample"\|"decode"\|"save"\|"cached"\|"done"\|"error", message}` |
 | `reelwright.run` | `{slug, phase: "start"\|"end", targets: [scene_id], reused: [scene_id], error?}` |
-| `reelwright.preview` | `{slug, scene_id, pass, passes, step, steps, image: "data:image/jpeg;base64,…"}` every sampler step, at most one per 0.25 s, always the last step (v0.3.5; v0.3.8 was one a second). The editor turns `image` into a `blob:` URL (`web/rw/preview.js`) before showing it. Replaces ComfyUI's own node preview |
+| `reelwright.preview` | `{slug, scene_id, pass, passes, step, steps, image: "data:image/jpeg;base64,…"}` every sampler step, at most one per 0.25 s, always the last step (v0.3.5; v0.3.8 was one a second). The editor turns `image` into a `blob:` URL (`web/rw/preview.js`) before showing it. Made with ComfyUI's own previewer under any extension wrapper (`render.stock_previewer`, v0.3.9; VideoHelperSuite's animated previews wrap it). Replaces ComfyUI's own node preview |
 | `reelwright.merge` | `{slug, phase: "start"\|"progress"\|"end", percent?, files?, error?}` |
 
 ## Running a render

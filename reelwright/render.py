@@ -91,10 +91,31 @@ PREVIEW_MAX_SIDE = 480
 PREVIEW_MIN_INTERVAL = 0.25
 
 
+# added 2026-11-02 v0.3.9: ComfyUI's own previewer, not an extension's wrapper of it.
+# VideoHelperSuite's "Display animated previews when sampling" replaces latent_preview.get_previewer with a wrapper
+# whose previewer sends its own animated frames to the frontend (as the executing node, so under Reelwright) and
+# returns no image. That put a preview back under the node after v0.3.5, gave the Render tab VHS's frames with a
+# 24-byte header in front ("could not be decoded"), and left preview_jpeg with nothing to show.
+# Wrappers made with functools (VHS's `hook`) keep the original in __wrapped__.
+def stock_previewer(device, latent_format):
+    fn = latent_preview.get_previewer
+    for _ in range(16):
+        inner = getattr(fn, "__wrapped__", None)
+        if inner is None:
+            break
+        fn = inner
+    return fn(device, latent_format)
+
+
 def preview_jpeg(previewer, x0):
     if getattr(x0, "is_nested", False):  # H3 latents carry video and audio; the first is the video
         x0 = x0.tensors[0]
-    _, img, _ = previewer.decode_latent_to_preview_image("JPEG", x0)
+    # [OLD 2026-11-02 v0.3.8->v0.3.9] a previewer that returned None failed here with "cannot unpack non-iterable NoneType"
+    # _, img, _ = previewer.decode_latent_to_preview_image("JPEG", x0)
+    out = previewer.decode_latent_to_preview_image("JPEG", x0)
+    if not out:
+        raise RuntimeError("the previewer ({}) returned no image".format(type(previewer).__name__))
+    _, img, _ = out
     img = img.convert("RGB")
     if max(img.size) > PREVIEW_MAX_SIDE:
         img.thumbnail((PREVIEW_MAX_SIDE, PREVIEW_MAX_SIDE))
@@ -121,7 +142,9 @@ def _sample(model, positive, latent, seed, settings, on_step):
     # [/OLD]
     steps = sigmas.shape[-1] - 1
     # the user's preview method (--preview-method / the frontend setting) still decides how, or whether, to preview
-    previewer = latent_preview.get_previewer(guider.model_patcher.load_device, guider.model_patcher.model.latent_format)
+    # [OLD 2026-11-02 v0.3.8->v0.3.9] an extension's wrapper (VideoHelperSuite) could take over the preview
+    # previewer = latent_preview.get_previewer(guider.model_patcher.load_device, guider.model_patcher.model.latent_format)
+    previewer = stock_previewer(guider.model_patcher.load_device, guider.model_patcher.model.latent_format)
     pbar = comfy.utils.ProgressBar(steps)  # ComfyUI's queue progress, without an image
 
     def callback(step, x0, x, total_steps):

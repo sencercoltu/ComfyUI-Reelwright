@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.9 — 2026-11-02
+
+- **Render-tab preview works with VideoHelperSuite's animated previews turned on.** VHS's "Display animated previews when sampling" setting replaces ComfyUI's `latent_preview.get_previewer`. Its previewer sends its own animated frames to the frontend for whichever node is running, and returns no image. For Reelwright this meant:
+  - a preview reappeared under the node after v0.3.5;
+  - from v0.3.7 the Render tab caught those frames, which start with 24 bytes of VHS's own data before the JPEG, so they showed as "preview could not be decoded";
+  - Reelwright's own preview got nothing (ComfyUI log: "no latent preview … cannot unpack non-iterable NoneType").
+
+  Reelwright now asks ComfyUI's own previewer underneath any wrapper (`render.stock_previewer`, following `__wrapped__`), so VHS is not involved in its preview at all. VHS's animated previews for other nodes are unchanged.
+- The preview window drops any header in front of a JPEG, PNG or WebP picture it receives, and its console warning now shows the first bytes of anything it can't decode.
+- A previewer that returns no image is reported by name in the ComfyUI log instead of as an unpacking error.
+
 ## v0.3.8 — 2026-11-02
 
 - **The Render tab's preview no longer shows a broken image.** The window used to be rebuilt on every re-render straight from the event's URL, and a picture that failed to load stayed on screen as a broken-image icon. It is now one element that lives as long as the editor:
