@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.0 — 2026-11-02
+
+- **Profiles** (Global tab): save the Global settings under a name, apply them to any project, update or delete them, and mark one as the default for new nodes. They live in `user/reelwright/profiles.json` and are shared by every Reelwright node. A new node starts with the default profile and shows a banner to pick another one.
+- **Per-scene quality**: a scene can render as Draft or Final regardless of the Global switch (Scene tab → Generation → Quality, or the scene's right-click menu). Draft scenes get a tag on the timeline. Quality is part of the cache key.
+- **Per-scene transitions**: a scene that starts fresh can set its own cut, crossfade or dip, its length and its audio fade (Scene tab → Starts from → Cut into this scene). The Merge card's values are now the defaults.
+- Deleting a scene asks first. Deleting the only scene resets it to an empty scene instead of leaving it unchanged.
+- **Assets can be deleted** from the inspector or their right-click menu (asset cards and the timeline bin), with confirmation. They are removed from every scene, cast anchor, voice, outfit and the score track; the file stays on disk.
+- Ctrl + wheel over the node zooms the ComfyUI canvas, as the wheel does over empty space. Over text fields and lists it does nothing. Alt + wheel still zooms the timeline.
+- Render progress: the Render tab shows "Scene k of n" with a bar for the scene and one for the whole run, and the node title shows `rendering k/n · NN%`.
+- LLM **Test connection** now reports its result under the button and as a message, and gives up after 20 seconds instead of appearing to do nothing. It tests the URL and model shown on the tab.
+
 ## v0.2.2 — 2026-11-02
 
 - Right-click inside the editor no longer opens ComfyUI's node menu, where Delete removed the whole node. Scenes, on the timeline and on the Scene tab strip, get their own menu: open, render, new take, split at playhead, duplicate, move, lock and delete. Text fields keep the browser's copy/paste menu.

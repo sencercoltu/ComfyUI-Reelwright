@@ -37,12 +37,14 @@ output, and `video` points at them.
 - ✅ Long-scene settings: longest pass, overlap, crossfade, seam mode, how far a seam may move to land on a cut.
 - ✅ Memory policy and the "encode all prompts first" switch (see §8).
 - ✅ LLM settings: OpenAI-compatible base URL, model, temperature, max tokens and presets. The API key is stored in the ComfyUI user folder, never in the workflow.
+- ✅ Profiles: save the whole Global tab under a name and apply it to any project; update, delete and mark one as the default for new nodes. Stored in `user/reelwright/profiles.json` (never the API key) and shared by every Reelwright node on the server. A new node starts with the default profile and shows a banner to pick another.
 - ✅ Override matrix: shows which scenes override which global setting.
 - ✅ Autosaved versions: list them and restore one.
 
 ## 3. Scenes (Timeline + Scene tabs)
 
-- ✅ Unlimited scenes. Add, duplicate, delete, reorder, split at the playhead.
+- ✅ Unlimited scenes. Add, duplicate, delete, reorder, split at the playhead. Deleting asks for confirmation; deleting the only scene resets it to an empty scene.
+- ✅ Right-click a scene (timeline or Scene tab strip) or an asset for its own menu; ComfyUI's node menu does not open inside the editor.
 - ✅ Duration: drag the right edge of a scene on the timeline, or type it. Any length is allowed (see §5).
 - ✅ How a scene starts:
   - **Fresh start**: hard cut, nothing carried over.
@@ -61,7 +63,7 @@ output, and `video` points at them.
   - In both views, refer to assets as `@P1`, `@V2`, `@A1`, to cast members as `@Mara` or `@{Old Keeper}`, and to the continuation clip as `@tail`. Each pass renumbers these into `<Picture k>`, `<Video k>`, `<Audio k>`, `<Subject n>`, in the order the native node presents references.
 - ✅ Task tags are derived automatically: `reference generation`, `keyframe completion`, `video continuation`, `audio reference`, `audio reuse`, `video editing`.
 - ✅ Prompt preview shows exactly what each pass will send.
-- ✅ Per-scene overrides of any global setting: seed, steps, sampler, resolution, video VAE, audio VAE, diffusion model, LoRA stack (add to or replace Global, per-LoRA strength override). A hollow dot means the setting follows Global; a coral dot means it is overridden. "Reset to Global" clears them.
+- ✅ Per-scene overrides of any global setting: quality (draft or final), seed, steps, sampler, resolution, video VAE, audio VAE, diffusion model, LoRA stack (add to or replace Global, per-LoRA strength override). A hollow dot means the setting follows Global; a coral dot means it is overridden. "Reset to Global" clears them.
 - ✅ Scene notes, timeline markers, lock (keep the current take even when what it continues from changes).
 
 ## 4. Prompt rewriter (LLM)
@@ -87,6 +89,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 ## 6. Assets (Assets tab)
 
 - ✅ Upload images, video and audio into `input/reelwright/<project>/`. Codes are assigned automatically: P1…, V1…, A1….
+- ✅ Delete an asset (inspector button or right-click menu, with confirmation): it is removed from every scene, cast anchor, voice, outfit and the score track. The file stays on disk.
 - ✅ Add files that are already in ComfyUI: a browser lists ComfyUI's input folder (imported files) and output folder (generated files), newest first, filterable by path and kind. Input files are used in place; output files are hard-linked (or copied) into `input/reelwright/<project>/from_output/`.
 - ✅ Each picture or video has a description that becomes its subject line. **Describe with LLM** sends the picture (or three frames of a video) to a vision-capable model with your own question (“describe the person on the left”, “describe the couch”); the answer is offered as a suggestion to use or append.
 - ✅ Each asset has defaults that any scene can override: role, retention, features to keep, soundtrack use, and a category (location, prop, style, keyframe, camera, ambience, music, voice, SFX).
@@ -121,7 +124,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Cache key per pass. It hashes:
   - model, text encoder and VAE names, plus the LoRA stack;
   - resolution, frames, steps, sampler, scheduler, shifts and seed;
-  - quality (draft or final);
+  - quality (draft or final, per scene when a scene overrides it);
   - the final prompt text;
   - the content of every reference file;
   - for a continuing scene, the key and take of the scene it continues from.
@@ -133,16 +136,16 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Disk layout per take: `<project>_<NN>_<scene title>_<take>.mp4` (e.g. `harbor_lights_02_mara_on_the_pier_v2.mp4`), `first.png`, `last.png`, `tail.mp4`, `meta.json`, plus `passes/` for long scenes. The Render tab shows each scene's file and opens it.
 - ✅ Memory policy between scenes: keep models / free cache but keep models (default) / unload everything. "Encode all prompts first" encodes every pass with the text encoder, then unloads it (about 27 GB) before sampling starts.
 - ✅ Groups scenes with the same LoRA stack together when they don't depend on each other, so fewer LoRA re-patches are needed.
-- ✅ Live progress on the timeline blocks (pass, step) through websocket events. Interrupting from ComfyUI stops the run cleanly.
+- ✅ Live progress on the timeline blocks (pass, step) through websocket events. The Render tab shows "Scene k of n" with a bar for the scene and one for the run; the node title shows `rendering k/n · NN%`. Interrupting from ComfyUI stops the run cleanly.
 - ✅ Seam inspector: last frame of scene N against first frame of scene N+1, side by side or as an onion skin.
 - 🗺️ Render farm: send independent scenes to several ComfyUI instances.
 
 ## 9. Merge (Render tab)
 
 - ✅ **Merge** button next to the scenes-and-takes table (and in the Merge card). It doesn't re-render anything; it uses the starred takes. Scenes that aren't ready can be skipped, shown as a slate, or block the merge.
-- ✅ Seams: plain cut, crossfade or dip to black for hard cuts. Continuation seams trim the overlap and crossfade inside it. Each seam can be overridden.
+- ✅ Seams: plain cut, crossfade or dip to black for hard cuts. Continuation seams trim the overlap and crossfade inside it. The Merge card sets the defaults; a scene that starts fresh can set its own transition, length and audio fade (Scene tab → Starts from → Cut into this scene).
 - ✅ Audio:
-  - a short fade at every seam;
+  - a short fade at every seam (per-scene override for fresh starts);
   - loudness normalisation (EBU R128, target LUFS);
   - an optional score track across the whole film that ducks under dialogue.
 - ✅ Colour match: per-scene RGB gain matched to a reference scene, to even out jumps between scenes.
@@ -162,7 +165,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
   - Ctrl+Z / Ctrl+Shift+Z undo/redo; Ctrl+S save; ? opens the help.
 - ✅ Undo/redo history, autosave.
 - ✅ Lint panel: missing or unused tags, dialogue without a language, timestamps past the end of a scene, over-budget references, missing files, a continuation without a previous scene, cast without anchors.
-- ✅ Zoom, snap to the frame grid, ripple edit.
+- ✅ Zoom, snap to the frame grid, ripple edit. Alt + wheel zooms the timeline; Ctrl + wheel anywhere on the node zooms the ComfyUI canvas, except over a text field or list.
 
 ## 11. MiniMax H3 facts used
 

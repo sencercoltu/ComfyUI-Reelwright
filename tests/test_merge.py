@@ -163,3 +163,27 @@ def test_failed_join_leaves_no_cut_and_probe_raises(tmp_path):
     with pytest.raises(merge.MergeError):
         merge.join(segs, str(out), 320, 180, loudness=-16.0)
     assert not out.exists() and not (tmp_path / "cut_v1.partial.mp4").exists()
+
+
+# added 2026-11-02 v0.3.0: each scene chooses the transition into it
+def test_per_scene_transition(harbor, store, roots):
+    a = clip(os.path.join(roots.output, "a.mp4"), 3)
+    b = clip(os.path.join(roots.output, "b.mp4"), 3, "smptebars")
+    c = clip(os.path.join(roots.output, "c.mp4"), 3, "rgbtestsrc")
+    p = harbor
+    for s in p["scenes"]:
+        s["start"]["mode"] = "fresh"
+    p["global"]["merge"].update(hard_cut="cut", transition_frames=12, audio_fade_frames=6, missing="block")
+    p["scenes"][1]["transition"] = {"mode": "dip", "frames": 24, "audio_fade_frames": None}
+    p["scenes"][2]["transition"] = {"mode": "", "frames": None, "audio_fade_frames": 0}
+    takes = {}
+    for s, path in zip(p["scenes"], (a, b, c)):
+        store.add_take(s["id"], {"id": "v1", "key": "k", "files": {"video": os.path.relpath(path, roots.output)}, "seconds": 3.0})
+    segs, _, _ = assemble.cut_plan(analyze(p, store), store)
+    assert [x["join"] for x in segs] == ["first", "dip", "cut"]
+    assert segs[1]["dur"] == pytest.approx(1.0)
+    assert segs[2]["fade"] == 0
+    args, _, _ = merge.build_command(segs, "o.mp4", 64, 32, audio_fade_frames=6)
+    graph = args[args.index("-filter_complex") + 1]
+    a1 = [x for x in graph.split(";") if x.endswith("[a1]")][0]
+    assert "afade=t=out" not in a1  # scene 3 asked for no fade at its cut

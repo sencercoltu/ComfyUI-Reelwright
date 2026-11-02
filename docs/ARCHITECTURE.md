@@ -18,6 +18,7 @@ ComfyUI-Reelwright/
     llm.py               OpenAI-compatible client and prompt templates (aiohttp)
     continuity.py        optional face-match drift check (insightface)
     routes.py            /reelwright/* HTTP routes
+    profiles.py          saved Global settings in user/reelwright/profiles.json
     node.py              the V3 node
   web/
     reelwright.js        ComfyUI extension: registers the DOM widget
@@ -95,6 +96,8 @@ lives on disk.
     { "id": "s_1", "title": "Harbor at dusk", "duration": 8.0,
       "color": "",                                        // optional tint for the timeline block
       "start": { "mode": "fresh", "overlap_frames": 39 },  // fresh | last_frame | tail
+      "transition": { "mode": "", "frames": null,          // fresh starts only: "" (merge default) | cut | crossfade | dip
+                      "audio_fade_frames": null },         //   null = use Global → Merge
       "trim": { "keep": "start", "in": 0.0 },             // short scenes: start | middle | end | custom
       "refs": [ { "id": "r_1", "asset": "a_2", "role": "reference",   // reference | first_frame | last_frame | keyframe
                   "time": 0.0, "retention": "weak_reference", "keep": [], "soundtrack": false } ],
@@ -107,7 +110,7 @@ lives on disk.
                                 "detailed_description": "", "overall_soundscape": "", "non_diegetic_music": "" },
                   "raw": "",
                   "pass_prompts": {} },                     // long scenes: {"1": "...", "2": "..."} overrides per pass
-      "overrides": {},                                     // any of: seed, steps, sampler, scheduler, width, height,
+      "overrides": {},                                     // any of: quality (draft|final), seed, steps, sampler, scheduler, width, height,
                                                            //   diffusion, video_vae, audio_vae, text_encoder,
                                                            //   loras: { "mode": "add"|"replace", "items": [ {id,name,strength,enabled} ],
                                                            //            "strengths": { "<global lora id>": 0.35 } }
@@ -140,7 +143,7 @@ mirrors the defaults).
 | GET | `/reelwright/llm/settings` | – | `{base_url, model, has_key, guides:{name:{bytes, fetched}}, guide_urls}` |
 | POST | `/reelwright/llm/settings` | `{base_url?, model?, api_key?}` | `{ok}` |
 | POST | `/reelwright/llm/models` | `{base_url?}` | `{models[]}` |
-| POST | `/reelwright/llm/test` | `{}` | `{ok, ms, model}` |
+| POST | `/reelwright/llm/test` | `{project?}` | `{ok, ms, model, reply, base_url}`; 20 s limit, readable error when the server can't be reached |
 | POST | `/reelwright/llm/rewrite` | `{project, scene_id, instruction}` | `{sections?, raw?, warnings[]}` |
 | POST | `/reelwright/llm/split` | `{project, scene_id}` | `{pass_prompts:{n: text}}` |
 | POST | `/reelwright/llm/script` | `{project, script}` | `{scenes[], cast[]}` |
@@ -151,6 +154,10 @@ mirrors the defaults).
 | POST | `/reelwright/llm/describe` | `{project, asset_ids[≤4], prompt}` | `{text, ms, model}`; pictures as JPEG, videos as 3 frames, OpenAI `image_url` parts |
 | GET | `/reelwright/files?root=input\|output&q=&kind=&limit=` | – | `{files:[{rel, kind, bytes, mtime}], total, truncated}`, newest first |
 | POST | `/reelwright/import` | `{slug, root, rel}` | `{asset}`; output files are hard-linked or copied into `input/reelwright/<slug>/from_output/` |
+| GET | `/reelwright/profiles` | – | `{profiles:[{id, name, created, updated, global}], default}` |
+| POST | `/reelwright/profiles/save` | `{name, global, id?, default?}` | `{profile, profiles, default}`; with `id` it replaces that profile |
+| POST | `/reelwright/profiles/delete` | `{id}` | `{profiles, default}` |
+| POST | `/reelwright/profiles/default` | `{id}` (`""` clears) | `{profiles, default}` |
 
 File previews use ComfyUI's own `/view?filename=&subfolder=&type=output|input`.
 
@@ -184,6 +191,7 @@ output/reelwright/<slug>/
 input/reelwright/<slug>/             uploaded assets (from_output/: files picked from ComfyUI's output)
 user/reelwright/llm.json     LLM base URL, model, API key (never in workflows)
 user/reelwright/guides/      MiniMax's H3 prompt guides, downloaded on request
+user/reelwright/profiles.json  saved Global profiles and the default for new nodes
 ```
 
 Every path that comes from the project or a request goes through

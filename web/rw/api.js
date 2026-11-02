@@ -55,6 +55,12 @@ export const rw = {
   describe: (project, asset_ids, prompt) => req("POST", "/reelwright/llm/describe", { project, asset_ids, prompt }),
   files: (root, query, kind, limit = 400) => req("GET", `/reelwright/files?root=${q(root)}&q=${q(query)}&kind=${q(kind)}&limit=${limit}`),
   importFile: (slug, root, rel) => req("POST", "/reelwright/import", { slug, root, rel }),
+  // added 2026-11-02 v0.3.0: Global profiles; the LLM test sends the project's LLM fields
+  profiles: () => req("GET", "/reelwright/profiles"),
+  saveProfile: (name, global, id, isDefault) => req("POST", "/reelwright/profiles/save", { name, global, id, default: isDefault }),
+  deleteProfile: id => req("POST", "/reelwright/profiles/delete", { id }),
+  defaultProfile: id => req("POST", "/reelwright/profiles/default", { id }),
+  llmTestProject: project => req("POST", "/reelwright/llm/test", { project }),
 };
 
 // `rel` is a path relative to ComfyUI's input or output folder.

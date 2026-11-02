@@ -221,6 +221,8 @@
 .rw-note svg { flex: none; margin-top: 2px; }
 .rw-note.warn { background: rgba(251, 191, 36, 0.07); border-color: rgba(251, 191, 36, 0.35); color: #fde68a; }
 .rw-note.err { background: rgba(248, 113, 113, 0.08); border-color: rgba(248, 113, 113, 0.4); color: #fecaca; }
+/* added 2026-11-02 v0.3.0: success note (LLM connection test) */
+.rw-note.ok { background: rgba(52, 211, 153, 0.08); border-color: rgba(52, 211, 153, 0.38); color: #a7f3d0; }
 .rw-note.vid { background: rgba(167, 139, 250, 0.08); border-color: rgba(167, 139, 250, 0.38); color: #ddd6fe; }
 .rw-note .rw-btn { margin-left: auto; }
 .rw-banner { display: flex; align-items: center; gap: 9px; margin: 10px 12px 0; padding: 8px 12px; border-radius: 9px; font-size: 12px; }
@@ -597,3 +599,16 @@
 .rw-ctx-ic { width: 13px; flex: none; }
 .rw-ctx-hint { color: var(--dim); font-size: 10.5px; }
 .rw-ctx-sep { height: 1px; margin: 4px 2px; background: var(--line); }
+
+/* added 2026-11-02 v0.3.0: confirmation dialog, profile banner, run progress */
+.rw-modal { position: absolute; inset: 0; z-index: 120; background: rgba(8, 9, 12, 0.55); display: flex; align-items: center; justify-content: center; }
+.rw-modal-box { width: 440px; max-width: calc(100% - 32px); padding: 16px 18px; border-radius: 12px; background: #1f2229; border: 1px solid #3a3f4b; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6); display: flex; flex-direction: column; gap: 10px; }
+.rw-modal-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--text); }
+.rw-modal-title svg { color: #fca5a5; flex: none; }
+.rw-modal-msg { color: var(--text2); font-size: 12.5px; line-height: 1.55; }
+.rw-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.rw-profile-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; margin: 0 0 8px; border-radius: 8px; border: 1px solid rgba(96, 165, 250, 0.4); background: rgba(96, 165, 250, 0.08); }
+.rw-progress { display: grid; grid-template-columns: 56px minmax(0, 1fr) 46px; align-items: center; gap: 8px; font-size: 11px; }
+.rw-progress .rw-meter-bar { height: 6px; }
+.rw-run { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.rw-qtag { font-size: 10px; padding: 0 5px; border-radius: 4px; background: rgba(251, 191, 36, 0.15); color: var(--warn); margin-left: 4px; font-family: var(--mono); }

@@ -349,12 +349,34 @@ const MEDIA = {
   ],
 };
 
+// added 2026-11-02 v0.3.0: profiles for the mock server (tests can seed them through window.__mockProfiles)
+let profileSeq = 0;
+const profileStore = { profiles: [], default: "" };
+if (typeof window !== "undefined") window.__mockProfiles = profileStore;
+
 async function route(path, opts = {}) {
   const url = new URL(path, "http://mock");
   const body = opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : null;
   await new Promise(r => setTimeout(r, 20));
   switch (url.pathname) {
-    case "/reelwright/info": return json({ version: "0.2.0", ffmpeg: "ffmpeg 7.1", insightface: true, h3_nodes: true });
+    // [OLD 2026-11-02 v0.2.2->v0.3.0] case "/reelwright/info": return json({ version: "0.2.0", ffmpeg: "ffmpeg 7.1", insightface: true, h3_nodes: true });
+    case "/reelwright/info": return json({ version: "0.3.0", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
+    // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
+    case "/reelwright/profiles": return json(profileStore);
+    case "/reelwright/profiles/save": {
+      if (!body.name) return json({ error: "Give the profile a name" }, 400);
+      let hit = profileStore.profiles.find(x => x.id === body.id);
+      if (!hit) { hit = { id: "g_" + (++profileSeq), created: 1793650000 }; profileStore.profiles.push(hit); }
+      Object.assign(hit, { name: body.name, updated: 1793650000 + profileSeq, global: body.global });
+      if (body.default === true) profileStore.default = hit.id;
+      else if (body.default === false && profileStore.default === hit.id) profileStore.default = "";
+      return json({ profile: hit, ...profileStore });
+    }
+    case "/reelwright/profiles/delete":
+      profileStore.profiles = profileStore.profiles.filter(x => x.id !== body.id);
+      if (profileStore.default === body.id) profileStore.default = "";
+      return json(profileStore);
+    case "/reelwright/profiles/default": profileStore.default = body.id || ""; return json(profileStore);
     case "/reelwright/models": return json({
       diffusion_models: ["minimax_h3_ref2va_pruned_int8_convrot.safetensors", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"],
       text_encoders: ["qwen3vl_32b_minimax_h3_int8_convrot.safetensors", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"],
@@ -387,7 +409,10 @@ async function route(path, opts = {}) {
     }
     case "/reelwright/import": return json({ asset: { kind: /\.(mp4|webm)$/.test(body.rel) ? "video" : "image", name: body.rel.split("/").pop().replace(/\.[^.]+$/, ""),
       file: body.root === "input" ? body.rel : `reelwright/${SLUG}/from_output/${body.rel.split("/").pop()}`, width: 1344, height: 768, category: "subject" } });
-    case "/reelwright/llm/test": return json({ ok: true, ms: 412, model: "qwen3-32b-instruct" });
+    // [OLD 2026-11-02 v0.2.2->v0.3.0] case "/reelwright/llm/test": return json({ ok: true, ms: 412, model: "qwen3-32b-instruct" });
+    case "/reelwright/llm/test": return body?.project?.global?.llm?.base_url?.includes("down")
+      ? json({ error: "Cannot connect to " + body.project.global.llm.base_url }, 502)
+      : json({ ok: true, ms: 412, model: body?.project?.global?.llm?.model || "qwen3-32b-instruct", base_url: body?.project?.global?.llm?.base_url || "http://llm.local:30000/v1", reply: "OK" });
     case "/reelwright/llm/rewrite": {
       const s = body.project.scenes.find(x => x.id === body.scene_id);
       return json({ sections: { ...s.prompt.sections, summary: (s.prompt.sections.summary || "") + " The candle gutters as she reads.", detailed_description: "Extreme close-ups, warm key light from the candle, shallow depth of field." }, warnings: [] });
@@ -423,6 +448,11 @@ export function createMockHost() {
     emit(type, detail) { for (const cb of listeners[type] || []) cb(detail); },
     async queue(request) { queued.push(request); },
     interrupt() { queued.push({ action: "interrupt" }); },
+    // added 2026-11-02 v0.3.0: title and canvas-zoom hooks the real host provides
+    titles: [],
+    setTitle(status) { this.titles.push(status); },
+    wheels: [],
+    forwardWheel(e) { this.wheels.push({ deltaY: e.deltaY, ctrl: e.ctrlKey }); },
     isInputLinked: name => name === "model" || name === "clip",
     queued,
     get project() { return JSON.parse(projectJSON); },

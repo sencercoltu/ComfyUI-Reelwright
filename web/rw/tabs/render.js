@@ -31,6 +31,7 @@ function scopeBar(ctx) {
     button({ label: "Stop", icon: "stop", help: "render.stop", variant: "danger-ghost", onClick: () => ctx.host.interrupt() }));
 }
 
+/* [OLD 2026-11-02 v0.2.2->v0.3.0] one line for the current pass only; no scene count or overall progress
 function runBanner(ctx) {
   const prog = Object.values(ctx.eph.progress).find(x => !["done", "cached", "error"].includes(x.phase));
   if (!ctx.eph.running && !prog) return null;
@@ -39,6 +40,29 @@ function runBanner(ctx) {
     h("b", null, "Rendering"),
     prog ? h("span", null, `${s?.title || prog.scene_id} · pass ${prog.pass}/${prog.passes} · ${prog.phase}${prog.steps ? ` · step ${prog.step}/${prog.steps}` : ""}${prog.message ? " · " + prog.message : ""}`) : h("span", null, "waiting for ComfyUI…"),
     prog?.steps ? h("span", { class: "rw-meter-bar grow" }, h("span", { class: "rw-meter-fill rw-bg-pic", style: { width: Math.round((prog.step / prog.steps) * 100) + "%" } })) : h("span", { class: "rw-flex" }));
+}
+*/
+// added 2026-11-02 v0.3.0: "scene k of n" with a bar for the scene and one for the whole run
+function runBanner(ctx) {
+  const r = ctx.runProgress?.();
+  const prog = r?.current || Object.values(ctx.eph.progress).find(x => !["done", "cached", "error"].includes(x.phase));
+  if (!ctx.eph.running && !prog) return null;
+  const s = prog && ctx.p.scenes.find(x => x.id === prog.scene_id);
+  const pct = v => Math.round(Math.max(0, Math.min(1, v)) * 100);
+  const bar = (label, v, cls, help) => h("div", { class: "rw-progress", help },
+    h("span", { class: "rw-dim" }, label),
+    h("span", { class: "rw-meter-bar" }, h("span", { class: ["rw-meter-fill", cls], style: { width: pct(v) + "%" } })),
+    h("span", { class: "mono rw-dim" }, pct(v) + "%"));
+  const scenePart = r ? r.scenePart : prog?.steps ? prog.step / prog.steps : 0;
+  const head = r ? `Scene ${Math.max(1, r.index)} of ${r.n}` : "Rendering";
+  const detail = prog ? `${s?.title || prog.scene_id} · pass ${prog.pass}/${prog.passes} · ${prog.phase}${prog.steps ? ` · step ${prog.step}/${prog.steps}` : ""}${prog.message ? " · " + prog.message : ""}`
+    : r && r.done >= r.n ? "finishing…" : "waiting for ComfyUI…";
+  return h("div", { class: "rw-banner info", help: "render.banner" }, icon("render", 14),
+    h("div", { class: "rw-run" },
+      h("div", { class: "rw-row" }, h("b", null, head), h("span", { class: "rw-ellipsis" }, detail),
+        r?.reused?.length ? h("span", { class: "rw-dim small" }, `· ${r.reused.length} reused`) : null),
+      bar("Scene", scenePart, "rw-bg-pic", "render.progress.scene"),
+      r && bar("Total", r.total, "rw-bg-aud", "render.progress.total")));
 }
 
 // added 2026-11-02 v0.2.0: the take a merge would use for a scene (starred, or newest when Merge uses latest)
@@ -216,6 +240,8 @@ function mergeCard(ctx) {
   const nReady = ready.filter(r => r.ok).length;
   const cutLen = ready.reduce((t, r, i) => t + (r.ok || m.missing !== "skip" ? r.s.duration - (i > 0 ? overlapSeconds(r.s) : 0) : 0), 0);
   const res = ctx.eph.merge;
+  // added 2026-11-02 v0.3.0: scenes whose Start card overrides the cut defaults
+  const overrides = p.scenes.filter((s, i) => i > 0 && s.transition && (s.transition.mode || s.transition.frames != null || s.transition.audio_fade_frames != null)).length;
   const fileLink = (label, rel) => rel && h("a", { class: "rw-file", href: viewURL(rel), target: "_blank", rel: "noopener", help: "render.merge.file" }, icon("download", 12), label, h("span", { class: "mono rw-dim" }, rel.split("/").pop()));
   return section({
     title: "Merge scenes", help: "render.merge", cls: "rw-merge",
@@ -224,9 +250,16 @@ function mergeCard(ctx) {
       field("Use", segmented({ small: true, value: m.use, help: "render.merge.use", options: [{ value: "starred", label: "Starred takes" }, { value: "latest", label: "Latest takes" }], onChange: v => set(x => { x.use = v; }) }), { help: "render.merge.use" }),
       field("Not ready", segmented({ small: true, value: m.missing, help: "render.merge.missing", options: [{ value: "skip", label: "Skip" }, { value: "slate", label: "Slate" }, { value: "block", label: "Block" }], onChange: v => set(x => { x.missing = v; }) }), { help: "render.merge.missing" }),
       h("div", { class: "rw-subhead" }, "Seams"),
+      /* [OLD 2026-11-02 v0.2.2->v0.3.0] labels did not say that each scene can override these
       field("Hard cuts", segmented({ small: true, value: m.hard_cut, help: "render.merge.hardCut", options: [{ value: "cut", label: "Cut" }, { value: "crossfade", label: "Crossfade" }, { value: "dip", label: "Dip to black" }], onChange: v => set(x => { x.hard_cut = v; }) }), { help: "render.merge.hardCut" }),
       field("Transition", number({ value: m.transition_frames, min: 0, max: 96, unit: "f", help: "render.merge.transition", onChange: v => set(x => { x.transition_frames = v ?? 12; }) }), { help: "render.merge.transition" }),
       field("Audio fade", number({ value: m.audio_fade_frames, min: 0, max: 48, unit: "f", help: "render.merge.audioFade", onChange: v => set(x => { x.audio_fade_frames = v ?? 6; }) }), { help: "render.merge.audioFade" }),
+      */
+      // added 2026-11-02 v0.3.0: these are defaults; a scene's Start card can set its own cut
+      field("Hard cuts · default", segmented({ small: true, value: m.hard_cut, help: "render.merge.hardCut", options: [{ value: "cut", label: "Cut" }, { value: "crossfade", label: "Crossfade" }, { value: "dip", label: "Dip to black" }], onChange: v => set(x => { x.hard_cut = v; }) }), { help: "render.merge.hardCut" }),
+      field("Transition · default", number({ value: m.transition_frames, min: 0, max: 96, unit: "f", help: "render.merge.transition", onChange: v => set(x => { x.transition_frames = v ?? 12; }) }), { help: "render.merge.transition" }),
+      field("Audio fade · default", number({ value: m.audio_fade_frames, min: 0, max: 48, unit: "f", help: "render.merge.audioFade", onChange: v => set(x => { x.audio_fade_frames = v ?? 6; }) }), { help: "render.merge.audioFade" }),
+      overrides && h("div", { class: "rw-dim small", help: "render.merge.overrides" }, `${overrides} scene${overrides > 1 ? "s" : ""} set their own cut`),
       h("div", { class: "rw-subhead" }, "Audio"),
       field("Normalize", h("span", { class: "rw-row" }, toggle({ value: m.normalize, help: "render.merge.normalize", onChange: v => set(x => { x.normalize = v; }) }),
         number({ value: m.loudness, min: -40, max: -5, step: 0.5, unit: "LUFS", help: "render.merge.loudness", onChange: v => set(x => { x.loudness = v ?? -16; }) })), { help: "render.merge.normalize" }),

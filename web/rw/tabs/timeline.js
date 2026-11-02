@@ -1,12 +1,14 @@
 // Timeline tab: asset bin, monitor with transport, quick inspector, and the
 // multi-lane timeline (scenes, pictures, video, audio, dialogue, camera, LoRAs).
 
-import { h, icon, button, toggle, segmented, chip, dot, slider } from "../ui.js";
+// [OLD 2026-11-02 v0.2.2->v0.3.0] import { h, icon, button, toggle, segmented, chip, dot, slider } from "../ui.js";
+import { h, icon, button, toggle, segmented, chip, dot, slider, select } from "../ui.js";
 import { viewURL } from "../api.js";
 import { highlightHTML } from "../prompttext.js";
 import {
   FPS, sceneStarts, fmtTime, framesOf, nearestGridFrames, estimatePasses, findAsset, findCast,
   effectiveLoras, overrideCount, sceneIndex, newId, assembledDuration, MIN_PASS_FRAMES,
+  effective, // added 2026-11-02 v0.3.0
 } from "../model.js";
 import { uploadFiles } from "./assets.js";
 
@@ -224,6 +226,7 @@ function renderBin(ctx) {
             onDragstart: e => { e.dataTransfer.setData("application/x-rw-asset", a.id); e.dataTransfer.effectAllowed = "copy"; },
             onClick: () => ctx.store.setEph({ selectedAsset: a.id }),
             onDblclick: () => { ctx.store.setEph({ selectedAsset: a.id }); ctx.actions.setTab("assets"); },
+            menu: () => assetMenu(ctx, a), // added 2026-11-02 v0.3.0
           },
           kind === "image" ? h("img", { class: "rw-bin-thumb", src: viewURL(a.file, "input"), alt: "", loading: "lazy" }) : h("span", { class: "rw-bin-thumb rw-bg-" + cls + "-soft" }, icon(kind, 12)),
           h("b", { class: "mono rw-c-" + cls }, a.code), h("span", { class: "rw-ellipsis" }, a.name || a.file.split("/").pop()),
@@ -546,13 +549,46 @@ function renderLanes(ctx) {
     if (e.ctrlKey || e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }
   } },
   [/OLD] */
+  /* [OLD 2026-11-02 v0.2.2->v0.3.0] Ctrl + wheel now zooms ComfyUI's canvas (editor.js), so only Alt zooms the timeline
   return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, wheel: e => {
     if (e.ctrlKey || e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }
+  } },
+  [/OLD] */
+  return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, wheel: e => {
+    if (e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }
   } },
   h("div", { class: "rw-lanes-inner", style: { width: HEAD_W + width + "px" } },
     h("div", { class: "rw-lane ruler" }, h("div", { class: "rw-lane-head mono rw-dim", help: "timeline.ruler" }, "24 fps"), ruler),
     lanes.map(([label, ic, cls, help, el, kind, extra]) => h("div", { class: ["rw-lane", kind] }, laneHead(label, ic, cls, help, extra), el)),
     playhead));
+}
+
+// added 2026-11-02 v0.3.0: right-click menu for an asset (timeline bin and Assets tab)
+export function assetMenu(ctx, a) {
+  const s = ctx.scene;
+  return [
+    { label: "Open in Assets tab", icon: "assets", help: "timeline.bin.item", onClick: () => { ctx.store.setEph({ selectedAsset: a.id }); ctx.actions.setTab("assets"); } },
+    { label: `Add to ${s.title}`, icon: "plus", help: "assets.addToScene", onClick: () => {
+      ctx.actions.editScene(s.id, sc => { sc.refs.push({ id: newId("r"), asset: a.id, role: a.defaults.role, time: 0, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack }); });
+      ctx.actions.toast(`Added ${a.code} to ${s.title}.`, "ok");
+    } },
+    { sep: true },
+    { label: "Delete asset", icon: "trash", help: "assets.delete", danger: true, onClick: () => ctx.actions.deleteAsset(a.id) },
+  ];
+}
+
+// added 2026-11-02 v0.3.0: offered once on a freshly added node when saved profiles exist
+export function profileBanner(ctx) {
+  const pr = ctx.eph.profiles;
+  if (!ctx.eph.fresh || !pr?.profiles?.length) return null;
+  const sel = ctx.eph.profileSel && pr.profiles.some(x => x.id === ctx.eph.profileSel) ? ctx.eph.profileSel : pr.profiles[0].id;
+  return h("div", { class: "rw-profile-banner", help: "global.profiles.banner" },
+    icon("global", 14), h("b", null, "New project"), h("span", { class: "rw-dim" }, "Start from a saved Global profile:"),
+    select({ options: pr.profiles.map(x => ({ value: x.id, label: x.name + (x.id === pr.default ? " · default" : "") })), value: sel, width: "240px",
+      help: "global.profiles.pick", onChange: v => ctx.store.setEph({ profileSel: v }) }),
+    button({ label: "Apply", small: true, variant: "primary", help: "global.profiles.apply", onClick: () => ctx.actions.applyProfile(pr.profiles.find(x => x.id === sel)) }),
+    h("span", { class: "rw-flex" }),
+    button({ icon: "close", small: true, variant: "ghost", help: "common.close", onClick: () => ctx.store.setEph({ fresh: false }) }));
 }
 
 // added 2026-11-02 v0.2.2: right-click menu for a scene (timeline block and the Scene tab strip)
@@ -570,9 +606,19 @@ export function sceneMenu(ctx, s) {
     { label: "Move left", icon: "chevLeft", help: "timeline.moveLeft", disabled: i === 0, onClick: () => ctx.actions.moveScene(s.id, -1) },
     { label: "Move right", icon: "chevRight", help: "timeline.moveRight", disabled: i === p.scenes.length - 1, onClick: () => ctx.actions.moveScene(s.id, 1) },
     { label: s.lock ? "Unlock take" : "Lock take", icon: s.lock ? "unlock" : "lock", help: "scene.lock", onClick: () => ctx.actions.editScene(s.id, sc => { sc.lock = !sc.lock; }) },
+    // added 2026-11-02 v0.3.0: draft or final per scene
     { sep: true },
+    ...[["", `Quality: follow Global (${p.global.quality})`], ["draft", "Quality: draft"], ["final", "Quality: final"]].map(([v, label]) => ({
+      label, icon: (s.overrides.quality || "") === v ? "check" : null, help: "scene.override.quality",
+      onClick: () => ctx.actions.editScene(s.id, sc => { if (v) sc.overrides.quality = v; else delete sc.overrides.quality; }),
+    })),
+    { sep: true },
+    /* [OLD 2026-11-02 v0.2.2->v0.3.0] no confirmation, and the only scene could not be deleted
     { label: "Delete scene", icon: "trash", hint: "Del", help: "timeline.delete", danger: true, disabled: p.scenes.length <= 1,
       onClick: () => { ctx.actions.deleteScene(s.id); ctx.actions.toast(`Deleted ${s.title}. Ctrl+Z brings it back.`, "info"); } },
+    [/OLD] */
+    { label: p.scenes.length <= 1 ? "Reset scene" : "Delete scene", icon: "trash", hint: "Del", help: "timeline.delete", danger: true,
+      onClick: async () => { if (await ctx.actions.deleteScene(s.id)) ctx.actions.toast(p.scenes.length <= 1 ? "Scene reset." : `Deleted ${s.title}.`, "info"); } },
   ];
 }
 
@@ -613,6 +659,8 @@ function sceneBlock(ctx, s, i, start, z) {
     h("span", { class: "mono rw-scene-idx" }, String(i + 1).padStart(2, "0")),
     h("span", { class: "rw-scene-title" }, s.title),
     s.lock && icon("lock", 11),
+    // added 2026-11-02 v0.3.0: show draft scenes
+    effective(p, s, "quality").value === "draft" && h("span", { class: "rw-qtag", help: "scene.override.quality" }, "draft"),
     est.count > 1 && h("span", { class: "rw-badge vid", help: "timeline.scene.passes" }, `${plan?.passes?.length || est.count} passes`),
     est.short && h("span", { class: "rw-badge", help: "timeline.scene.short" }, "trim"),
     dot(status === "cached" || status === "locked" ? "ok" : status === "stale" ? "warn" : status === "rendering" ? "busy" : "empty", "status." + status));
@@ -742,6 +790,7 @@ export function render(ctx) {
   const m = monitorOf(ctx);
   m.show(s, p.ui.playhead - starts[s.id]);
   return h("div", { class: "rw-tl" },
+    profileBanner(ctx), // added 2026-11-02 v0.3.0
     h("div", { class: "rw-tl-top" },
       renderBin(ctx),
       h("div", { class: "rw-mon-col" }, m.el, renderTransport(ctx)),

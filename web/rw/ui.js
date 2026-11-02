@@ -442,3 +442,32 @@ export function contextMenu(root, clientX, clientY, items) {
   setTimeout(() => { document.addEventListener("pointerdown", outside, true); document.addEventListener("keydown", esc, true); }, 0);
   return close;
 }
+
+// added 2026-11-02 v0.3.0: a modal confirmation inside the editor. Resolves true/false.
+// Enter confirms, Escape or a click outside cancels.
+export function confirmDialog(root, { title, message, confirmLabel = "Delete", danger = true, cancelLabel = "Cancel" }) {
+  return new Promise(resolve => {
+    root.querySelectorAll(".rw-modal").forEach(m => m.remove());
+    const key = e => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
+      else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); done(true); }
+    };
+    // focus goes back to the editor so its shortcuts (Ctrl+Z) work right after the dialog closes
+    const prev = document.activeElement;
+    const done = v => {
+      overlay.remove(); document.removeEventListener("keydown", key, true);
+      const back = prev && prev.isConnected && root.contains(prev) ? prev : root;
+      back.focus?.({ preventScroll: true });
+      resolve(v);
+    };
+    const ok = button({ label: confirmLabel, variant: danger ? "danger" : "primary", help: "common.confirm", onClick: () => done(true) });
+    const overlay = h("div", { class: "rw-modal", onPointerdown: e => { if (e.target === overlay) done(false); } },
+      h("div", { class: "rw-modal-box", role: "alertdialog", "aria-modal": "true" },
+        h("div", { class: "rw-modal-title" }, danger ? icon("warn", 15) : null, h("span", null, title)),
+        message ? h("div", { class: "rw-modal-msg" }, message) : null,
+        h("div", { class: "rw-modal-actions" }, button({ label: cancelLabel, help: "common.cancel", onClick: () => done(false) }), ok)));
+    root.appendChild(overlay);
+    document.addEventListener("keydown", key, true);
+    ok.focus({ preventScroll: true });
+  });
+}

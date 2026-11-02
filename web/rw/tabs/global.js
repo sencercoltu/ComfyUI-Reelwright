@@ -1,7 +1,8 @@
 // Global tab: models, LoRAs, output, sampling, draft, defaults, long scenes,
 // LLM settings, script import and the override matrix.
 
-import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, dot } from "../ui.js";
+// [OLD 2026-11-02 v0.2.2->v0.3.0] import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, dot } from "../ui.js";
+import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, dot, confirmDialog } from "../ui.js";
 import { rw } from "../api.js";
 import {
   ASPECTS, START_MODES, STABLE_LANGUAGES, OVERRIDE_KEYS, adaptCanvas, newId, slugify, defaultScene, effective, FPS,
@@ -18,6 +19,58 @@ function modelRow(ctx, label, key, list, input, help) {
       wired ? h("span", { class: "rw-badge pic", help: "global.models.wired" }, "wired input wins") : null),
     select({ options: list || [], value: g[key], placeholder: key === "latent_upscaler" ? "none (no hires pass)" : undefined, mono: true, help,
       onChange: v => ctx.actions.edit(q => { q.global.models[key] = v; }) }));
+}
+
+// added 2026-11-02 v0.3.0: saved Global settings shared by every Reelwright node on this ComfyUI
+function profilesCard(ctx) {
+  const pr = ctx.eph.profiles;
+  if (!pr) ctx.actions.loadProfiles();
+  const list = pr?.profiles || [];
+  const sel = list.find(x => x.id === ctx.eph.profileSel) || null;
+  const busy = !!ctx.eph.profileBusy;
+  const run = async (fn, okMsg) => {
+    ctx.store.setEph({ profileBusy: true });
+    try { const r = await fn(); if (r) ctx.store.setEph({ profiles: { profiles: r.profiles, default: r.default } }); if (okMsg) ctx.actions.toast(okMsg, "ok"); return r; }
+    catch (err) { ctx.actions.toast("Profiles: " + err.message, "error"); return null; }
+    finally { ctx.store.setEph({ profileBusy: false }); }
+  };
+  const nameInput = h("input", { class: "rw-input grow", key: "profile-name", placeholder: "New profile name, e.g. RTX 6000 · draft turbo", help: "global.profiles.name", value: ctx.eph.profileName || "",
+    onInput: e => { ctx.eph.profileName = e.target.value; } });
+  const saveNew = async () => {
+    const name = (ctx.eph.profileName || "").trim();
+    if (!name) { ctx.actions.toast("Type a name for the new profile.", "warn"); return; }
+    const r = await run(() => rw.saveProfile(name, ctx.p.global), `Saved profile “${name}”.`);
+    if (r?.profile) { ctx.eph.profileName = ""; ctx.store.setEph({ profileSel: r.profile.id }); }
+  };
+  return section({
+    title: "Profiles", help: "global.profiles",
+    actions: h("span", { class: "rw-dim small" }, pr?.offline ? "backend offline" : `${list.length} saved`),
+    children: [
+      h("div", { class: "rw-row" },
+        select({ options: list.map(x => ({ value: x.id, label: x.name + (x.id === pr.default ? " · default for new nodes" : "") })), value: sel?.id || "",
+          placeholder: list.length ? "pick a profile" : "no profiles yet", help: "global.profiles.pick", width: "100%", onChange: v => ctx.store.setEph({ profileSel: v }) }),
+        button({ label: "Apply", small: true, variant: "primary", help: "global.profiles.apply", disabled: !sel || busy, onClick: async () => {
+          if (await confirmDialog(ctx.root, { title: `Apply “${sel.name}”?`, danger: false, confirmLabel: "Apply profile",
+            message: "This project's Global settings (models, LoRAs, output, sampling, draft, defaults, long scenes, memory, continuity, LLM and merge) are replaced by the profile. Scenes, assets and cast are not touched. Ctrl+Z undoes this." })) ctx.actions.applyProfile(sel);
+        } })),
+      sel && h("div", { class: "rw-row wrap" },
+        button({ label: "Update with current settings", icon: "refresh", small: true, help: "global.profiles.update", disabled: busy, onClick: async () => {
+          if (await confirmDialog(ctx.root, { title: `Overwrite “${sel.name}”?`, danger: false, confirmLabel: "Update profile",
+            message: "The profile's saved settings are replaced by this project's current Global settings." })) run(() => rw.saveProfile(sel.name, ctx.p.global, sel.id), `Updated “${sel.name}”.`);
+        } }),
+        toggle({ value: pr.default === sel.id, label: "Use for new nodes", help: "global.profiles.default", disabled: busy,
+          onChange: v => run(() => rw.defaultProfile(v ? sel.id : ""), v ? `New nodes start with “${sel.name}”.` : "New nodes start with the built-in defaults.") }),
+        h("span", { class: "rw-flex" }),
+        button({ label: "Delete", icon: "trash", small: true, variant: "danger-ghost", help: "global.profiles.delete", disabled: busy, onClick: async () => {
+          if (await confirmDialog(ctx.root, { title: `Delete profile “${sel.name}”?`, confirmLabel: "Delete profile",
+            message: "Only the saved profile is deleted. Projects that used it keep their settings." })) {
+            const r = await run(() => rw.deleteProfile(sel.id), `Deleted “${sel.name}”.`);
+            if (r) ctx.store.setEph({ profileSel: "" });
+          }
+        } })),
+      h("div", { class: "rw-row" }, nameInput, button({ label: "Save as new", icon: "plus", small: true, help: "global.profiles.save", disabled: busy, onClick: saveNew })),
+    ],
+  });
 }
 
 function projectCard(ctx) {
@@ -218,11 +271,27 @@ function llmCard(ctx) {
       // added 2026-11-02 v0.2.0: MiniMax's official prompt guides go into the system prompt
       guidesField(ctx, l, st, set),
       h("div", { class: "rw-row" },
+        /* [OLD 2026-11-02 v0.2.2->v0.3.0] no busy state and only a tiny status in the card header, so a slow or failing server looked like "nothing happens"
         button({ label: "Test connection", small: true, help: "global.llm.test", onClick: async () => {
           try { const r = await rw.llmTest(); ctx.store.setEph({ llm: { ...st, ok: true, ms: r.ms, error: null } }); }
           catch (err) { ctx.store.setEph({ llm: { ...st, ok: false, error: err.message } }); }
         } }),
+        [/OLD] */
+        button({ label: st.testing ? "Testing…" : "Test connection", small: true, help: "global.llm.test", disabled: !!st.testing, onClick: async () => {
+          ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: true, error: null } });
+          try {
+            const r = await rw.llmTestProject(ctx.p);
+            ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: false, ok: true, ms: r.ms, error: null, testedModel: r.model, testedUrl: r.base_url, reply: r.reply } });
+            ctx.actions.toast(`LLM answered in ${r.ms} ms · ${r.model || "server default model"}`, "ok");
+          } catch (err) {
+            ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: false, ok: false, error: err.message } });
+            ctx.actions.toast("LLM test failed: " + err.message, "error");
+          }
+        } }),
         h("span", { class: "rw-dim small" }, "Only used when you press Rewrite, Split or Import — never during a render.")),
+      // added 2026-11-02 v0.3.0: the result of the last test, in full
+      st.ok && st.testedUrl ? h("div", { class: "rw-note ok small", help: "global.llm.status" }, icon("check", 12), `${st.testedUrl} · ${st.testedModel || "default model"} · ${st.ms} ms${st.reply ? ` · replied “${st.reply}”` : ""}`) : null,
+      st.error ? h("div", { class: "rw-note err small", help: "global.llm.status" }, icon("warn", 12), st.error) : null,
     ],
   });
 }
@@ -316,7 +385,8 @@ function scriptCard(ctx) {
 function matrixCard(ctx) {
   const p = ctx.p;
   const keys = [...OVERRIDE_KEYS, "loras"];
-  const label = { seed: "Seed", steps: "Steps", sampler: "Sampler", scheduler: "Scheduler", width: "Width", height: "Height", diffusion: "Model", text_encoder: "Text enc.", video_vae: "Video VAE", audio_vae: "Audio VAE", loras: "LoRAs" };
+  // [OLD 2026-11-02 v0.2.2->v0.3.0] const label = { seed: "Seed", steps: "Steps", sampler: "Sampler", scheduler: "Scheduler", width: "Width", height: "Height", diffusion: "Model", text_encoder: "Text enc.", video_vae: "Video VAE", audio_vae: "Audio VAE", loras: "LoRAs" };
+  const label = { seed: "Seed", steps: "Steps", sampler: "Sampler", scheduler: "Scheduler", width: "Width", height: "Height", diffusion: "Model", text_encoder: "Text enc.", video_vae: "Video VAE", audio_vae: "Audio VAE", quality: "Quality", loras: "LoRAs" };
   return section({
     title: "Where scenes override Global", help: "global.matrix",
     children: h("div", { class: "rw-matrix", style: { "grid-template-columns": `90px repeat(${p.scenes.length}, minmax(22px, 1fr))` } },
@@ -353,7 +423,8 @@ export function render(ctx) {
     rw.llmSettings().then(s => ctx.store.setEph({ llm: { ...ctx.eph.llm, ...s } })).catch(() => {});
   }
   return h("div", { class: "rw-cols", dataset: { scroll: "global-cols" } },
-    h("div", { class: "rw-col flex" }, projectCard(ctx), modelsCard(ctx), lorasCard(ctx)),
+    // [OLD 2026-11-02 v0.2.2->v0.3.0] h("div", { class: "rw-col flex" }, projectCard(ctx), modelsCard(ctx), lorasCard(ctx)),
+    h("div", { class: "rw-col flex" }, profilesCard(ctx), projectCard(ctx), modelsCard(ctx), lorasCard(ctx)),
     h("div", { class: "rw-col flex" }, outputCard(ctx), samplingCard(ctx), draftCard(ctx), defaultsCard(ctx)),
     h("div", { class: "rw-col flex" }, llmCard(ctx), scriptCard(ctx), matrixCard(ctx), infoCard(ctx)));
 }

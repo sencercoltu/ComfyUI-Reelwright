@@ -4,7 +4,8 @@ description = "Reelwright: a timeline editor node for MiniMax H3 ref2va. Scenes 
 # [OLD 2026-11-02 v0.1.0->v0.2.0] version = "0.1.0"
 # [OLD 2026-11-02 v0.2.0->v0.2.1] version = "0.2.0"
 # [OLD 2026-11-02 v0.2.1->v0.2.2] version = "0.2.1"
-version = "0.2.2"
+# [OLD 2026-11-02 v0.2.2->v0.3.0] version = "0.2.2"
+version = "0.3.0"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = []

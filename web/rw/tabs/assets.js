@@ -3,6 +3,7 @@
 
 import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips, confirmInline } from "../ui.js";
 import { rw, viewURL } from "../api.js";
+import { assetMenu } from "./timeline.js"; // added 2026-11-02 v0.3.0
 import {
   ASSET_CATEGORIES, ROLES, newId, assignCodes, retentionOptions, assetUsage, assetCastUse, sceneBudget, budgetIssues, findAsset,
 } from "../model.js";
@@ -102,6 +103,7 @@ function grid(ctx) {
             draggable: "true",
             onDragstart: e => { e.dataTransfer.setData("application/x-rw-asset", a.id); },
             onClick: () => ctx.store.setEph({ selectedAsset: a.id }),
+            menu: () => { ctx.store.setEph({ selectedAsset: a.id }); return assetMenu(ctx, a); }, // added 2026-11-02 v0.3.0
           }, thumb(a),
           h("span", { class: "rw-asset-meta" },
             h("span", { class: "rw-row" }, h("b", { class: "mono rw-c-" + KIND_CLASS[kind] }, a.code), h("b", { class: "rw-ellipsis" }, a.name || a.file.split("/").pop())),
@@ -297,7 +299,9 @@ function inspector(ctx) {
   const card = h("div", { class: "rw-col mid" },
     section({
       title: "Asset", help: "assets.inspector",
-      actions: h("span", { class: "mono rw-dim small" }, a.width ? `${a.width}×${a.height}` : "", a.duration ? ` · ${a.duration.toFixed(2)} s` : ""),
+      // [OLD 2026-11-02 v0.2.2->v0.3.0] actions: h("span", { class: "mono rw-dim small" }, a.width ? `${a.width}×${a.height}` : "", a.duration ? ` · ${a.duration.toFixed(2)} s` : ""),
+      actions: [h("span", { class: "mono rw-dim small" }, a.width ? `${a.width}×${a.height}` : "", a.duration ? ` · ${a.duration.toFixed(2)} s` : ""),
+        button({ icon: "trash", small: true, variant: "danger-ghost", help: "assets.delete", onClick: () => ctx.actions.deleteAsset(a.id) })],
       children: [
         preview,
         h("div", { class: "rw-row" }, h("b", { class: "mono rw-c-" + kc, help: "assets.code" }, a.code),
@@ -362,6 +366,7 @@ function inspector(ctx) {
         ];
       })) : !castUse.length && h("div", { class: "rw-empty sm" }, "Not used yet.")],
     }));
+  /* [OLD 2026-11-02 v0.2.2->v0.3.0] the confirmation bar appeared at the bottom of a long column, out of sight, so deleting looked broken
   card.append(h("div", { class: "rw-row end" }, button({ label: "Delete asset", icon: "trash", variant: "danger-ghost", help: "assets.delete", onClick: () => {
     confirmInline(card, usage.length ? `Remove ${a.code} and its ${usage.length} reference${usage.length > 1 ? "s" : ""}?` : `Remove ${a.code} from the project?`, () => {
       ctx.actions.edit(q => {
@@ -372,6 +377,8 @@ function inspector(ctx) {
       ctx.store.setEph({ selectedAsset: "" });
     });
   } })));
+  [/OLD] */
+  card.append(h("div", { class: "rw-row end" }, button({ label: "Delete asset", icon: "trash", variant: "danger-ghost", help: "assets.delete", onClick: () => ctx.actions.deleteAsset(a.id) })));
   return card;
 }
 

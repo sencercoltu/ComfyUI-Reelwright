@@ -64,7 +64,9 @@ node. A wired input replaces the matching Global-tab loader.
 
 ## Using it
 
-1. **Global tab:** pick the models, the output size and your LoRAs.
+1. **Global tab:** pick the models, the output size and your LoRAs. Save them
+   as a **profile** to reuse them; the profile marked *Use for new nodes* fills
+   in every new Reelwright node.
 2. **Assets tab:** drop in pictures, video and audio. Each asset gets a code
    (P1, V1, A1…) and default settings: role, retention and the features to keep.
    **From ComfyUI** adds files already in ComfyUI's input or output folder, and
@@ -80,9 +82,11 @@ node. A wired input replaces the matching Global-tab loader.
    Refer to assets as `@P1` and to cast members as `@Mara` (or `@{Old Keeper}`).
    The preview shows the exact prompt for each pass.
 6. **Render pending.** Only new or changed scenes render. Watch progress on the
-   timeline blocks.
+   timeline blocks, the Render tab ("Scene 2 of 5") and the node title. A scene
+   can render as Draft or Final on its own (Scene tab → Generation → Quality).
 7. **Merge scenes.** The cut, plus any side files you enabled, is written to
-   `output/reelwright/<project>/cuts/`.
+   `output/reelwright/<project>/cuts/`. Transitions default to the Merge card;
+   a scene that starts fresh can choose its own cut, crossfade or dip.
 
 Everything is stored in the workflow. The project is also autosaved, with
 versions, under `output/reelwright/<project>/`.
@@ -134,9 +138,14 @@ download them a short built-in summary is sent instead.
 | D | duplicate |
 | N | new scene |
 | M | marker |
-| Delete | remove scene |
+| Delete | remove scene (asks first) |
 | Ctrl+Z / Ctrl+Shift+Z | undo / redo |
 | ? | help |
+| Alt + wheel | zoom the timeline |
+| Ctrl + wheel | zoom the ComfyUI canvas (not over text fields) |
+
+Right-click a scene or an asset for its menu (open, render, duplicate, draft/final,
+delete…).
 
 ## Development
 

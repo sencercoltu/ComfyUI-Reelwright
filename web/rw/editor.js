@@ -10,11 +10,15 @@ import { h, icon, button } from "./ui.js";
 /* [OLD 2026-11-02 v0.2.1->v0.2.2] contextMenu added
 import { h, icon, button, comboState } from "./ui.js";
 [/OLD] */
+/* [OLD 2026-11-02 v0.2.2->v0.3.0] confirmDialog added
 import { h, icon, button, comboState, contextMenu } from "./ui.js";
+[/OLD] */
+import { h, icon, button, comboState, contextMenu, confirmDialog } from "./ui.js";
 import { VERSION } from "./version.js";
 import {
   normalizeProject, defaultScene, newId, sceneIndex, sceneStarts, assembledDuration, fmtTime,
   sceneBudget, budgetIssues, FPS,
+  normalizeGlobal, assetUsage, assetCastUse, findAsset, // added 2026-11-02 v0.3.0
 } from "./model.js";
 import * as timeline from "./tabs/timeline.js";
 import * as sceneTab from "./tabs/scene.js";
@@ -61,9 +65,19 @@ function installEventGuards() {
     const root = rootOf(e);
     if (!root) return;
     e.stopPropagation(); // the default scroll still happens
+    /* [OLD 2026-11-02 v0.2.2->v0.3.0] Ctrl + wheel did nothing over the node
     const el = find(e, root, "__rwWheel");
     if (el) el.__rwWheel(e);
     if ((e.ctrlKey || e.metaKey) && !e.defaultPrevented) e.preventDefault(); // no browser page zoom over the editor
+    [/OLD] */
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd + wheel zooms ComfyUI's canvas, except over a text field or an open list
+      e.preventDefault(); // never the browser's page zoom
+      if (!e.target.closest("input, textarea, select, [contenteditable], .rw-combo-list")) root.__rwHost?.forwardWheel?.(e);
+      return;
+    }
+    const el = find(e, root, "__rwWheel");
+    if (el) el.__rwWheel(e);
   }, { capture: true, passive: false });
 }
 
@@ -72,6 +86,7 @@ export function mountEditor(container, host) {
   setHost(host);
   const store = createStore(normalizeProject(host.getProject()), { persist: json => host.setProject(json) });
   const root = h("div", { class: "rw-root", tabindex: "0" });
+  root.__rwHost = host; // added 2026-11-02 v0.3.0: the wheel guard forwards Ctrl + wheel to the canvas
   const tabbar = h("div", { class: "rw-tabbar" });
   const body = h("div", { class: "rw-body" });
   const footer = h("div", { class: "rw-footer" });
@@ -132,6 +147,7 @@ export function mountEditor(container, host) {
         p.ui.selected = copy.id;
       });
     },
+    /* [OLD 2026-11-02 v0.2.2->v0.3.0] no confirmation, and the last scene could not be deleted (it stayed as it was)
     deleteScene(id) {
       if (store.project.scenes.length <= 1) { actions.toast("A project needs at least one scene.", "warn"); return; }
       store.update(p => {
@@ -141,6 +157,63 @@ export function mountEditor(container, host) {
         if (p.scenes[0]) p.scenes[0].start.mode = "fresh";
         p.ui.selected = p.scenes[Math.min(i, p.scenes.length - 1)].id;
       });
+    },
+    [/OLD] */
+    async deleteScene(id, { ask = true } = {}) {
+      const s = store.project.scenes.find(x => x.id === id);
+      if (!s) return false;
+      const last = store.project.scenes.length <= 1;
+      if (ask && !(await confirmDialog(root, last
+        ? { title: `Reset “${s.title}”?`, confirmLabel: "Reset scene",
+          message: "It is the only scene, so it is replaced by an empty one: title, length, shots, dialogue, references, cast, prompt, overrides and transition go back to the defaults. Rendered takes stay on disk. Ctrl+Z undoes this." }
+        : { title: `Delete “${s.title}”?`, confirmLabel: "Delete scene",
+          message: "Its shots, dialogue, references and prompt are removed from the project. Rendered takes stay on disk. Ctrl+Z undoes this." }))) return false;
+      store.update(p => {
+        const i = sceneIndex(p, id);
+        if (i < 0) return;
+        if (p.scenes.length <= 1) {
+          const fresh = defaultScene(p, { title: "Scene 1" });
+          fresh.start.mode = "fresh";
+          p.scenes = [fresh];
+          p.ui.selected = fresh.id;
+          p.ui.playhead = 0;
+          return;
+        }
+        p.scenes.splice(i, 1);
+        if (p.scenes[0]) p.scenes[0].start.mode = "fresh";
+        p.ui.selected = p.scenes[Math.min(i, p.scenes.length - 1)].id;
+      });
+      return true;
+    },
+    // added 2026-11-02 v0.3.0: delete an asset (with confirmation) and every reference to it
+    async deleteAsset(id) {
+      const p = store.project;
+      const a = findAsset(p, id);
+      if (!a) return false;
+      const uses = assetUsage(p, id).length, castUses = assetCastUse(p, id).length;
+      const what = [uses ? `${uses} scene reference${uses > 1 ? "s" : ""}` : "", castUses ? `${castUses} cast link${castUses > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ");
+      if (!(await confirmDialog(root, { title: `Delete ${a.code} “${a.name || a.file}”?`, confirmLabel: "Delete asset",
+        message: (what ? `It is removed from the project together with its ${what}. ` : "It is removed from the project. ") +
+          "The file stays in ComfyUI's input folder. Ctrl+Z undoes this." }))) return false;
+      store.update(q => {
+        q.assets = q.assets.filter(x => x.id !== id);
+        for (const s of q.scenes) s.refs = s.refs.filter(r => r.asset !== id);
+        for (const c of q.cast) { c.anchors = c.anchors.filter(x => x !== id); if (c.voice === id) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => x !== id); }
+        if (q.global.merge.score.asset === id) q.global.merge.score.asset = "";
+      });
+      store.setEph({ selectedAsset: "" });
+      actions.toast(`Deleted ${a.code}.`, "info");
+      return true;
+    },
+    // added 2026-11-02 v0.3.0: Global profiles
+    applyProfile(prof) {
+      store.update(p => { p.global = normalizeGlobal(prof.global, p); });
+      store.setEph({ fresh: false, profileSel: prof.id });
+      actions.toast(`Applied profile “${prof.name}”. Ctrl+Z undoes this.`, "ok");
+    },
+    async loadProfiles() {
+      try { const r = await rw.profiles(); store.setEph({ profiles: r }); return r; }
+      catch { store.setEph({ profiles: { profiles: [], default: "", offline: true } }); return null; }
     },
     moveScene(id, dir) {
       store.update(p => {
@@ -391,10 +464,33 @@ export function mountEditor(container, host) {
   });
   for (const ev of ["keyup", "keypress", "wheel", "copy", "paste", "cut"]) root.addEventListener(ev, e => e.stopPropagation());
 
+  // added 2026-11-02 v0.3.0: progress of the whole run (scene k of n) for the Render tab and the node title
+  function runProgress() {
+    const run = store.eph.run;
+    if (!run || !run.targets?.length) return null;
+    const n = run.targets.length;
+    const cur = Object.values(store.eph.progress).find(x => run.targets.includes(x.scene_id) && !["done", "cached", "error"].includes(x.phase));
+    let part = 0;
+    if (cur) {
+      const passes = Math.max(1, cur.passes || 1);
+      const within = cur.phase === "sample" && cur.steps ? cur.step / cur.steps : ["decode", "save"].includes(cur.phase) ? 1 : 0;
+      part = Math.min(1, ((Math.max(1, cur.pass || 1) - 1) + within) / passes);
+    }
+    const done = run.done.length;
+    return { n, done, index: Math.min(n, done + (cur ? 1 : 0)), current: cur || null, scenePart: part, total: Math.min(1, (done + part) / n), reused: run.reused || [] };
+  }
+  ctx.runProgress = runProgress;
+  function updateTitle() {
+    const r = runProgress();
+    host.setTitle?.(r ? `rendering ${Math.max(1, r.index)}/${r.n} · ${Math.round(r.total * 100)}%` : null);
+  }
+
   const lastProgressRender = { at: 0 };
   host.on("reelwright.progress", d => {
     if (d.slug !== store.project.slug) return;
     store.eph.progress[d.scene_id] = d;
+    if (store.eph.run && ["done", "cached", "error"].includes(d.phase) && !store.eph.run.done.includes(d.scene_id)) store.eph.run.done.push(d.scene_id);
+    updateTitle();
     if (["done", "cached", "error"].includes(d.phase)) {
       actions.refreshTakes();
       store.refreshPlan();
@@ -404,9 +500,11 @@ export function mountEditor(container, host) {
   });
   host.on("reelwright.run", d => {
     if (d.slug !== store.project.slug) return;
-    if (d.phase === "start") store.setEph({ running: true });
+    // [OLD 2026-11-02 v0.2.2->v0.3.0] if (d.phase === "start") store.setEph({ running: true });
+    if (d.phase === "start") { store.setEph({ running: true, run: { targets: d.targets || [], reused: d.reused || [], done: [], started: Date.now() } }); updateTitle(); }
     else {
-      store.setEph({ running: false });
+      store.setEph({ running: false, run: null });
+      host.setTitle?.(null);
       actions.refreshTakes();
       store.refreshPlan();
       if (d.error) actions.toast("Render stopped: " + d.error, "error");
@@ -437,6 +535,17 @@ export function mountEditor(container, host) {
 
   return {
     root,
+    // added 2026-11-02 v0.3.0: called for a node that was just added (not loaded from a workflow)
+    async startNew() {
+      store.setEph({ fresh: true });
+      const r = await actions.loadProfiles();
+      const d = r?.profiles?.find(x => x.id === r.default);
+      if (d) {
+        store.update(p => { p.global = normalizeGlobal(d.global, p); }, { history: false });
+        store.setEph({ profileSel: d.id });
+        actions.toast(`New project: using profile “${d.name}”.`, "ok");
+      }
+    },
     load(json) { store.load(json); },
     get project() { return store.project; },
     destroy() { timeline.stopPlayback(ctx); root.remove(); },

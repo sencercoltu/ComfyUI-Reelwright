@@ -14,8 +14,11 @@ from . import spec
 
 SECTION_KEYS = ("subject_definitions", "summary", "retention_analysis",
                 "detailed_description", "overall_soundscape", "non_diegetic_music")
+# [OLD 2026-11-02 v0.2.2->v0.3.0] OVERRIDE_KEYS = ("seed", "steps", "sampler", "scheduler", "width", "height",
+#                  "diffusion", "text_encoder", "video_vae", "audio_vae")
 OVERRIDE_KEYS = ("seed", "steps", "sampler", "scheduler", "width", "height",
-                 "diffusion", "text_encoder", "video_vae", "audio_vae")
+                 "diffusion", "text_encoder", "video_vae", "audio_vae", "quality")
+TRANSITIONS = ("cut", "crossfade", "dip")  # added 2026-11-02 v0.3.0: per-scene hard-cut transition
 CODE_PREFIX = {"image": "P", "video": "V", "audio": "A"}
 
 
@@ -79,6 +82,8 @@ def default_scene(project=None, **patch):
         "trim": {"keep": "start", "in": 0.0},
         "refs": [], "cast": [], "shots": [], "dialogue": [],
         "prompt": default_prompt(), "overrides": {}, "lock": False, "notes": "",
+        # added 2026-11-02 v0.3.0: how the cut into this scene looks; empty/None follow Global -> Merge
+        "transition": {"mode": "", "frames": None, "audio_fade_frames": None},
     }
     scene.update(patch)
     return scene
@@ -217,12 +222,19 @@ def effective_loras(p, scene):
         c = cast.get(sc["id"])
         if c and c["lora"].get("name"):
             out.append((c["lora"]["name"], float(c["lora"]["strength"])))
-    if g["quality"] == "draft" and g["draft"].get("lora"):
+    # [OLD 2026-11-02 v0.2.2->v0.3.0] if g["quality"] == "draft" and g["draft"].get("lora"):
+    if scene_quality(p, scene) == "draft" and g["draft"].get("lora"):
         out.append((g["draft"]["lora"], float(g["draft"]["lora_strength"])))
     seen = {}
     for name, strength in out:
         seen[name] = strength  # later entries win, so a scene item can retune a global LoRA
     return list(seen.items())
+
+
+def scene_quality(p, scene):
+    """"draft" or "final": the scene's own choice, else Global (added 2026-11-02 v0.3.0)."""
+    q = (scene.get("overrides") or {}).get("quality")
+    return q if q in ("draft", "final") else p["global"]["quality"]
 
 
 def resolve_settings(p, scene, scene_index):
@@ -234,7 +246,8 @@ def resolve_settings(p, scene, scene_index):
     width = int(o.get("width") or g["output"]["width"])
     height = int(o.get("height") or g["output"]["height"])
     steps = int(o.get("steps") or s["steps"])
-    if g["quality"] == "draft":
+    quality = scene_quality(p, scene)  # [OLD 2026-11-02 v0.2.2->v0.3.0] was g["quality"] for every scene
+    if quality == "draft":
         width, height = spec.snap_canvas(width * g["draft"]["scale"], height * g["draft"]["scale"])
         steps = int(g["draft"]["steps"])
     return {
@@ -253,7 +266,8 @@ def resolve_settings(p, scene, scene_index):
         "shift_video": float(s["shift_video"]), "shift_audio": float(s["shift_audio"]),
         "seed": scene_seed(p, scene, scene_index),
         "loras": effective_loras(p, scene),
-        "quality": g["quality"],
+        # [OLD 2026-11-02 v0.2.2->v0.3.0] "quality": g["quality"],
+        "quality": quality,
     }
 
 

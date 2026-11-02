@@ -131,10 +131,18 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
                 width, height, FPS, _f(length), k))
             a = "anullsrc=r={}:cl=stereo,atrim=duration={}".format(AUDIO_RATE, _f(length))
         nxt = segments[k + 1]["join"] if k + 1 < len(segments) else None
-        if fade > 0 and k > 0 and seg["join"] == "cut":
-            a += ",afade=t=in:d={}".format(_f(min(fade, length / 2)))
-        if fade > 0 and nxt == "cut":
-            a += ",afade=t=out:st={}:d={}".format(_f(length - min(fade, length / 2)), _f(min(fade, length / 2)))
+        # [OLD 2026-11-02 v0.2.2->v0.3.0] one audio fade for every cut; a segment's "fade" (seconds) now sets the fade at the cut into it
+        # if fade > 0 and k > 0 and seg["join"] == "cut":
+        #     a += ",afade=t=in:d={}".format(_f(min(fade, length / 2)))
+        # if fade > 0 and nxt == "cut":
+        #     a += ",afade=t=out:st={}:d={}".format(_f(length - min(fade, length / 2)), _f(min(fade, length / 2)))
+        # [/OLD]
+        fin = seg.get("fade", fade)
+        fout = segments[k + 1].get("fade", fade) if k + 1 < len(segments) else 0
+        if fin > 0 and k > 0 and seg["join"] == "cut":
+            a += ",afade=t=in:d={}".format(_f(min(fin, length / 2)))
+        if fout > 0 and nxt == "cut":
+            a += ",afade=t=out:st={}:d={}".format(_f(length - min(fout, length / 2)), _f(min(fout, length / 2)))
         graph.append(a + "[a{}]".format(k))
 
     vcur, acur = "v0", "a0"

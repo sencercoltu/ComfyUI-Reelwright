@@ -102,7 +102,9 @@ tip("timeline.moveRight", "Move the selected scene one place later.");
 tip("timeline.snap", "When on, dragging a scene edge snaps to H3's 17k+5 frame grid, so the scene needs no trimming. Off: any whole frame.");
 tip("timeline.ripple", "Ripple: lengthening a scene pushes the later scenes along. Roll: the next scene shrinks by the same amount, so the total stays the same.");
 tip("timeline.addMarker", "Add a marker at the playhead (M). Markers are notes for you and are not sent to H3.");
-tip("timeline.zoom", "Timeline zoom in pixels per second. Ctrl or Alt + mouse wheel also zooms; + and − on the keyboard too.");
+// [OLD 2026-11-02 v0.2.2->v0.3.0] Ctrl + wheel now zooms the ComfyUI canvas, like the wheel outside the node
+// tip("timeline.zoom", "Timeline zoom in pixels per second. Ctrl or Alt + mouse wheel also zooms; + and − on the keyboard too.");
+tip("timeline.zoom", "Timeline zoom in pixels per second. Alt + mouse wheel over the lanes also zooms; + and − on the keyboard too. Ctrl + wheel anywhere on the node zooms the ComfyUI canvas (except over a text field).");
 tip("timeline.fit", "Zoom so the whole film fits the width.");
 tip("timeline.ruler", "Click or drag to move the playhead.");
 tip("timeline.marker", "A marker. Click to edit its text and colour.");
@@ -173,6 +175,10 @@ more("scene.start", "Starts from", "Fresh start is a hard cut: nothing is carrie
 tip("scene.start.fresh", "Hard cut. Nothing from the previous scene is used.");
 tip("scene.start.last_frame", "The previous scene's last frame becomes guide frame 0 of this scene (fully preserved).");
 tip("scene.start.tail", "The previous scene's last frames and audio guide the start of this scene; the overlap is trimmed in the cut.");
+more("scene.transition", "Cut into this scene", "How the merge joins this scene to the previous one when this scene starts fresh (a hard cut). By default it uses the Merge scenes settings on the Render tab; set a value here to use a different transition, length or audio fade for this seam only.\n\nScenes that start from the last frame or a tail clip are joined seamlessly, so these settings do not apply to them.", "This scene's transition in the final cut.");
+tip("scene.transition.mode", "Cut, crossfade or dip to black at the seam before this scene. Default follows Render → Merge scenes.");
+tip("scene.transition.frames", "Length of the crossfade or dip into this scene, in frames at 24 fps.");
+tip("scene.transition.audioFade", "Audio fade-in at the start of this scene (and fade-out at the end of the previous one), in frames.");
 tip("scene.start.overlap", "How many frames of the previous scene's tail guide this scene. Longer overlaps carry motion better but cost generation time.");
 more("scene.overrides", "Generation", "Settings this scene uses instead of the Global ones. A hollow dot follows Global; a coral dot is overridden here, and the reset button brings back the Global value.\n\nPer-scene VAEs are safe: every scene is decoded to a file, and continuations pass pixels (a frame or a clip), never latents, so a different VAE in one scene affects nothing else.", "Settings this scene overrides.");
 tip("scene.override.seed", "Seed for this scene. Without an override it is the Global seed (plus the scene index in +1 mode). Long scenes add the pass index.");
@@ -185,6 +191,7 @@ tip("scene.override.diffusion", "A different diffusion model (for example a fine
 tip("scene.override.text_encoder", "A different text encoder file for this scene. Its CLIP type stays minimax.");
 tip("scene.override.video_vae", "A different video VAE for this scene. Safe: scenes hand over pixels, not latents.");
 tip("scene.override.audio_vae", "A different audio VAE for this scene.");
+tip("scene.override.quality", "Render this scene as Draft or Final regardless of the Global quality switch. Handy for keeping approved scenes at Final while you iterate on the rest in Draft. Part of the cache key, so draft and final takes are kept apart.");
 tip("scene.override.resetAll", "Clear every override in this scene so it follows the Global tab again.");
 tip("scene.lock", "Keep the starred take even when a scene this one continues from changes. A locked scene never goes stale on its own.");
 tip("scene.color", "Tint for this scene's block on the timeline. Only for you.");
@@ -383,7 +390,11 @@ tip("render.quality", "Draft renders smaller and faster with the same seeds; Fin
 tip("render.quality.draft", "Fast preview: scaled resolution, fewer steps and the optional turbo LoRA (Global → Draft).");
 tip("render.quality.final", "Full resolution and steps.");
 tip("render.stop", "Interrupt the current ComfyUI run. Finished scenes stay on disk.");
-tip("render.banner", "What is rendering right now.");
+// [OLD 2026-11-02 v0.2.2->v0.3.0] the banner now shows scene k of n and two progress bars
+// tip("render.banner", "What is rendering right now.");
+tip("render.banner", "What is rendering right now: which scene of the run, its pass and sampling step. The node title shows the same count and the overall percentage.");
+tip("render.progress.scene", "Progress of the scene being rendered, across all of its passes.");
+tip("render.progress.total", "Progress of the whole run. Scenes reused from disk are not counted.");
 tip("render.refresh", "Reload takes and statuses from disk.");
 // added 2026-11-02 v0.2.0
 tip("render.table.file", "The rendered video the merge will use for this scene (starred take, or the newest when Merge uses latest takes). Click to open it.");
@@ -418,9 +429,15 @@ tip("render.seam.mix", "Opacity of the second frame in onion-skin mode.");
 more("render.merge", "Merge scenes", "Joins one take of every scene into a single film. Nothing is re-rendered, so it takes seconds and you can merge again whenever a scene changes.\n\nContinuation seams trim the overlap and crossfade inside it; hard cuts use the transition you choose. Audio gets a short fade at every seam and can be loudness-normalised. A score track can run under the whole film and duck under dialogue. Extras: subtitles from dialogue, a chapter per scene, OpenTimelineIO and FCPXML timelines for Resolve or Premiere, and a project bundle.", "Join the rendered scenes into one film.");
 tip("render.merge.use", "Use each scene's starred take, or its newest take.");
 tip("render.merge.missing", "What to do with scenes that have no take: skip them, insert a title slate of the same length, or refuse to merge.");
+/* [OLD 2026-11-02 v0.2.2->v0.3.0] these are now defaults that each scene can override
 tip("render.merge.hardCut", "Transition at fresh-start seams: plain cut, crossfade or dip to black.");
 tip("render.merge.transition", "Length of crossfades and dips, in frames at 24 fps.");
 tip("render.merge.audioFade", "Short audio fade at every seam, in frames, to avoid clicks.");
+*/
+tip("render.merge.hardCut", "Default transition at fresh-start seams: plain cut, crossfade or dip to black. A scene can choose its own on the Scene tab (Starts from → Cut into this scene).");
+tip("render.merge.transition", "Default length of crossfades and dips, in frames at 24 fps. Scenes can override it.");
+tip("render.merge.audioFade", "Default audio fade at every seam, in frames, to avoid clicks. Scenes that start fresh can override it.");
+tip("render.merge.overrides", "How many scenes set their own transition, length or audio fade. Those scenes ignore the defaults above.");
 tip("render.merge.normalize", "Normalise loudness of the whole film (EBU R128).");
 tip("render.merge.loudness", "Target integrated loudness. −16 LUFS suits online video; −23 broadcast.");
 tip("render.merge.score", "Optional music asset that plays under the whole film. Useful because each H3 pass makes its own music.");
@@ -444,6 +461,16 @@ tip("render.versions.load", "Load the list of saved versions.");
 tip("render.versions.restore", "Replace the current project with this version.");
 
 // ---------- Global ----------
+// added 2026-11-02 v0.3.0: saved Global settings
+more("global.profiles", "Profiles", "A profile is a saved copy of this tab: models, LoRAs, output, sampling, draft, defaults, merge, memory and LLM settings (never the API key). Profiles are stored in ComfyUI's user folder (user/reelwright/profiles.json) and shared by every Reelwright node on this server.\n\nApply copies a profile into this project (you can undo it). Mark one as 'Use for new nodes' and every new Reelwright node starts with it; a banner on a new node also lets you pick a different one.", "Save and reuse Global settings.");
+tip("global.profiles.pick", "Choose a saved profile.");
+tip("global.profiles.apply", "Replace this project's Global settings with the chosen profile. Ctrl+Z undoes it.");
+tip("global.profiles.update", "Overwrite the chosen profile with the current Global settings.");
+tip("global.profiles.default", "New Reelwright nodes start with this profile.");
+tip("global.profiles.delete", "Delete the chosen profile. Projects that used it keep their settings.");
+tip("global.profiles.name", "Name for a new profile.");
+tip("global.profiles.save", "Save the current Global settings as a new profile.");
+tip("global.profiles.banner", "This node is new. Pick a saved profile to fill in the Global settings, or close this to keep the defaults.");
 more("global.project", "Project", "The project name, and the folder its renders and uploads go to. Changing the folder after rendering points the project at a new, empty render folder.", "Project name and folder.");
 tip("global.project.name", "Project name.");
 tip("global.project.slug", "Folder name under output/reelwright/ and input/reelwright/. Letters, digits and underscores.");
@@ -511,7 +538,9 @@ tip("global.llm.preset", "System prompt style for rewrites.");
 more("global.llm.guides", "Official H3 prompt guides", "When on, Rewrite, Split and Import send MiniMax's own H3 prompt-writing guides to the LLM as part of its instructions: the Ref2VA guide (ref-en.txt) and the base guide (base-en.txt) from the MiniMax-H3 repository on GitHub.\n\nThe guides are under MiniMax's licence, so Reelwright does not ship them: press Download to fetch them into ComfyUI's user/reelwright/guides folder. Until then, a short built-in summary of the same rules is sent instead.\n\nTogether they are about 40 KB (roughly 10,000 tokens), so turn this off for small local models with short context windows.", "Send MiniMax's official prompt guides to the LLM.");
 tip("global.llm.guidesStatus", "Whether the official guides are downloaded, and when.");
 tip("global.llm.guidesFetch", "Download (or refresh) the official guides from the MiniMax-H3 GitHub repository.");
-tip("global.llm.test", "Send a tiny request to check the URL, key and model.");
+// [OLD 2026-11-02 v0.2.2->v0.3.0] now says where the result appears
+// tip("global.llm.test", "Send a tiny request to check the URL, key and model.");
+tip("global.llm.test", "Send a tiny request to check the URL, key and model. The result appears below the button and as a message; it gives up after 20 seconds.");
 tip("global.llm.status", "Result of the last connection test.");
 more("global.script", "Import a script", "Paste a screenplay, in Fountain or plain text. The LLM proposes characters, locations and scenes with shots and dialogue; tick the ones you want and add them. Existing cast with the same names is reused.", "Turn a screenplay into scenes.");
 tip("global.script.text", "Paste the script here.");

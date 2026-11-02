@@ -15,7 +15,8 @@ import folder_paths
 from aiohttp import web
 from server import PromptServer
 
-from . import VERSION, assemble, continuity, llm, media, merge
+# [OLD 2026-11-02 v0.2.2->v0.3.0] from . import VERSION, assemble, continuity, llm, media, merge
+from . import VERSION, assemble, continuity, llm, media, merge, profiles
 from .analysis import analyze, plan_response
 from .model import normalize_project, project_index
 from .storage import ProjectStore, Roots, check_id, check_slug, read_json, safe_join
@@ -247,6 +248,33 @@ async def llm_models(request):
     if not base:
         raise ValueError("Set the LLM base URL first")
     return {"models": await llm.list_models(base, s["api_key"])}
+
+
+# ---- Global profiles (added 2026-11-02 v0.3.0) ----------------------------------------------
+
+@routes.get("/reelwright/profiles")
+@json_route
+async def profiles_list(request):
+    return profiles.load(_user_root())
+
+
+@routes.post("/reelwright/profiles/save")
+@json_route
+async def profiles_save(request):
+    b = await body_of(request)
+    return profiles.save(_user_root(), b.get("name"), b.get("global"), b.get("id"), b.get("default"))
+
+
+@routes.post("/reelwright/profiles/delete")
+@json_route
+async def profiles_delete(request):
+    return profiles.delete(_user_root(), (await body_of(request)).get("id"))
+
+
+@routes.post("/reelwright/profiles/default")
+@json_route
+async def profiles_default(request):
+    return profiles.set_default(_user_root(), (await body_of(request)).get("id") or "")
 
 
 @routes.post("/reelwright/llm/test")

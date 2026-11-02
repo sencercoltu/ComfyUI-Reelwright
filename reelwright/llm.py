@@ -8,6 +8,7 @@ import os
 import re
 import time
 
+import asyncio  # added 2026-11-02 v0.3.0
 import aiohttp
 
 from .storage import read_json, write_json
@@ -179,13 +180,14 @@ def _err(data, status):
     return "HTTP {}".format(status)
 
 
-async def chat(cfg, system, user, max_tokens=None):
+async def chat(cfg, system, user, max_tokens=None, timeout=None):
     # `user` may be a list of OpenAI content parts (text + image_url) for vision models (added 2026-11-02 v0.2.0)
     body = {"model": cfg["model"], "temperature": cfg["temperature"],
             "max_tokens": max_tokens or cfg["max_tokens"],
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     t0 = time.time()
-    async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
+    # [OLD 2026-11-02 v0.2.2->v0.3.0] async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
+    async with aiohttp.ClientSession(timeout=timeout or TIMEOUT) as s:
         async with s.post(cfg["base_url"] + "/chat/completions", headers=_headers(cfg["api_key"]), json=body) as r:
             data = await r.json(content_type=None)
             if r.status >= 400:
@@ -318,8 +320,18 @@ async def script_to_scenes(cfg, p, script):
 
 
 async def test(cfg):
-    text, ms, model = await chat(cfg, "Reply with the single word OK.", "ping", max_tokens=8)
-    return {"ok": True, "ms": ms, "model": model, "reply": text[:40]}
+    # [OLD 2026-11-02 v0.2.2->v0.3.0] waited up to 180 s, so an unreachable server looked like "nothing happens"
+    # text, ms, model = await chat(cfg, "Reply with the single word OK.", "ping", max_tokens=8)
+    # return {"ok": True, "ms": ms, "model": model, "reply": text[:40]}
+    # [/OLD]
+    try:
+        text, ms, model = await chat(cfg, "Reply with the single word OK.", "ping", max_tokens=16,
+                                     timeout=aiohttp.ClientTimeout(total=20, connect=6))
+    except asyncio.TimeoutError:
+        raise RuntimeError("No answer from {} within 20 s".format(cfg["base_url"]))
+    except aiohttp.ClientConnectorError as e:
+        raise RuntimeError("Cannot connect to {}: {}".format(cfg["base_url"], e.os_error or e))
+    return {"ok": True, "ms": ms, "model": model, "reply": text[:40], "base_url": cfg["base_url"]}
 
 
 # ---- vision (added 2026-11-02 v0.2.0) ------------------------------------------------------

@@ -19,8 +19,13 @@ export const ASSET_CATEGORIES = {
 };
 export const SECTION_KEYS = ["subject_definitions", "summary", "retention_analysis",
   "detailed_description", "overall_soundscape", "non_diegetic_music"];
+/* [OLD 2026-11-02 v0.2.2->v0.3.0] quality became a per-scene override
 export const OVERRIDE_KEYS = ["seed", "steps", "sampler", "scheduler", "width", "height",
   "diffusion", "text_encoder", "video_vae", "audio_vae"];
+[/OLD] */
+export const OVERRIDE_KEYS = ["seed", "steps", "sampler", "scheduler", "width", "height",
+  "diffusion", "text_encoder", "video_vae", "audio_vae", "quality"];
+export const TRANSITIONS = ["cut", "crossfade", "dip"]; // added 2026-11-02 v0.3.0
 
 const CODE_PREFIX = { image: "P", video: "V", audio: "A" };
 
@@ -155,6 +160,8 @@ export function defaultScene(project, patch = {}) {
     prompt: defaultPrompt(),
     overrides: {},
     lock: false, notes: "",
+    // added 2026-11-02 v0.3.0: the cut into this scene; empty/null follow Global -> Merge
+    transition: { mode: "", frames: null, audio_fade_frames: null },
     ...patch,
   };
 }
@@ -174,6 +181,18 @@ export function defaultProject(name = "Untitled") {
 
 function isObj(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+// added 2026-11-02 v0.3.0: a profile's Global settings, completed with today's defaults
+export function normalizeGlobal(g, p = null) {
+  const out = fill(isObj(g) ? structuredClone(g) : {}, defaultGlobal());
+  // a profile saved in another project may name a score asset or colour scene this project lacks
+  if (p) {
+    const m = out.merge;
+    if (m.score?.asset && !p.assets.some(a => a.id === m.score.asset)) m.score.asset = "";
+    if (m.color_ref_scene && !p.scenes.some(s => s.id === m.color_ref_scene)) m.color_ref_scene = "";
+  }
+  return out;
 }
 
 function fill(target, defaults) {
@@ -265,6 +284,7 @@ const GLOBAL_PATH = {
   scheduler: g => g.sampling.scheduler, width: g => g.output.width, height: g => g.output.height,
   diffusion: g => g.models.diffusion, text_encoder: g => g.models.text_encoder,
   video_vae: g => g.models.video_vae, audio_vae: g => g.models.audio_vae,
+  quality: g => g.quality, // added 2026-11-02 v0.3.0
 };
 
 export function effective(project, scene, key) {

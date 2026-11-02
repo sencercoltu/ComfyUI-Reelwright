@@ -76,3 +76,45 @@ def test_scene_overrides_win():
     st = resolve_settings(p, s, 0)
     assert st["video_vae"] == "other_vae.safetensors" and st["steps"] == 30
     assert st["audio_vae"] == p["global"]["models"]["audio_vae"]
+
+
+# ---- added 2026-11-02 v0.3.0 ----
+def test_scene_quality_override():
+    from reelwright.model import default_project, resolve_settings, effective_loras
+    p = default_project("Q")
+    p["global"]["quality"] = "final"
+    p["global"]["draft"].update(lora="turbo.safetensors", scale=0.5, steps=4)
+    s = p["scenes"][0]
+    final = resolve_settings(p, s, 0)
+    s["overrides"]["quality"] = "draft"
+    draft = resolve_settings(p, s, 0)
+    assert final["quality"] == "final" and draft["quality"] == "draft"
+    assert draft["steps"] == 4 and draft["width"] < final["width"]
+    assert ("turbo.safetensors", 1.0) in effective_loras(p, s)
+    p["global"]["quality"] = "draft"
+    s["overrides"]["quality"] = "final"
+    assert resolve_settings(p, s, 0)["quality"] == "final"
+    assert all(n != "turbo.safetensors" for n, _ in effective_loras(p, s))
+
+
+def test_profiles_store(tmp_path):
+    from reelwright import profiles
+    from reelwright.model import default_global
+    root = str(tmp_path)
+    assert profiles.load(root) == {"profiles": [], "default": ""}
+    g = default_global()
+    a = profiles.save(root, "Draft box", g, make_default=True)
+    pid = a["profile"]["id"]
+    assert a["default"] == pid and a["profiles"][0]["name"] == "Draft box"
+    g2 = dict(g, quality="draft")
+    b = profiles.save(root, "Draft box v2", g2, pid=pid)
+    assert len(b["profiles"]) == 1 and b["profiles"][0]["global"]["quality"] == "draft" and b["default"] == pid
+    profiles.save(root, "Other", g)
+    assert len(profiles.load(root)["profiles"]) == 2
+    assert profiles.set_default(root, "")["default"] == ""
+    assert [x["name"] for x in profiles.delete(root, pid)["profiles"]] == ["Other"]
+    import pytest
+    with pytest.raises(ValueError):
+        profiles.save(root, "  ", g)
+    with pytest.raises(ValueError):
+        profiles.delete(root, "nope")

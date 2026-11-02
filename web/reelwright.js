@@ -45,7 +45,25 @@ app.registerExtension({
       },
       interrupt: () => api.interrupt(),
       isInputLinked: name => (node.inputs || []).some(i => i.name === name && i.link != null),
+      // added 2026-11-02 v0.3.0: Ctrl + wheel over the editor zooms the canvas like it does over empty space
+      forwardWheel(e) {
+        const canvas = app.canvas?.canvas;
+        if (!canvas) return;
+        canvas.dispatchEvent(new WheelEvent("wheel", {
+          clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY,
+          deltaX: e.deltaX, deltaY: e.deltaY, deltaZ: e.deltaZ, deltaMode: e.deltaMode,
+          ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey, bubbles: true, cancelable: true,
+        }));
+      },
+      // added 2026-11-02 v0.3.0: render progress in the node title ("Reelwright · rendering 2/5 · 43%")
+      setTitle(status) {
+        if (baseTitle === null) baseTitle = node.title;
+        node.title = status ? `${baseTitle} · ${status}` : baseTitle;
+        if (!status) baseTitle = null;
+        node.setDirtyCanvas?.(true, true);
+      },
     };
+    let baseTitle = null;
 
     const widget = node.addDOMWidget("reelwright_editor", "reelwright", container, {
       hideOnZoom: false,
@@ -57,12 +75,19 @@ app.registerExtension({
 
     const editor = mountEditor(container, host);
     if (!projectW.value) host.setProject(JSON.stringify(editor.project));
+    // added 2026-11-02 v0.3.0: a workflow load configures the node right after creating it; a node that is
+    // still unconfigured a moment later was just added, so offer the saved Global profiles
+    let configured = false;
+    setTimeout(() => { if (!configured) editor.startNew?.().catch(() => {}); }, 0);
     if (!runW.value) runW.value = IDLE_REQUEST;
     node.setSize([Math.max(node.size[0], 1600), Math.max(node.size[1], 1000)]);
 
     const onConfigure = node.onConfigure;
     node.onConfigure = function () {
+      configured = true; // added 2026-11-02 v0.3.0
       const r = onConfigure?.apply(this, arguments);
+      // added 2026-11-02 v0.3.0: a workflow saved mid-render carries the progress suffix in its title
+      if (typeof node.title === "string") node.title = node.title.replace(/ · rendering \d+\/\d+ · \d+%$/, "");
       editor.load(projectW.value);
       return r;
     };

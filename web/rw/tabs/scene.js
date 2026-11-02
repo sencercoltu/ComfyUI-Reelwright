@@ -138,8 +138,38 @@ function startCard(ctx, s) {
         options: OVERLAP_CHOICES, value: String(s.start.overlap_frames), help: "scene.start.overlap",
         onChange: v => ctx.actions.editScene(s.id, sc => { sc.start.overlap_frames = Number(v); }),
       }), { help: "scene.start.overlap" }),
+      transitionFields(ctx, s, i), // added 2026-11-02 v0.3.0
     ],
   });
+}
+
+// added 2026-11-02 v0.3.0: how the cut into this scene looks in the merge (per scene; empty follows Global -> Merge)
+function transitionFields(ctx, s, i) {
+  if (i === 0) return null;
+  const m = ctx.p.global.merge;
+  if (s.start.mode !== "fresh") {
+    return h("div", { class: "rw-dim small", help: "scene.transition" }, s.start.mode === "tail"
+      ? "Continuous start: the merge crossfades inside the tail overlap (Global → Long scenes → Crossfade), so there is no cut transition."
+      : "Continuous start: the merge drops the repeated first frame, so there is no cut transition.");
+  }
+  const tr = s.transition || {};
+  const setT = fn => ctx.actions.editScene(s.id, sc => { sc.transition = sc.transition || { mode: "", frames: null, audio_fade_frames: null }; fn(sc.transition); });
+  const mode = tr.mode || m.hard_cut;
+  const label = { cut: "cut", crossfade: "crossfade", dip: "dip to black" };
+  return [
+    h("div", { class: "rw-subhead", help: "scene.transition" }, "Cut into this scene"),
+    field("Transition", segmented({ small: true, value: tr.mode || "", help: "scene.transition.mode", options: [
+      { value: "", label: `Merge default · ${label[m.hard_cut] || m.hard_cut}`, help: "scene.transition.mode" },
+      { value: "cut", label: "Cut", help: "scene.transition.mode" }, { value: "crossfade", label: "Crossfade", help: "scene.transition.mode" },
+      { value: "dip", label: "Dip to black", help: "scene.transition.mode" }],
+    onChange: v => setT(t => { t.mode = v; }) }), { help: "scene.transition.mode", dot: tr.mode ? "override" : "global", wide: true }),
+    mode !== "cut" && field("Length", number({ value: tr.frames ?? m.transition_frames, min: 0, max: 96, unit: "f", help: "scene.transition.frames",
+      onChange: v => setT(t => { t.frames = v; }) }), { help: "scene.transition.frames", dot: tr.frames != null ? "override" : "global",
+      reset: tr.frames != null ? () => setT(t => { t.frames = null; }) : null }),
+    field("Audio fade", number({ value: tr.audio_fade_frames ?? m.audio_fade_frames, min: 0, max: 48, unit: "f", help: "scene.transition.audioFade",
+      onChange: v => setT(t => { t.audio_fade_frames = v; }) }), { help: "scene.transition.audioFade", dot: tr.audio_fade_frames != null ? "override" : "global",
+      reset: tr.audio_fade_frames != null ? () => setT(t => { t.audio_fade_frames = null; }) : null }),
+  ];
 }
 
 function overridesCard(ctx, s) {
@@ -156,6 +186,10 @@ function overridesCard(ctx, s) {
     title: "Generation", help: "scene.overrides",
     actions: overrideCount(s) ? button({ label: "Reset to Global", small: true, help: "scene.override.resetAll", onClick: () => ctx.actions.editScene(s.id, sc => { sc.overrides = {}; }) }) : h("span", { class: "rw-dim small" }, "follows Global"),
     children: [
+      // added 2026-11-02 v0.3.0: draft or final for this scene only
+      row("quality", "Quality", () => segmented({ small: true, value: s.overrides.quality || "", help: "scene.override.quality",
+        options: [{ value: "", label: `Global · ${p.global.quality}`, help: "scene.override.quality" }, { value: "draft", label: "Draft", help: "scene.override.quality" }, { value: "final", label: "Final", help: "scene.override.quality" }],
+        onChange: v => set("quality", v || null) })),
       row("seed", "Seed", num("seed", { min: 0, width: "120px" })),
       row("steps", "Steps", num("steps", { min: 1, max: 200 })),
       row("sampler", "Sampler", sel(models.samplers, "sampler")),

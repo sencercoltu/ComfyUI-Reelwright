@@ -75,13 +75,24 @@ def cut_plan(result, store):
         elif mode == "last_frame" and adjacent:
             seg["in"] = 1 / spec.FPS
         else:
-            hard = m["hard_cut"]
+            # [OLD 2026-11-02 v0.2.2->v0.3.0] every hard cut used Global -> Merge; now each scene can choose its own
+            # hard = m["hard_cut"]
+            # if hard in ("crossfade", "dip"):
+            #     prev_len = segments[-1]["out"] - segments[-1]["in"]
+            #     d = min(int(m["transition_frames"]) / spec.FPS, prev_len / 2, (length - seg["in"]) / 2)
+            # [/OLD]
+            tr = s.get("transition") or {}
+            hard = tr.get("mode") or m["hard_cut"]
+            frames = tr.get("frames") if tr.get("frames") is not None else m["transition_frames"]
             if hard in ("crossfade", "dip"):
                 prev_len = segments[-1]["out"] - segments[-1]["in"]
-                d = min(int(m["transition_frames"]) / spec.FPS, prev_len / 2, (length - seg["in"]) / 2)
+                d = min(int(frames) / spec.FPS, prev_len / 2, (length - seg["in"]) / 2)
                 if d > 0:
                     seg["join"] = "xfade" if hard == "crossfade" else "dip"
                     seg["dur"] = d
+        afade = (s.get("transition") or {}).get("audio_fade_frames")
+        if afade is not None:
+            seg["fade"] = int(afade) / spec.FPS  # added 2026-11-02 v0.3.0: per-scene audio fade at its cut
         segments.append(seg)
         lines = [{"t": float(d["t"]), "speaker": names.get(d["speaker"], ""), "text": d["text"]} for d in s["dialogue"]]
         entries.append({"scene_id": s["id"], "title": "{:02d} {}".format(i + 1, s["title"]), "path": path,
