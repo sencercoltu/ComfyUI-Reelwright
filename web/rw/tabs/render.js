@@ -1,7 +1,8 @@
 // Render tab: what to render, takes, cache keys, dependency chains, memory
 // policy, the seam inspector, merge settings and autosaved versions.
 
-import { h, icon, button, toggle, segmented, select, number, section, field, dot, confirmInline, slider } from "../ui.js";
+// [OLD 2026-11-02 v0.3.5->v0.3.6] import { h, icon, button, toggle, segmented, select, number, section, field, dot, confirmInline, slider } from "../ui.js";
+import { h, icon, button, toggle, segmented, select, number, section, field, dot, confirmInline, slider, confirmDialog } from "../ui.js";
 import { rw, viewURL } from "../api.js";
 import { continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, overlapSeconds } from "../model.js";
 
@@ -306,6 +307,7 @@ function mergeCard(ctx) {
   });
 }
 
+/* [OLD 2026-11-02 v0.3.5->v0.3.6] versions could not be deleted, and the long file name squeezed the date onto two lines
 function versionsCard(ctx) {
   const v = ctx.eph.versions;
   return section({
@@ -319,6 +321,55 @@ function versionsCard(ctx) {
         button({ label: "Restore", small: true, help: "render.versions.restore", onClick: e => confirmInline(e.currentTarget.closest(".rw-list-row"), "Replace the current project with this version? (Undo works.)", async () => {
           try { const r = await rw.version(ctx.p.slug, x.name); ctx.store.replaceProject(r.project); ctx.actions.toast("Version restored.", "ok"); } catch (err) { ctx.actions.toast(err.message, "error"); }
         }) }))))
+        : h("div", { class: "rw-empty sm" }, "No versions saved yet."),
+  });
+}
+[/OLD] */
+// added 2026-11-02 v0.3.6: one row per version (date, time, size), with Restore and Delete; Delete all in the header
+function versionsCard(ctx) {
+  const v = ctx.eph.versions;
+  const load = async () => {
+    try { ctx.store.setEph({ versions: (await rw.versions(ctx.p.slug)).versions || [] }); } catch (err) { ctx.actions.toast("Versions unavailable: " + err.message, "error"); }
+  };
+  const fmt = x => {
+    const m = /^project_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.json$/.exec(x.name);
+    const d = m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : new Date(x.created * 1000);
+    return [d.toLocaleDateString(), d.toLocaleTimeString()];
+  };
+  const kb = n => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
+  const remove = async names => {
+    try {
+      const r = await rw.deleteVersions(ctx.p.slug, names);
+      ctx.store.setEph({ versions: r.versions || [] });
+      ctx.actions.toast(`Deleted ${r.removed} version${r.removed === 1 ? "" : "s"}.`, "ok");
+    } catch (err) { ctx.actions.toast("Delete failed: " + err.message, "error"); }
+  };
+  const removeAll = async () => {
+    if (!(await confirmDialog(ctx.root, { title: `Delete all ${v.length} autosaved versions?`, confirmLabel: "Delete all",
+      message: `The version files in output/reelwright/${ctx.p.slug}/versions are removed for good. The project itself (and its latest autosave) stays.` }))) return;
+    try {
+      const r = await rw.deleteAllVersions(ctx.p.slug);
+      ctx.store.setEph({ versions: r.versions || [] });
+      ctx.actions.toast(`Deleted ${r.removed} version${r.removed === 1 ? "" : "s"}.`, "ok");
+    } catch (err) { ctx.actions.toast("Delete failed: " + err.message, "error"); }
+  };
+  return section({
+    title: "Autosaved versions", help: "render.versions",
+    actions: h("span", { class: "rw-row" },
+      v?.length ? button({ label: "Delete all", icon: "trash", small: true, variant: "danger-ghost", help: "render.versions.deleteAll", onClick: removeAll }) : null,
+      button({ label: v ? "Refresh" : "Load list", icon: "refresh", small: true, help: "render.versions.load", onClick: load })),
+    children: !v ? h("div", { class: "rw-dim small" }, "Every few seconds of editing is saved to output/reelwright/" + ctx.p.slug + "/versions.")
+      : v.length ? h("div", { class: "rw-versions", dataset: { scroll: "versions" } }, v.map(x => {
+        const [day, time] = fmt(x);
+        return h("div", { class: "rw-list-row rw-version", title: x.name },
+          h("span", { class: "mono rw-version-when" }, h("span", null, day), " ", h("b", null, time)),
+          h("span", { class: "rw-dim small grow" }, x.size ? kb(x.size) : ""),
+          button({ label: "Restore", small: true, help: "render.versions.restore", onClick: e => confirmInline(e.currentTarget.closest(".rw-list-row"), "Replace the current project with this version? (Undo works.)", async () => {
+            try { const r = await rw.version(ctx.p.slug, x.name); ctx.store.replaceProject(r.project); ctx.actions.toast("Version restored.", "ok"); } catch (err) { ctx.actions.toast(err.message, "error"); }
+          }) }),
+          button({ icon: "trash", small: true, variant: "ghost", help: "render.versions.delete", "aria-label": "Delete this version",
+            onClick: e => confirmInline(e.currentTarget.closest(".rw-list-row"), `Delete the version from ${day} ${time}? This cannot be undone.`, () => remove([x.name])) }));
+      }))
         : h("div", { class: "rw-empty sm" }, "No versions saved yet."),
   });
 }

@@ -350,6 +350,11 @@ const MEDIA = {
 };
 
 // added 2026-11-02 v0.3.0: profiles for the mock server (tests can seed them through window.__mockProfiles)
+// added 2026-11-02 v0.3.6: autosaved versions the mock can delete
+let mockVersions = [
+  { name: "project_20261102_101500.json", created: 1793614500, size: 18400 }, { name: "project_20261102_094012.json", created: 1793612412, size: 17200 },
+  { name: "project_20261102_090029.json", created: 1793610029, size: 17100 }, { name: "project_20261102_085404.json", created: 1793609644, size: 16900 },
+];
 let profileSeq = 0;
 const profileStore = { profiles: [], default: "" };
 if (typeof window !== "undefined") window.__mockProfiles = profileStore;
@@ -365,7 +370,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-02 v0.3.2->v0.3.3] case "/reelwright/info": return json({ version: "0.3.2", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // [OLD 2026-11-02 v0.3.3->v0.3.4] case "/reelwright/info": return json({ version: "0.3.3", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // [OLD 2026-11-02 v0.3.4->v0.3.5] case "/reelwright/info": return json({ version: "0.3.4", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
-    case "/reelwright/info": return json({ version: "0.3.5", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
+    // [OLD 2026-11-02 v0.3.5->v0.3.6] case "/reelwright/info": return json({ version: "0.3.5", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
+    case "/reelwright/info": return json({ version: "0.3.6", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -396,7 +402,15 @@ async function route(path, opts = {}) {
     case "/reelwright/takes/delete": takes[body.scene_id].takes = takes[body.scene_id].takes.filter(t => t.id !== body.take_id); return json({ ok: true });
     case "/reelwright/merge": return json({ ok: true, duration: 58.75, files: { video: `reelwright/${SLUG}/cuts/${SLUG}_cut_v4.mp4`, srt: `reelwright/${SLUG}/cuts/${SLUG}_cut_v4.srt`, otio: `reelwright/${SLUG}/cuts/${SLUG}_cut_v4.otio`, fcpxml: `reelwright/${SLUG}/cuts/${SLUG}_cut_v4.fcpxml`, chapters: `reelwright/${SLUG}/cuts/${SLUG}_cut_v4.chapters.txt` } });
     case "/reelwright/autosave": return json({ ok: true, version: "project_20261102_101500.json" });
-    case "/reelwright/versions": return json({ versions: [{ name: "project_20261102_101500.json", created: 1793614500, size: 18400 }, { name: "project_20261102_094012.json", created: 1793612412, size: 17200 }] });
+    // [OLD 2026-11-02 v0.3.5->v0.3.6] case "/reelwright/versions": return json({ versions: [{ name: "project_20261102_101500.json", created: 1793614500, size: 18400 }, { name: "project_20261102_094012.json", created: 1793612412, size: 17200 }] });
+    case "/reelwright/versions": return json({ versions: mockVersions });
+    // added 2026-11-02 v0.3.6
+    case "/reelwright/versions/delete": {
+      const kill = body.all ? mockVersions.map(v => v.name) : body.names || [];
+      const before = mockVersions.length;
+      mockVersions = mockVersions.filter(v => !kill.includes(v.name));
+      return json({ removed: before - mockVersions.length, versions: mockVersions });
+    }
     case "/reelwright/version": return json({ project: demoProject() });
     // [OLD 2026-11-02 v0.1.0->v0.2.0] case "/reelwright/llm/settings": return json({ base_url: "http://llm.local:30000/v1", model: "qwen3-32b-instruct", has_key: true, ok: true });
     case "/reelwright/llm/settings": return json({ base_url: "http://llm.local:30000/v1", model: "qwen3-32b-instruct", has_key: true, ok: true,

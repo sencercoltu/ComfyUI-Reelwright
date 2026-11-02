@@ -592,6 +592,28 @@ def main():
         page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [] })")
         page.wait_for_timeout(300)
         check(page.locator(".rw-run-preview").count() == 0, "preview stayed after the run ended")
+
+        # ---- added 2026-11-02 v0.3.6 ----
+        # Autosaved versions: one line each, delete one, then delete all.
+        page.click("button[data-help='render.versions.load']")
+        page.wait_for_timeout(400)
+        rows = page.locator(".rw-version")
+        n0 = rows.count()
+        check(n0 == 4, f"versions listed: {n0}")
+        hts = page.evaluate("[...document.querySelectorAll('.rw-version-when')].map(e => e.getBoundingClientRect().height)")
+        check(hts and max(hts) < 22, f"version date wraps: {hts}")
+        page.locator(".rw-versions").scroll_into_view_if_needed()
+        page.screenshot(path=str(shots / "v036_versions.png"))
+        rows.nth(1).locator("button[data-help='render.versions.delete']").click()
+        page.wait_for_timeout(200)
+        rows.nth(1).locator(".rw-confirm button:has-text('Confirm')").click()
+        page.wait_for_timeout(400)
+        check(page.locator(".rw-version").count() == n0 - 1, "single delete did not remove a row")
+        page.click("button[data-help='render.versions.deleteAll']")
+        page.wait_for_timeout(200)
+        page.locator(".rw-modal button:has-text('Delete all')").click()
+        page.wait_for_timeout(400)
+        check(page.locator(".rw-version").count() == 0 and page.locator(".rw-versions").count() == 0, "delete all left versions")
         browser.close()
     httpd.shutdown()
 

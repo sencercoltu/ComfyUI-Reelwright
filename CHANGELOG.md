@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.6 — 2026-11-02
+
+- **Autosaved versions can be deleted** (Render tab): a delete button on each row, and **Delete all** in the card header (with confirmation). Only the version snapshots are removed; the project and its latest autosave stay.
+- Each version is one line: date and time (from the file name), size, Restore and Delete; the file name is in the tooltip.
+- README: why ComfyUI Manager's list doesn't show Reelwright and how to update it.
+
 ## v0.3.5 — 2026-11-02
 
 - **Latent preview moves to the Render tab.** ComfyUI painted each sampling step's preview over the whole node. Reelwright now sends the preview to its own Render tab instead: a 200 px window next to the progress bars, about once a second, with the scene, pass and step. ComfyUI's progress bar still updates, and its preview setting (Latent2RGB, TAESD or none) still decides the image. The preview disappears when the run ends.

@@ -43,6 +43,11 @@ git clone https://github.com/sencercoltu/ComfyUI-Reelwright
 
 Restart ComfyUI. The node is under **video → Reelwright**.
 
+Reelwright is not published to the ComfyUI Registry, so ComfyUI Manager's node
+list doesn't show it, even when Manager's "Install via Git URL" installed it.
+It still loads normally. Update it with `git pull` in its folder and restart
+ComfyUI.
+
 Requirements:
 
 - A ComfyUI build with the native MiniMax H3 nodes (`comfy_extras/nodes_minimax_h3.py`).

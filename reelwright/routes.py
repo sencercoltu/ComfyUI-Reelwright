@@ -197,6 +197,17 @@ async def versions(request):
     return {"versions": slug_store(request.query.get("slug", "")).list_versions()}
 
 
+# added 2026-11-02 v0.3.6: delete autosaved versions; {"names": [...]} or {"all": true}
+@routes.post("/reelwright/versions/delete")
+@json_route
+async def versions_delete(request):
+    b = await body_of(request)
+    store = slug_store(b.get("slug", ""))
+    names = [v["name"] for v in store.list_versions()] if b.get("all") else b.get("names") or []
+    removed = await asyncio.to_thread(store.delete_versions, names)
+    return {"removed": removed, "versions": store.list_versions()}
+
+
 @routes.get("/reelwright/version")
 @json_route
 async def version(request):

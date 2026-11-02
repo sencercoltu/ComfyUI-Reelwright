@@ -39,6 +39,9 @@ export const rw = {
   merge: project => req("POST", "/reelwright/merge", { project }),
   autosave: project => req("POST", "/reelwright/autosave", { project }),
   versions: slug => req("GET", "/reelwright/versions?slug=" + q(slug)),
+  // added 2026-11-02 v0.3.6
+  deleteVersions: (slug, names) => req("POST", "/reelwright/versions/delete", { slug, names }),
+  deleteAllVersions: slug => req("POST", "/reelwright/versions/delete", { slug, all: true }),
   version: (slug, name) => req("GET", "/reelwright/version?slug=" + q(slug) + "&name=" + q(name)),
   llmSettings: () => req("GET", "/reelwright/llm/settings"),
   saveLlmSettings: s => req("POST", "/reelwright/llm/settings", s),

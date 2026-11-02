@@ -624,3 +624,7 @@
 .rw-run-preview { flex: none; margin: 0; width: 200px; display: flex; flex-direction: column; gap: 3px; }
 .rw-run-preview img { width: 200px; aspect-ratio: 16 / 9; object-fit: contain; border-radius: 6px; background: #0c0d10; border: 1px solid var(--line); }
 .rw-run-preview figcaption { font-size: 10px; color: var(--text3); text-align: right; }
+/* added 2026-11-02 v0.3.6: autosaved versions on one line each */
+.rw-version { gap: 8px; }
+.rw-version-when { white-space: nowrap; font-size: 11.5px; color: var(--text2); }
+.rw-version-when b { font-weight: 500; color: var(--text); }

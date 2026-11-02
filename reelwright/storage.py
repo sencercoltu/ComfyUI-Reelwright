@@ -164,6 +164,20 @@ class ProjectStore:
                 out.append({"name": name, "created": int(st.st_mtime), "size": st.st_size})
         return sorted(out, key=lambda v: v["name"], reverse=True)
 
+    # added 2026-11-02 v0.3.6: delete autosaved versions (project.json, the latest autosave, is never touched)
+    def delete_versions(self, names):
+        names = list(names or [])
+        bad = [n for n in names if not VERSION_RE.match(n or "")]
+        if bad:
+            raise ValueError("invalid version name: " + bad[0])
+        removed = 0
+        for name in names:
+            path = safe_join(self.dir, "versions", name)
+            if os.path.isfile(path):
+                os.remove(path)
+                removed += 1
+        return removed
+
     def read_version(self, name):
         if not VERSION_RE.match(name or ""):
             raise ValueError("invalid version name")

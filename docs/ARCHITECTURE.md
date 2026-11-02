@@ -142,6 +142,7 @@ mirrors the defaults).
 | POST | `/reelwright/autosave` | `{project}` | `{ok, version}` |
 | GET | `/reelwright/versions?slug=` | – | `{versions:[{name, created, size}]}` |
 | GET | `/reelwright/version?slug=&name=` | – | `{project}` |
+| POST | `/reelwright/versions/delete` | `{slug, names[]}` or `{slug, all: true}` | `{removed, versions}`; only `project_YYYYmmdd_HHMMSS.json` files in `versions/`, never `project.json` |
 | GET | `/reelwright/llm/settings` | – | `{base_url, model, has_key, guides:{name:{bytes, fetched}}, guide_urls}` |
 | POST | `/reelwright/llm/settings` | `{base_url?, model?, api_key?}` | `{ok}` |
 | POST | `/reelwright/llm/models` | `{base_url?}` | `{models[]}` |

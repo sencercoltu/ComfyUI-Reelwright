@@ -473,6 +473,9 @@ tip("render.merge.file", "Open this file.");
 more("render.versions", "Autosaved versions", "The project is autosaved to disk while you edit, with a version kept every few minutes. Restoring a version replaces the current project; Ctrl+Z brings back what you had.", "Earlier versions of the project.");
 tip("render.versions.load", "Load the list of saved versions.");
 tip("render.versions.restore", "Replace the current project with this version.");
+// added 2026-11-02 v0.3.6
+tip("render.versions.delete", "Delete this version file. It cannot be undone; the project itself is not affected.");
+tip("render.versions.deleteAll", "Delete every autosaved version of this project. The project and its latest autosave stay.");
 
 // ---------- Global ----------
 // added 2026-11-02 v0.3.0: saved Global settings

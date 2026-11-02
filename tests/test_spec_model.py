@@ -118,3 +118,25 @@ def test_profiles_store(tmp_path):
         profiles.save(root, "  ", g)
     with pytest.raises(ValueError):
         profiles.delete(root, "nope")
+
+
+# added 2026-11-02 v0.3.6: autosaved versions can be deleted; project.json stays
+def test_delete_versions(store, harbor):
+    import os
+    import pytest
+    from reelwright.storage import read_json
+    vdir = os.path.join(store.dir, "versions")
+    os.makedirs(vdir, exist_ok=True)
+    store.autosave(harbor)
+    names = ["project_20261102_08{:02d}00.json".format(m) for m in range(3)]
+    for n in names:
+        with open(os.path.join(vdir, n), "w") as f:
+            f.write("{}")
+    have = [v["name"] for v in store.list_versions()]
+    assert set(names) <= set(have)
+    assert store.delete_versions([names[0]]) == 1
+    assert names[0] not in [v["name"] for v in store.list_versions()]
+    with pytest.raises(ValueError):
+        store.delete_versions(["../project.json"])
+    assert store.delete_versions([v["name"] for v in store.list_versions()]) == len(have) - 1
+    assert store.list_versions() == [] and read_json(os.path.join(store.dir, "project.json"))["slug"] == harbor["slug"]

@@ -39,7 +39,7 @@ output, and `video` points at them.
 - ✅ LLM settings: OpenAI-compatible base URL, model, temperature, max tokens and presets. The API key is stored in the ComfyUI user folder, never in the workflow.
 - ✅ Profiles: save the whole Global tab under a name and apply it to any project; update, delete and mark one as the default for new nodes. Stored in `user/reelwright/profiles.json` (never the API key) and shared by every Reelwright node on the server. A new node starts with the default profile and shows a banner to pick another.
 - ✅ Override matrix: shows which scenes override which global setting.
-- ✅ Autosaved versions: list them and restore one.
+- ✅ Autosaved versions: list them (date, time, size), restore one, delete one or delete all. The project's latest autosave (`project.json`) is never deleted.
 
 ## 3. Scenes (Timeline + Scene tabs)
 
