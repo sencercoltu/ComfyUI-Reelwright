@@ -6,7 +6,9 @@ samples it (H3 is CFG-distilled), and the video/audio VAEs decode it. Every
 scene is written to disk before the next one starts.
 """
 
+import base64  # added 2026-11-02 v0.3.5: latent previews go to the Render tab
 import gc
+import io  # added 2026-11-02 v0.3.5
 import json
 import logging
 import os
@@ -82,6 +84,22 @@ class Models:
         self.clips.clear()
 
 
+# added 2026-11-02 v0.3.5: one sampling step's latent as a small JPEG data URL for the Render tab
+PREVIEW_MAX_SIDE = 480
+
+
+def preview_jpeg(previewer, x0):
+    if getattr(x0, "is_nested", False):  # H3 latents carry video and audio; the first is the video
+        x0 = x0.tensors[0]
+    _, img, _ = previewer.decode_latent_to_preview_image("JPEG", x0)
+    img = img.convert("RGB")
+    if max(img.size) > PREVIEW_MAX_SIDE:
+        img.thumbnail((PREVIEW_MAX_SIDE, PREVIEW_MAX_SIDE))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=80)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
 def _sample(model, positive, latent, seed, settings, on_step):
     guider = Guider_Basic(model)
     guider.set_conds(positive)
@@ -90,11 +108,23 @@ def _sample(model, positive, latent, seed, settings, on_step):
     sigmas = comfy.samplers.calculate_sigmas(model.get_model_object("model_sampling"),
                                              settings["scheduler"], settings["steps"]).cpu()
     sampler = comfy.samplers.sampler_object(settings["sampler"])
-    preview = latent_preview.prepare_callback(guider.model_patcher, sigmas.shape[-1] - 1)
+    # [OLD 2026-11-02 v0.3.4->v0.3.5] ComfyUI's preview callback sent each step's image with the progress bar, and the
+    # frontend painted it over the whole node; the preview now goes to the editor's Render tab instead
+    # preview = latent_preview.prepare_callback(guider.model_patcher, sigmas.shape[-1] - 1)
+    #
+    # def callback(step, x0, x, total_steps):
+    #     preview(step, x0, x, total_steps)
+    #     on_step(step + 1, total_steps)
+    # [/OLD]
+    steps = sigmas.shape[-1] - 1
+    # the user's preview method (--preview-method / the frontend setting) still decides how, or whether, to preview
+    previewer = latent_preview.get_previewer(guider.model_patcher.load_device, guider.model_patcher.model.latent_format)
+    pbar = comfy.utils.ProgressBar(steps)  # ComfyUI's queue progress, without an image
 
     def callback(step, x0, x, total_steps):
-        preview(step, x0, x, total_steps)
-        on_step(step + 1, total_steps)
+        pbar.update_absolute(step + 1, total_steps, None)
+        # the image is only decoded when on_step asks for it (it throttles to about one per second)
+        on_step(step + 1, total_steps, (lambda: preview_jpeg(previewer, x0)) if previewer else None)
 
     samples = guider.sample(noise, latent_image, sampler, sigmas, callback=callback,
                             disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED, seed=seed)
@@ -348,12 +378,24 @@ class Renderer:
             seed = (x["seed"] + variant * 1000003) % (2 ** 63)
             seeds.append(seed)
             last_sent = [0.0]
+            last_preview = [0.0]  # added 2026-11-02 v0.3.5
 
-            def on_step(step, total, _n=n):
+            # [OLD 2026-11-02 v0.3.4->v0.3.5] def on_step(step, total, _n=n):
+            def on_step(step, total, preview=None, _n=n):
                 now = time.time()
                 if now - last_sent[0] > 0.4 or step == total:
                     last_sent[0] = now
                     self.progress(sid, _n + 1, n_pass, "sample", step, total)
+                # added 2026-11-02 v0.3.5: about one latent preview per second, shown in the Render tab
+                if preview is not None and (now - last_preview[0] > 1.0 or step == total):
+                    last_preview[0] = now
+                    try:
+                        image = preview()
+                    except Exception as e:  # a preview must never stop a render
+                        log.debug("Reelwright preview failed: %s", e)
+                        return
+                    send("reelwright.preview", {"slug": self.slug, "scene_id": sid, "pass": _n + 1, "passes": n_pass,
+                                                "step": step, "steps": total, "image": image})
 
             samples = _sample(model, positive, latent, seed, st, on_step)
             del positive, latent

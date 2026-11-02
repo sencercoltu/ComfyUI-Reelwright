@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3.5 — 2026-11-02
+
+- **Latent preview moves to the Render tab.** ComfyUI painted each sampling step's preview over the whole node. Reelwright now sends the preview to its own Render tab instead: a 200 px window next to the progress bars, about once a second, with the scene, pass and step. ComfyUI's progress bar still updates, and its preview setting (Latent2RGB, TAESD or none) still decides the image. The preview disappears when the run ends.
+
 ## v0.3.4 — 2026-11-02
 
 - **Asset descriptions reach characters too.** Scenes already read an asset's description live when it is a scene reference, but a character's subject line only used the Cast tab description, so describing an anchor picture changed nothing. A cast member with no description of its own now uses the description of its first anchor picture that has one, in every scene it appears in, in the LLM's scene context and in the training-set caption. A character's own description still wins.

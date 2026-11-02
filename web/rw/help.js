@@ -406,6 +406,7 @@ tip("render.stop", "Interrupt the current ComfyUI run. Finished scenes stay on d
 // [OLD 2026-11-02 v0.2.2->v0.3.0] the banner now shows scene k of n and two progress bars
 // tip("render.banner", "What is rendering right now.");
 tip("render.banner", "What is rendering right now: which scene of the run, its pass and sampling step. The node title shows the same count and the overall percentage.");
+tip("render.preview", "Latent preview of the scene being sampled, about once a second. ComfyUI's preview setting decides its quality (Latent2RGB or TAESD) or turns it off.");
 tip("render.progress.scene", "Progress of the scene being rendered, across all of its passes.");
 tip("render.progress.total", "Progress of the whole run. Scenes reused from disk are not counted.");
 tip("render.refresh", "Reload takes and statuses from disk.");

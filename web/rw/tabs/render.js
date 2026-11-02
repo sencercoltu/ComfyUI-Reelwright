@@ -57,12 +57,27 @@ function runBanner(ctx) {
   const head = r ? `Scene ${Math.max(1, r.index)} of ${r.n}` : "Rendering";
   const detail = prog ? `${s?.title || prog.scene_id} · pass ${prog.pass}/${prog.passes} · ${prog.phase}${prog.steps ? ` · step ${prog.step}/${prog.steps}` : ""}${prog.message ? " · " + prog.message : ""}`
     : r && r.done >= r.n ? "finishing…" : "waiting for ComfyUI…";
+  /* [OLD 2026-11-02 v0.3.4->v0.3.5] no latent preview (ComfyUI painted it over the whole node)
   return h("div", { class: "rw-banner info", help: "render.banner" }, icon("render", 14),
     h("div", { class: "rw-run" },
       h("div", { class: "rw-row" }, h("b", null, head), h("span", { class: "rw-ellipsis" }, detail),
         r?.reused?.length ? h("span", { class: "rw-dim small" }, `· ${r.reused.length} reused`) : null),
       bar("Scene", scenePart, "rw-bg-pic", "render.progress.scene"),
       r && bar("Total", r.total, "rw-bg-aud", "render.progress.total")));
+  [/OLD] */
+  // added 2026-11-02 v0.3.5: a small window with the latest latent preview of the scene being sampled
+  const pv = ctx.eph.preview;
+  const pvScene = pv && ctx.p.scenes.find(x => x.id === pv.scene_id);
+  const preview = pv?.image && h("figure", { class: "rw-run-preview", help: "render.preview" },
+    h("img", { src: pv.image, alt: "" }),
+    h("figcaption", { class: "mono" }, `${pvScene ? String(sceneIndex(ctx.p, pvScene.id) + 1).padStart(2, "0") : ""} · pass ${pv.pass}/${pv.passes} · ${pv.step}/${pv.steps}`));
+  return h("div", { class: "rw-banner info", help: "render.banner" }, icon("render", 14),
+    h("div", { class: "rw-run" },
+      h("div", { class: "rw-row" }, h("b", null, head), h("span", { class: "rw-ellipsis" }, detail),
+        r?.reused?.length ? h("span", { class: "rw-dim small" }, `· ${r.reused.length} reused`) : null),
+      bar("Scene", scenePart, "rw-bg-pic", "render.progress.scene"),
+      r && bar("Total", r.total, "rw-bg-aud", "render.progress.total")),
+    preview);
 }
 
 // added 2026-11-02 v0.2.0: the take a merge would use for a scene (starred, or newest when Merge uses latest)

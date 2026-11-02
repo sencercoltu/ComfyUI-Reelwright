@@ -169,6 +169,7 @@ File previews use ComfyUI's own `/view?filename=&subfolder=&type=output|input`.
 |---|---|
 | `reelwright.progress` | `{slug, scene_id, pass: 1, passes: 3, step, steps, phase: "encode"\|"sample"\|"decode"\|"save"\|"cached"\|"done"\|"error", message}` |
 | `reelwright.run` | `{slug, phase: "start"\|"end", targets: [scene_id], reused: [scene_id], error?}` |
+| `reelwright.preview` | `{slug, scene_id, pass, passes, step, steps, image: "data:image/jpeg;base64,…"}` about once a second while sampling (v0.3.5; replaces ComfyUI's own node preview) |
 | `reelwright.merge` | `{slug, phase: "start"\|"progress"\|"end", percent?, files?, error?}` |
 
 ## Running a render

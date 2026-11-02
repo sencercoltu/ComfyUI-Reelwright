@@ -574,6 +574,24 @@ def main():
         cast_lines = page.locator("[data-help='scene.cast.description']").all_inner_texts()
         check(any(t.startswith("from P1: ") and "navy pea coat" in t for t in cast_lines), f"scene cast row: {cast_lines}")
         page.screenshot(path=str(shots / "v034_scene.png"))
+
+        # ---- added 2026-11-02 v0.3.5 ----
+        # The latent preview shows only in the Render tab, in a small window, and goes away after the run.
+        page.evaluate("""() => { const h = window.__host, c = document.createElement('canvas'); c.width = 42; c.height = 24;
+          const g = c.getContext('2d'); const gr = g.createLinearGradient(0, 0, 42, 24); gr.addColorStop(0, '#203a5a'); gr.addColorStop(1, '#c8783c'); g.fillStyle = gr; g.fillRect(0, 0, 42, 24);
+          h.emit('reelwright.run', { slug: 'harbor_lights', phase: 'start', targets: ['s_02'], reused: [] });
+          h.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: 9, steps: 20, phase: 'sample' });
+          h.emit('reelwright.preview', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: 9, steps: 20, image: c.toDataURL('image/jpeg') }); }""")
+        page.wait_for_timeout(400)
+        check(page.locator(".rw-run-preview").count() == 0, "latent preview shown outside the Render tab")
+        page.click(".rw-tab:has-text('Render')")
+        page.wait_for_timeout(400)
+        pb = page.evaluate("(() => { const e = document.querySelector('.rw-run-preview img'); if (!e) return null; const r = e.getBoundingClientRect(); return [r.width, r.height, e.naturalWidth]; })()")
+        check(pb is not None and pb[0] <= 220 and pb[2] == 42, f"render preview window: {pb}")
+        page.screenshot(path=str(shots / "v035_preview.png"))
+        page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [] })")
+        page.wait_for_timeout(300)
+        check(page.locator(".rw-run-preview").count() == 0, "preview stayed after the run ended")
         browser.close()
     httpd.shutdown()
 

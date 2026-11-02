@@ -620,3 +620,7 @@
 .rw-desc-uses b { font-weight: 500; color: var(--text3); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; }
 .rw-ref-desc { text-align: left; font-size: 11px; color: var(--text2); max-width: 100%; display: block; }
 .rw-ref-desc.empty { color: var(--warn); }
+/* added 2026-11-02 v0.3.5: latent preview in the Render tab's run banner */
+.rw-run-preview { flex: none; margin: 0; width: 200px; display: flex; flex-direction: column; gap: 3px; }
+.rw-run-preview img { width: 200px; aspect-ratio: 16 / 9; object-fit: contain; border-radius: 6px; background: #0c0d10; border: 1px solid var(--line); }
+.rw-run-preview figcaption { font-size: 10px; color: var(--text3); text-align: right; }

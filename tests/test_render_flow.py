@@ -198,3 +198,41 @@ def test_node_survives_a_failed_merge(stubs, harbor, roots, monkeypatch):
     video, last, audio, plan = out.result
     assert video.get_duration() == pytest.approx(2.5, abs=0.1)   # the last scene's take, not the broken cut
     assert audio["waveform"].shape[1] == 2
+
+
+# added 2026-11-02 v0.3.5: latent previews go to the Render tab as reelwright.preview events, not onto the node
+def test_latent_preview_events(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    asked = []
+
+    def sample_with_preview(model, positive, latent, seed, settings, on_step):
+        n = settings["steps"]
+        for k in range(1, n + 1):
+            on_step(k, n, lambda k=k: asked.append(k) or "data:image/jpeg;base64,AAAA")
+        return latent
+    monkeypatch.setattr(render, "_sample", sample_with_preview)
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_one"]}).run()
+    previews = [d for e, d in events if e == "reelwright.preview"]
+    assert previews and all(d["scene_id"] == "s_one" and d["image"].startswith("data:image/jpeg") for d in previews)
+    assert previews[-1]["step"] == previews[-1]["steps"]          # the last step is always shown
+    assert len(asked) < 5                                          # decoded only when sent (about once a second)
+
+
+def test_preview_jpeg_handles_nested_latents(comfy):
+    render, _ = comfy
+    import torch
+    from PIL import Image
+    seen = []
+
+    class Previewer:
+        def decode_latent_to_preview_image(self, fmt, x0):
+            seen.append(tuple(x0.shape))
+            return ("JPEG", Image.new("RGB", (1344, 768), (200, 80, 40)), 512)
+    nested = types.SimpleNamespace(is_nested=True, tensors=[torch.zeros(1, 4, 3, 8, 8), torch.zeros(1, 2, 5)])
+    url = render.preview_jpeg(Previewer(), nested)
+    assert seen == [(1, 4, 3, 8, 8)] and url.startswith("data:image/jpeg;base64,")
+    import base64, io
+    img = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
+    assert max(img.size) == render.PREVIEW_MAX_SIDE

@@ -501,12 +501,22 @@ export function mountEditor(container, host) {
     const now = Date.now();
     if (now - lastProgressRender.at > 250 || d.phase !== "sample") { lastProgressRender.at = now; store.notify(); }
   });
+  // added 2026-11-02 v0.3.5: the latest latent preview, shown only in the Render tab's run banner
+  host.on("reelwright.preview", d => {
+    if (d.slug !== store.project.slug) return;
+    store.eph.preview = d;
+    if (store.project.ui.tab !== "render") return; // nothing else shows it, so no re-render elsewhere
+    const now = Date.now();
+    if (now - lastProgressRender.at > 250) { lastProgressRender.at = now; store.notify(); }
+  });
   host.on("reelwright.run", d => {
     if (d.slug !== store.project.slug) return;
     // [OLD 2026-11-02 v0.2.2->v0.3.0] if (d.phase === "start") store.setEph({ running: true });
-    if (d.phase === "start") { store.setEph({ running: true, run: { targets: d.targets || [], reused: d.reused || [], done: [], started: Date.now() } }); updateTitle(); }
+    // [OLD 2026-11-02 v0.3.4->v0.3.5] if (d.phase === "start") { store.setEph({ running: true, run: { targets: d.targets || [], reused: d.reused || [], done: [], started: Date.now() } }); updateTitle(); }
+    if (d.phase === "start") { store.setEph({ running: true, preview: null, run: { targets: d.targets || [], reused: d.reused || [], done: [], started: Date.now() } }); updateTitle(); }
     else {
-      store.setEph({ running: false, run: null });
+      // [OLD 2026-11-02 v0.3.4->v0.3.5] store.setEph({ running: false, run: null });
+      store.setEph({ running: false, run: null, preview: null });
       host.setTitle?.(null);
       actions.refreshTakes();
       store.refreshPlan();

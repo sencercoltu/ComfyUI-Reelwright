@@ -137,7 +137,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Disk layout per take: `<project>_<NN>_<scene title>_<take>.mp4` (e.g. `harbor_lights_02_mara_on_the_pier_v2.mp4`), `first.png`, `last.png`, `tail.mp4`, `meta.json`, plus `passes/` for long scenes. The Render tab shows each scene's file and opens it.
 - ✅ Memory policy between scenes: keep models / free cache but keep models (default) / unload everything. "Encode all prompts first" encodes every pass with the text encoder, then unloads it (about 27 GB) before sampling starts.
 - ✅ Groups scenes with the same LoRA stack together when they don't depend on each other, so fewer LoRA re-patches are needed.
-- ✅ Live progress on the timeline blocks (pass, step) through websocket events. The Render tab shows "Scene k of n" with a bar for the scene and one for the run; the node title shows `rendering k/n · NN%`. Interrupting from ComfyUI stops the run cleanly.
+- ✅ Live progress on the timeline blocks (pass, step) through websocket events. The Render tab shows "Scene k of n" with a bar for the scene and one for the run; the node title shows `rendering k/n · NN%`. A small latent preview (about once a second, using ComfyUI's preview method) shows next to the bars; ComfyUI no longer paints it over the node. Interrupting from ComfyUI stops the run cleanly.
 - ✅ Seam inspector: last frame of scene N against first frame of scene N+1, side by side or as an onion skin.
 - 🗺️ Render farm: send independent scenes to several ComfyUI instances.
 
