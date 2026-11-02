@@ -110,7 +110,8 @@ tip("timeline.marker.text", "Marker text, shown on the ruler.");
 tip("timeline.marker.color", "Marker colour.");
 tip("timeline.marker.jump", "Move the playhead to this marker.");
 tip("timeline.marker.delete", "Delete this marker.");
-tip("timeline.scene", "A scene. Click to select, double-click to open it on the Scene tab, drop an asset on it to add a reference.");
+// [OLD 2026-11-02 v0.2.1->v0.2.2] right-click menu added: tip("timeline.scene", "A scene. Click to select, double-click to open it on the Scene tab, drop an asset on it to add a reference.");
+tip("timeline.scene", "A scene. Click to select, double-click to open it on the Scene tab, right-click for split, duplicate, move, lock and delete, drop an asset on it to add a reference.");
 tip("timeline.scene.resize", "Drag to change the scene's length. Long scenes split into several H3 passes automatically; short ones are trimmed from a minimum pass.");
 tip("timeline.scene.shot", "A shot cut. Drag to move it; the prompt writes it as [ShotN] At mm:ss.fff, cut to …");
 tip("timeline.scene.passes", "This scene is longer than one H3 pass (15.08 s), so it renders as several passes joined in the cut.");
@@ -150,7 +151,8 @@ tip("timeline.lane.lora.cast", "A cast member's identity LoRA, added automatical
 // ---------- Scene ----------
 tip("scene.nav.prev", "Previous scene.");
 tip("scene.nav.next", "Next scene.");
-tip("scene.nav.strip", "All scenes, sized by length. Click to switch. The bottom stripe shows status: green on disk, amber stale.");
+// [OLD 2026-11-02 v0.2.1->v0.2.2] right-click menu added: tip("scene.nav.strip", "All scenes, sized by length. Click to switch. The bottom stripe shows status: green on disk, amber stale.");
+tip("scene.nav.strip", "All scenes, sized by length. Click to switch, right-click for the scene menu. The bottom stripe shows status: green on disk, amber stale.");
 tip("scene.title", "Scene title, used on the timeline, in chapters and in file names.");
 more("scene.duration", "Duration", "Scenes can be any length. H3 generates 124 to 362 frames per pass (5.17–15.08 s at 24 fps), always on its 17k+5 frame grid (124, 141, 158 … 362).\n\nLonger scenes are split into several passes, joined on shot cuts where possible and with short overlaps elsewhere. Shorter scenes render one 124-frame pass and keep the window you choose; the rest stays on disk so you can move the window later. Lengths between grid points render one grid step longer and are trimmed exactly.", "How long the scene is on the timeline.");
 tip("scene.duration.step", "Move to the previous or next 17k+5 grid length (one step is 17 frames, 0.71 s).");

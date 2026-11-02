@@ -3,7 +3,8 @@ name = "comfyui-reelwright"
 description = "Reelwright: a timeline editor node for MiniMax H3 ref2va. Scenes of any length, per-scene overrides, cached renders, cast continuity and one-click merge."
 # [OLD 2026-11-02 v0.1.0->v0.2.0] version = "0.1.0"
 # [OLD 2026-11-02 v0.2.0->v0.2.1] version = "0.2.0"
-version = "0.2.1"
+# [OLD 2026-11-02 v0.2.1->v0.2.2] version = "0.2.1"
+version = "0.2.2"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = []

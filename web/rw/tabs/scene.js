@@ -3,6 +3,7 @@
 import { h, icon, button, toggle, segmented, select, number, text, textarea, chip, dot, section, field, meter, keepChips, slider } from "../ui.js";
 import { rw, viewURL } from "../api.js";
 import { codeEditor } from "../codeedit.js";
+import { sceneMenu } from "./timeline.js"; // added 2026-11-02 v0.2.2
 import { highlightHTML, diffLines, unknownTags } from "../prompttext.js";
 import {
   FPS, MIN_PASS_FRAMES, ROLES, SECTION_KEYS, STABLE_LANGUAGES, alignFramesUp, nearestGridFrames, framesOf, fmtTime,
@@ -51,6 +52,7 @@ function navigator(ctx) {
         type: "button", class: ["rw-nav-item", x.id === s.id && "on", "st-" + ctx.statusOf(x.id)], help: "scene.nav.strip",
         style: { "flex-grow": String(Math.max(0.6, x.duration)), "background-image": take?.files?.first ? `url("${viewURL(take.files.first)}")` : null },
         onClick: () => ctx.actions.select(x.id),
+        menu: () => { ctx.actions.select(x.id); return sceneMenu(ctx, x); }, // added 2026-11-02 v0.2.2
       }, h("span", { class: "mono" }, String(j + 1).padStart(2, "0") + (x.id === s.id ? " · " + x.title : "")));
     })),
     button({ icon: "chevRight", help: "scene.nav.next", disabled: i === p.scenes.length - 1, onClick: () => ctx.actions.select(p.scenes[i + 1].id) }),

@@ -7,7 +7,10 @@ import { installTooltips } from "./tooltip.js";
 /* [OLD 2026-11-02 v0.1.0->v0.2.0] comboState is needed for the render guard
 import { h, icon, button } from "./ui.js";
 [/OLD] */
+/* [OLD 2026-11-02 v0.2.1->v0.2.2] contextMenu added
 import { h, icon, button, comboState } from "./ui.js";
+[/OLD] */
+import { h, icon, button, comboState, contextMenu } from "./ui.js";
 import { VERSION } from "./version.js";
 import {
   normalizeProject, defaultScene, newId, sceneIndex, sceneStarts, assembledDuration, fmtTime,
@@ -31,7 +34,41 @@ const TABS = {
 
 const PENDING = new Set(["stale", "pending", "missing", "queued"]);
 
+// added 2026-11-02 v0.2.2: ComfyUI handles some events before they reach the editor. With "Nodes 2.0"
+// (Vue nodes) on, a right-click inside the node opened the node's own menu (Delete removes the whole node)
+// and the mouse wheel zoomed the canvas instead of scrolling lists. Window capture listeners run before
+// anything ComfyUI attaches to the page, so events that start inside an editor stop there and are routed
+// to the editor's own handlers (`menu` and `wheel` props in ui.js).
+function installEventGuards() {
+  if (window.__rwEventGuards) return;
+  window.__rwEventGuards = true;
+  const rootOf = e => (e.target instanceof Element ? e.target.closest(".rw-root") : null);
+  const find = (e, root, key) => {
+    for (let el = e.target; el && el !== root.parentNode; el = el.parentNode) if (el[key]) return el;
+    return null;
+  };
+  window.addEventListener("contextmenu", e => {
+    const root = rootOf(e);
+    if (!root) return;
+    e.stopPropagation();
+    const el = find(e, root, "__rwMenu");
+    const items = el ? el.__rwMenu(e) : null;
+    if (items && items.length) { e.preventDefault(); contextMenu(root, e.clientX, e.clientY, items); return; }
+    // text fields keep the browser's menu (copy, paste, spelling); elsewhere there is nothing to offer
+    if (!e.target.closest("input, textarea, [contenteditable]")) e.preventDefault();
+  }, true);
+  window.addEventListener("wheel", e => {
+    const root = rootOf(e);
+    if (!root) return;
+    e.stopPropagation(); // the default scroll still happens
+    const el = find(e, root, "__rwWheel");
+    if (el) el.__rwWheel(e);
+    if ((e.ctrlKey || e.metaKey) && !e.defaultPrevented) e.preventDefault(); // no browser page zoom over the editor
+  }, { capture: true, passive: false });
+}
+
 export function mountEditor(container, host) {
+  installEventGuards(); // added 2026-11-02 v0.2.2
   setHost(host);
   const store = createStore(normalizeProject(host.getProject()), { persist: json => host.setProject(json) });
   const root = h("div", { class: "rw-root", tabindex: "0" });
@@ -331,8 +368,13 @@ export function mountEditor(container, host) {
   ctx.render = render;
   store.subscribe(() => { if (!frame) frame = requestAnimationFrame(render); });
 
+  /* [OLD 2026-11-02 v0.2.1->v0.2.2] clicking a combobox list (e.g. its scrollbar) moved focus to the root, which closed the list
   root.addEventListener("pointerdown", e => {
     if (!e.target.closest("input, textarea, select, [contenteditable]")) root.focus({ preventScroll: true });
+  }, true);
+  [/OLD] */
+  root.addEventListener("pointerdown", e => {
+    if (!e.target.closest("input, textarea, select, [contenteditable], .rw-combo-list, .rw-ctx")) root.focus({ preventScroll: true });
   }, true);
   root.addEventListener("keydown", e => {
     e.stopPropagation();

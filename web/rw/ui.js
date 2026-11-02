@@ -17,6 +17,9 @@ export function h(tag, props, ...children) {
         if (typeof v === "string") el.setAttribute("style", v);
         else for (const [sk, sv] of Object.entries(v)) if (sv !== undefined && sv !== null) el.style.setProperty(sk, String(sv));
       } else if (k === "help") el.dataset.help = v;
+      // added 2026-11-02 v0.2.2: right-click menu and wheel handlers are routed by editor.js (see installEventGuards)
+      else if (k === "menu") el.__rwMenu = v;
+      else if (k === "wheel") el.__rwWheel = v;
       else if (k === "key") el.dataset.key = v;
       else if (k === "dataset") Object.assign(el.dataset, v);
       else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
@@ -229,7 +232,13 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
     const root = wrap.closest(".rw-root");
     if (!root) return;
     if (!list) {
+      /* [OLD 2026-11-02 v0.2.1->v0.2.2] pressing the list's scrollbar moved focus out of the input, which closed the list
       list = h("div", { class: ["rw-combo-list", mono && "mono"], role: "listbox" });
+      [/OLD] */
+      // keep focus in the input while the list is pressed; the scrollbar gutter is left alone so dragging works
+      list = h("div", { class: ["rw-combo-list", mono && "mono"], role: "listbox",
+        onPointerdown: () => { pressed = true; document.addEventListener("pointerup", () => { pressed = false; }, { capture: true, once: true }); },
+        onMousedown: e => { if (e.target !== e.currentTarget || e.offsetX < e.currentTarget.clientWidth) e.preventDefault(); } });
       root.appendChild(list);
       comboState.open++;
       input.setAttribute("aria-expanded", "true");
@@ -271,9 +280,17 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
       input.blur();
     } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); revert(); close(); input.blur(); }
   });
+  // added 2026-11-02 v0.2.2: a press inside the list (scrollbar included) never closes it
+  let pressed = false;
   input.addEventListener("blur", () => {
+    const inList = pressed; // read now: the button may be released before the timeout runs
     setTimeout(() => {
       if (done) return;
+      if (inList && list) {
+        comboState.restoring = true; // refocus without resetting the typed filter
+        try { input.focus({ preventScroll: true }); } finally { comboState.restoring = false; }
+        return;
+      }
       const typed = input.value.trim();
       if (free && typed && typed !== shown) { choose({ value: typed, label: typed }); return; }
       revert();
@@ -401,4 +418,27 @@ export function confirmInline(host, message, onYes) {
     button({ label: "Cancel", help: "common.cancel", small: true, onClick: () => bar.remove() }),
     button({ label: "Confirm", help: "common.confirm", small: true, variant: "danger", onClick: () => { bar.remove(); onYes(); } }));
   host.appendChild(bar);
+}
+
+// added 2026-11-02 v0.2.2: the editor's own right-click menu. Items: {label, icon, help, onClick, danger, disabled}
+// or {sep: true}. Positioned in the root's unscaled pixels and kept inside the node.
+export function contextMenu(root, clientX, clientY, items) {
+  root.querySelectorAll(".rw-ctx").forEach(m => m.remove());
+  const close = () => { menu.remove(); document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", esc, true); };
+  const outside = e => { if (!menu.contains(e.target)) close(); };
+  const esc = e => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  const menu = h("div", { class: "rw-ctx", role: "menu" }, items.filter(Boolean).map(it => it.sep
+    ? h("div", { class: "rw-ctx-sep" })
+    : h("button", {
+      type: "button", role: "menuitem", class: ["rw-ctx-item", it.danger && "danger"], help: it.help, disabled: !!it.disabled,
+      onClick: e => { e.stopPropagation(); close(); it.onClick?.(); },
+    }, it.icon ? icon(it.icon, 13) : h("span", { class: "rw-ctx-ic" }), h("span", null, it.label), it.hint ? h("span", { class: "rw-ctx-hint mono" }, it.hint) : null)));
+  root.appendChild(menu);
+  const rr = root.getBoundingClientRect();
+  const sc = (rr.width / (root.offsetWidth || rr.width)) || 1;
+  const x = (clientX - rr.left) / sc, y = (clientY - rr.top) / sc;
+  menu.style.left = Math.max(4, Math.min(root.offsetWidth - menu.offsetWidth - 4, x)) + "px";
+  menu.style.top = Math.max(4, Math.min(root.offsetHeight - menu.offsetHeight - 4, y)) + "px";
+  setTimeout(() => { document.addEventListener("pointerdown", outside, true); document.addEventListener("keydown", esc, true); }, 0);
+  return close;
 }

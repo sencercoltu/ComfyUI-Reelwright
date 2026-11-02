@@ -541,13 +541,39 @@ function renderLanes(ctx) {
   ctx.tl.playhead = playhead;
   ctx.tl.playheadLabel = playheadLabel;
 
+  /* [OLD 2026-11-02 v0.2.1->v0.2.2] wheel events are now routed by editor.js, so a DOM listener here never fires
   return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onWheel: e => {
+    if (e.ctrlKey || e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }
+  } },
+  [/OLD] */
+  return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, wheel: e => {
     if (e.ctrlKey || e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }
   } },
   h("div", { class: "rw-lanes-inner", style: { width: HEAD_W + width + "px" } },
     h("div", { class: "rw-lane ruler" }, h("div", { class: "rw-lane-head mono rw-dim", help: "timeline.ruler" }, "24 fps"), ruler),
     lanes.map(([label, ic, cls, help, el, kind, extra]) => h("div", { class: ["rw-lane", kind] }, laneHead(label, ic, cls, help, extra), el)),
     playhead));
+}
+
+// added 2026-11-02 v0.2.2: right-click menu for a scene (timeline block and the Scene tab strip)
+export function sceneMenu(ctx, s) {
+  const p = ctx.p;
+  const i = sceneIndex(p, s.id);
+  const local = p.ui.playhead - sceneStarts(p).starts[s.id];
+  return [
+    { label: "Open in Scene tab", icon: "scene", help: "timeline.inspector.open", onClick: () => ctx.actions.select(s.id, "scene") },
+    { label: "Render this scene", icon: "play", help: "timeline.inspector.render", onClick: () => ctx.actions.run("selected", [s.id]) },
+    { label: "New take", icon: "refresh", help: "render.scope.take", onClick: () => ctx.actions.run("take", [s.id]) },
+    { sep: true },
+    { label: "Split at playhead", icon: "cut", hint: "S", help: "timeline.split", disabled: !(local > 0 && local < s.duration), onClick: () => ctx.actions.splitScene(s.id, local) },
+    { label: "Duplicate", icon: "copy", hint: "D", help: "timeline.duplicate", onClick: () => ctx.actions.duplicateScene(s.id) },
+    { label: "Move left", icon: "chevLeft", help: "timeline.moveLeft", disabled: i === 0, onClick: () => ctx.actions.moveScene(s.id, -1) },
+    { label: "Move right", icon: "chevRight", help: "timeline.moveRight", disabled: i === p.scenes.length - 1, onClick: () => ctx.actions.moveScene(s.id, 1) },
+    { label: s.lock ? "Unlock take" : "Lock take", icon: s.lock ? "unlock" : "lock", help: "scene.lock", onClick: () => ctx.actions.editScene(s.id, sc => { sc.lock = !sc.lock; }) },
+    { sep: true },
+    { label: "Delete scene", icon: "trash", hint: "Del", help: "timeline.delete", danger: true, disabled: p.scenes.length <= 1,
+      onClick: () => { ctx.actions.deleteScene(s.id); ctx.actions.toast(`Deleted ${s.title}. Ctrl+Z brings it back.`, "info"); } },
+  ];
 }
 
 function sceneBlock(ctx, s, i, start, z) {
@@ -566,6 +592,7 @@ function sceneBlock(ctx, s, i, start, z) {
     help: "timeline.scene",
     onClick: () => ctx.actions.select(s.id),
     onDblclick: () => ctx.actions.select(s.id, "scene"),
+    menu: () => { ctx.actions.select(s.id); return sceneMenu(ctx, s); }, // added 2026-11-02 v0.2.2
     onDragover: e => { if (e.dataTransfer.types.includes("application/x-rw-asset")) { e.preventDefault(); e.currentTarget.classList.add("drop"); } },
     onDragleave: e => e.currentTarget.classList.remove("drop"),
     onDrop: e => {
