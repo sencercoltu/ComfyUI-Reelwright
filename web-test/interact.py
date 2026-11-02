@@ -614,6 +614,62 @@ def main():
         page.locator(".rw-modal button:has-text('Delete all')").click()
         page.wait_for_timeout(400)
         check(page.locator(".rw-version").count() == 0 and page.locator(".rw-versions").count() == 0, "delete all left versions")
+
+        # ---- added 2026-11-02 v0.3.8 ----
+        # The preview window is one element that survives re-renders, shows every preview through a blob: URL, keeps
+        # the last good picture when one can't be decoded, and never shows a broken image.
+        page.evaluate("""() => { const h = window.__host;
+          window.__pv = (step, w) => { const c = document.createElement('canvas'); c.width = w || 42; c.height = 24;
+            const g = c.getContext('2d'); g.fillStyle = `hsl(${step * 17}, 60%, 50%)`; g.fillRect(0, 0, c.width, 24);
+            h.emit('reelwright.preview', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step, steps: 40, image: c.toDataURL('image/jpeg') }); };
+          h.emit('reelwright.run', { slug: 'harbor_lights', phase: 'start', targets: ['s_02'], reused: [] });
+          h.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: 1, steps: 40, phase: 'sample' });
+          window.__pv(1); }""")
+        page.wait_for_timeout(400)
+        st = page.evaluate("""(() => { const e = document.querySelector('.rw-run-preview img'); if (!e) return null; e.__mark = 1;
+          return { src: e.src.slice(0, 5), w: e.naturalWidth, cap: document.querySelector('.rw-run-preview figcaption').textContent }; })()""")
+        check(st is not None and st["src"] == "blob:" and st["w"] == 42 and st["cap"].endswith("1/40"), f"preview through a blob: URL: {st}")
+        # re-renders (progress events) keep the same element
+        page.evaluate("""() => { for (let i = 2; i < 6; i++) window.__host.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: i, steps: 40, phase: 'sample' }); }""")
+        page.wait_for_timeout(400)
+        check(page.evaluate("document.querySelector('.rw-run-preview img')?.__mark === 1"), "preview element rebuilt on re-render")
+        # a preview that can't be decoded keeps the last good one
+        first = page.evaluate("document.querySelector('.rw-run-preview img').src")
+        page.evaluate("""() => window.__host.emit('reelwright.preview', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: 6, steps: 40, image: 'data:image/jpeg;base64,AAAAAAAA' })""")
+        page.wait_for_timeout(400)
+        st = page.evaluate("""(() => { const e = document.querySelector('.rw-run-preview img');
+          const f = e.closest('.rw-run-preview');
+          return { same: e.src === %r, w: e.naturalWidth, failed: f.classList.contains('failed'), cap: f.querySelector('figcaption').textContent }; })()""" % first)
+        check(st["same"] and st["w"] == 42 and not st["failed"] and st["cap"].endswith("1/40"), f"bad preview replaced a good one: {st}")
+        # fast updates: 30 previews 15 ms apart; never broken, ends on the last one, earlier object URLs are released
+        samples = page.evaluate("""async () => { const out = [];
+          for (let s = 7; s <= 36; s++) { window.__pv(s, 40 + (s % 2)); await new Promise(r => setTimeout(r, 15));
+            const e = document.querySelector('.rw-run-preview img'); out.push(e && e.complete && e.naturalWidth > 0 ? 1 : 0); }
+          await new Promise(r => setTimeout(r, 300));
+          const e = document.querySelector('.rw-run-preview img');
+          return { ok: out.every(Boolean), cap: document.querySelector('.rw-run-preview figcaption').textContent, src: e.src }; }""")
+        check(samples["ok"] and samples["cap"].endswith("36/40"), f"fast previews: {samples['ok']} {samples['cap']}")
+        n_err = len(errors)
+        revoked = page.evaluate("""async u => { try { await (await fetch(u)).blob(); return false; } catch { return true; } }""", first)
+        page.wait_for_timeout(100)
+        # the fetch of a released URL is expected to fail ("Failed to load resource"); that is not an editor error
+        errors[n_err:] = [e for e in errors[n_err:] if "ERR_FILE_NOT_FOUND" not in e]
+        check(revoked, "the first preview's object URL was never released")
+        # a run whose previews can't be decoded shows a note, not a broken image
+        page.evaluate("""() => { const h = window.__host;
+          h.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [] });
+          h.emit('reelwright.run', { slug: 'harbor_lights', phase: 'start', targets: ['s_02'], reused: [] });
+          h.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: 1, steps: 40, phase: 'sample' });
+          h.emit('reelwright.preview', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: 1, steps: 40, image: 'data:image/jpeg;base64,AAAAAAAA' }); }""")
+        page.wait_for_timeout(500)
+        st = page.evaluate("""(() => { const f = document.querySelector('.rw-run-preview'); if (!f) return null;
+          return { failed: f.classList.contains('failed'), cap: f.querySelector('figcaption').textContent, vis: getComputedStyle(f.querySelector('img')).display, frame: f.querySelector('.rw-run-preview-frame').getBoundingClientRect().width }; })()""")
+        check(st is not None and st["failed"] and "could not be decoded" in st["cap"] and st["vis"] == "none" and st["frame"] > 150, f"undecodable preview: {st}")
+        page.locator(".rw-run-preview").scroll_into_view_if_needed()
+        page.screenshot(path=str(shots / "v038_preview_failed.png"))
+        page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [] })")
+        page.wait_for_timeout(300)
+        check(page.locator(".rw-run-preview").count() == 0, "preview stayed after the run ended (v0.3.8)")
         browser.close()
     httpd.shutdown()
 

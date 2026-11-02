@@ -26,6 +26,7 @@ import * as assetsTab from "./tabs/assets.js";
 import * as castTab from "./tabs/cast.js";
 import * as renderTab from "./tabs/render.js";
 import * as globalTab from "./tabs/global.js";
+import { createPreviewView } from "./preview.js"; // added 2026-11-02 v0.3.8
 
 const TABS = {
   timeline: { label: "Timeline", icon: "timeline", mod: timeline },
@@ -513,6 +514,8 @@ export function mountEditor(container, host) {
   [/OLD] */
   // added 2026-11-02 v0.3.7: previews come from the backend (reelwright.preview, a data URL) or from ComfyUI's own
   // preview stream for this node (a Blob, redirected by web/reelwright.js); both end up in the Render tab
+  /* [OLD 2026-11-02 v0.3.7->v0.3.8] the <img> was rebuilt from store.eph.preview on every (throttled) re-render and the previous object URL was
+     revoked at once; a picture that failed to load showed as a broken-image icon
   function setPreview(p) {
     const old = store.eph.preview;
     if (old?.objectUrl && old.objectUrl !== p?.objectUrl) URL.revokeObjectURL(old.objectUrl);
@@ -521,14 +524,35 @@ export function mountEditor(container, host) {
     const now = Date.now();
     if (now - lastProgressRender.at > 250) { lastProgressRender.at = now; store.notify(); }
   }
+  [/OLD] */
+  // added 2026-11-02 v0.3.8: one preview window for the editor's lifetime (web/rw/preview.js). Each new image is decoded
+  // off-screen and swapped in place, without re-rendering the tab, so it can follow every sampler step.
+  const previewView = createPreviewView({
+    captionFor: pv => {
+      const i = store.project.scenes.findIndex(x => x.id === pv.scene_id);
+      return [i >= 0 && String(i + 1).padStart(2, "0"), pv.passes && `pass ${pv.pass}/${pv.passes}`, pv.steps && `${pv.step}/${pv.steps}`].filter(Boolean).join(" · ");
+    },
+    onVisible: () => { if (store.project.ui.tab === "render") store.notify(); }, // the banner needs to make room once
+  });
+  ctx.previewFigure = () => previewView.element();
+  function setPreview(p) {
+    if (!p) previewView.clear();
+    else previewView.show(p);
+  }
   host.on("reelwright.preview", d => {
     if (d.slug !== store.project.slug) return;
     setPreview(d);
   });
+  /* [OLD 2026-11-02 v0.3.7->v0.3.8] the object URL is now made (and released) by the preview window
   function showComfyPreview(blob) {
     const cur = Object.values(store.eph.progress).find(x => !["done", "cached", "error"].includes(x.phase)) || {};
     const url = URL.createObjectURL(blob);
     setPreview({ image: url, objectUrl: url, scene_id: cur.scene_id, pass: cur.pass, passes: cur.passes, step: cur.step, steps: cur.steps });
+  }
+  [/OLD] */
+  function showComfyPreview(blob) {
+    const cur = Object.values(store.eph.progress).find(x => !["done", "cached", "error"].includes(x.phase)) || {};
+    setPreview({ blob, scene_id: cur.scene_id, pass: cur.pass, passes: cur.passes, step: cur.step, steps: cur.steps });
   }
   host.on("reelwright.run", d => {
     if (d.slug !== store.project.slug) return;
@@ -586,6 +610,7 @@ export function mountEditor(container, host) {
     },
     load(json) { store.load(json); },
     get project() { return store.project; },
-    destroy() { timeline.stopPlayback(ctx); root.remove(); },
+    // [OLD 2026-11-02 v0.3.7->v0.3.8] destroy() { timeline.stopPlayback(ctx); root.remove(); },
+    destroy() { timeline.stopPlayback(ctx); previewView.clear(); root.remove(); },
   };
 }

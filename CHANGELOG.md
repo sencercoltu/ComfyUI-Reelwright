@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.8 — 2026-11-02
+
+- **The Render tab's preview no longer shows a broken image.** The window used to be rebuilt on every re-render straight from the event's URL, and a picture that failed to load stayed on screen as a broken-image icon. It is now one element that lives as long as the editor:
+  - each new preview is decoded off-screen and swapped in only once it has loaded;
+  - if one can't be decoded, the last good picture stays (or an empty frame says so) and the browser console gets one warning;
+  - every preview is shown through a `blob:` URL, the same kind ComfyUI uses for its own node previews; the backend's base64 JPEG is converted in the browser, so nothing depends on `data:` images being allowed;
+  - an object URL is released only after its replacement is on screen.
+- **Previews follow every sampler step.** The backend's gap between previews went from one second to 0.25 s, and a new preview updates the window in place without re-rendering the tab.
+- A preview that can't be made (for example a missing TAESD file) is now a warning in the ComfyUI console, once per pass, instead of a hidden debug line.
+
 ## v0.3.7 — 2026-11-02
 
 - **No latent preview under the node, whatever sends it.** v0.3.5 stopped Reelwright's backend from handing previews to ComfyUI, but a backend that hadn't been restarted (or anything else reporting previews for the node) still made ComfyUI paint them under the node. The extension now intercepts ComfyUI's preview stream (`b_preview_with_metadata`, and `b_preview` while a Reelwright node is executing) for Reelwright nodes only and shows those images in the Render tab's preview window. Other nodes keep their previews.

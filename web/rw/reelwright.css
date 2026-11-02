@@ -622,8 +622,16 @@
 .rw-ref-desc.empty { color: var(--warn); }
 /* added 2026-11-02 v0.3.5: latent preview in the Render tab's run banner */
 .rw-run-preview { flex: none; margin: 0; width: 200px; display: flex; flex-direction: column; gap: 3px; }
+/* [OLD 2026-11-02 v0.3.7->v0.3.8] the frame was drawn by the <img>; now a wrapper draws it so it stays when the picture is hidden
 .rw-run-preview img { width: 200px; aspect-ratio: 16 / 9; object-fit: contain; border-radius: 6px; background: #0c0d10; border: 1px solid var(--line); }
+[/OLD] */
+/* added 2026-11-02 v0.3.8 */
+.rw-run-preview-frame { width: 200px; aspect-ratio: 16 / 9; border-radius: 6px; background: #0c0d10; border: 1px solid var(--line); overflow: hidden; }
+.rw-run-preview-frame img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .rw-run-preview figcaption { font-size: 10px; color: var(--text3); text-align: right; }
+/* added 2026-11-02 v0.3.8: nothing decodable yet: an empty dark frame with the reason underneath, never a broken-image icon */
+.rw-run-preview.failed img { display: none; }
+.rw-run-preview.failed figcaption { color: var(--warn); }
 /* added 2026-11-02 v0.3.6: autosaved versions on one line each */
 .rw-version { gap: 8px; }
 .rw-version-when { white-space: nowrap; font-size: 11.5px; color: var(--text2); }

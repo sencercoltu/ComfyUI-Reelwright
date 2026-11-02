@@ -86,6 +86,9 @@ class Models:
 
 # added 2026-11-02 v0.3.5: one sampling step's latent as a small JPEG data URL for the Render tab
 PREVIEW_MAX_SIDE = 480
+# added 2026-11-02 v0.3.8: the shortest gap between two previews. It used to be one second; H3 steps usually take
+# longer than this, so in practice every sampler step now shows up in the Render tab.
+PREVIEW_MIN_INTERVAL = 0.25
 
 
 def preview_jpeg(previewer, x0):
@@ -123,7 +126,8 @@ def _sample(model, positive, latent, seed, settings, on_step):
 
     def callback(step, x0, x, total_steps):
         pbar.update_absolute(step + 1, total_steps, None)
-        # the image is only decoded when on_step asks for it (it throttles to about one per second)
+        # [OLD 2026-11-02 v0.3.7->v0.3.8] # the image is only decoded when on_step asks for it (it throttles to about one per second)
+        # the image is only decoded when on_step asks for it (at most one per PREVIEW_MIN_INTERVAL)
         on_step(step + 1, total_steps, (lambda: preview_jpeg(previewer, x0)) if previewer else None)
 
     samples = guider.sample(noise, latent_image, sampler, sigmas, callback=callback,
@@ -379,6 +383,7 @@ class Renderer:
             seeds.append(seed)
             last_sent = [0.0]
             last_preview = [0.0]  # added 2026-11-02 v0.3.5
+            preview_failed = [False]  # added 2026-11-02 v0.3.8: warn once per pass when a preview can't be made
 
             # [OLD 2026-11-02 v0.3.4->v0.3.5] def on_step(step, total, _n=n):
             def on_step(step, total, preview=None, _n=n):
@@ -387,12 +392,21 @@ class Renderer:
                     last_sent[0] = now
                     self.progress(sid, _n + 1, n_pass, "sample", step, total)
                 # added 2026-11-02 v0.3.5: about one latent preview per second, shown in the Render tab
-                if preview is not None and (now - last_preview[0] > 1.0 or step == total):
+                # [OLD 2026-11-02 v0.3.7->v0.3.8] once a second was too slow to follow; now every step (see PREVIEW_MIN_INTERVAL)
+                # if preview is not None and (now - last_preview[0] > 1.0 or step == total):
+                if preview is not None and (now - last_preview[0] >= PREVIEW_MIN_INTERVAL or step == total):
                     last_preview[0] = now
                     try:
                         image = preview()
                     except Exception as e:  # a preview must never stop a render
-                        log.debug("Reelwright preview failed: %s", e)
+                        # [OLD 2026-11-02 v0.3.7->v0.3.8] failures were hidden at debug level
+                        # log.debug("Reelwright preview failed: %s", e)
+                        # added 2026-11-02 v0.3.8: the first failure of a pass shows in the ComfyUI console
+                        if not preview_failed[0]:
+                            preview_failed[0] = True
+                            log.warning("Reelwright: no latent preview for scene %s pass %d: %s", sid, _n + 1, e)
+                        else:
+                            log.debug("Reelwright preview failed: %s", e)
                         return
                     send("reelwright.preview", {"slug": self.slug, "scene_id": sid, "pass": _n + 1, "passes": n_pass,
                                                 "step": step, "steps": total, "image": image})

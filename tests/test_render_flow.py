@@ -217,7 +217,49 @@ def test_latent_preview_events(stubs, harbor, store, roots, monkeypatch):
     previews = [d for e, d in events if e == "reelwright.preview"]
     assert previews and all(d["scene_id"] == "s_one" and d["image"].startswith("data:image/jpeg") for d in previews)
     assert previews[-1]["step"] == previews[-1]["steps"]          # the last step is always shown
-    assert len(asked) < 5                                          # decoded only when sent (about once a second)
+    # [OLD 2026-11-02 v0.3.7->v0.3.8] assert len(asked) < 5                                          # decoded only when sent (about once a second)
+    assert len(asked) < 5                                          # decoded only when sent (at most every 0.25 s)
+
+
+# added 2026-11-02 v0.3.8: previews follow the sampler (it used to be at most one a second)
+def test_latent_preview_every_step_when_steps_are_slow(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    clock = [1000.0]
+
+    def sample_with_preview(model, positive, latent, seed, settings, on_step):
+        for k in range(1, 7):
+            clock[0] += render.PREVIEW_MIN_INTERVAL + 0.05  # a step a little slower than the preview gap
+            on_step(k, 6, lambda: "data:image/jpeg;base64,AAAA")
+        return latent
+    monkeypatch.setattr(render, "_sample", sample_with_preview)
+    monkeypatch.setattr(render.time, "time", lambda: clock[0])
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_one"]}).run()
+    steps = [d["step"] for e, d in events if e == "reelwright.preview"]
+    assert steps == [1, 2, 3, 4, 5, 6]
+    assert render.PREVIEW_MIN_INTERVAL < 1.0
+
+
+def test_latent_preview_failure_warns_once(stubs, harbor, store, roots, monkeypatch, caplog):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    clock = [1000.0]
+
+    def sample_with_bad_preview(model, positive, latent, seed, settings, on_step):
+        for k in range(1, 5):
+            clock[0] += 1.0
+            on_step(k, 4, lambda: (_ for _ in ()).throw(RuntimeError("taeh3 missing")))
+        return latent
+    monkeypatch.setattr(render, "_sample", sample_with_bad_preview)
+    monkeypatch.setattr(render.time, "time", lambda: clock[0])
+    with caplog.at_level("DEBUG", logger="reelwright"):
+        render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_one"]}).run()
+    warnings = [r for r in caplog.records if r.levelname == "WARNING" and "no latent preview" in r.getMessage()]
+    assert len(warnings) == 1 and "taeh3 missing" in warnings[0].getMessage()
+    assert not [d for e, d in events if e == "reelwright.preview"]
+    assert [d for e, d in events if e == "reelwright.run" and d.get("phase") == "end" and not d.get("error")]  # the render went on
 
 
 def test_preview_jpeg_handles_nested_latents(comfy):
