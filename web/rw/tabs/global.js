@@ -6,6 +6,7 @@ import { h, icon, button, toggle, segmented, select, number, text, textarea, sec
 import { rw } from "../api.js";
 import {
   ASPECTS, START_MODES, STABLE_LANGUAGES, OVERRIDE_KEYS, adaptCanvas, newId, slugify, defaultScene, effective, FPS,
+  sceneIndex, // added 2026-11-02 v0.3.1
 } from "../model.js";
 import { VERSION } from "../version.js";
 
@@ -336,6 +337,7 @@ function scriptCard(ctx) {
       ctx.actions.toast("Script import failed: " + err.message, "error");
     }
   };
+  /* [OLD 2026-11-02 v0.3.0->v0.3.1] scenes were always appended at the end
   const apply = () => {
     ctx.actions.edit(p => {
       const ids = {};
@@ -364,6 +366,64 @@ function scriptCard(ctx) {
     ctx.store.setEph({ scriptDraft: null });
     ctx.actions.toast("Script imported. Review the new scenes on the Timeline.", "ok");
   };
+  [/OLD] */
+  // added 2026-11-02 v0.3.1: where the imported scenes go: after the last scene, after the selected one, or instead of all
+  const mode = ctx.eph.scriptMode || "append";
+  const selScene = ctx.scene;
+  const short = t => (t.length > 18 ? t.slice(0, 17) + "…" : t);
+  const apply = async () => {
+    const pickedScenes = draft.scenes.filter(x => x._on);
+    const pickedCast = draft.cast.filter(x => x._on);
+    if (!pickedScenes.length && !pickedCast.length) { ctx.actions.toast("Tick at least one scene or cast member.", "warn"); return; }
+    if (mode === "replace") {
+      if (!pickedScenes.length) { ctx.actions.toast("Tick at least one scene to replace the current ones.", "warn"); return; }
+      const n = ctx.p.scenes.length;
+      if (!(await confirmDialog(ctx.root, { title: `Replace all ${n} scene${n > 1 ? "s" : ""}?`, confirmLabel: "Replace scenes",
+        message: `The ${n} current scene${n > 1 ? "s are" : " is"} removed and the ${pickedScenes.length} imported scene${pickedScenes.length > 1 ? "s" : ""} take${pickedScenes.length > 1 ? "" : "s"} their place. Cast, assets and Global settings stay. Rendered takes stay on disk. Ctrl+Z undoes this.` }))) return;
+    }
+    let firstId = null;
+    ctx.actions.edit(p => {
+      const ids = {};
+      for (const c of p.cast) ids[c.name.toLowerCase()] = c.id;
+      let sn = p.cast.filter(c => c.speaker).length;
+      for (const c of pickedCast) {
+        if (ids[(c.name || "").toLowerCase()]) continue;
+        const id = newId("c");
+        ids[(c.name || "").toLowerCase()] = id;
+        const kind = c.kind || "character";
+        p.cast.push({ id, kind, name: c.name || "Unnamed", speaker: kind === "character" ? c.speaker || "S" + (++sn) : "", description: c.description || "",
+          anchors: [], pack_sheet: true, outfits: [], default_outfit: "", voice: "", language: c.language || p.global.defaults.language, lora: { name: "", strength: 0.8 } });
+      }
+      const made = pickedScenes.map(s => {
+        const sc = defaultScene(p, { title: s.title || "Imported scene", duration: Number(s.duration) > 0 ? Number(s.duration) : p.global.defaults.duration });
+        sc.prompt.sections.summary = s.summary || "";
+        sc.prompt.sections.overall_soundscape = s.soundscape || "";
+        sc.prompt.sections.non_diegetic_music = s.music || "";
+        sc.shots = (s.shots || []).map(x => ({ id: newId("h"), t: Number(x.t) || 0, camera: x.camera || "", text: x.text || "" }));
+        sc.dialogue = (s.dialogue || []).map(d => ({ id: newId("d"), speaker: ids[(d.speaker || "").toLowerCase()] || "", t: Number(d.t) || 0, language: d.language || p.global.defaults.language, delivery: d.delivery || "says", text: d.text || "" }));
+        const names = new Set([...(s.cast || []), ...(s.dialogue || []).map(d => d.speaker)].map(n => (n || "").toLowerCase()));
+        sc.cast = [...names].filter(n => ids[n]).map(n => ({ id: ids[n], outfit: "" }));
+        return sc;
+      });
+      if (!made.length) return;
+      if (mode === "replace") {
+        p.scenes = made;
+        if (p.global.merge.color_ref_scene && !made.some(s => s.id === p.global.merge.color_ref_scene)) p.global.merge.color_ref_scene = "";
+      } else if (mode === "insert") {
+        const i = sceneIndex(p, selScene?.id);
+        p.scenes.splice(i < 0 ? p.scenes.length : i + 1, 0, ...made);
+      } else {
+        p.scenes.push(...made);
+      }
+      p.scenes[0].start.mode = "fresh";
+      firstId = made[0].id;
+      p.ui.selected = firstId;
+    });
+    ctx.store.setEph({ scriptDraft: null });
+    ctx.root.focus?.({ preventScroll: true }); // the button is gone after the re-render; keep Ctrl+Z working
+    const where = mode === "replace" ? "replaced the old scenes" : mode === "insert" ? `inserted after ${selScene?.title || "the selected scene"}` : "added at the end";
+    ctx.actions.toast(pickedScenes.length ? `Imported ${pickedScenes.length} scene${pickedScenes.length > 1 ? "s" : ""} (${where}). Ctrl+Z undoes this.` : "Imported the cast.", "ok");
+  };
   return section({
     title: "Import a script", help: "global.script",
     children: [
@@ -372,12 +432,24 @@ function scriptCard(ctx) {
       h("div", { class: "rw-row" }, button({ label: draft?.busy ? "Reading script…" : "Propose scenes", icon: "wand", variant: "pink", help: "global.script.run", disabled: !!draft?.busy, onClick: run }),
         draft?.scenes && button({ label: "Discard", small: true, help: "global.script.discard", onClick: () => ctx.store.setEph({ scriptDraft: null }) })),
       draft?.scenes && h("div", { class: "rw-script-review" },
-        h("div", { class: "rw-subhead" }, `${draft.cast.length} cast · ${draft.scenes.length} scenes proposed`),
+        // [OLD 2026-11-02 v0.3.0->v0.3.1] said "1 scenes"
+        // h("div", { class: "rw-subhead" }, `${draft.cast.length} cast · ${draft.scenes.length} scenes proposed`),
+        h("div", { class: "rw-subhead" }, `${draft.cast.length} cast · ${draft.scenes.length} scene${draft.scenes.length === 1 ? "" : "s"} proposed`),
         draft.cast.map(c => h("label", { class: "rw-check", help: "global.script.pick" }, h("input", { type: "checkbox", checked: c._on, onChange: e => { c._on = e.target.checked; } }),
           h("b", null, c.name), h("span", { class: "rw-dim small" }, ` ${c.kind || "character"}${c.description ? " · " + c.description.slice(0, 60) : ""}`))),
         draft.scenes.map(s => h("label", { class: "rw-check", help: "global.script.pick" }, h("input", { type: "checkbox", checked: s._on, onChange: e => { s._on = e.target.checked; } }),
           h("b", null, s.title || "Untitled"), h("span", { class: "rw-dim small mono" }, ` ${Number(s.duration || 0).toFixed(1)} s · ${(s.shots || []).length} shots · ${(s.dialogue || []).length} lines`))),
-        button({ label: "Add selected to the project", icon: "plus", variant: "primary", small: true, help: "global.script.apply", onClick: apply })),
+        // [OLD 2026-11-02 v0.3.0->v0.3.1] one button that always appended: button({ label: "Add selected to the project", icon: "plus", variant: "primary", small: true, help: "global.script.apply", onClick: apply })),
+      ),
+      // added 2026-11-02 v0.3.1: choose where the scenes go
+      draft?.scenes && field("Add scenes", segmented({ small: true, value: mode, help: "global.script.mode", options: [
+        { value: "append", label: "At the end", help: "global.script.mode.append" },
+        { value: "insert", label: `After ${String(sceneIndex(ctx.p, selScene?.id) + 1).padStart(2, "0")} · ${short(selScene?.title || "selected")}`, help: "global.script.mode.insert" },
+        { value: "replace", label: "Replace all scenes", help: "global.script.mode.replace" }],
+      onChange: v => ctx.store.setEph({ scriptMode: v }) }), { help: "global.script.mode", wide: true }),
+      draft?.scenes && h("div", { class: "rw-row" },
+        button({ label: mode === "replace" ? "Replace scenes with the selected" : "Add selected to the project", icon: mode === "replace" ? "refresh" : "plus",
+          variant: mode === "replace" ? "danger" : "primary", small: true, help: "global.script.apply", onClick: apply })),
     ],
   });
 }

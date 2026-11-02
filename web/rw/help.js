@@ -546,7 +546,13 @@ more("global.script", "Import a script", "Paste a screenplay, in Fountain or pla
 tip("global.script.text", "Paste the script here.");
 tip("global.script.run", "Ask the LLM to propose scenes and cast. Nothing is added until you confirm.");
 tip("global.script.pick", "Include this item when adding.");
-tip("global.script.apply", "Add the ticked cast and scenes to the project.");
+// [OLD 2026-11-02 v0.3.0->v0.3.1] tip("global.script.apply", "Add the ticked cast and scenes to the project.");
+tip("global.script.apply", "Add the ticked cast and scenes to the project, where 'Add scenes' says. Ctrl+Z undoes it.");
+// added 2026-11-02 v0.3.1: where imported scenes go
+more("global.script.mode", "Where the imported scenes go", "At the end: after the last scene.\n\nAfter the selected scene: right after the scene selected on the Timeline or Scene tab, so you can drop a new sequence into the middle of the film.\n\nReplace all scenes: the current scenes are removed and the imported ones take their place. Cast, assets and Global settings stay, and rendered takes stay on disk. You are asked to confirm, and Ctrl+Z undoes it.\n\nWhatever you choose, the first scene of the film always starts fresh.", "Where the imported scenes go.");
+tip("global.script.mode.append", "Add the imported scenes after the last scene.");
+tip("global.script.mode.insert", "Insert the imported scenes right after the selected scene.");
+tip("global.script.mode.replace", "Remove the current scenes and use the imported ones instead (asks first).");
 tip("global.script.discard", "Throw the proposal away.");
 more("global.matrix", "Where scenes override Global", "Each row is a setting and each column a scene. A coral dot means that scene overrides the setting. Click a scene number to open it.", "Overrides at a glance.");
 tip("global.matrix.scene", "Open this scene.");

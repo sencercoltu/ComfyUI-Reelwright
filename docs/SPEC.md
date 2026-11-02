@@ -71,7 +71,7 @@ output, and `video` points at them.
 - ✅ Runs only when you press a button. Never during a queue run.
 - ✅ **Rewrite**: optional instruction plus a preset. Shows a diff, and you Accept, Edit or Discard. Tags and `<d>…</d>` dialogue lines are kept exactly as written; this is checked after the rewrite.
 - ✅ **Split prompt**: for long scenes, gives each pass its own prompt with re-based timestamps. A rule-based split is the default; the LLM split is optional.
-- ✅ **Script import**: paste a screenplay (Fountain or plain text). The LLM proposes scenes, shots, dialogue and cast. You review them before they are added.
+- ✅ **Script import**: paste a screenplay (Fountain or plain text). The LLM proposes scenes, shots, dialogue and cast. You review them before they are added, and choose where the scenes go: at the end, right after the selected scene, or in place of all current scenes (asks first; cast, assets and Global stay). Ctrl+Z undoes the import.
 - ✅ **Test connection**, and the model list from `/models`.
 
 ## 5. Any scene length
