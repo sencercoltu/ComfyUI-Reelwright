@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3.7 — 2026-11-02
+
+- **No latent preview under the node, whatever sends it.** v0.3.5 stopped Reelwright's backend from handing previews to ComfyUI, but a backend that hadn't been restarted (or anything else reporting previews for the node) still made ComfyUI paint them under the node. The extension now intercepts ComfyUI's preview stream (`b_preview_with_metadata`, and `b_preview` while a Reelwright node is executing) for Reelwright nodes only and shows those images in the Render tab's preview window. Other nodes keep their previews.
+
 ## v0.3.6 — 2026-11-02
 
 - **Autosaved versions can be deleted** (Render tab): a delete button on each row, and **Delete all** in the card header (with confirmation). Only the version snapshots are removed; the project and its latest autosave stay.

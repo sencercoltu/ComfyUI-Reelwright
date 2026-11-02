@@ -12,11 +12,49 @@ document.head.appendChild(css);
 
 const IDLE_REQUEST = JSON.stringify({ action: "pending" });
 
+// added 2026-11-02 v0.3.7: ComfyUI paints a sampler's latent preview under the node that is running. For a
+// Reelwright node that image is moved into the editor's Render tab instead. This covers previews from any
+// source (an older Reelwright backend, or anything else that reports previews for this node).
+const editors = new Set(); // {node, editor}
+let executingId = null;
+let swallowedBlob = null;
+function editorFor(id) {
+  if (id === null || id === undefined) return null;
+  const s = String(id), last = s.split(":").pop();
+  for (const x of editors) if (String(x.node.id) === s || String(x.node.id) === last) return x.editor;
+  return null;
+}
+function installPreviewRedirect() {
+  if (api.__rwPreviewRedirect || typeof api.dispatchCustomEvent !== "function") return;
+  api.__rwPreviewRedirect = true;
+  api.addEventListener("executing", e => {
+    const d = e.detail;
+    executingId = d && typeof d === "object" ? (d.display_node ?? d.node ?? null) : d;
+  });
+  const original = api.dispatchCustomEvent.bind(api);
+  api.dispatchCustomEvent = function (type, detail) {
+    try {
+      if (type === "b_preview_with_metadata" && detail?.blob) {
+        const ed = editorFor(detail.displayNodeId) || editorFor(detail.nodeId) || editorFor(detail.realNodeId);
+        if (ed) { swallowedBlob = detail.blob; ed.showComfyPreview?.(detail.blob); return true; }
+      } else if (type === "b_preview" && detail instanceof Blob) {
+        if (detail === swallowedBlob) { swallowedBlob = null; return true; } // the same image, sent the old way too
+        const ed = editorFor(executingId);
+        if (ed) { ed.showComfyPreview?.(detail); return true; }
+      }
+    } catch (err) {
+      console.warn("Reelwright: preview redirect failed", err);
+    }
+    return original(type, detail);
+  };
+}
+
 app.registerExtension({
   name: "reelwright.editor",
 
   nodeCreated(node) {
     if (node.constructor?.comfyClass !== "Reelwright") return;
+    installPreviewRedirect(); // added 2026-11-02 v0.3.7
     const projectW = node.widgets?.find(w => w.name === "project");
     const runW = node.widgets?.find(w => w.name === "run_request");
     if (!projectW || !runW) return;
@@ -74,6 +112,8 @@ app.registerExtension({
     widget.serialize = false;
 
     const editor = mountEditor(container, host);
+    const entry = { node, editor }; // added 2026-11-02 v0.3.7: for the preview redirect
+    editors.add(entry);
     if (!projectW.value) host.setProject(JSON.stringify(editor.project));
     // added 2026-11-02 v0.3.0: a workflow load configures the node right after creating it; a node that is
     // still unconfigured a moment later was just added, so offer the saved Global profiles
@@ -93,6 +133,7 @@ app.registerExtension({
     };
     const onRemoved = node.onRemoved;
     node.onRemoved = function () {
+      editors.delete(entry); // added 2026-11-02 v0.3.7
       editor.destroy();
       return onRemoved?.apply(this, arguments);
     };

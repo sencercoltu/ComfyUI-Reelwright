@@ -502,6 +502,7 @@ export function mountEditor(container, host) {
     if (now - lastProgressRender.at > 250 || d.phase !== "sample") { lastProgressRender.at = now; store.notify(); }
   });
   // added 2026-11-02 v0.3.5: the latest latent preview, shown only in the Render tab's run banner
+  /* [OLD 2026-11-02 v0.3.6->v0.3.7] only the backend's reelwright.preview events were shown
   host.on("reelwright.preview", d => {
     if (d.slug !== store.project.slug) return;
     store.eph.preview = d;
@@ -509,14 +510,37 @@ export function mountEditor(container, host) {
     const now = Date.now();
     if (now - lastProgressRender.at > 250) { lastProgressRender.at = now; store.notify(); }
   });
+  [/OLD] */
+  // added 2026-11-02 v0.3.7: previews come from the backend (reelwright.preview, a data URL) or from ComfyUI's own
+  // preview stream for this node (a Blob, redirected by web/reelwright.js); both end up in the Render tab
+  function setPreview(p) {
+    const old = store.eph.preview;
+    if (old?.objectUrl && old.objectUrl !== p?.objectUrl) URL.revokeObjectURL(old.objectUrl);
+    store.eph.preview = p;
+    if (!p || store.project.ui.tab !== "render") return; // nothing else shows it, so no re-render elsewhere
+    const now = Date.now();
+    if (now - lastProgressRender.at > 250) { lastProgressRender.at = now; store.notify(); }
+  }
+  host.on("reelwright.preview", d => {
+    if (d.slug !== store.project.slug) return;
+    setPreview(d);
+  });
+  function showComfyPreview(blob) {
+    const cur = Object.values(store.eph.progress).find(x => !["done", "cached", "error"].includes(x.phase)) || {};
+    const url = URL.createObjectURL(blob);
+    setPreview({ image: url, objectUrl: url, scene_id: cur.scene_id, pass: cur.pass, passes: cur.passes, step: cur.step, steps: cur.steps });
+  }
   host.on("reelwright.run", d => {
     if (d.slug !== store.project.slug) return;
     // [OLD 2026-11-02 v0.2.2->v0.3.0] if (d.phase === "start") store.setEph({ running: true });
     // [OLD 2026-11-02 v0.3.4->v0.3.5] if (d.phase === "start") { store.setEph({ running: true, run: { targets: d.targets || [], reused: d.reused || [], done: [], started: Date.now() } }); updateTitle(); }
-    if (d.phase === "start") { store.setEph({ running: true, preview: null, run: { targets: d.targets || [], reused: d.reused || [], done: [], started: Date.now() } }); updateTitle(); }
+    // [OLD 2026-11-02 v0.3.6->v0.3.7] if (d.phase === "start") { store.setEph({ running: true, preview: null, run: { targets: d.targets || [], reused: d.reused || [], done: [], started: Date.now() } }); updateTitle(); }
+    if (d.phase === "start") { setPreview(null); store.setEph({ running: true, run: { targets: d.targets || [], reused: d.reused || [], done: [], started: Date.now() } }); updateTitle(); }
     else {
       // [OLD 2026-11-02 v0.3.4->v0.3.5] store.setEph({ running: false, run: null });
-      store.setEph({ running: false, run: null, preview: null });
+      // [OLD 2026-11-02 v0.3.6->v0.3.7] store.setEph({ running: false, run: null, preview: null });
+      setPreview(null);
+      store.setEph({ running: false, run: null });
       host.setTitle?.(null);
       actions.refreshTakes();
       store.refreshPlan();
@@ -549,6 +573,7 @@ export function mountEditor(container, host) {
   return {
     root,
     // added 2026-11-02 v0.3.0: called for a node that was just added (not loaded from a workflow)
+    showComfyPreview, // added 2026-11-02 v0.3.7: ComfyUI's preview stream for this node, redirected by reelwright.js
     async startNew() {
       store.setEph({ fresh: true });
       const r = await actions.loadProfiles();

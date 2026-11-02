@@ -71,7 +71,8 @@ function runBanner(ctx) {
   const pvScene = pv && ctx.p.scenes.find(x => x.id === pv.scene_id);
   const preview = pv?.image && h("figure", { class: "rw-run-preview", help: "render.preview" },
     h("img", { src: pv.image, alt: "" }),
-    h("figcaption", { class: "mono" }, `${pvScene ? String(sceneIndex(ctx.p, pvScene.id) + 1).padStart(2, "0") : ""} · pass ${pv.pass}/${pv.passes} · ${pv.step}/${pv.steps}`));
+    // [OLD 2026-11-02 v0.3.6->v0.3.7] h("figcaption", { class: "mono" }, `${pvScene ? String(sceneIndex(ctx.p, pvScene.id) + 1).padStart(2, "0") : ""} · pass ${pv.pass}/${pv.passes} · ${pv.step}/${pv.steps}`));
+    h("figcaption", { class: "mono" }, [pvScene && String(sceneIndex(ctx.p, pvScene.id) + 1).padStart(2, "0"), pv.passes && `pass ${pv.pass}/${pv.passes}`, pv.steps && `${pv.step}/${pv.steps}`].filter(Boolean).join(" · ")));
   return h("div", { class: "rw-banner info", help: "render.banner" }, icon("render", 14),
     h("div", { class: "rw-run" },
       h("div", { class: "rw-row" }, h("b", null, head), h("span", { class: "rw-ellipsis" }, detail),
