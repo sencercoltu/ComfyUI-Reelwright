@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.2 — 2026-11-02
+
+- **Describe with thinking models** (Qwen3 and similar on SGLang or vLLM): Describe gave the model only 400 tokens. A model that reasons first often used them all on reasoning, so the reply had no answer and Describe said "The model returned no text. Is it a vision model?". How long the reasoning runs varies per picture and per try, which is why it worked sometimes.
+  - Describe now allows max(Max tokens, 6000) tokens. If the model still runs out while thinking, it asks once more with thinking off and says so under the answer.
+  - New **Thinking** setting (Global → Prompt rewriter): *Model default* or *Off*. Off sends `chat_template_kwargs: {"enable_thinking": false}`, which SGLang and vLLM pass to Qwen3-style chat templates; faster, and Describe then uses 600 tokens.
+  - Every LLM call reads the reasoning (`reasoning_content`, `reasoning` or an unclosed `<think>`) and `finish_reason`, so a cut-off reply says "used all N tokens thinking" instead of "no text". The "Is it a vision model?" hint only appears when the model really answered with nothing.
+  - Test connection notes when the model thinks before answering.
+
 ## v0.3.1 — 2026-11-02
 
 - Script import (Global → Import a script) asks where the proposed scenes go: **at the end**, **after the selected scene**, or **replace all scenes**. Replacing asks first; cast, assets and Global settings stay, and rendered takes stay on disk. The first imported scene is selected, the film's first scene always starts fresh, and Ctrl+Z undoes the import.

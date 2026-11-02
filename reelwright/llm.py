@@ -148,10 +148,17 @@ def resolve(project_llm, stored):
     #         "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
     #         "preset": project_llm.get("preset", "h3_ref2va")}
     # [/OLD]
+    # [OLD 2026-11-02 v0.3.1->v0.3.2] no thinking switch
+    # return {"base_url": base, "model": project_llm.get("model") or stored["model"], "api_key": stored["api_key"],
+    #         "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
+    #         "preset": project_llm.get("preset", "h3_ref2va"), "include_guides": bool(project_llm.get("include_guides", True)),
+    #         "guides": stored.get("guides") or {}}
+    # [/OLD]
     return {"base_url": base, "model": project_llm.get("model") or stored["model"], "api_key": stored["api_key"],
             "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
             "preset": project_llm.get("preset", "h3_ref2va"), "include_guides": bool(project_llm.get("include_guides", True)),
-            "guides": stored.get("guides") or {}}
+            "guides": stored.get("guides") or {},
+            "thinking": "off" if project_llm.get("thinking") == "off" else "auto"}  # added 2026-11-02 v0.3.2
 
 
 def _headers(key):
@@ -180,21 +187,82 @@ def _err(data, status):
     return "HTTP {}".format(status)
 
 
-async def chat(cfg, system, user, max_tokens=None, timeout=None):
+# added 2026-11-02 v0.3.2: a reply with no answer text, and why
+class NoAnswer(RuntimeError):
+    def __init__(self, message, reason):
+        super().__init__(message)
+        self.reason = reason  # "thinking_cut" | "cut" | "reasoning_only" | "empty"
+
+
+def read_reply(data, max_tokens):
+    """(answer, reasoning, finish_reason) from an OpenAI-style reply. Thinking models put their reasoning in
+    `reasoning_content` (SGLang, vLLM, DeepSeek) or `reasoning` (newer vLLM, Ollama, OpenRouter), or inline in
+    <think>…</think> when the server has no reasoning parser."""
+    choice = (data.get("choices") or [{}])[0]
+    msg = choice.get("message") or {}
+    text = msg.get("content") or ""
+    if isinstance(text, list):  # some servers return content parts
+        text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
+    reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
+    inline = re.findall(r"<think>(.*?)</think>", text, flags=re.S)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+    # an unclosed <think> means the reply was cut off while still thinking
+    if "<think>" in text:
+        head, _, tail = text.partition("<think>")
+        text, inline = head, inline + [tail]
+    reasoning = (reasoning + "".join(inline)).strip()
+    return text.strip(), reasoning, choice.get("finish_reason") or ""
+
+
+def no_answer(reasoning, finish, max_tokens):
+    if finish == "length" and reasoning:
+        return NoAnswer("The model used all {} tokens thinking and stopped before it answered. Raise Max tokens, or set "
+                        "Thinking to Off (Global → Prompt rewriter).".format(max_tokens), "thinking_cut")
+    if finish == "length":
+        return NoAnswer("The reply was cut off at {} tokens before any text. Raise Max tokens.".format(max_tokens), "cut")
+    if reasoning:
+        return NoAnswer("The model returned only its reasoning, no answer. Try Thinking: Off (Global → Prompt rewriter).",
+                        "reasoning_only")
+    return NoAnswer("The model returned no text.", "empty")
+
+
+# [OLD 2026-11-02 v0.3.1->v0.3.2] ignored the reasoning field and finish_reason, so a thinking model that ran out of tokens
+# looked like an empty answer ("Is it a vision model?")
+# async def chat(cfg, system, user, max_tokens=None, timeout=None):
+#     # `user` may be a list of OpenAI content parts (text + image_url) for vision models (added 2026-11-02 v0.2.0)
+#     body = {"model": cfg["model"], "temperature": cfg["temperature"],
+#             "max_tokens": max_tokens or cfg["max_tokens"],
+#             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+#     t0 = time.time()
+#     async with aiohttp.ClientSession(timeout=timeout or TIMEOUT) as s:
+#         async with s.post(cfg["base_url"] + "/chat/completions", headers=_headers(cfg["api_key"]), json=body) as r:
+#             data = await r.json(content_type=None)
+#             if r.status >= 400:
+#                 raise RuntimeError(_err(data, r.status))
+#     text = data["choices"][0]["message"].get("content") or ""
+#     # reasoning models may wrap their answer after a think block
+#     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+#     return text, int((time.time() - t0) * 1000), data.get("model", cfg["model"])
+# [/OLD]
+async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None):
     # `user` may be a list of OpenAI content parts (text + image_url) for vision models (added 2026-11-02 v0.2.0)
-    body = {"model": cfg["model"], "temperature": cfg["temperature"],
-            "max_tokens": max_tokens or cfg["max_tokens"],
+    limit = max_tokens or cfg["max_tokens"]
+    body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    if cfg.get("thinking") == "off":
+        # Qwen3-style chat templates (SGLang, vLLM) skip the think block with this
+        body["chat_template_kwargs"] = {"enable_thinking": False}
     t0 = time.time()
-    # [OLD 2026-11-02 v0.2.2->v0.3.0] async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
     async with aiohttp.ClientSession(timeout=timeout or TIMEOUT) as s:
         async with s.post(cfg["base_url"] + "/chat/completions", headers=_headers(cfg["api_key"]), json=body) as r:
             data = await r.json(content_type=None)
             if r.status >= 400:
                 raise RuntimeError(_err(data, r.status))
-    text = data["choices"][0]["message"].get("content") or ""
-    # reasoning models may wrap their answer after a think block
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+    text, reasoning, finish = read_reply(data if isinstance(data, dict) else {}, limit)
+    if info is not None:
+        info.update(finish=finish, reasoning_chars=len(reasoning))
+    if not text and require_text:
+        raise no_answer(reasoning, finish, limit)
     return text, int((time.time() - t0) * 1000), data.get("model", cfg["model"])
 
 
@@ -324,14 +392,22 @@ async def test(cfg):
     # text, ms, model = await chat(cfg, "Reply with the single word OK.", "ping", max_tokens=8)
     # return {"ok": True, "ms": ms, "model": model, "reply": text[:40]}
     # [/OLD]
+    info = {}  # added 2026-11-02 v0.3.2: report whether the model thinks first
     try:
+        # [OLD 2026-11-02 v0.3.1->v0.3.2] an empty reply from a thinking model counted as a failure only later, in Describe
+        # text, ms, model = await chat(cfg, "Reply with the single word OK.", "ping", max_tokens=16,
+        #                              timeout=aiohttp.ClientTimeout(total=20, connect=6))
         text, ms, model = await chat(cfg, "Reply with the single word OK.", "ping", max_tokens=16,
-                                     timeout=aiohttp.ClientTimeout(total=20, connect=6))
+                                     timeout=aiohttp.ClientTimeout(total=20, connect=6), require_text=False, info=info)
     except asyncio.TimeoutError:
         raise RuntimeError("No answer from {} within 20 s".format(cfg["base_url"]))
     except aiohttp.ClientConnectorError as e:
         raise RuntimeError("Cannot connect to {}: {}".format(cfg["base_url"], e.os_error or e))
-    return {"ok": True, "ms": ms, "model": model, "reply": text[:40], "base_url": cfg["base_url"]}
+    # [OLD 2026-11-02 v0.3.1->v0.3.2] return {"ok": True, "ms": ms, "model": model, "reply": text[:40], "base_url": cfg["base_url"]}
+    thinking = info.get("reasoning_chars", 0) > 0
+    return {"ok": True, "ms": ms, "model": model, "reply": text[:40], "base_url": cfg["base_url"], "thinking": thinking,
+            "note": ("This model thinks before it answers, so Describe, Rewrite, Split and Import get a bigger token budget. "
+                     "Set Thinking to Off for faster answers.") if thinking and cfg.get("thinking") != "off" else ""}
 
 
 # ---- vision (added 2026-11-02 v0.2.0) ------------------------------------------------------
@@ -353,8 +429,29 @@ async def describe(cfg, images, prompt):
     if not images:
         raise ValueError("Nothing to describe")
     parts = [{"type": "text", "text": prompt or "Describe the main subject."}] + [image_part(d, m) for d, m in images]
-    text, ms, model = await chat(cfg, DESCRIBE_SYSTEM, parts, max_tokens=400)
+    # [OLD 2026-11-02 v0.3.1->v0.3.2] 400 tokens: a thinking model often used them all on reasoning, which read as "no text"
+    # text, ms, model = await chat(cfg, DESCRIBE_SYSTEM, parts, max_tokens=400)
+    note = ""
+    try:
+        text, ms, model = await chat(cfg, DESCRIBE_SYSTEM, parts, max_tokens=describe_budget(cfg))
+    except NoAnswer as e:
+        if e.reason == "empty":
+            raise RuntimeError("The model returned no text. Is it a vision model?")
+        if cfg.get("thinking") == "off" or e.reason == "cut":
+            raise
+        # still thinking when the budget ran out: ask once more with thinking switched off
+        try:
+            text, ms, model = await chat(dict(cfg, thinking="off"), DESCRIBE_SYSTEM, parts, max_tokens=600)
+        except Exception:
+            raise e
+        note = "The model kept thinking past the token budget, so this answer was made with thinking off."
     text = text.strip().strip('"').strip()
     if not text:
         raise RuntimeError("The model returned no text. Is it a vision model?")
-    return {"text": text, "ms": ms, "model": model}
+    # [OLD 2026-11-02 v0.3.1->v0.3.2] return {"text": text, "ms": ms, "model": model}
+    return {"text": text, "ms": ms, "model": model, "note": note}
+
+
+def describe_budget(cfg):
+    """The answer is two sentences; a thinking model needs room to reason first (added 2026-11-02 v0.3.2)."""
+    return 600 if cfg.get("thinking") == "off" else max(int(cfg["max_tokens"]), 6000)

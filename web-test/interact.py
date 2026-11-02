@@ -435,6 +435,22 @@ def main():
         page.keyboard.press("Control+z")
         page.wait_for_timeout(300)
         check([s["id"] for s in project(page)["scenes"]] == before, "undo did not restore the replaced scenes")
+
+        # ---- added 2026-11-02 v0.3.2 ----
+        # Thinking switch: the test explains a thinking model; Off is saved with the project.
+        page.click(".rw-tab:has-text('Global')")
+        page.wait_for_timeout(300)
+        url = page.locator("input[data-help='global.llm.baseUrl']")
+        url.fill("http://llm.local:30000/v1")
+        url.press("Tab")
+        page.wait_for_timeout(300)
+        page.click("button[data-help='global.llm.test']")
+        page.wait_for_timeout(400)
+        check(page.locator(".rw-note[data-help='global.llm.thinking']").count() == 1, "thinking note missing after the test")
+        page.locator("[data-help='global.llm.thinking'] button:has-text('Off')").first.click()
+        page.wait_for_timeout(300)
+        check(project(page)["global"]["llm"]["thinking"] == "off", "thinking switch not saved")
+        page.screenshot(path=str(shots / "v032_thinking.png"))
         browser.close()
     httpd.shutdown()
 

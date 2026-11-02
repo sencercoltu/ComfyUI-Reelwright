@@ -532,7 +532,12 @@ tip("global.llm.storeKey", "Save the API key on the ComfyUI server.");
 tip("global.llm.model", "Model id the server expects. Type to filter the listed models (e.g. minimax), or type any id and press Enter. ↻ lists what the server offers. Empty uses the server default.");
 tip("global.llm.listModels", "Fetch the model list from the server's /models endpoint.");
 tip("global.llm.temperature", "Creativity of the rewrite. 0.2–0.5 keeps it close to your text.");
-tip("global.llm.maxTokens", "Maximum length of the LLM's answer.");
+// [OLD 2026-11-02 v0.3.1->v0.3.2] tip("global.llm.maxTokens", "Maximum length of the LLM's answer.");
+tip("global.llm.maxTokens", "Maximum length of the LLM's answer, thinking included. Rewrite, Split and Import use at least 6000; Describe uses at least 6000 too (600 with thinking off).");
+// added 2026-11-02 v0.3.2
+more("global.llm.thinking", "Thinking", "Thinking models (Qwen3 and its successors, DeepSeek-R1 and others) reason before they answer, and that reasoning counts against Max tokens. If the budget runs out mid-thought the reply has no answer at all.\n\nModel default: leave it to the model and the server. Reelwright gives these calls a large budget, and if Describe still runs out it asks once more with thinking off.\n\nOff: ask the server to skip the reasoning step (sends chat_template_kwargs enable_thinking=false, which SGLang and vLLM pass to Qwen3-style chat templates). Faster, and plenty for descriptions and rewrites. Servers that don't accept the field (for example OpenAI's API) answer with an error; switch back to Model default for those.", "Let the model think first, or skip it.");
+tip("global.llm.thinking.auto", "Leave thinking to the model and server.");
+tip("global.llm.thinking.off", "Ask the server to skip the thinking step (SGLang, vLLM with Qwen3-style models).");
 tip("global.llm.preset", "System prompt style for rewrites.");
 // added 2026-11-02 v0.2.0
 more("global.llm.guides", "Official H3 prompt guides", "When on, Rewrite, Split and Import send MiniMax's own H3 prompt-writing guides to the LLM as part of its instructions: the Ref2VA guide (ref-en.txt) and the base guide (base-en.txt) from the MiniMax-H3 repository on GitHub.\n\nThe guides are under MiniMax's licence, so Reelwright does not ship them: press Download to fetch them into ComfyUI's user/reelwright/guides folder. Until then, a short built-in summary of the same rules is sent instead.\n\nTogether they are about 40 KB (roughly 10,000 tokens), so turn this off for small local models with short context windows.", "Send MiniMax's official prompt guides to the LLM.");

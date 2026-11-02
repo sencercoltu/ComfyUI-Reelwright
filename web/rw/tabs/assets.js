@@ -217,7 +217,8 @@ export async function describeAssets(ctx, ids, prompt, key) {
   ctx.store.setEph({ describe: { key, busy: true } });
   try {
     const r = await rw.describe(ctx.p, ids, prompt);
-    ctx.store.setEph({ describe: { key, text: r.text, model: r.model, ms: r.ms } });
+    // [OLD 2026-11-02 v0.3.1->v0.3.2] ctx.store.setEph({ describe: { key, text: r.text, model: r.model, ms: r.ms } });
+    ctx.store.setEph({ describe: { key, text: r.text, model: r.model, ms: r.ms, note: r.note || "" } });
   } catch (err) {
     ctx.store.setEph({ describe: { key, error: err.message } });
   }
@@ -237,6 +238,7 @@ export function describeBox(ctx, { key, ids, defaultPrompt, apply, help = "asset
     d?.error ? h("div", { class: "rw-note err" }, icon("warn", 12), d.error) : null,
     d?.text ? h("div", { class: "rw-suggest", help: help + ".result" },
       h("div", { class: "rw-suggest-text" }, d.text),
+      d.note ? h("div", { class: "rw-dim small" }, d.note) : null, // added 2026-11-02 v0.3.2
       h("div", { class: "rw-row" },
         h("span", { class: "rw-dim small mono rw-ellipsis grow" }, [d.model, d.ms ? d.ms + " ms" : ""].filter(Boolean).join(" · ")),
         button({ label: "Use", small: true, variant: "primary", help: help + ".use", onClick: () => { apply(d.text, "use"); ctx.store.setEph({ describe: null }); } }),

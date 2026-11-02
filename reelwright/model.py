@@ -57,8 +57,12 @@ def default_global():
         # [OLD 2026-11-02 v0.1.0->v0.2.0] no switch for sending MiniMax's prompt guides
         # "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va"},
         # [/OLD]
+        # [OLD 2026-11-02 v0.3.1->v0.3.2] no thinking switch
+        # "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
+        #         "include_guides": True},
+        # [/OLD]
         "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
-                "include_guides": True},
+                "include_guides": True, "thinking": "auto"},  # thinking: auto (model default) | off
         "merge": {"use": "starred", "missing": "skip", "hard_cut": "cut", "transition_frames": 12,
                   "audio_fade_frames": 6, "loudness": -16.0, "normalize": True,
                   "score": {"asset": "", "volume_db": -12.0, "duck": True},

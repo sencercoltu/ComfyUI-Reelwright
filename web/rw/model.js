@@ -123,7 +123,8 @@ function defaultGlobal() {
     /* [OLD 2026-11-02 v0.1.0->v0.2.0] no switch for sending MiniMax's prompt guides
     llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va" },
     [/OLD] */
-    llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va", include_guides: true },
+    // [OLD 2026-11-02 v0.3.1->v0.3.2] llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va", include_guides: true },
+    llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va", include_guides: true, thinking: "auto" },
     merge: { use: "starred", missing: "skip", hard_cut: "cut", transition_frames: 12, audio_fade_frames: 6,
       loudness: -16.0, normalize: true, score: { asset: "", volume_db: -12.0, duck: true },
       color_match: false, color_ref_scene: "", codec: "h264", crf: 16,

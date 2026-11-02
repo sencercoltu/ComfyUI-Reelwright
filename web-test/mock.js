@@ -361,7 +361,8 @@ async function route(path, opts = {}) {
   switch (url.pathname) {
     // [OLD 2026-11-02 v0.2.2->v0.3.0] case "/reelwright/info": return json({ version: "0.2.0", ffmpeg: "ffmpeg 7.1", insightface: true, h3_nodes: true });
     // [OLD 2026-11-02 v0.3.0->v0.3.1] case "/reelwright/info": return json({ version: "0.3.0", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
-    case "/reelwright/info": return json({ version: "0.3.1", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
+    // [OLD 2026-11-02 v0.3.1->v0.3.2] case "/reelwright/info": return json({ version: "0.3.1", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
+    case "/reelwright/info": return json({ version: "0.3.2", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -413,7 +414,9 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-02 v0.2.2->v0.3.0] case "/reelwright/llm/test": return json({ ok: true, ms: 412, model: "qwen3-32b-instruct" });
     case "/reelwright/llm/test": return body?.project?.global?.llm?.base_url?.includes("down")
       ? json({ error: "Cannot connect to " + body.project.global.llm.base_url }, 502)
-      : json({ ok: true, ms: 412, model: body?.project?.global?.llm?.model || "qwen3-32b-instruct", base_url: body?.project?.global?.llm?.base_url || "http://llm.local:30000/v1", reply: "OK" });
+      // [OLD 2026-11-02 v0.3.1->v0.3.2] : json({ ok: true, ms: 412, model: body?.project?.global?.llm?.model || "qwen3-32b-instruct", base_url: body?.project?.global?.llm?.base_url || "http://llm.local:30000/v1", reply: "OK" });
+      : json({ ok: true, ms: 412, model: body?.project?.global?.llm?.model || "qwen3-32b-instruct", base_url: body?.project?.global?.llm?.base_url || "http://llm.local:30000/v1", reply: "OK",
+        thinking: body?.project?.global?.llm?.thinking !== "off", note: body?.project?.global?.llm?.thinking !== "off" ? "This model thinks before it answers, so Describe, Rewrite, Split and Import get a bigger token budget. Set Thinking to Off for faster answers." : "" });
     case "/reelwright/llm/rewrite": {
       const s = body.project.scenes.find(x => x.id === body.scene_id);
       return json({ sections: { ...s.prompt.sections, summary: (s.prompt.sections.summary || "") + " The candle gutters as she reads.", detailed_description: "Extreme close-ups, warm key light from the candle, shallow depth of field." }, warnings: [] });

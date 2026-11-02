@@ -266,6 +266,10 @@ function llmCard(ctx) {
         } })), { help: "global.llm.model" }),
       field("Temperature", number({ value: l.temperature, min: 0, max: 2, step: 0.05, help: "global.llm.temperature", onChange: v => set(x => { x.temperature = v ?? 0.4; }) }), { help: "global.llm.temperature" }),
       field("Max tokens", number({ value: l.max_tokens, min: 128, max: 32768, step: 128, help: "global.llm.maxTokens", onChange: v => set(x => { x.max_tokens = v ?? 2048; }) }), { help: "global.llm.maxTokens" }),
+      // added 2026-11-02 v0.3.2: thinking models (Qwen3 and similar) can spend the whole budget reasoning
+      field("Thinking", segmented({ small: true, value: l.thinking === "off" ? "off" : "auto", help: "global.llm.thinking", options: [
+        { value: "auto", label: "Model default", help: "global.llm.thinking.auto" }, { value: "off", label: "Off", help: "global.llm.thinking.off" }],
+      onChange: v => set(x => { x.thinking = v; }) }), { help: "global.llm.thinking" }),
       field("Preset", select({ options: [
         { value: "h3_ref2va", label: "H3 ref2va · six sections" }, { value: "h3_compact", label: "H3 · compact prose" }, { value: "h3_cinematic", label: "H3 · cinematic detail" }],
       value: l.preset, help: "global.llm.preset", onChange: v => set(x => { x.preset = v; }) }), { help: "global.llm.preset" }),
@@ -282,7 +286,8 @@ function llmCard(ctx) {
           ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: true, error: null } });
           try {
             const r = await rw.llmTestProject(ctx.p);
-            ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: false, ok: true, ms: r.ms, error: null, testedModel: r.model, testedUrl: r.base_url, reply: r.reply } });
+            // [OLD 2026-11-02 v0.3.1->v0.3.2] ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: false, ok: true, ms: r.ms, error: null, testedModel: r.model, testedUrl: r.base_url, reply: r.reply } });
+            ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: false, ok: true, ms: r.ms, error: null, testedModel: r.model, testedUrl: r.base_url, reply: r.reply, note: r.note || "" } });
             ctx.actions.toast(`LLM answered in ${r.ms} ms · ${r.model || "server default model"}`, "ok");
           } catch (err) {
             ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: false, ok: false, error: err.message } });
@@ -293,6 +298,7 @@ function llmCard(ctx) {
       // added 2026-11-02 v0.3.0: the result of the last test, in full
       st.ok && st.testedUrl ? h("div", { class: "rw-note ok small", help: "global.llm.status" }, icon("check", 12), `${st.testedUrl} · ${st.testedModel || "default model"} · ${st.ms} ms${st.reply ? ` · replied “${st.reply}”` : ""}`) : null,
       st.error ? h("div", { class: "rw-note err small", help: "global.llm.status" }, icon("warn", 12), st.error) : null,
+      st.ok && st.note ? h("div", { class: "rw-note small", help: "global.llm.thinking" }, icon("info", 12), st.note) : null, // added 2026-11-02 v0.3.2
     ],
   });
 }

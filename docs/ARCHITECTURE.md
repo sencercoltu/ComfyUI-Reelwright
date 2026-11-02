@@ -64,7 +64,8 @@ lives on disk.
     "memory": { "policy": "free_cache", "encode_first": true, "group_by_lora": true },  // keep | free_cache | unload_all
     "continuity": { "reanchor_after": 2, "face_check": false, "face_threshold": 0.8, "on_drift": "flag" }, // flag | retake
     "llm": { "base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
-             "include_guides": true },                    // v0.2.0: send MiniMax's guides when downloaded
+             "include_guides": true,                      // v0.2.0: send MiniMax's guides when downloaded
+             "thinking": "auto" },                        // v0.3.2: auto | off (chat_template_kwargs enable_thinking=false)
     "merge": { "use": "starred", "missing": "skip",                 // skip | slate | block
                "hard_cut": "cut", "transition_frames": 12,           // cut | crossfade | dip
                "audio_fade_frames": 6, "loudness": -16.0, "normalize": true,
@@ -143,7 +144,7 @@ mirrors the defaults).
 | GET | `/reelwright/llm/settings` | – | `{base_url, model, has_key, guides:{name:{bytes, fetched}}, guide_urls}` |
 | POST | `/reelwright/llm/settings` | `{base_url?, model?, api_key?}` | `{ok}` |
 | POST | `/reelwright/llm/models` | `{base_url?}` | `{models[]}` |
-| POST | `/reelwright/llm/test` | `{project?}` | `{ok, ms, model, reply, base_url}`; 20 s limit, readable error when the server can't be reached |
+| POST | `/reelwright/llm/test` | `{project?}` | `{ok, ms, model, reply, base_url, thinking, note}`; 20 s limit, readable error when the server can't be reached; `thinking` is true when the reply carried reasoning |
 | POST | `/reelwright/llm/rewrite` | `{project, scene_id, instruction}` | `{sections?, raw?, warnings[]}` |
 | POST | `/reelwright/llm/split` | `{project, scene_id}` | `{pass_prompts:{n: text}}` |
 | POST | `/reelwright/llm/script` | `{project, script}` | `{scenes[], cast[]}` |
@@ -151,7 +152,7 @@ mirrors the defaults).
 | POST | `/reelwright/cast/export` | `{project, cast_id}` | `{folder, files}` |
 | POST | `/reelwright/continuity/check` | `{project, scene_id}` | `{scores:{cast_id: value}, available}` |
 | POST | `/reelwright/llm/guides` | `{}` | `{guides}`: downloads MiniMax's `ref-en.txt` and `base-en.txt` into `user/reelwright/guides/` |
-| POST | `/reelwright/llm/describe` | `{project, asset_ids[≤4], prompt}` | `{text, ms, model}`; pictures as JPEG, videos as 3 frames, OpenAI `image_url` parts |
+| POST | `/reelwright/llm/describe` | `{project, asset_ids[≤4], prompt}` | `{text, ms, model, note}`; pictures as JPEG, videos as 3 frames, OpenAI `image_url` parts; budget max(Max tokens, 6000), or 600 with thinking off; one retry with thinking off when a thinking model runs out of tokens |
 | GET | `/reelwright/files?root=input\|output&q=&kind=&limit=` | – | `{files:[{rel, kind, bytes, mtime}], total, truncated}`, newest first |
 | POST | `/reelwright/import` | `{slug, root, rel}` | `{asset}`; output files are hard-linked or copied into `input/reelwright/<slug>/from_output/` |
 | GET | `/reelwright/profiles` | – | `{profiles:[{id, name, created, updated, global}], default}` |
