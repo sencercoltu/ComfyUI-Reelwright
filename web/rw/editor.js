@@ -449,6 +449,9 @@ export function mountEditor(container, host) {
   root.addEventListener("pointerdown", e => {
     if (!e.target.closest("input, textarea, select, [contenteditable], .rw-combo-list, .rw-ctx")) root.focus({ preventScroll: true });
   }, true);
+  // added 2026-11-02 v0.3.3: presses the editor handles itself (timeline pan) stop at the root, after the root's own
+  // listeners (tooltips) have seen them, so ComfyUI doesn't also drag the node
+  root.addEventListener("pointerdown", e => { if (e.rwOwned) e.stopPropagation(); });
   root.addEventListener("keydown", e => {
     e.stopPropagation();
     const typing = e.target.matches?.("input, textarea, select, [contenteditable]");

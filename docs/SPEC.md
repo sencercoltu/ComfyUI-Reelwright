@@ -167,6 +167,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Undo/redo history, autosave.
 - ✅ Lint panel: missing or unused tags, dialogue without a language, timestamps past the end of a scene, over-budget references, missing files, a continuation without a previous scene, cast without anchors.
 - ✅ Zoom, snap to the frame grid, ripple edit. Alt + wheel zooms the timeline; Ctrl + wheel anywhere on the node zooms the ComfyUI canvas, except over a text field or list.
+- ✅ Timeline navigation: the mouse wheel scrolls sideways when the film is wider than the lanes (Shift + wheel scrolls up and down). Dragging anywhere on the lanes pans and leaves the playhead alone. A click on the ruler or an empty part of a lane moves the playhead; dragging the playhead's time label scrubs. Mouse distances account for ComfyUI's canvas zoom.
 
 ## 11. MiniMax H3 facts used
 

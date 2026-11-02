@@ -104,9 +104,12 @@ tip("timeline.ripple", "Ripple: lengthening a scene pushes the later scenes alon
 tip("timeline.addMarker", "Add a marker at the playhead (M). Markers are notes for you and are not sent to H3.");
 // [OLD 2026-11-02 v0.2.2->v0.3.0] Ctrl + wheel now zooms the ComfyUI canvas, like the wheel outside the node
 // tip("timeline.zoom", "Timeline zoom in pixels per second. Ctrl or Alt + mouse wheel also zooms; + and − on the keyboard too.");
-tip("timeline.zoom", "Timeline zoom in pixels per second. Alt + mouse wheel over the lanes also zooms; + and − on the keyboard too. Ctrl + wheel anywhere on the node zooms the ComfyUI canvas (except over a text field).");
+// [OLD 2026-11-02 v0.3.2->v0.3.3] tip("timeline.zoom", "Timeline zoom in pixels per second. Alt + mouse wheel over the lanes also zooms; + and − on the keyboard too. Ctrl + wheel anywhere on the node zooms the ComfyUI canvas (except over a text field).");
+tip("timeline.zoom", "Timeline zoom in pixels per second. Alt + mouse wheel over the lanes also zooms; + and − on the keyboard too. The mouse wheel scrolls the timeline sideways (Shift + wheel: up and down), and dragging an empty spot pans it. Ctrl + wheel anywhere on the node zooms the ComfyUI canvas (except over a text field).");
 tip("timeline.fit", "Zoom so the whole film fits the width.");
-tip("timeline.ruler", "Click or drag to move the playhead.");
+// [OLD 2026-11-02 v0.3.2->v0.3.3] tip("timeline.ruler", "Click or drag to move the playhead.");
+tip("timeline.ruler", "Click to move the playhead here. Drag to pan the timeline; drag the playhead's time label to scrub.");
+tip("timeline.playhead", "Drag to scrub through the film.");
 tip("timeline.marker", "A marker. Click to edit its text and colour.");
 tip("timeline.marker.text", "Marker text, shown on the ruler.");
 tip("timeline.marker.color", "Marker colour.");

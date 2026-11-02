@@ -141,6 +141,10 @@ download them a short built-in summary is sent instead.
 | Delete | remove scene (asks first) |
 | Ctrl+Z / Ctrl+Shift+Z | undo / redo |
 | ? | help |
+| Wheel / Shift + wheel | scroll the timeline sideways / up and down |
+| Drag on the timeline | pan (the playhead stays) |
+| Click on the ruler or an empty lane | move the playhead |
+| Drag the playhead's time label | scrub |
 | Alt + wheel | zoom the timeline |
 | Ctrl + wheel | zoom the ComfyUI canvas (not over text fields) |
 

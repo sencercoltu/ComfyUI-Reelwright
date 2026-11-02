@@ -451,6 +451,81 @@ def main():
         page.wait_for_timeout(300)
         check(project(page)["global"]["llm"]["thinking"] == "off", "thinking switch not saved")
         page.screenshot(path=str(shots / "v032_thinking.png"))
+
+        # ---- added 2026-11-02 v0.3.3 ----
+        # Timeline: wheel scrolls sideways, click on the ruler moves the playhead, hovering does not,
+        # dragging pans without touching the playhead, the playhead label scrubs.
+        page.click(".rw-tab:has-text('Timeline')")
+        page.wait_for_timeout(300)
+        page.wait_for_timeout(800)  # let the plan/autosave refresh from the previous steps land first
+        z0 = project(page)["ui"]["zoom"] or 22
+        page.locator(".rw-root").focus()
+        for _ in range(4):
+            page.keyboard.press("+")
+        page.wait_for_timeout(400)
+        check(abs(project(page)["ui"]["zoom"] - z0 * 1.25 ** 4) < 0.6, f"zoom after four + presses: {z0} -> {project(page)['ui']['zoom']}")
+        # read the DOM in one evaluate: the editor re-renders asynchronously, so a locator can resolve an element
+        # that is replaced a moment later (a detached element reports scrollLeft 0 and no bounding box)
+        sl = lambda: page.evaluate("document.querySelector('.rw-lanes').scrollLeft")
+        box = lambda sel, i=0: page.evaluate("([s, i]) => { const e = document.querySelectorAll(s)[i]; if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }", [sel, i])
+        ph = lambda: project(page)["ui"]["playhead"]
+        lb = box(".rw-lanes")
+        check(page.evaluate("(() => { const el = document.querySelector('.rw-lanes'); return el.scrollWidth > el.clientWidth; })()"), "timeline did not overflow after zooming in")
+        page.evaluate("document.querySelector('.rw-lanes').scrollLeft = 0")
+        page.mouse.move(lb["x"] + 400, lb["y"] + 200)
+        page.mouse.wheel(0, 400)
+        page.wait_for_timeout(300)
+        check(sl() > 100, f"wheel did not scroll sideways ({sl()})")
+        rb = box(".rw-ruler-lane")
+        page.mouse.click(lb["x"] + 500, rb["y"] + rb["height"] / 2)
+        page.wait_for_timeout(300)
+        t1 = ph()
+        expect = (lb["x"] + 500 - rb["x"]) / project(page)["ui"]["zoom"]
+        check(abs(t1 - expect) < 0.1, f"ruler click put the playhead at {t1:.2f}, expected {expect:.2f}")
+        page.mouse.move(lb["x"] + 900, lb["y"] + 250, steps=6)
+        page.wait_for_timeout(200)
+        check(ph() == t1, "playhead followed the mouse without a press")
+        # drag an empty spot of the dialogue lane: pans, playhead stays, selection stays
+        sel = project(page)["ui"]["selected"]
+        dl = box(".rw-lane-body", 4)
+        s0 = sl()
+        page.mouse.move(lb["x"] + 800, dl["y"] + dl["height"] - 4)
+        page.mouse.down()
+        page.mouse.move(lb["x"] + 600, dl["y"] + dl["height"] - 4, steps=8)
+        page.mouse.up()
+        page.wait_for_timeout(300)
+        check(abs((sl() - s0) - 200) < 3 and ph() == t1 and project(page)["ui"]["selected"] == sel, f"pan: scroll {s0}->{sl()}, playhead {ph()} vs {t1}")
+        # a drag that starts on a scene block pans too and does not select it
+        bb = box(".rw-scene", 5)
+        s0 = sl()
+        page.mouse.move(bb["x"] + 30, bb["y"] + 40)
+        page.mouse.down()
+        page.mouse.move(bb["x"] + 130, bb["y"] + 40, steps=6)
+        page.mouse.up()
+        page.wait_for_timeout(300)
+        s1, sel1, ph1 = sl(), project(page)["ui"]["selected"], ph()
+        check(abs((s0 - s1) - 100) < 3 and sel1 == sel, f"drag on a scene block did not pan or selected it: scroll {s0}->{s1}, selected {sel1} vs {sel}, playhead {ph1}")
+        # the playhead label scrubs
+        hb = box(".rw-playhead-label")
+        check(hb is not None, f"playhead label not visible (tab {page.inner_text('.rw-tab.on')})")
+        if hb:
+            page.mouse.move(hb["x"] + hb["width"] / 2, hb["y"] + hb["height"] / 2)
+            page.mouse.down()
+            page.mouse.move(hb["x"] + hb["width"] / 2 + 120, hb["y"] + hb["height"] / 2, steps=6)
+            page.mouse.up()
+            page.wait_for_timeout(300)
+            check(abs(ph() - (t1 + 120 / project(page)["ui"]["zoom"])) < 0.15, f"playhead drag: {ph():.2f}")
+        # a release that never reaches the editor: the next move without a button ends the drag
+        t2 = ph()
+        page.evaluate("""() => {
+          const r = document.querySelector('.rw-ruler-lane'), b = r.getBoundingClientRect();
+          r.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, buttons: 1, clientX: b.left + 50, clientY: b.top + 5 }));
+          window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, buttons: 0, clientX: b.left + 400, clientY: b.top + 5 }));
+          window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, buttons: 1, clientX: b.left + 600, clientY: b.top + 5 }));
+        }""")
+        page.wait_for_timeout(200)
+        check(ph() == t2 and not page.evaluate("document.querySelector('.rw-root').classList.contains('rw-panning')"), "a lost release left the drag running")
+        page.screenshot(path=str(shots / "v033_timeline.png"))
         browser.close()
     httpd.shutdown()
 

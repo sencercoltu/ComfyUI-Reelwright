@@ -407,6 +407,8 @@ function renderLanes(ctx) {
   const selectScene = id => () => ctx.actions.select(id);
 
   // Ruler
+  /* [OLD 2026-11-02 v0.3.2->v0.3.3] press-and-drag scrubbed the playhead with window listeners; when ComfyUI swallowed the
+     pointerup the listener stayed and the playhead followed the mouse over the node
   const ruler = h("div", {
     class: "rw-ruler-lane", style: { width: width + "px", "background-size": `${z}px 6px` }, help: "timeline.ruler",
     onPointerdown: e => {
@@ -419,6 +421,9 @@ function renderLanes(ctx) {
       window.addEventListener("pointerup", up);
     },
   });
+  [/OLD] */
+  // added 2026-11-02 v0.3.3: clicks and drags on the ruler are handled by lanesPointerdown (click = playhead, drag = pan)
+  const ruler = h("div", { class: "rw-ruler-lane", style: { width: width + "px", "background-size": `${z}px 6px` }, help: "timeline.ruler" });
   for (let t = 0; t <= total + step; t += step) {
     ruler.append(h("span", { class: "rw-tick", style: { left: t * z + "px" } }), h("span", { class: "rw-tick-label mono", style: { left: t * z + 4 + "px" } }, fmtTime(t, false)));
   }
@@ -538,7 +543,15 @@ function renderLanes(ctx) {
   ];
 
   const playhead = h("div", { class: "rw-playhead", style: { left: HEAD_W + p.ui.playhead * z + "px" } });
-  const playheadLabel = h("span", { class: "rw-playhead-label mono" }, fmtTime(p.ui.playhead));
+  // [OLD 2026-11-02 v0.3.2->v0.3.3] const playheadLabel = h("span", { class: "rw-playhead-label mono" }, fmtTime(p.ui.playhead));
+  // added 2026-11-02 v0.3.3: drag the playhead's label to scrub
+  const playheadLabel = h("span", { class: "rw-playhead-label mono", help: "timeline.playhead", onPointerdown: e => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const rulerLeft = () => (ctx.root.querySelector(".rw-ruler-lane") || ruler).getBoundingClientRect().left;
+    trackDrag(ev => setPlayhead(ctx, (ev.clientX - rulerLeft()) / scaleOf(ctx) / zoomOf(ctx)));
+  } }, fmtTime(p.ui.playhead));
   playhead.append(playheadLabel);
   ctx.tl = ctx.tl || {};
   ctx.tl.playhead = playhead;
@@ -554,13 +567,89 @@ function renderLanes(ctx) {
     if (e.ctrlKey || e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }
   } },
   [/OLD] */
+  /* [OLD 2026-11-02 v0.3.2->v0.3.3] plain wheel only scrolled up and down, so a long film could not be scrolled sideways with the mouse
   return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, wheel: e => {
     if (e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }
+  } },
+  [/OLD] */
+  // added 2026-11-02 v0.3.3: wheel scrolls sideways when the film is wider than the lanes; Shift + wheel scrolls
+  // up and down; Alt + wheel zooms. Click = playhead, drag = pan (see lanesPointerdown).
+  return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onPointerdown: e => lanesPointerdown(ctx, e), wheel: e => {
+    if (e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); return; }
+    const el = ctx.root.querySelector(".rw-lanes");
+    if (!el) return;
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientWidth : 1;
+    if (e.shiftKey) {
+      if (el.scrollHeight > el.clientHeight + 1) { e.preventDefault(); el.scrollTop += (e.deltaY || e.deltaX) * unit; }
+      return;
+    }
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && el.scrollWidth > el.clientWidth + 1) { e.preventDefault(); el.scrollLeft += e.deltaY * unit; }
   } },
   h("div", { class: "rw-lanes-inner", style: { width: HEAD_W + width + "px" } },
     h("div", { class: "rw-lane ruler" }, h("div", { class: "rw-lane-head mono rw-dim", help: "timeline.ruler" }, "24 fps"), ruler),
     lanes.map(([label, ic, cls, help, el, kind, extra]) => h("div", { class: ["rw-lane", kind] }, laneHead(label, ic, cls, help, extra), el)),
     playhead));
+}
+
+// added 2026-11-02 v0.3.3: screen pixels per editor pixel. ComfyUI scales the whole node with the canvas zoom, so
+// mouse distances must be divided by this before they become seconds.
+function scaleOf(ctx) {
+  const r = ctx.root.getBoundingClientRect();
+  return (r.width / (ctx.root.offsetWidth || r.width)) || 1;
+}
+
+// added 2026-11-02 v0.3.3: follow the pointer while the button is held. Capture-phase window listeners still see the
+// release when ComfyUI stops it on the way up, and a move with no button pressed ends the drag, so the
+// tracking can never outlive the press.
+function trackDrag(onMove, onEnd) {
+  let done = false;
+  const stop = ev => {
+    if (done) return;
+    done = true;
+    window.removeEventListener("pointermove", move, true);
+    window.removeEventListener("pointerup", stop, true);
+    window.removeEventListener("pointercancel", stop, true);
+    window.removeEventListener("blur", stop);
+    onEnd?.(ev);
+  };
+  const move = ev => { if (!(ev.buttons & 1)) stop(ev); else onMove(ev); };
+  window.addEventListener("pointermove", move, true);
+  window.addEventListener("pointerup", stop, true);
+  window.addEventListener("pointercancel", stop, true);
+  window.addEventListener("blur", stop);
+}
+
+// added 2026-11-02 v0.3.3: a press on the lanes. A drag pans the timeline (the playhead stays where it is); a click
+// on the ruler or on an empty part of a lane moves the playhead there. Clicks on scenes and chips keep their own action.
+const LANE_CONTROLS = ".rw-lane-head, button, input, select, textarea, a, .rw-resize, .rw-shot-tick, .rw-marker, .rw-playhead-label";
+function lanesPointerdown(ctx, e) {
+  if (e.button !== 0 || !(e.target instanceof Element) || e.target.closest(LANE_CONTROLS)) return;
+  e.rwOwned = true; // the editor root stops it there, so Nodes 2.0 doesn't start dragging the whole node
+  const t = e.target;
+  const empty = !!t.closest(".rw-ruler-lane") || t.matches(".rw-lane-body, .rw-lane, .rw-lanes-inner, .rw-lanes");
+  const el0 = e.currentTarget;
+  const x0 = e.clientX, y0 = e.clientY, sl0 = el0.scrollLeft, st0 = el0.scrollTop;
+  const sc = scaleOf(ctx);
+  let panning = false;
+  trackDrag(ev => {
+    if (!panning && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
+    if (!panning) { panning = true; ctx.root.classList.add("rw-panning"); }
+    const el = ctx.root.querySelector(".rw-lanes") || el0; // a re-render may have replaced the lanes
+    el.scrollLeft = sl0 - (ev.clientX - x0) / sc;
+    el.scrollTop = st0 - (ev.clientY - y0) / sc;
+  }, ev => {
+    ctx.root.classList.remove("rw-panning");
+    if (panning) {
+      // the release after a pan is not a click on whatever is under the pointer
+      // (nor a double-click: two quick pans would otherwise open the scene under the pointer)
+      const kill = ce => { ce.stopPropagation(); ce.preventDefault(); };
+      for (const type of ["click", "dblclick"]) window.addEventListener(type, kill, { capture: true, once: true });
+      setTimeout(() => { for (const type of ["click", "dblclick"]) window.removeEventListener(type, kill, true); }, 0);
+    } else if (empty && ev?.type === "pointerup") {
+      const ruler = ctx.root.querySelector(".rw-ruler-lane");
+      if (ruler) setPlayhead(ctx, (ev.clientX - ruler.getBoundingClientRect().left) / sc / zoomOf(ctx));
+    }
+  });
 }
 
 // added 2026-11-02 v0.3.0: right-click menu for an asset (timeline bin and Assets tab)
@@ -648,7 +737,8 @@ function sceneBlock(ctx, s, i, start, z) {
       const a = findAsset(p, id);
       if (!a) return;
       const rect = e.currentTarget.getBoundingClientRect();
-      const t = Math.max(0, Math.min(s.duration, (e.clientX - rect.left) / z));
+      // [OLD 2026-11-02 v0.3.2->v0.3.3] ignored ComfyUI's canvas zoom: const t = Math.max(0, Math.min(s.duration, (e.clientX - rect.left) / z));
+      const t = Math.max(0, Math.min(s.duration, (e.clientX - rect.left) / scaleOf(ctx) / z));
       ctx.actions.editScene(s.id, sc => {
         sc.refs.push({ id: newId("r"), asset: id, role: a.defaults.role, time: Math.round(t * FPS) / FPS, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack });
       });
@@ -700,7 +790,8 @@ function shotTick(ctx, s, sh, z) {
     let t = t0;
     tick.setPointerCapture(e.pointerId);
     const move = ev => {
-      t = Math.max(1 / FPS, Math.min(s.duration - 1 / FPS, t0 + (ev.clientX - x0) / z));
+      // [OLD 2026-11-02 v0.3.2->v0.3.3] ignored ComfyUI's canvas zoom: t = Math.max(1 / FPS, Math.min(s.duration - 1 / FPS, t0 + (ev.clientX - x0) / z));
+      t = Math.max(1 / FPS, Math.min(s.duration - 1 / FPS, t0 + (ev.clientX - x0) / scaleOf(ctx) / z));
       t = Math.round(t * FPS) / FPS;
       tick.style.left = t * z + "px";
       tick.dataset.label = fmtTime(t);
@@ -731,7 +822,8 @@ function resizeHandle(ctx, s, z, block) {
     block.append(tip);
     let d = d0;
     const move = ev => {
-      let frames = framesOf(Math.max(1 / FPS, d0 + (ev.clientX - x0) / z));
+      // [OLD 2026-11-02 v0.3.2->v0.3.3] ignored ComfyUI's canvas zoom: let frames = framesOf(Math.max(1 / FPS, d0 + (ev.clientX - x0) / z));
+      let frames = framesOf(Math.max(1 / FPS, d0 + (ev.clientX - x0) / scaleOf(ctx) / z));
       if (p.ui.snap) frames = Math.max(5, nearestGridFrames(frames));
       if (!p.ui.ripple && next) frames = Math.min(frames, framesOf(d0 + nextD0) - 1);
       d = frames / FPS;

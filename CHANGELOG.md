@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.3 — 2026-11-02
+
+- **Mouse wheel scrolls the timeline sideways** when the scenes don't fit. Shift + wheel scrolls up and down; Alt + wheel still zooms.
+- **The playhead only moves where you click** (the ruler or an empty part of a lane). It no longer follows the mouse: the ruler's drag tracking used window listeners that could miss the button release inside ComfyUI and keep running. Drags now track the button state and always end.
+- **Dragging the timeline pans it**, from the ruler, an empty lane or a scene block; the playhead stays put and the press doesn't select a scene or drag the node. To scrub, drag the playhead's time label.
+- Timeline mouse maths (click, pan, scrub, shot ticks, scene resize, dropping an asset) now account for ComfyUI's canvas zoom; at zoom levels other than 100 % they were off.
+
 ## v0.3.2 — 2026-11-02
 
 - **Describe with thinking models** (Qwen3 and similar on SGLang or vLLM): Describe gave the model only 400 tokens. A model that reasons first often used them all on reasoning, so the reply had no answer and Describe said "The model returned no text. Is it a vision model?". How long the reasoning runs varies per picture and per try, which is why it worked sometimes.
