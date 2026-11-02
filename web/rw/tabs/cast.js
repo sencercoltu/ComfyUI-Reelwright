@@ -3,7 +3,8 @@
 
 import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, confirmInline, chip } from "../ui.js";
 import { rw, viewURL } from "../api.js";
-import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes } from "../model.js";
+// [OLD 2026-11-02 v0.3.3->v0.3.4] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes } from "../model.js";
+import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription } from "../model.js";
 import { describeBox } from "./assets.js"; // added 2026-11-02 v0.2.0: describe from anchors
 
 const KINDS = [["character", "Characters"], ["location", "Locations"], ["prop", "Props"]];
@@ -119,8 +120,19 @@ function profileCard(ctx, c) {
       /* [OLD 2026-11-02 v0.1.0->v0.2.0] H3's guide numbers speakers S1, S2… by speaking order in each clip, so the prompt builder assigns them
       c.kind === "character" && field("Speaker ID", text({ value: c.speaker, key: "cast-spk-" + c.id, mono: true, width: "70px", help: "cast.speaker", onChange: v => edit(x => { x.speaker = v.toUpperCase(); }) }), { help: "cast.speaker" }),
       [/OLD] */
+      /* [OLD 2026-11-02 v0.3.3->v0.3.4] the anchors' descriptions were not used when this was empty
       h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.description" }, "Description"),
         textarea({ value: c.description, rows: 3, key: "cast-desc-" + c.id, help: "cast.description", placeholder: "Woman, early 30s, short auburn hair, navy pea coat with brass buttons.", onChange: v => edit(x => { x.description = v; }) })),
+      [/OLD] */
+      (() => {
+        const d = castDescription(p, c);
+        return h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.description" }, "Description"),
+          h("div", { class: "grow", style: { display: "flex", "flex-direction": "column", gap: "4px", "min-width": "0" } },
+            textarea({ value: c.description, rows: 3, key: "cast-desc-" + c.id, help: "cast.description",
+              placeholder: d.asset ? `Empty: uses ${d.asset.code}'s description, "${d.text}"` : "Woman, early 30s, short auburn hair, navy pea coat with brass buttons.",
+              onChange: v => edit(x => { x.description = v; }) }),
+            d.asset ? h("div", { class: "rw-dim small", help: "cast.description.fromAnchor" }, `Using ${d.asset.code}'s description (its first described anchor). Type here to override it.`) : null));
+      })(),
       // added 2026-11-02 v0.2.0: fill the description from the anchor pictures with a vision LLM
       c.anchors.length > 0 && h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.describe" }, "From anchors"),
         describeBox(ctx, {

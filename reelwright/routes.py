@@ -18,7 +18,8 @@ from server import PromptServer
 # [OLD 2026-11-02 v0.2.2->v0.3.0] from . import VERSION, assemble, continuity, llm, media, merge
 from . import VERSION, assemble, continuity, llm, media, merge, profiles
 from .analysis import analyze, plan_response
-from .model import normalize_project, project_index
+# [OLD 2026-11-02 v0.3.3->v0.3.4] from .model import normalize_project, project_index
+from .model import cast_description, normalize_project, project_index
 from .storage import ProjectStore, Roots, check_id, check_slug, read_json, safe_join
 
 log = logging.getLogger("reelwright")
@@ -449,7 +450,8 @@ async def cast_export(request):
         raise ValueError("unknown cast member")
     folder = os.path.join(store.cast_dir(c["id"]), "training")
     os.makedirs(folder, exist_ok=True)
-    caption = "{}, {}".format(re.sub(r"\W+", "_", c["name"]).lower(), c["description"]).strip(", ")
+    # [OLD 2026-11-02 v0.3.3->v0.3.4] caption = "{}, {}".format(re.sub(r"\W+", "_", c["name"]).lower(), c["description"]).strip(", ")
+    caption = "{}, {}".format(re.sub(r"\W+", "_", c["name"]).lower(), cast_description(c, idx["assets"])[0]).strip(", ")
     files = []
 
     def add(src, stem):

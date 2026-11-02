@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.4 — 2026-11-02
+
+- **Asset descriptions reach characters too.** Scenes already read an asset's description live when it is a scene reference, but a character's subject line only used the Cast tab description, so describing an anchor picture changed nothing. A cast member with no description of its own now uses the description of its first anchor picture that has one, in every scene it appears in, in the LLM's scene context and in the training-set caption. A character's own description still wins.
+- The asset inspector shows **where the description is used**: scene prompts (with links), the characters it describes, and why it isn't used where it isn't (the character has its own description, an earlier anchor is used, guide frames only send it when @mentioned, outfit pictures use the outfit's name).
+- Scene tab: each reference shows its asset's description (click to edit it in the Assets tab; empty ones are flagged), and each cast member shows the description its subject line uses.
+- Cast tab: an empty description shows which anchor's description is used instead.
+- Rewrite and Split now give the LLM each reference's description, not only its name.
+- New lint: a character with no description and no described anchor.
+
 ## v0.3.3 — 2026-11-02
 
 - **Mouse wheel scrolls the timeline sideways** when the scenes don't fit. Shift + wheel scrolls up and down; Alt + wheel still zooms.

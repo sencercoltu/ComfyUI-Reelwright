@@ -189,6 +189,22 @@ def project_index(p):
     }
 
 
+# added 2026-11-02 v0.3.4: a cast member without its own description is described by its anchor pictures,
+# so an asset's description reaches every scene the character is in
+def cast_description(c, assets):
+    """(text, asset_id) used for a cast member's subject line. The cast member's own description wins; otherwise
+    the description of its first anchor picture that has one. asset_id is None when the text is the cast's own."""
+    own = (c.get("description") or "").strip().rstrip(".")
+    if own:
+        return own, None
+    for aid in c.get("anchors") or []:
+        a = assets.get(aid)
+        d = ((a or {}).get("description") or "").strip().rstrip(".")
+        if a and a.get("kind") == "image" and d:
+            return d, aid
+    return "", None
+
+
 def scene_seed(p, scene, scene_index, take_number=0):
     o = scene["overrides"]
     if o.get("seed") is not None:

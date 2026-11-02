@@ -615,3 +615,8 @@
 .rw-progress .rw-meter-bar { height: 6px; }
 .rw-run { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; }
 .rw-qtag { font-size: 10px; padding: 0 5px; border-radius: 4px; background: rgba(251, 191, 36, 0.15); color: var(--warn); margin-left: 4px; font-family: var(--mono); }
+/* added 2026-11-02 v0.3.4: where an asset's description is used, and the description on a scene's reference */
+.rw-desc-uses { display: flex; flex-direction: column; gap: 3px; padding: 7px 10px; border-radius: 7px; background: var(--panel2); border: 1px solid var(--line); color: var(--text2); line-height: 1.45; }
+.rw-desc-uses b { font-weight: 500; color: var(--text3); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+.rw-ref-desc { text-align: left; font-size: 11px; color: var(--text2); max-width: 100%; display: block; }
+.rw-ref-desc.empty { color: var(--warn); }

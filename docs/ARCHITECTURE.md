@@ -81,7 +81,8 @@ lives on disk.
       "duration": 0, "width": 1024, "height": 1365, "category": "subject",
       "defaults": { "role": "reference", "retention": "fully_preserved", "keep": ["face", "hair"], "soundtrack": false },
       "notes": "",
-      "description": "" }                                  // v0.2.0: the asset's subject line
+      "description": "" }                                  // v0.2.0: the asset's subject line; read live by every scene,
+                                                           //   and by a cast member without its own description (v0.3.4)
   ],
   "cast": [
     { "id": "c_1", "kind": "character",                 // character | location | prop

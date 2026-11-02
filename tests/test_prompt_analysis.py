@@ -168,3 +168,40 @@ def test_reference_pictures_become_subjects(harbor):
     assert "<Subject 1> is the wooden pier at dusk, shown in <Picture 1>." in b["prompt"]
     assert "<Subject 1> (appears in [Shot 1]): fully_preserved - planks and lamps are retained." in b["prompt"]
     assert "boats rock beside <Subject 1>" in b["prompt"]
+
+
+# added 2026-11-02 v0.3.4: an asset's description reaches every scene, including through a character's anchors
+def test_asset_description_reaches_every_scene_and_character(harbor):
+    from reelwright.model import cast_description, project_index
+    p = copy.deepcopy(harbor)
+    mara = p["cast"][0]
+    mara["description"] = ""
+    p["assets"][1]["description"] = "side view of the woman, auburn bob"  # a_side, second anchor
+    assets = project_index(p)["assets"]
+    assert cast_description(mara, assets) == ("side view of the woman, auburn bob", "a_side")
+    p["assets"][0]["description"] = "a woman in her thirties with short auburn hair."  # a_front, first anchor wins
+    assert cast_description(mara, project_index(p)["assets"]) == ("a woman in her thirties with short auburn hair", "a_front")
+    p["scenes"][1]["cast"] = [{"id": "c_mara", "outfit": ""}]
+    b, _ = _build(p, 1)
+    assert "<Subject 1> is Mara, a woman in her thirties with short auburn hair, shown in <Picture 1>." in b["prompt"]
+    # an edit to the asset changes the prompt; the character's own description still wins
+    p["assets"][0]["description"] = "a woman with a grey wool coat"
+    b, _ = _build(p, 1)
+    assert "<Subject 1> is Mara, a woman with a grey wool coat, shown in" in b["prompt"]
+    mara["description"] = "Mara, harbour clerk"
+    b, _ = _build(p, 1)
+    assert "<Subject 1> is Mara, Mara, harbour clerk, shown in" in b["prompt"]
+
+
+def test_llm_context_uses_live_descriptions(harbor):
+    import pytest
+    pytest.importorskip("aiohttp")
+    from reelwright.llm import scene_context
+    p = copy.deepcopy(harbor)
+    p["cast"][0]["description"] = ""
+    p["assets"][0]["description"] = "a woman with a grey wool coat"
+    p["scenes"][0]["refs"] = [{"id": "r_l", "asset": "a_letter", "role": "reference", "time": 0, "retention": "", "keep": [], "soundtrack": False}]
+    p["scenes"][0]["cast"] = [{"id": "c_mara", "outfit": ""}]
+    p["assets"][3]["description"] = "a folded letter with a red wax seal"
+    ctx = scene_context(p, p["scenes"][0])
+    assert "a folded letter with a red wax seal" in ctx and "a woman with a grey wool coat" in ctx

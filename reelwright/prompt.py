@@ -10,7 +10,8 @@ before its <Video k>), then standalone audio.
 import re
 
 from . import spec
-from .model import project_index
+# [OLD 2026-11-02 v0.3.3->v0.3.4] from .model import project_index
+from .model import cast_description, project_index
 from .planner import continuation_depth
 
 TAG_RE = re.compile(r"@\{([^}]+)\}|@([A-Za-z][\w-]*)")
@@ -453,7 +454,10 @@ def subject_definitions(p, scene, refs, pass_, ids):
         src = _labels("Picture", s["pictures"]) or _labels("Video", s["videos"])
         if s["cast"]:
             c = cast[s["cast"]]
-            bits = [c["name"]] + ([c["description"].strip().rstrip(".")] if c["description"].strip() else [])
+            # [OLD 2026-11-02 v0.3.3->v0.3.4] anchor pictures' descriptions were never used
+            # bits = [c["name"]] + ([c["description"].strip().rstrip(".")] if c["description"].strip() else [])
+            desc, _ = cast_description(c, assets)
+            bits = [c["name"]] + ([desc] if desc else [])
             text = "{} is {}".format(head, ", ".join(bits))
             if src:
                 text += ", shown in " + src

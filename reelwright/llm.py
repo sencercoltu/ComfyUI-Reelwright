@@ -11,6 +11,7 @@ import time
 import asyncio  # added 2026-11-02 v0.3.0
 import aiohttp
 
+from .model import cast_description  # added 2026-11-02 v0.3.4
 from .storage import read_json, write_json
 
 TIMEOUT = aiohttp.ClientTimeout(total=180)
@@ -297,14 +298,21 @@ def scene_context(p, scene):
     for r in scene["refs"]:
         a = idx_assets.get(r["asset"])
         if a:
-            refs.append("@{} {} ({}, {}{})".format(a["code"], a["name"] or a["file"], a["kind"], r["role"],
-                                                 ", at {:.2f}s".format(r["time"]) if r["role"] == "keyframe" else ""))
+            # [OLD 2026-11-02 v0.3.3->v0.3.4] the LLM saw the asset's name but not its description
+            # refs.append("@{} {} ({}, {}{})".format(a["code"], a["name"] or a["file"], a["kind"], r["role"],
+            #                                      ", at {:.2f}s".format(r["time"]) if r["role"] == "keyframe" else ""))
+            desc = (a.get("description") or "").strip()
+            refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], r["role"],
+                                                   ", at {:.2f}s".format(r["time"]) if r["role"] == "keyframe" else "",
+                                                   " - " + desc if desc else ""))
     people = []
     for e in scene["cast"]:
         c = cast.get(e["id"])
         if c:
+            # [OLD 2026-11-02 v0.3.3->v0.3.4] people.append("@{} - {} ({}){}".format(c["name"] if " " not in c["name"] else "{" + c["name"] + "}",
+            #                                       c["description"], c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
             people.append("@{} - {} ({}){}".format(c["name"] if " " not in c["name"] else "{" + c["name"] + "}",
-                                                  c["description"], c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
+                                                  cast_description(c, idx_assets)[0], c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
     shots = ["{:.2f}s {} | {}".format(float(s["t"]), s["camera"], s["text"]) for s in scene["shots"]]
     lines = ["{:.2f}s {}: <d>[{}] {}</d>".format(float(d["t"]), cast.get(d["speaker"], {}).get("name", "?"),
                                                d["language"], d["text"]) for d in scene["dialogue"]]

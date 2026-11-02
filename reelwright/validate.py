@@ -1,7 +1,8 @@
 """Lint rules. Problems are reported, never fixed silently; only errors block a render."""
 
 from . import spec
-from .model import project_index
+# [OLD 2026-11-02 v0.3.3->v0.3.4] from .model import project_index
+from .model import cast_description, project_index
 from .planner import continuation_depth
 
 
@@ -134,4 +135,11 @@ def lint_project(p, plans, builds, asset_exists):
                         described.add(a["id"])
                         issues.append(_issue("info", "{}: {} has no description, so its subject line is generic "
                                                      "(Assets tab: Describe with LLM)".format(name, a["code"]), sid))
+                    # added 2026-11-02 v0.3.4: a character with no description and no described anchor
+                    c = idx["cast"].get(subj.get("cast") or "")
+                    if c and c["id"] not in described and not cast_description(c, assets)[0]:
+                        described.add(c["id"])
+                        issues.append(_issue("info", "{}: {} has no description and none of its anchor pictures has "
+                                                     "one, so its subject line is only the name (Cast tab or Assets "
+                                                     "tab: Describe with LLM)".format(name, c["name"]), sid))
     return issues

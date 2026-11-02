@@ -382,6 +382,36 @@ export function assetCastUse(project, assetId) {
   return out;
 }
 
+// added 2026-11-02 v0.3.4: mirrors cast_description in reelwright/model.py. A cast member without its own
+// description uses the description of its first anchor picture that has one.
+const tidy = t => (t || "").trim().replace(/\.+$/, "");
+export function castDescription(project, c) {
+  const own = tidy(c.description);
+  if (own) return { text: own, asset: null };
+  for (const id of c.anchors || []) {
+    const a = findAsset(project, id);
+    if (a && a.kind === "image" && tidy(a.description)) return { text: tidy(a.description), asset: a };
+  }
+  return { text: "", asset: null };
+}
+
+// added 2026-11-02 v0.3.4: every place an asset's description ends up (or why it doesn't)
+export function descriptionUses(project, assetId) {
+  const out = [];
+  project.scenes.forEach((s, i) => {
+    for (const r of s.refs) if (r.asset === assetId) out.push({ how: r.role === "reference" ? "ref" : "guide", scene: s, index: i });
+  });
+  for (const c of project.cast) {
+    const scenes = project.scenes.filter(s => s.cast.some(x => x.id === c.id) || s.dialogue.some(d => d.speaker === c.id)).length;
+    if (c.anchors.includes(assetId)) {
+      const d = castDescription(project, c);
+      out.push({ how: d.asset?.id === assetId ? "cast" : d.asset ? "castOther" : d.text ? "castOwn" : "castNone", cast: c, scenes, by: d.asset });
+    }
+    if (c.outfits.some(o => (o.assets || []).includes(assetId))) out.push({ how: "outfit", cast: c, scenes });
+  }
+  return out;
+}
+
 // Chains of scenes linked by continuation (last frame or tail).
 export function continuityChains(project) {
   const chains = [];

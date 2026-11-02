@@ -258,6 +258,8 @@ more("scene.refs", "References", "Assets this scene sends to H3. A picture can b
 tip("scene.refs.role", "reference: guides the whole scene. first_frame / last_frame / keyframe: pins this picture at that exact frame.");
 tip("scene.refs.time", "When the keyframe is pinned, in seconds from the start of the scene.");
 tip("scene.refs.retention", "How closely H3 should follow this reference.");
+tip("scene.refs.description", "The asset's description as this scene uses it. It lives on the asset: click to edit it in the Assets tab, and every scene follows.");
+tip("scene.cast.description", "The description this character's subject line uses: its own, or its first described anchor picture's.");
 tip("scene.refs.keep", "Features to keep, written into the retention line (face, hair, coat …). Press Enter to add.");
 tip("scene.refs.soundtrack", "Also send this video's audio as its own <Audio n>, numbered just before the video.");
 tip("scene.refs.remove", "Remove this reference from the scene.");
@@ -290,7 +292,13 @@ tip("assets.browse.tile", "Click to select; click again to unselect. Then press 
 tip("assets.browse.used", "Already an asset in this project.");
 tip("assets.browse.clear", "Unselect everything.");
 tip("assets.browse.add", "Add the selected files as assets.");
+/* [OLD 2026-11-02 v0.3.3->v0.3.4] did not say that every scene and character picks it up
 more("assets.description", "Description", "A short visual description of what this asset shows. When the asset is used as a reference, it becomes its subject line, e.g. \"<Subject 2> is the wooden pier at dusk, shown in <Picture 3>.\" Without it the line is generic, which H3's guide warns against.\n\nWrite it yourself, or ask a vision LLM below.", "Visual description used in subject_definitions.");
+*/
+more("assets.description", "Description", "A short visual description of what this asset shows. When the asset is used as a reference, it becomes its subject line, e.g. \"<Subject 2> is the wooden pier at dusk, shown in <Picture 3>.\" Without it the line is generic, which H3's guide warns against.\n\nThe description is stored once, on the asset. Every scene builds its prompt from it each time, so an edit here reaches all scenes at once (and marks their takes stale). A character with no description of its own uses the description of its first described anchor picture.\n\nWrite it yourself, or ask a vision LLM below.", "Visual description used in every scene that uses this asset.");
+tip("assets.description.uses", "Where this description goes right now: scene prompts, and characters that use this picture as an anchor.");
+tip("assets.description.scene", "Open this scene.");
+tip("assets.description.cast", "Open this character in the Cast tab.");
 more("assets.describe", "Describe with LLM", "Sends this picture (or three frames of this video) to the LLM set on the Global tab with your question, for example \"describe the person on the left of this picture\" or \"describe the couch\". The model must accept images (a vision model).\n\nThe answer appears as a suggestion: Use replaces the description, Append adds to it, Dismiss throws it away.", "Ask a vision LLM to describe this asset.");
 tip("assets.describe.prompt", "What to ask about this asset. Empty uses the grey example. Enter sends it.");
 tip("assets.describe.result", "The model's answer. Nothing changes until you press Use or Append.");
@@ -349,7 +357,9 @@ tip("cast.name", "Name; in prompts write @Name, or @{Two Words} when it has spac
 tip("cast.kind", "Character, location or prop.");
 // [OLD 2026-11-02 v0.1.0->v0.2.0] speaker field removed from the UI: tip("cast.speaker", "Speaker ID used in dialogue: <Subject n> (S1). Keep it stable.");
 tip("cast.speaker", "Older projects stored a fixed speaker ID here. H3's guide numbers speakers by speaking order in each clip, so the prompt builder now assigns S1, S2… itself.");
-tip("cast.description", "Short visual description written into every scene's subject definitions.");
+// [OLD 2026-11-02 v0.3.3->v0.3.4] tip("cast.description", "Short visual description written into every scene's subject definitions.");
+tip("cast.description", "Short visual description written into every scene's subject definitions. Leave it empty to use the description of the first anchor picture that has one (Assets tab).");
+tip("cast.description.fromAnchor", "This character has no description of its own, so its subject line uses this anchor picture's description. Edit it in the Assets tab, or type a description here to override it.");
 // added 2026-11-02 v0.2.0
 more("cast.describe", "Describe from anchors", "Sends up to four anchor pictures to the LLM set on the Global tab and asks your question, for example \"describe the person on the left\" or \"describe only the coat\". The model must accept images (a vision model).\n\nThe answer appears as a suggestion: Use replaces the description, Append adds to it, Dismiss throws it away. Nothing is sent during a render.", "Ask a vision LLM to describe this entry from its anchor pictures.");
 tip("cast.describe.prompt", "What to ask about the anchor pictures. Empty uses the grey example. Enter sends it.");

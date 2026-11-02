@@ -92,7 +92,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Upload images, video and audio into `input/reelwright/<project>/`. Codes are assigned automatically: P1…, V1…, A1….
 - ✅ Delete an asset (inspector button or right-click menu, with confirmation): it is removed from every scene, cast anchor, voice, outfit and the score track. The file stays on disk.
 - ✅ Add files that are already in ComfyUI: a browser lists ComfyUI's input folder (imported files) and output folder (generated files), newest first, filterable by path and kind. Input files are used in place; output files are hard-linked (or copied) into `input/reelwright/<project>/from_output/`.
-- ✅ Each picture or video has a description that becomes its subject line. **Describe with LLM** sends the picture (or three frames of a video) to a vision-capable model with your own question (“describe the person on the left”, “describe the couch”); the answer is offered as a suggestion to use or append.
+- ✅ Each picture or video has a description that becomes its subject line. It is stored once on the asset and every scene reads it when its prompt is built, so an edit reaches all scenes at once; the inspector lists where it is used, and each scene's References card shows it. **Describe with LLM** sends the picture (or three frames of a video) to a vision-capable model with your own question (“describe the person on the left”, “describe the couch”); the answer is offered as a suggestion to use or append.
 - ✅ Each asset has defaults that any scene can override: role, retention, features to keep, soundtrack use, and a category (location, prop, style, keyframe, camera, ambience, music, voice, SFX).
 - ✅ Usage list: every scene that uses an asset, with its role and retention, and whether that scene overrides the asset's defaults.
 - ✅ Reference budget per scene and per pass:
@@ -109,7 +109,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Story bible: characters, locations and props.
 - ✅ Character:
   - anchor set (any number of angles), optionally packed into one 2×2 or 3×3 sheet so it uses 1 picture slot;
-  - description, written into subject definitions, optionally drafted from the anchors with a vision LLM;
+  - description, written into subject definitions, optionally drafted from the anchors with a vision LLM; when it is empty, the description of the first anchor picture that has one is used;
   - outfits, each with its own retention and features to keep;
   - voice reference (speaker IDs are numbered per clip by the prompt builder);
   - language;

@@ -6,6 +6,7 @@ import { rw, viewURL } from "../api.js";
 import { assetMenu } from "./timeline.js"; // added 2026-11-02 v0.3.0
 import {
   ASSET_CATEGORIES, ROLES, newId, assignCodes, retentionOptions, assetUsage, assetCastUse, sceneBudget, budgetIssues, findAsset,
+  descriptionUses, sceneIndex, // added 2026-11-02 v0.3.4
 } from "../model.js";
 
 const KIND_CLASS = { image: "pic", video: "vid", audio: "aud" };
@@ -200,6 +201,30 @@ function browserCard(ctx) {
   });
 }
 
+// added 2026-11-02 v0.3.4: where this asset's description is used, read live from the project. Scenes build their
+// prompts from it every time, so an edit here reaches all of them at once.
+function descriptionWhere(ctx, a) {
+  const p = ctx.p;
+  const uses = descriptionUses(p, a.id);
+  const num = s => String(sceneIndex(p, s.id) + 1).padStart(2, "0");
+  const sceneLinks = list => list.map((u, k) => [k ? ", " : "", h("button", { type: "button", class: "link mono", help: "assets.description.scene", onClick: () => ctx.actions.select(u.scene.id, "scene") }, num(u.scene))]);
+  const castLink = c => h("button", { type: "button", class: "link", help: "assets.description.cast", onClick: () => { ctx.store.setEph({ selectedCast: c.id }); ctx.actions.setTab("cast"); } }, c.name);
+  const refs = uses.filter(u => u.how === "ref"), guides = uses.filter(u => u.how === "guide");
+  const rows = [];
+  if (refs.length) rows.push(h("div", null, `In the prompt of scene${refs.length > 1 ? "s" : ""} `, sceneLinks(refs), "."));
+  for (const u of uses) {
+    const own = u.cast?.kind === "character" ? "their own" : "its own";
+    if (u.how === "cast") rows.push(h("div", null, castLink(u.cast), `'s subject line in ${u.scenes} scene${u.scenes === 1 ? "" : "s"} (no description of ${own} in the Cast tab).`));
+    if (u.how === "castOwn") rows.push(h("div", { class: "rw-dim" }, "Not used for ", castLink(u.cast), `: ${own} description (Cast tab) is used instead.`));
+    if (u.how === "castOther") rows.push(h("div", { class: "rw-dim" }, "Not used for ", castLink(u.cast), `: ${u.by.code} is an earlier anchor with a description.`));
+    if (u.how === "castNone") rows.push(h("div", { class: "rw-dim" }, castLink(u.cast), "'s subject line will use this once it has text."));
+    if (u.how === "outfit") rows.push(h("div", { class: "rw-dim" }, "Outfit picture of ", castLink(u.cast), ": the outfit's name is used, not this text."));
+  }
+  if (guides.length) rows.push(h("div", { class: "rw-dim" }, "Guide frame in scene ", sceneLinks(guides), ": sent only when the prompt mentions @" + a.code + "."));
+  if (!rows.length) rows.push(h("div", { class: "rw-dim" }, "Not used in any scene yet."));
+  return h("div", { class: "rw-desc-uses small", help: "assets.description.uses" }, h("b", null, "Used in"), rows);
+}
+
 // ---- describe with a vision LLM (added 2026-11-02 v0.2.0) ----
 
 const DESCRIBE_PROMPTS = {
@@ -315,7 +340,8 @@ function inspector(ctx) {
     // added 2026-11-02 v0.2.0: the description becomes this asset's subject line ("<Subject 1> is …")
     a.kind !== "audio" && section({
       title: "Description", help: "assets.description",
-      actions: h("span", { class: "rw-dim small" }, "goes into subject_definitions"),
+      // [OLD 2026-11-02 v0.3.3->v0.3.4] actions: h("span", { class: "rw-dim small" }, "goes into subject_definitions"),
+      actions: h("span", { class: "rw-dim small" }, "every scene that uses it, live"),
       children: [
         textarea({ value: a.description || "", rows: 3, key: "asset-desc-" + a.id, help: "assets.description",
           placeholder: a.category === "location" ? "the wooden pier at dusk, wet planks, iron lamps" : "the young woman with long dark hair and a blue cardigan",
@@ -324,6 +350,7 @@ function inspector(ctx) {
           key: "asset-" + a.id, ids: [a.id], defaultPrompt: DESCRIBE_PROMPTS[a.category] || "Describe the main subject.",
           apply: (t, mode) => edit(x => { x.description = mode === "append" && x.description ? x.description.replace(/[.\s]*$/, "") + "; " + t : t; }),
         }),
+        descriptionWhere(ctx, a), // added 2026-11-02 v0.3.4
       ],
     }),
     section({
