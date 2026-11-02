@@ -115,4 +115,23 @@ def lint_project(p, plans, builds, asset_exists):
                         code = "@" + assets[aid]["code"]
                         if not img["cast"] and code.lower() not in text.lower():
                             issues.append(_issue("info", "{}: {} is attached but never named in the prompt".format(where, code), sid))
+            # added 2026-11-02 v0.2.0: hints from MiniMax's Ref2VA prompt guide (ref-en.txt)
+            elif not (s["prompt"]["pass_prompts"] or {}).get(str(pass_["index"]), "").strip():
+                desc = b["prompt"].split("detailed_description:\n", 1)[-1].split("\n\noverall_soundscape:", 1)[0]
+                words = len(desc.split())
+                if words < 120:
+                    issues.append(_issue("info", "{}: detailed_description has {} words; H3's guide aims for 350-500 "
+                                                 "(Rewrite can expand it)".format(where, words), sid))
+        if s["prompt"]["mode"] != "raw":
+            if not s["prompt"]["sections"]["overall_soundscape"].strip():
+                issues.append(_issue("info", "{}: overall_soundscape is empty, so H3 gets N/A, which its guide "
+                                             "reserves for complete silence".format(name), sid))
+            described = set()
+            for b in builds[sid]:
+                for subj in b["subjects"]:
+                    a = assets.get(subj.get("asset") or "")
+                    if a and not (a.get("description") or "").strip() and a["id"] not in described:
+                        described.add(a["id"])
+                        issues.append(_issue("info", "{}: {} has no description, so its subject line is generic "
+                                                     "(Assets tab: Describe with LLM)".format(name, a["code"]), sid))
     return issues

@@ -142,6 +142,7 @@ export function segmented({ options, value, onChange, help, key, small }) {
     }));
 }
 
+/* [OLD 2026-11-02 v0.1.0->v0.2.0] native <select> could not be searched; replaced by the combobox below
 export function select({ options, value, onChange, help, key, placeholder, mono, width }) {
   const opts = options.map(o => (typeof o === "string" ? { value: o, label: o } : o));
   const known = opts.some(o => o.value === value);
@@ -154,6 +155,136 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
   opts.map(o => h("option", { value: o.value }, o.label)));
   sel.value = value ?? "";
   return sel;
+}
+[/OLD] */
+
+// added 2026-11-02 v0.2.0: type-to-filter combobox with the same API as the old select().
+// Typing narrows the list (every word must match, e.g. "minimax int8"); arrows + Enter pick.
+// `free: true` also accepts a typed value that is not in the list (languages, LLM model ids).
+// The list lives in the editor root so cards with overflow cannot clip it.
+export const comboState = { open: 0, onClose: null, restoring: false };
+
+export function select({ options, value, onChange, help, key, placeholder, mono, width, free = false }) {
+  const given = options.map(o => (typeof o === "string" ? { value: o, label: o } : o));
+  // the old <select> turned the placeholder into an empty first option ("none", "no voice reference"),
+  // so keep it pickable; "+ Add…" placeholders are prompts, not values
+  const noneOpt = placeholder !== undefined && !String(placeholder).startsWith("+") && !given.some(o => o.value === "");
+  const opts = noneOpt ? [{ value: "", label: placeholder }, ...given] : given;
+  const cur = opts.find(o => o.value === value);
+  const missing = !cur && !!value && !free;
+  const shown = cur ? (cur.value === "" ? "" : cur.label) : (value || "");
+  const input = h("input", {
+    type: "text", class: ["rw-combo-input", mono && "mono", missing && "missing"], help, key,
+    placeholder: placeholder ?? (free ? "type or pick…" : "type to filter…"),
+    autocomplete: "off", spellcheck: "false", role: "combobox", "aria-expanded": "false", "aria-autocomplete": "list",
+  });
+  input.value = missing ? value + " (missing)" : shown;
+  const wrap = h("span", { class: ["rw-select", "rw-combo", mono && "mono"], style: width ? { width } : null });
+  let list = null, items = [], active = -1, done = false;
+
+  const matches = q => {
+    const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+    return opts.filter(o => { const s = (o.label + " " + o.value).toLowerCase(); return terms.every(t => s.includes(t)); });
+  };
+  const mark = (label, q) => {
+    const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return label;
+    const re = new RegExp("(" + terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+    return label.split(re).map((part, i) => (i % 2 ? h("mark", null, part) : part));
+  };
+  function position() {
+    const root = wrap.closest(".rw-root");
+    if (!root || !list) return;
+    const rr = root.getBoundingClientRect(), r = wrap.getBoundingClientRect();
+    const sc = rr.width / (root.offsetWidth || rr.width) || 1;
+    const below = (rr.bottom - r.bottom) / sc - 10, above = (r.top - rr.top) / sc - 10;
+    const up = below < 160 && above > below;
+    const w = Math.max(r.width / sc, 200);
+    let left = (r.left - rr.left) / sc;
+    left = Math.max(6, Math.min(root.offsetWidth - w - 6, left));
+    list.style.left = left + "px";
+    list.style.minWidth = w + "px";
+    list.style.maxWidth = Math.max(w, Math.min(520, root.offsetWidth - 12)) + "px";
+    list.style.maxHeight = Math.max(120, Math.min(300, up ? above : below)) + "px";
+    list.style.top = up ? "" : ((r.bottom - rr.top) / sc + 3) + "px";
+    list.style.bottom = up ? ((rr.bottom - r.top) / sc + 3) + "px" : "";
+  }
+  function paint(q) {
+    items = matches(q);
+    const typed = q.trim();
+    const freeItem = free && typed && !opts.some(o => o.value.toLowerCase() === typed.toLowerCase());
+    if (active >= items.length + (freeItem ? 1 : 0)) active = items.length - 1;
+    // falsy extras are filtered out: replaceChildren() would print them as "null"
+    list.replaceChildren(...[
+      ...items.map((o, i) => h("button", {
+        type: "button", class: ["rw-combo-opt", i === active && "active", o.value === value && "cur", o.value === "" && "none"], role: "option",
+        onPointerdown: e => { e.preventDefault(); choose(o); },
+      }, mark(o.label, q))),
+      freeItem ? h("button", { type: "button", class: ["rw-combo-opt free", active === items.length && "active"],
+        onPointerdown: e => { e.preventDefault(); choose({ value: typed, label: typed }); } }, "Use “" + typed + "”") : null,
+      !items.length && !freeItem ? h("div", { class: "rw-combo-empty" }, opts.length ? "No match" : "Nothing to pick yet") : null].filter(Boolean));
+    list.querySelector(".active")?.scrollIntoView({ block: "nearest" });
+  }
+  function open(q) {
+    const root = wrap.closest(".rw-root");
+    if (!root) return;
+    if (!list) {
+      list = h("div", { class: ["rw-combo-list", mono && "mono"], role: "listbox" });
+      root.appendChild(list);
+      comboState.open++;
+      input.setAttribute("aria-expanded", "true");
+    }
+    if (q === "" && active < 0) active = Math.max(0, opts.findIndex(o => o.value === value));
+    paint(q);
+    position();
+  }
+  function close() {
+    if (!list) return;
+    list.remove();
+    list = null;
+    active = -1;
+    input.setAttribute("aria-expanded", "false");
+    comboState.open = Math.max(0, comboState.open - 1);
+    if (!comboState.open && comboState.onClose) { const f = comboState.onClose; comboState.onClose = null; f(); }
+  }
+  function choose(o) {
+    done = true;
+    input.value = o.value === "" ? "" : o.label;
+    close();
+    if (o.value !== value) onChange(o.value);
+  }
+  function revert() { input.value = missing ? value + " (missing)" : shown; }
+
+  // the editor re-focuses keyed fields after each render; that must not pop the list open again
+  input.addEventListener("focus", () => { done = false; if (comboState.restoring) return; input.select(); open(""); });
+  input.addEventListener("pointerdown", () => { if (document.activeElement === input && !list) open(""); });
+  input.addEventListener("input", () => { active = 0; open(input.value); });
+  input.addEventListener("keydown", e => {
+    const n = items.length + (list?.querySelector(".free") ? 1 : 0);
+    if (e.key === "ArrowDown") { e.preventDefault(); if (!list) open(""); else { active = Math.min(n - 1, active + 1); paint(input.value === shown ? "" : input.value); } }
+    else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(0, active - 1); if (list) paint(input.value === shown ? "" : input.value); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      const q = input.value === shown ? "" : input.value;
+      if (active >= 0 && active < items.length) choose(items[active]);
+      else if (free && q.trim()) choose({ value: q.trim(), label: q.trim() });
+      input.blur();
+    } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); revert(); close(); input.blur(); }
+  });
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (done) return;
+      const typed = input.value.trim();
+      if (free && typed && typed !== shown) { choose({ value: typed, label: typed }); return; }
+      revert();
+      close();
+    }, 0);
+  });
+  wrap.append(input, h("button", {
+    type: "button", class: "rw-combo-btn", tabindex: "-1", "aria-label": "Show options", help,
+    onPointerdown: e => { e.preventDefault(); if (list) close(); else input.focus(); },
+  }, icon("chevDown", 11)));
+  return wrap;
 }
 
 export function number({ value, onChange, help, key, min, max, step = 1, width = "84px", unit, mono = true }) {

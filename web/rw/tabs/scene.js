@@ -235,7 +235,8 @@ function shotsCard(ctx, s) {
       h("datalist", { id: listId }, presets.map(v => h("option", { value: v }))),
       s.shots.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.shots" }, "No shots: the scene is written as one continuous take.")
         : s.shots.map((sh, i) => h("div", { class: "rw-list-row shot" },
-          h("span", { class: "mono rw-dim", help: "scene.shots.index" }, `[Shot${i + 1}]`),
+          // [OLD 2026-11-02 v0.1.0->v0.2.0] h("span", { class: "mono rw-dim", help: "scene.shots.index" }, `[Shot${i + 1}]`),  (guide writes [Shot 1])
+          h("span", { class: "mono rw-dim", help: "scene.shots.index" }, `[Shot ${i + 1}]`),
           number({ value: Number(sh.t.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "86px", unit: "s", help: "scene.shots.time",
             onChange: v => edit(sh.id, (x, sc) => { x.t = Math.round((v ?? 0) * FPS) / FPS; sc.shots.sort((a, b) => a.t - b.t); }) }),
           h("input", { class: "rw-input", list: listId, placeholder: "camera", value: sh.camera, key: `shot-cam-${sh.id}`, help: "scene.shots.camera",
@@ -250,7 +251,10 @@ function shotsCard(ctx, s) {
 
 function dialogueCard(ctx, s) {
   const p = ctx.p;
+  /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs now follow speaking order per clip (see the prompt preview)
   const speakers = p.cast.filter(c => c.kind === "character").map(c => ({ value: c.id, label: `${c.name} (${c.speaker || "S?"})` }));
+  [/OLD] */
+  const speakers = p.cast.filter(c => c.kind === "character").map(c => ({ value: c.id, label: c.name }));
   const langs = STABLE_LANGUAGES.map(l => ({ value: l, label: l }));
   const edit = (id, fn) => ctx.actions.editScene(s.id, sc => { const x = sc.dialogue.find(q => q.id === id); if (x) fn(x, sc); });
   return section({
@@ -267,7 +271,10 @@ function dialogueCard(ctx, s) {
           select({ options: speakers, value: d.speaker, placeholder: "speaker", help: "scene.dialogue.speaker", width: "130px", onChange: v => edit(d.id, x => { x.speaker = v; }) }),
           number({ value: Number(d.t.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "80px", unit: "s", help: "scene.dialogue.time",
             onChange: v => edit(d.id, (x, sc) => { x.t = v ?? 0; sc.dialogue.sort((a, b) => a.t - b.t); }) }),
+          /* [OLD 2026-11-02 v0.1.0->v0.2.0] language is now typed or picked (free combobox)
           select({ options: langs, value: d.language, help: "scene.dialogue.language", width: "104px", onChange: v => edit(d.id, x => { x.language = v; }) }),
+          [/OLD] */
+          select({ options: langs, value: d.language, free: true, help: "scene.dialogue.language", width: "104px", onChange: v => edit(d.id, x => { x.language = v; }) }),
           h("input", { class: "rw-input", style: { width: "90px" }, placeholder: "delivery", value: d.delivery, key: `dlg-del-${d.id}`, help: "scene.dialogue.delivery",
             onChange: e => edit(d.id, x => { x.delivery = e.target.value; }) }),
           h("input", { class: "rw-input grow", placeholder: "the spoken line", value: d.text, key: `dlg-text-${d.id}`, help: "scene.dialogue.text",
@@ -439,7 +446,10 @@ function castCard(ctx, s) {
         const anchor = findAsset(p, c.anchors[0]);
         return h("div", { class: "rw-list-row" },
           anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
+          /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are assigned per clip now
           h("div", { class: "grow" }, h("b", null, c.name), h("div", { class: "rw-dim small" }, `${c.kind}${c.speaker ? " · " + c.speaker : ""} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`)),
+          [/OLD] */
+          h("div", { class: "grow" }, h("b", null, c.name), h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`)),
           c.outfits.length > 0 && select({ options: c.outfits.map(o => ({ value: o.id, label: o.name })), value: sc.outfit || c.default_outfit, help: "scene.cast.outfit",
             onChange: v => ctx.actions.editScene(s.id, x => { x.cast.find(q => q.id === c.id).outfit = v; }) }),
           button({ icon: "close", small: true, variant: "ghost", help: "scene.cast.remove", onClick: () => ctx.actions.editScene(s.id, x => { x.cast = x.cast.filter(q => q.id !== c.id); }) }));

@@ -8,6 +8,7 @@ guides, file writing, pass stitching, takes, caching and the merge.
 import importlib.util
 import json
 import os
+import re  # added 2026-11-02 v0.2.0
 import subprocess
 import sys
 import types
@@ -134,6 +135,8 @@ def test_render_pending_then_cache_then_partial(stubs, harbor, store, roots):
         take = store.starred_take(sid)
         video = store.output_path(take["files"]["video"])
         assert merge.probe(video)["duration"] == pytest.approx(secs, abs=0.1), sid
+        # added 2026-11-02 v0.2.0: takes are named <slug>_<NN>_<title>_<take>.mp4
+        assert re.fullmatch(r"harbor_lights_\d\d_[a-z0-9_]+_" + re.escape(take["id"]) + r"\.mp4", os.path.basename(video)), video
         for k in ("first", "last", "tail"):
             assert os.path.isfile(store.output_path(take["files"][k]))
     assert os.path.isfile(store.output_path(store.starred_take("s_short")["files"]["passes"][0]))  # handles kept

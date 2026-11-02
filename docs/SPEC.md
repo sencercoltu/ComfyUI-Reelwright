@@ -17,7 +17,8 @@ validation · 🗺️ roadmap.
 | ✅ Optional inputs | `model`, `clip`, `vae`, `audio_vae`. A wired input replaces the matching Global-tab loader for the whole run. |
 | ✅ Outputs | `video` (the merged cut, or the last rendered scene), `last_frame`, `audio`, `scene_plan` (JSON) |
 | ✅ Editor | Timeline · Scene · Assets · Cast · Render · Global tabs inside the node |
-| ✅ Help | Every control has a hover tooltip; every section has a **?** button with a longer explanation |
+| ✅ Pickers | Every drop-down is a type-to-filter combobox (every typed word must match); language and LLM model also accept values that are not in the list |
+| ✅ Help | Every control has a hover tooltip; every section has a **?** button with a longer explanation that opens beside the icon, stays inside the node and can be dragged by its header |
 | ✅ Storage | Settings are saved in the workflow, plus an autosave with versions on disk. Renders live under `output/reelwright/<project>/` |
 
 The node does not output a frame batch for the whole film. A 90 s film at
@@ -49,11 +50,13 @@ output, and `video` points at them.
   - **Tail clip**: the previous scene's last N frames (17k+5) become a guide clip at frame 0, plus its audio. The overlap is trimmed in the final cut, so motion, light and sound continue.
 - ✅ References: any asset, with a role (reference / first frame / last frame / keyframe at time t), a retention label, the features to keep, and whether to use a video's soundtrack.
 - ✅ Retention labels follow the H3 guide. Visual: `fully_preserved`, `partially_preserved`, `attribute_transfer`, `weak_reference`. Audio: `fully_copy`, `partially_copy`, `reference`, `weak_reference`.
-- ✅ Shots: list of shots with start time, camera and action. Shot ticks show inside the scene block on the timeline and can be dragged. They are written as `[Shot1]`, `[Shot2] At 00:05.000, cut to …`.
-- ✅ Dialogue lines: speaker (from the Cast), time, language, delivery and text. Written as `<Subject n> (S1) whispers <d>[English] …</d>`.
+- ✅ Shots: list of shots with start time, camera and action. Shot ticks show inside the scene block on the timeline and can be dragged. They are written as `[Shot 1] A wide shot: …`, `[Shot 2] At 00:05.000, the shot cuts to …`, as in MiniMax's Ref2VA guide.
+- ✅ Dialogue lines: speaker (from the Cast), time, language, delivery and text. Written as `<Subject n> (S1) whispers, <d>[English] …</d>`. Speaker IDs follow speaking order inside each clip (first voice S1, next new voice S2), as the guide asks. The language is picked from H3's 11 stable languages or typed freely.
 - ✅ Camera: per-shot camera wording from presets, or a reference clip (uses a video slot).
 - ✅ Prompt editor with two views:
   - **Structured**: six sections (subject definitions, summary, retention analysis, detailed description, soundscape, music). Each can be auto-filled from refs, cast, shots and dialogue.
+  - The built prompt follows MiniMax's Ref2VA guide (`ref-en.txt`): the labels `subject_definitions:`, `summary:`, `retention_analysis:`, `detailed_description:`, `overall_soundscape:`, `non_diegetic_music:` each on their own line, in that order, with `N/A` for empty sections. Reference pictures that define a character, place, prop or style become `<Subject N>` lines (`<Subject 2> is the wooden pier at dusk, shown in <Picture 3>.`); standalone `<Picture N>` is kept for frame anchors. Retention lines name the shots a subject appears in (`<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - identity and appearance are retained.`).
+  - Info lints point at the guide's advice: a short detailed description, an empty soundscape (N/A means silence), a reference asset without a description.
   - **Raw**.
   - In both views, refer to assets as `@P1`, `@V2`, `@A1`, to cast members as `@Mara` or `@{Old Keeper}`, and to the continuation clip as `@tail`. Each pass renumbers these into `<Picture k>`, `<Video k>`, `<Audio k>`, `<Subject n>`, in the order the native node presents references.
 - ✅ Task tags are derived automatically: `reference generation`, `keyframe completion`, `video continuation`, `audio reference`, `audio reuse`, `video editing`.
@@ -84,6 +87,8 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 ## 6. Assets (Assets tab)
 
 - ✅ Upload images, video and audio into `input/reelwright/<project>/`. Codes are assigned automatically: P1…, V1…, A1….
+- ✅ Add files that are already in ComfyUI: a browser lists ComfyUI's input folder (imported files) and output folder (generated files), newest first, filterable by path and kind. Input files are used in place; output files are hard-linked (or copied) into `input/reelwright/<project>/from_output/`.
+- ✅ Each picture or video has a description that becomes its subject line. **Describe with LLM** sends the picture (or three frames of a video) to a vision-capable model with your own question (“describe the person on the left”, “describe the couch”); the answer is offered as a suggestion to use or append.
 - ✅ Each asset has defaults that any scene can override: role, retention, features to keep, soundtrack use, and a category (location, prop, style, keyframe, camera, ambience, music, voice, SFX).
 - ✅ Usage list: every scene that uses an asset, with its role and retention, and whether that scene overrides the asset's defaults.
 - ✅ Reference budget per scene and per pass:
@@ -100,9 +105,9 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Story bible: characters, locations and props.
 - ✅ Character:
   - anchor set (any number of angles), optionally packed into one 2×2 or 3×3 sheet so it uses 1 picture slot;
-  - description, written into subject definitions;
+  - description, written into subject definitions, optionally drafted from the anchors with a vision LLM;
   - outfits, each with its own retention and features to keep;
-  - voice reference and speaker ID (S1, S2…);
+  - voice reference (speaker IDs are numbered per clip by the prompt builder);
   - language;
   - optional identity LoRA, added automatically to every scene the character is in.
 - ✅ Identity always comes from the anchors, never through a chain of rendered frames. Scene 10 gets the same identity inputs as scene 1.
@@ -125,7 +130,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Resume: after a crash or restart, a run reuses everything on disk whose key still matches.
 - ✅ Render scope: pending only, selected scenes, from the playhead on, everything, or a new take of one scene.
 - ✅ Takes: every render is kept as a take. Star one; it is used for continuation and merge. Compare two takes side by side in the A/B view.
-- ✅ Disk layout per take: `video.mp4`, `first.png`, `last.png`, `tail.mp4`, `meta.json`, plus `passes/` for long scenes.
+- ✅ Disk layout per take: `<project>_<NN>_<scene title>_<take>.mp4` (e.g. `harbor_lights_02_mara_on_the_pier_v2.mp4`), `first.png`, `last.png`, `tail.mp4`, `meta.json`, plus `passes/` for long scenes. The Render tab shows each scene's file and opens it.
 - ✅ Memory policy between scenes: keep models / free cache but keep models (default) / unload everything. "Encode all prompts first" encodes every pass with the text encoder, then unloads it (about 27 GB) before sampling starts.
 - ✅ Groups scenes with the same LoRA stack together when they don't depend on each other, so fewer LoRA re-patches are needed.
 - ✅ Live progress on the timeline blocks (pass, step) through websocket events. Interrupting from ComfyUI stops the run cleanly.
@@ -134,7 +139,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 
 ## 9. Merge (Render tab)
 
-- ✅ **Merge scenes** button. It doesn't re-render anything; it uses the starred takes. Scenes that aren't ready can be skipped, shown as a slate, or block the merge.
+- ✅ **Merge** button next to the scenes-and-takes table (and in the Merge card). It doesn't re-render anything; it uses the starred takes. Scenes that aren't ready can be skipped, shown as a slate, or block the merge.
 - ✅ Seams: plain cut, crossfade or dip to black for hard cuts. Continuation seams trim the overlap and crossfade inside it. Each seam can be overridden.
 - ✅ Audio:
   - a short fade at every seam;

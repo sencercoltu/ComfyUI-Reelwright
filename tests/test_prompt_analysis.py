@@ -124,3 +124,47 @@ def test_plan_response_shape(harbor, store):
     assert set(s) >= {"status", "key", "passes", "prompts", "issues", "takes"}
     assert {"index", "start", "end", "gen_frames", "keep_in", "keep_out", "seam_before", "overlap_frames", "seed"} <= set(s["passes"][0])
     assert out["timeline"]["total"] == 42.5
+
+
+# added 2026-11-02 v0.2.0: output follows MiniMax's official Ref2VA guide (ref-en.txt)
+def test_ref2va_sections_follow_the_guide(harbor):
+    b, _ = _build(harbor, 1)
+    heads = [line for line in b["prompt"].split("\n") if line.endswith(":") and " " not in line]
+    assert heads == ["subject_definitions:", "summary:", "retention_analysis:", "detailed_description:",
+                     "overall_soundscape:", "non_diegetic_music:"]
+    for old in ("Subjects:", "Retention:", "Shots:", "Single continuous take", "[Shot1]"):
+        assert old not in b["prompt"]
+    assert "<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>." in b["prompt"]
+    assert "<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - identity and appearance are retained." in b["prompt"]
+    assert "[Shot 1] A wide shot: Mara leaves the pier." in b["prompt"]
+    assert "[Shot 2] At 00:06.000, the shot cuts to a tracking shot: along the seawall." in b["prompt"]
+    assert "summary:\n[reference generation + video continuation + audio reference] <Subject 1> walks home" in b["prompt"]
+    assert b["prompt"].endswith("overall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A")
+
+
+def test_speaker_ids_follow_speaking_order_per_pass(harbor):
+    p = copy.deepcopy(harbor)
+    p["cast"].append({"id": "c_finn", "name": "Finn", "speaker": "S7", "kind": "character", "anchors": [],
+                      "outfits": [], "description": "", "voice": "", "lora": {"name": "", "strength": 1}})
+    s = p["scenes"][0]
+    s["cast"] = [{"id": "c_mara", "outfit": ""}, {"id": "c_finn", "outfit": ""}]
+    s["dialogue"] = [{"id": "d_a", "speaker": "c_finn", "t": 1.0, "text": "Late again", "language": "English", "delivery": "calls out"},
+                     {"id": "d_b", "speaker": "c_mara", "t": 3.0, "text": "Sorry!", "language": "English", "delivery": ""}]
+    b, _ = _build(p, 0)
+    assert "<Subject 2> (S1) calls out, <d>[English] Late again.</d>" in b["prompt"]
+    assert "<Subject 1> (S2) says, <d>[English] Sorry!</d>" in b["prompt"]
+    assert "<Audio 1> is the voice-timbre reference for <Subject 1> (S2)." in b["prompt"]
+    assert "(S" not in b["prompt"].split("retention_analysis:")[1].split("detailed_description:")[0]
+
+
+def test_reference_pictures_become_subjects(harbor):
+    p = copy.deepcopy(harbor)
+    p["assets"].append({"id": "a_pier", "code": "P9", "kind": "image", "name": "pier", "file": p["assets"][0]["file"],
+                        "category": "location", "description": "the wooden pier at dusk", "defaults": {}})
+    p["scenes"][0]["refs"] = [{"id": "r_pier", "asset": "a_pier", "role": "reference", "keep": ["planks", "lamps"]}]
+    p["scenes"][0]["shots"][0]["text"] = "boats rock beside @P9"
+    b, _ = _build(p, 0)
+    assert b["tag_map"]["@P9"] == "<Subject 1>"
+    assert "<Subject 1> is the wooden pier at dusk, shown in <Picture 1>." in b["prompt"]
+    assert "<Subject 1> (appears in [Shot 1]): fully_preserved - planks and lamps are retained." in b["prompt"]
+    assert "boats rock beside <Subject 1>" in b["prompt"]

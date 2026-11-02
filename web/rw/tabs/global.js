@@ -162,7 +162,10 @@ function defaultsCard(ctx) {
     children: [
       field("Duration", number({ value: d.duration, min: 0.25, step: 0.25, unit: "s", help: "global.defaults.duration", onChange: v => set(x => { x.duration = v ?? 8; }) }), { help: "global.defaults.duration" }),
       field("Starts from", segmented({ small: true, value: d.start_mode, help: "global.defaults.start", options: START_MODES.map(m => ({ value: m, label: m.replace("_", " "), help: "scene.start." + m })), onChange: v => set(x => { x.start_mode = v; }) }), { help: "global.defaults.start" }),
+      /* [OLD 2026-11-02 v0.1.0->v0.2.0] language is now typed or picked (free combobox)
       field("Language", select({ options: STABLE_LANGUAGES, value: d.language, help: "global.defaults.language", onChange: v => set(x => { x.language = v; }) }), { help: "global.defaults.language" }),
+      [/OLD] */
+      field("Language", select({ options: STABLE_LANGUAGES, value: d.language, free: true, help: "global.defaults.language", onChange: v => set(x => { x.language = v; }) }), { help: "global.defaults.language" }),
       h("div", { class: "rw-subhead" }, "Long scenes"),
       field("Longest pass", number({ value: L.max_pass_frames, min: 124, max: 362, step: 17, unit: "f", help: "global.long.maxPass", onChange: v => setL(x => { x.max_pass_frames = Math.max(124, Math.min(362, 17 * Math.round(((v ?? 362) - 5) / 17) + 5)); }) }), { help: "global.long.maxPass" }),
       field("Overlap", number({ value: L.overlap_frames, min: 5, max: 107, step: 17, unit: "f", help: "global.long.overlap", onChange: v => setL(x => { x.overlap_frames = Math.max(5, 17 * Math.round(((v ?? 39) - 5) / 17) + 5); }) }), { help: "global.long.overlap" }),
@@ -197,8 +200,12 @@ function llmCard(ctx) {
       field("Base URL", text({ value: l.base_url, key: "llm-url", mono: true, placeholder: st.base_url || "http://localhost:30000/v1", help: "global.llm.baseUrl", onChange: v => { set(x => { x.base_url = v.trim(); }); syncServer({ base_url: v.trim() }); } }), { help: "global.llm.baseUrl" }),
       field("API key", h("span", { class: "rw-row grow" }, keyInput, button({ label: "Store", small: true, help: "global.llm.storeKey", onClick: saveKey })), { help: "global.llm.key" }),
       field("Model", h("span", { class: "rw-row grow" },
+        /* [OLD 2026-11-02 v0.1.0->v0.2.0] one filterable combobox replaces the list/text switch
         st.models?.length ? select({ options: st.models, value: l.model, mono: true, help: "global.llm.model", onChange: v => { set(x => { x.model = v; }); syncServer({ model: v }); } })
           : text({ value: l.model, key: "llm-model", mono: true, placeholder: st.model || "model id", help: "global.llm.model", onChange: v => { set(x => { x.model = v; }); syncServer({ model: v }); } }),
+        [/OLD] */
+        select({ options: st.models || [], value: l.model, free: true, mono: true, width: "100%", placeholder: st.model ? "server default · " + st.model : "server default",
+          help: "global.llm.model", onChange: v => { set(x => { x.model = v; }); syncServer({ model: v }); } }),
         button({ icon: "refresh", small: true, variant: "ghost", help: "global.llm.listModels", onClick: async () => {
           try { const r = await rw.llmModels(l.base_url); ctx.store.setEph({ llm: { ...st, models: r.models || [] } }); }
           catch (err) { ctx.store.setEph({ llm: { ...st, error: err.message } }); }
@@ -208,6 +215,8 @@ function llmCard(ctx) {
       field("Preset", select({ options: [
         { value: "h3_ref2va", label: "H3 ref2va · six sections" }, { value: "h3_compact", label: "H3 · compact prose" }, { value: "h3_cinematic", label: "H3 · cinematic detail" }],
       value: l.preset, help: "global.llm.preset", onChange: v => set(x => { x.preset = v; }) }), { help: "global.llm.preset" }),
+      // added 2026-11-02 v0.2.0: MiniMax's official prompt guides go into the system prompt
+      guidesField(ctx, l, st, set),
       h("div", { class: "rw-row" },
         button({ label: "Test connection", small: true, help: "global.llm.test", onClick: async () => {
           try { const r = await rw.llmTest(); ctx.store.setEph({ llm: { ...st, ok: true, ms: r.ms, error: null } }); }
@@ -216,6 +225,32 @@ function llmCard(ctx) {
         h("span", { class: "rw-dim small" }, "Only used when you press Rewrite, Split or Import — never during a render.")),
     ],
   });
+}
+
+// added 2026-11-02 v0.2.0: guide status, download button and the include switch
+function guidesField(ctx, l, st, set) {
+  const have = st.guides || {};
+  const names = Object.keys(st.guide_urls || { "ref-en.txt": 1, "base-en.txt": 1 });
+  const got = names.filter(n => have[n]);
+  const when = got.length ? new Date(Math.max(...got.map(n => have[n].fetched)) * 1000).toLocaleDateString() : "";
+  const fetchGuides = async () => {
+    ctx.store.setEph({ llm: { ...ctx.eph.llm, guidesBusy: true } });
+    try {
+      const r = await rw.llmGuides();
+      ctx.store.setEph({ llm: { ...ctx.eph.llm, guides: r.guides, guidesBusy: false } });
+      ctx.actions.toast("Downloaded MiniMax's H3 prompt guides.", "ok");
+    } catch (err) {
+      ctx.store.setEph({ llm: { ...ctx.eph.llm, guidesBusy: false } });
+      ctx.actions.toast("Could not download the guides: " + err.message, "error");
+    }
+  };
+  return field("H3 guides", h("span", { class: "rw-row grow" },
+    toggle({ value: l.include_guides !== false, help: "global.llm.guides", onChange: v => set(x => { x.include_guides = v; }) }),
+    h("span", { class: ["small", got.length === names.length ? "rw-c-aud" : "rw-dim"], help: "global.llm.guidesStatus" },
+      got.length === names.length ? `official · ${when}` : got.length ? `${got.length}/${names.length} downloaded` : "built-in summary"),
+    h("span", { class: "rw-flex" }),
+    button({ label: st.guidesBusy ? "Downloading…" : got.length ? "Update" : "Download", icon: "download", small: true, disabled: !!st.guidesBusy,
+      help: "global.llm.guidesFetch", onClick: fetchGuides })), { help: "global.llm.guides" });
 }
 
 function scriptCard(ctx) {

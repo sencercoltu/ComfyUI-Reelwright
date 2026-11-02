@@ -4,6 +4,7 @@
 import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, confirmInline, chip } from "../ui.js";
 import { rw, viewURL } from "../api.js";
 import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes } from "../model.js";
+import { describeBox } from "./assets.js"; // added 2026-11-02 v0.2.0: describe from anchors
 
 const KINDS = [["character", "Characters"], ["location", "Locations"], ["prop", "Props"]];
 
@@ -40,7 +41,10 @@ function list(ctx, sel) {
           type: "button", class: ["rw-bible-item", sel === c.id && "on"], help: "cast.item",
           onClick: () => ctx.store.setEph({ selectedCast: c.id }),
         }, anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
+        /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are assigned per clip now
         h("span", { class: "grow" }, h("b", null, c.name), h("span", { class: "rw-dim small" }, `${c.speaker ? c.speaker + " · " : ""}${scenes} scene${scenes === 1 ? "" : "s"} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}`)));
+        [/OLD] */
+        h("span", { class: "grow" }, h("b", null, c.name), h("span", { class: "rw-dim small" }, `${scenes} scene${scenes === 1 ? "" : "s"} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}`)));
       }),
       p.cast.every(c => c.kind !== kind) && h("div", { class: "rw-dim small" }, "None yet."))),
   }), h("div", { class: "rw-dim small", help: "cast.bible" }, "Tag an entry in any scene and its anchors, description, voice and LoRA come with it."));
@@ -112,11 +116,25 @@ function profileCard(ctx, c) {
     children: [
       field("Name", text({ value: c.name, key: "cast-name-" + c.id, help: "cast.name", onChange: v => edit(x => { x.name = v; }) }), { help: "cast.name" }),
       field("Kind", segmented({ small: true, value: c.kind, help: "cast.kind", options: KINDS.map(([k]) => k), onChange: v => edit(x => { x.kind = v; }) }), { help: "cast.kind" }),
+      /* [OLD 2026-11-02 v0.1.0->v0.2.0] H3's guide numbers speakers S1, S2… by speaking order in each clip, so the prompt builder assigns them
       c.kind === "character" && field("Speaker ID", text({ value: c.speaker, key: "cast-spk-" + c.id, mono: true, width: "70px", help: "cast.speaker", onChange: v => edit(x => { x.speaker = v.toUpperCase(); }) }), { help: "cast.speaker" }),
+      [/OLD] */
       h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.description" }, "Description"),
         textarea({ value: c.description, rows: 3, key: "cast-desc-" + c.id, help: "cast.description", placeholder: "Woman, early 30s, short auburn hair, navy pea coat with brass buttons.", onChange: v => edit(x => { x.description = v; }) })),
+      // added 2026-11-02 v0.2.0: fill the description from the anchor pictures with a vision LLM
+      c.anchors.length > 0 && h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.describe" }, "From anchors"),
+        describeBox(ctx, {
+          key: "cast-" + c.id, ids: c.anchors.slice(0, 4), help: "cast.describe",
+          defaultPrompt: c.kind === "character" ? `Describe ${c.name || "this person"}: build, face, hair, clothing and accessories.`
+            : c.kind === "location" ? "Describe this place: setting, architecture, materials, lighting and time of day."
+              : "Describe the main object: what it is, shape, material, colour and condition.",
+          apply: (t, mode) => edit(x => { x.description = mode === "append" && x.description ? x.description.replace(/[.\s]*$/, "") + "; " + t : t; }),
+        })),
       c.kind === "character" && field("Voice", select({ options: audio, value: c.voice, placeholder: "no voice reference", help: "cast.voice", onChange: v => edit(x => { x.voice = v; }) }), { help: "cast.voice" }),
+      /* [OLD 2026-11-02 v0.1.0->v0.2.0] language is now typed or picked (free combobox)
       c.kind === "character" && field("Language", select({ options: STABLE_LANGUAGES, value: c.language, help: "cast.language", onChange: v => edit(x => { x.language = v; }) }), { help: "cast.language" }),
+      [/OLD] */
+      c.kind === "character" && field("Language", select({ options: STABLE_LANGUAGES, value: c.language, free: true, help: "cast.language", onChange: v => edit(x => { x.language = v; }) }), { help: "cast.language" }),
       field("Identity LoRA", h("span", { class: "rw-row" },
         select({ options: loras, value: c.lora.name, placeholder: "none", mono: true, help: "cast.lora", onChange: v => edit(x => { x.lora.name = v; }) }),
         number({ value: c.lora.strength, min: -4, max: 4, step: 0.05, width: "74px", help: "cast.lora.strength", onChange: v => edit(x => { x.lora.strength = v ?? 0.8; }) })), { help: "cast.lora" }),
@@ -213,7 +231,9 @@ export function render(ctx) {
     list(ctx, c?.id),
     c ? h("div", { class: "rw-col wide" },
       h("div", { class: "rw-cast-head" }, h("span", { class: "rw-cast-name" }, c.name),
+        /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are assigned per clip now
         c.speaker && chip({ label: `<Subject> · ${c.speaker}`, kind: "pic", help: "cast.speaker" }),
+        [/OLD] */
         h("span", { class: "rw-flex" })),
       anchorsCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c))
       : h("div", { class: "rw-col wide" }, section({ title: "Story bible", help: "cast.bible", children: [

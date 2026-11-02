@@ -26,7 +26,7 @@ from server import PromptServer
 
 from . import assemble, continuity, media, merge, spec
 from .analysis import analyze
-from .model import project_index
+from .model import project_index, slugify  # slugify: added 2026-11-02 v0.2.0 for take file names
 
 log = logging.getLogger("reelwright")
 
@@ -328,6 +328,8 @@ class Renderer:
         take_id = self.store.new_take_id(sid)
         tdir = self.store.take_dir(sid, take_id)
         os.makedirs(os.path.join(tdir, "passes"), exist_ok=True)
+        # added 2026-11-02 v0.2.0: readable file names, e.g. harbor_lights_02_the_long_walk_home_v3.mp4
+        video_name = "{}_{:02d}_{}_{}.mp4".format(self.slug, sr["index"] + 1, slugify(scene["title"])[:40], take_id)
         vae = self.models.vae(st["video_vae"], "vae")
         avae = self.models.vae(st["audio_vae"], "audio_vae")
         t0 = time.time()
@@ -371,7 +373,8 @@ class Renderer:
                         media.slice_audio(kept_audio, max(0.0, kept.shape[0] / spec.FPS - 2.5), kept.shape[0] / spec.FPS)
                         if kept_audio is not None else None)
             if n_pass == 1:
-                media.save_video(kept, kept_audio, os.path.join(tdir, "video.mp4"))
+                # [OLD 2026-11-02 v0.1.0->v0.2.0] media.save_video(kept, kept_audio, os.path.join(tdir, "video.mp4"))
+                media.save_video(kept, kept_audio, os.path.join(tdir, video_name))
             if n + 1 < n_pass and plan["passes"][n + 1]["seam_before"] == "overlap":
                 prev_pass = (frames[-plan["passes"][n + 1]["overlap_frames"]:].clone(), audio)
             else:
@@ -381,7 +384,8 @@ class Renderer:
 
         if n_pass > 1:
             segs = assemble.pass_segments(plan, pass_files, self.p["global"]["long"]["crossfade_frames"])
-            merge.join(segs, os.path.join(tdir, "video.mp4"), st["width"], st["height"], audio_fade_frames=0)
+            # [OLD 2026-11-02 v0.1.0->v0.2.0] merge.join(segs, os.path.join(tdir, "video.mp4"), st["width"], st["height"], audio_fade_frames=0)
+            merge.join(segs, os.path.join(tdir, video_name), st["width"], st["height"], audio_fade_frames=0)
         media.frame_to_png(firsts[0], os.path.join(tdir, "first.png"))
         tail_frames, tail_audio = last_out
         media.frame_to_png(tail_frames[-1], os.path.join(tdir, "last.png"))
@@ -393,12 +397,13 @@ class Renderer:
             "quality": st["quality"], "seconds": plan["frames"] / spec.FPS, "frames": plan["frames"],
             "overlap_frames": plan["passes"][0]["overlap_frames"], "seeds": seeds,
             "render_seconds": round(time.time() - t0, 1),
-            "files": {"video": rel("video.mp4"), "first": rel("first.png"), "last": rel("last.png"), "tail": rel("tail.mp4"),
+            # [OLD 2026-11-02 v0.1.0->v0.2.0] "files": {"video": rel("video.mp4"), "first": rel("first.png"), ...
+            "files": {"video": rel(video_name), "first": rel("first.png"), "last": rel("last.png"), "tail": rel("tail.mp4"),
                       "passes": [self.store.rel_output(f) for f in pass_files]},
             "face": {},
         }
         if self.p["global"]["continuity"]["face_check"] and continuity.available():
-            take["face"] = continuity.check_scene(self.p, scene, self.store, os.path.join(tdir, "video.mp4"))
+            take["face"] = continuity.check_scene(self.p, scene, self.store, os.path.join(tdir, video_name))  # [OLD 2026-11-02] was "video.mp4"
         meta = dict(take, prompts=sr["prompts"], passes=sr["passes"],
                     settings={k: v for k, v in st.items() if k != "loras"}, loras=st["loras"])
         with open(os.path.join(tdir, "meta.json"), "w", encoding="utf-8") as f:

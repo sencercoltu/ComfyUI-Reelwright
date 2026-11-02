@@ -115,7 +115,10 @@ function defaultGlobal() {
     long: { max_pass_frames: 362, overlap_frames: 39, crossfade_frames: 12, seam_mode: "auto", cut_snap_seconds: 2.0 },
     memory: { policy: "free_cache", encode_first: true, group_by_lora: true },
     continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag" },
+    /* [OLD 2026-11-02 v0.1.0->v0.2.0] no switch for sending MiniMax's prompt guides
     llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va" },
+    [/OLD] */
+    llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va", include_guides: true },
     merge: { use: "starred", missing: "skip", hard_cut: "cut", transition_frames: 12, audio_fade_frames: 6,
       loudness: -16.0, normalize: true, score: { asset: "", volume_db: -12.0, duck: true },
       color_match: false, color_ref_scene: "", codec: "h264", crf: 16,
@@ -214,7 +217,11 @@ export function normalizeProject(raw) {
   }
   for (const a of p.assets) {
     fill(a, { id: newId("a"), code: "", kind: "image", name: "", file: "", duration: 0, width: 0, height: 0, category: "",
+      /* [OLD 2026-11-02 v0.1.0->v0.2.0] assets had no description
       defaults: { role: "reference", retention: a.kind === "audio" ? "reference" : "fully_preserved", keep: [], soundtrack: false }, notes: "" });
+      [/OLD] */
+      defaults: { role: "reference", retention: a.kind === "audio" ? "reference" : "fully_preserved", keep: [], soundtrack: false }, notes: "",
+      description: "" }); // added 2026-11-02 v0.2.0: description feeds subject_definitions
   }
   assignCodes(p.assets);
   for (const c of p.cast) {

@@ -67,8 +67,10 @@ node. A wired input replaces the matching Global-tab loader.
 1. **Global tab:** pick the models, the output size and your LoRAs.
 2. **Assets tab:** drop in pictures, video and audio. Each asset gets a code
    (P1, V1, A1…) and default settings: role, retention and the features to keep.
+   **From ComfyUI** adds files already in ComfyUI's input or output folder, and
+   **Describe** asks a vision LLM to write an asset's description.
 3. **Cast tab:** create your characters, give each anchor pictures, a
-   description, a voice and a speaker ID.
+   description and a voice.
 4. **Timeline:**
    - add scenes and drag their right edge to set the length;
    - drag shot ticks inside a block to move cuts;
@@ -112,6 +114,13 @@ LM Studio, vLLM, SGLang, Ollama's `/v1`…) and a model. The API key is stored i
 `user/reelwright/llm.json`, never in the workflow. The rewriter never
 runs during a queue run. It keeps every `@tag` and `<d>…</d>` dialogue line, and
 warns you if the model changed one.
+
+Press **Download** next to *H3 guides* to fetch MiniMax's official H3 prompt
+guides (the Ref2VA guide and the base guide) from the MiniMax-H3 GitHub
+repository into `user/reelwright/guides/`. They are sent to the LLM with every
+rewrite, split and script import (about 10,000 tokens; turn it off for small
+local models). They are not bundled because of their licence; until you
+download them a short built-in summary is sent instead.
 
 ## Keyboard (when the node has focus)
 

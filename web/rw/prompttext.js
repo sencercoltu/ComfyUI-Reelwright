@@ -2,6 +2,8 @@
 // and dialogue. Returns HTML-safe markup for the editor overlay and previews.
 
 const RULES = [
+  // added 2026-11-02 v0.2.0: the six Ref2VA section labels, each on its own line
+  [/^(?:subject_definitions|summary|retention_analysis|detailed_description|overall_soundscape|non_diegetic_music):$/gm, "hl-sec"],
   [/&lt;d&gt;[\s\S]*?&lt;\/d&gt;/g, "hl-dlg"],
   [/&lt;(?:Picture|Subject) \d+&gt;/g, "hl-pic"],
   [/&lt;Video \d+&gt;/g, "hl-vid"],

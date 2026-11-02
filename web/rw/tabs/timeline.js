@@ -81,7 +81,8 @@ function monitorOf(ctx) {
     badgeBL.textContent = `${String(idx).padStart(2, "0")} · f ${Math.min(framesOf(local), framesOf(scene.duration))} / ${framesOf(scene.duration)}`;
     const line = scene.dialogue.find(d => local >= d.t && local < d.t + 3.5);
     const sp = line && findCast(ctx.p, line.speaker);
-    badgeBR.textContent = line ? `${sp?.name || "?"} (${sp?.speaker || "S?"}): “${line.text}”` : "";
+    // [OLD 2026-11-02 v0.1.0->v0.2.0] badgeBR.textContent = line ? `${sp?.name || "?"} (${sp?.speaker || "S?"}): “${line.text}”` : "";  (speaker IDs are per clip now)
+    badgeBR.textContent = line ? `${sp?.name || "?"}: “${line.text}”` : "";
     badgeBR.style.display = line ? "" : "none";
   };
   return m;
@@ -463,7 +464,10 @@ function renderLanes(ctx) {
     const next = allLines[k + 1]?.x ?? Infinity;
     dlg.append(h("span", {
       class: "rw-dlg", style: { left: it.x + "px", "max-width": Math.max(28, next - it.x - 4) + "px" }, help: "timeline.lane.dialogue", onClick: selectScene(it.s.id),
+    /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now
     }, h("b", { class: "mono" }, (it.d.language || "").slice(0, 2).toUpperCase()), ` ${c?.name || "?"} (${c?.speaker || "S?"}) “${it.d.text}”`));
+    [/OLD] */
+    }, h("b", { class: "mono" }, (it.d.language || "").slice(0, 2).toUpperCase()), ` ${c?.name || "?"} “${it.d.text}”`));
   });
 
   for (const s of p.scenes) {

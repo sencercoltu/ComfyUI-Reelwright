@@ -51,7 +51,11 @@ def default_global():
                  "seam_mode": "auto", "cut_snap_seconds": 2.0},
         "memory": {"policy": "free_cache", "encode_first": True, "group_by_lora": True},
         "continuity": {"reanchor_after": 2, "face_check": False, "face_threshold": 0.8, "on_drift": "flag"},
-        "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va"},
+        # [OLD 2026-11-02 v0.1.0->v0.2.0] no switch for sending MiniMax's prompt guides
+        # "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va"},
+        # [/OLD]
+        "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
+                "include_guides": True},
         "merge": {"use": "starred", "missing": "skip", "hard_cut": "cut", "transition_frames": 12,
                   "audio_fade_frames": 6, "loudness": -16.0, "normalize": True,
                   "score": {"asset": "", "volume_db": -12.0, "duck": True},
@@ -152,7 +156,7 @@ def normalize_project(raw):
                   "defaults": {"role": "reference",
                                "retention": "reference" if a.get("kind") == "audio" else "fully_preserved",
                                "keep": [], "soundtrack": False},
-                  "notes": ""})
+                  "notes": "", "description": ""})  # added 2026-11-02 v0.2.0: description feeds subject_definitions
     assign_codes(p["assets"])
     for c in p["cast"]:
         _fill(c, {"id": new_id("c"), "kind": "character", "name": "", "speaker": "", "description": "",

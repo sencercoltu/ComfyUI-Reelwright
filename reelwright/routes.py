@@ -212,7 +212,23 @@ def _user_root():
 @json_route
 async def llm_settings_get(request):
     s = llm.load_settings(_user_root())
-    return {"base_url": s["base_url"], "model": s["model"], "has_key": bool(s["api_key"])}
+    # [OLD 2026-11-02 v0.1.0->v0.2.0] return {"base_url": s["base_url"], "model": s["model"], "has_key": bool(s["api_key"])}
+    return {"base_url": s["base_url"], "model": s["model"], "has_key": bool(s["api_key"]),
+            "guides": llm.guide_status(_user_root()), "guide_urls": llm.GUIDES}
+
+
+# added 2026-11-02 v0.2.0: download MiniMax's official prompt guides into user/reelwright/guides
+@routes.post("/reelwright/llm/guides")
+@json_route
+async def llm_guides_fetch(request):
+    return {"guides": await llm.fetch_guides(_user_root())}
+
+
+def _cfg(p):
+    """LLM config for a project, with the downloaded guides attached (added 2026-11-02 v0.2.0)."""
+    stored = llm.load_settings(_user_root())
+    stored["guides"] = llm.load_guides(_user_root())
+    return llm.resolve(p["global"]["llm"], stored)
 
 
 @routes.post("/reelwright/llm/settings")
@@ -237,7 +253,8 @@ async def llm_models(request):
 @json_route
 async def llm_test(request):
     b = await body_of(request)
-    cfg = llm.resolve((b.get("project") or {}).get("global", {}).get("llm", {}), llm.load_settings(_user_root()))
+    # [OLD 2026-11-02 v0.1.0->v0.2.0] cfg = llm.resolve((b.get("project") or {}).get("global", {}).get("llm", {}), llm.load_settings(_user_root()))
+    cfg = _cfg(normalize_project(b.get("project") or {}))
     return await llm.test(cfg)
 
 
@@ -252,9 +269,17 @@ def _scene(p, scene_id):
 @json_route
 async def llm_rewrite(request):
     b = await body_of(request)
-    p = normalize_project(b["project"])
-    cfg = llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
-    return await llm.rewrite(cfg, p, _scene(p, b["scene_id"]), b.get("instruction", ""))
+    # [OLD 2026-11-02 v0.1.0->v0.2.0] the rewrite did not see the built prompt or the guides
+    # p = normalize_project(b["project"])
+    # cfg = llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
+    # return await llm.rewrite(cfg, p, _scene(p, b["scene_id"]), b.get("instruction", ""))
+    # [/OLD]
+    p, store = project_store(b["project"])
+    cfg = _cfg(p)
+    scene = _scene(p, b["scene_id"])
+    result = await asyncio.to_thread(analyze, p, store, wired_flags(store))
+    prompts = result["scenes"][scene["id"]]["prompts"]
+    return await llm.rewrite(cfg, p, scene, b.get("instruction", ""), prompts[0] if prompts else "")
 
 
 @routes.post("/reelwright/llm/split")
@@ -262,7 +287,7 @@ async def llm_rewrite(request):
 async def llm_split(request):
     b = await body_of(request)
     p, store = project_store(b["project"])
-    cfg = llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
+    cfg = _cfg(p)  # [OLD 2026-11-02 v0.1.0->v0.2.0] llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
     result = await asyncio.to_thread(analyze, p, store, wired_flags(store))
     sr = result["scenes"][_scene(p, b["scene_id"])["id"]]
     pass_prompts = await llm.split(cfg, p, _scene(p, b["scene_id"]), sr["passes"], sr["prompts"])
@@ -274,10 +299,80 @@ async def llm_split(request):
 async def llm_script(request):
     b = await body_of(request)
     p = normalize_project(b["project"])
-    cfg = llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
+    cfg = _cfg(p)  # [OLD 2026-11-02 v0.1.0->v0.2.0] llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
     if not (b.get("script") or "").strip():
         raise ValueError("Paste a script first")
     return await llm.script_to_scenes(cfg, p, b["script"])
+
+
+# added 2026-11-02 v0.2.0: describe pictures (or video frames) with a vision model
+@routes.post("/reelwright/llm/describe")
+@json_route
+async def llm_describe(request):
+    b = await body_of(request)
+    p, store = project_store(b["project"])
+    idx = project_index(p)
+    images = []
+    for aid in (b.get("asset_ids") or [])[:4]:
+        a = idx["assets"].get(aid)
+        if not a:
+            raise ValueError("unknown asset")
+        path = store.input_path(a["file"])
+        if not os.path.isfile(path):
+            raise FileNotFoundError("{} file is missing".format(a["code"]))
+        images += await asyncio.to_thread(media.stills_for_vision, path)
+    return await llm.describe(_cfg(p), images[:6], (b.get("prompt") or "").strip())
+
+
+# ---- ComfyUI input/output browser (added 2026-11-02 v0.2.0) ------------------------------
+
+def _media_root(name):
+    r = roots()
+    if name == "input":
+        return r.input
+    if name == "output":
+        return r.output
+    raise ValueError("root must be input or output")
+
+
+@routes.get("/reelwright/files")
+@json_route
+async def files(request):
+    q = request.query
+    return await asyncio.to_thread(media.list_media, _media_root(q.get("root", "input")), q.get("q", ""),
+                                   q.get("kind", ""), min(1000, int(q.get("limit", 400))))
+
+
+@routes.post("/reelwright/import")
+@json_route
+async def import_file(request):
+    """Use a file that is already in ComfyUI's input or output folder as an asset.
+    Input files are used where they are; output files are linked (or copied) into the project's input folder."""
+    b = await body_of(request)
+    store = slug_store(b["slug"])
+    root = b.get("root", "input")
+    src = safe_join(_media_root(root), b["rel"])
+    if not os.path.isfile(src) or media.kind_of(src) is None:
+        raise ValueError("not a picture, video or audio file: " + b["rel"])
+    if root == "input":
+        dst = src
+    else:
+        base, ext = _safe_filename(b["rel"])
+        folder = os.path.join(store.input_dir, "from_output")
+        os.makedirs(folder, exist_ok=True)
+        dst, n = os.path.join(folder, base + ext), 1
+        while os.path.exists(dst) and not os.path.samefile(dst, src) and os.path.getsize(dst) != os.path.getsize(src):
+            n += 1
+            dst = os.path.join(folder, "{}_{}{}".format(base, n, ext))
+        if not os.path.exists(dst):
+            try:
+                os.link(src, dst)
+            except OSError:
+                await asyncio.to_thread(shutil.copyfile, src, dst)
+    info = await asyncio.to_thread(media.describe, dst)
+    category = {"image": "subject", "video": "motion", "audio": "voice"}[info["kind"]]
+    return {"asset": dict(info, file=os.path.relpath(dst, store.roots.input).replace(os.sep, "/"),
+                          name=os.path.splitext(os.path.basename(src))[0], category=category)}
 
 
 # ---- takes, cast, continuity -----------------------------------------------

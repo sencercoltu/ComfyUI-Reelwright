@@ -9,6 +9,24 @@ import {
 
 const KIND_CLASS = { image: "pic", video: "vid", audio: "aud" };
 
+// added 2026-11-02 v0.2.0: one place that turns a backend file record into a project asset
+// (used by uploads and by the ComfyUI input/output browser)
+function addAsset(ctx, a, fallbackName, fallbackKind) {
+  let id = "";
+  ctx.actions.edit(p => {
+    const kind = a.kind || fallbackKind;
+    id = a.id || newId("a");
+    p.assets.push({
+      id, code: "", kind, name: a.name || fallbackName, file: a.file,
+      duration: a.duration || 0, width: a.width || 0, height: a.height || 0, category: a.category || ASSET_CATEGORIES[kind][0],
+      defaults: { role: "reference", retention: kind === "audio" ? "reference" : "fully_preserved", keep: [], soundtrack: false }, notes: "",
+      description: "",
+    });
+    assignCodes(p.assets);
+  });
+  return id;
+}
+
 export async function uploadFiles(ctx, files) {
   const list = files.filter(f => /^(image|video|audio)\//.test(f.type) || /\.(png|jpe?g|webp|gif|mp4|mov|webm|mkv|wav|mp3|flac|ogg|m4a)$/i.test(f.name));
   if (!list.length) { ctx.actions.toast("Only image, video and audio files can be used as assets.", "warn"); return; }
@@ -16,6 +34,7 @@ export async function uploadFiles(ctx, files) {
     try {
       const res = await rw.upload(file, ctx.p.slug);
       const a = res.asset || res;
+      /* [OLD 2026-11-02 v0.1.0->v0.2.0] moved into addAsset() so the ComfyUI browser shares it
       ctx.actions.edit(p => {
         const kind = a.kind || (file.type.split("/")[0]);
         p.assets.push({
@@ -25,6 +44,8 @@ export async function uploadFiles(ctx, files) {
         });
         assignCodes(p.assets);
       });
+      [/OLD] */
+      addAsset(ctx, a, file.name.replace(/\.[^.]+$/, ""), file.type.split("/")[0]);
       ctx.actions.toast(`Uploaded ${file.name}.`, "ok");
     } catch (err) {
       ctx.actions.toast(`Upload failed for ${file.name}: ${err.message}`, "error");
@@ -58,7 +79,11 @@ function grid(ctx) {
       h("input", { class: "rw-input", style: { width: "220px" }, key: "asset-q", placeholder: "Search name, code, category…", help: "assets.search", value: ctx.eph.assetQuery || "",
         onInput: e => { ctx.eph.assetQuery = e.target.value; ctx.store.notify(); } }),
       h("span", { class: "rw-flex" }),
+      // added 2026-11-02 v0.2.0: pick files already in ComfyUI's input or output folders
+      button({ label: "From ComfyUI", icon: "search", variant: ctx.eph.browse ? "accent-ghost" : "default", help: "assets.browse",
+        onClick: () => { if (ctx.eph.browse) ctx.store.setEph({ browse: null }); else openBrowser(ctx); } }),
       button({ label: "Upload", icon: "upload", variant: "primary", help: "assets.upload", onClick: () => fileInput.click() }), fileInput),
+    ctx.eph.browse && browserCard(ctx),
     h("div", {
       class: "rw-dropzone", help: "assets.drop",
       onDragover: e => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.currentTarget.classList.add("over"); } },
@@ -88,6 +113,133 @@ function grid(ctx) {
     }),
     budgetMatrix(ctx),
     cameraPresets(ctx));
+}
+
+// ---- ComfyUI input/output browser (added 2026-11-02 v0.2.0) ----
+
+function openBrowser(ctx, patch = {}) {
+  const b = { root: "input", q: "", kind: "all", picked: [], files: null, busy: true, ...(ctx.eph.browse || {}), ...patch };
+  ctx.store.setEph({ browse: b });
+  const token = (ctx.eph.browseToken || 0) + 1;
+  ctx.eph.browseToken = token;
+  rw.files(b.root, b.q, b.kind === "all" ? "" : b.kind).then(r => {
+    if (ctx.eph.browseToken !== token || !ctx.eph.browse) return;
+    ctx.store.setEph({ browse: { ...ctx.eph.browse, files: r.files || [], total: r.total || 0, truncated: !!r.truncated, busy: false, error: "" } });
+  }).catch(err => {
+    if (ctx.eph.browseToken !== token || !ctx.eph.browse) return;
+    ctx.store.setEph({ browse: { ...ctx.eph.browse, files: [], busy: false, error: err.message } });
+  });
+}
+
+async function importPicked(ctx) {
+  const b = ctx.eph.browse;
+  let n = 0;
+  ctx.store.setEph({ browse: { ...b, importing: true } });
+  for (const rel of b.picked) {
+    try {
+      const r = await rw.importFile(ctx.p.slug, b.root, rel);
+      const a = r.asset || r;
+      if (b.root === "input" && ctx.p.assets.some(x => x.file === a.file)) continue;
+      addAsset(ctx, a, rel.split("/").pop().replace(/\.[^.]+$/, ""), a.kind);
+      n++;
+    } catch (err) { ctx.actions.toast(`Could not add ${rel}: ${err.message}`, "error"); }
+  }
+  ctx.store.setEph({ browse: { ...ctx.eph.browse, picked: [], importing: false } });
+  ctx.actions.toast(n ? `Added ${n} asset${n > 1 ? "s" : ""} from ComfyUI ${b.root}.` : "Nothing new to add.", n ? "ok" : "info");
+}
+
+function browserCard(ctx) {
+  const b = ctx.eph.browse;
+  const have = new Set(ctx.p.assets.map(a => a.file));
+  const picked = new Set(b.picked);
+  let timer = 0;
+  const shown = (b.files || []).slice(0, 160);
+  const tile = f => {
+    const used = b.root === "input" && have.has(f.rel);
+    const url = viewURL(f.rel, b.root);
+    const media = f.kind === "image" ? h("img", { src: url, alt: "", loading: "lazy" })
+      : f.kind === "video" ? h("video", { src: url, muted: true, preload: "metadata", playsinline: true })
+        : h("span", { class: "rw-browse-aud rw-c-aud" }, icon("audio", 22));
+    return h("button", {
+      type: "button", class: ["rw-browse-tile", picked.has(f.rel) && "on", used && "used"], title: f.rel, help: used ? "assets.browse.used" : "assets.browse.tile", disabled: used,
+      onClick: () => {
+        const next = picked.has(f.rel) ? b.picked.filter(x => x !== f.rel) : [...b.picked, f.rel];
+        ctx.store.setEph({ browse: { ...ctx.eph.browse, picked: next } });
+      },
+    }, media, h("span", { class: "rw-browse-name mono rw-ellipsis" }, f.rel.split("/").pop()),
+    used ? h("span", { class: "rw-browse-badge" }, "added") : picked.has(f.rel) ? h("span", { class: "rw-browse-badge on" }, icon("check", 11)) : null);
+  };
+  return section({
+    title: "ComfyUI files", help: "assets.browse", cls: "rw-browse",
+    actions: [
+      h("span", { class: "rw-dim small" }, b.busy ? "loading…" : `${b.total ?? 0} file${b.total === 1 ? "" : "s"}${b.truncated ? " (showing the newest)" : ""}`),
+      button({ icon: "close", small: true, variant: "ghost", help: "common.close", onClick: () => ctx.store.setEph({ browse: null }) }),
+    ],
+    children: [
+      h("div", { class: "rw-row wrap" },
+        segmented({ small: true, value: b.root, help: "assets.browse.root", options: [
+          { value: "input", label: "Input", help: "assets.browse.root" }, { value: "output", label: "Output (generated)", help: "assets.browse.root" }],
+        onChange: v => openBrowser(ctx, { root: v, picked: [], files: null, busy: true }) }),
+        segmented({ small: true, value: b.kind, help: "assets.browse.kind", options: [
+          { value: "all", label: "All" }, { value: "image", label: "Pictures", icon: "image" }, { value: "video", label: "Videos", icon: "video" }, { value: "audio", label: "Audio", icon: "audio" }],
+        onChange: v => openBrowser(ctx, { kind: v, busy: true }) }),
+        h("input", { class: "rw-input grow", key: "browse-q", placeholder: "Filter by path, e.g. ComfyUI_0 or portraits", help: "assets.browse.search", value: b.q,
+          onInput: e => { const v = e.target.value; clearTimeout(timer); timer = setTimeout(() => openBrowser(ctx, { q: v, busy: true }), 300); } })),
+      b.error ? h("div", { class: "rw-note err" }, icon("warn", 12), b.error) : null,
+      shown.length ? h("div", { class: "rw-browse-grid", dataset: { scroll: "browse" } }, shown.map(tile))
+        : h("div", { class: "rw-empty sm" }, b.busy ? "Reading ComfyUI's " + b.root + " folder…" : "No pictures, videos or audio here" + (b.q ? " match." : ".")),
+      h("div", { class: "rw-row" },
+        h("span", { class: "rw-dim small" }, b.root === "output" ? "Generated files are linked into this project's input folder." : "Input files are used where they are."),
+        h("span", { class: "rw-flex" }),
+        b.picked.length ? button({ label: "Clear", small: true, variant: "ghost", help: "assets.browse.clear", onClick: () => ctx.store.setEph({ browse: { ...b, picked: [] } }) }) : null,
+        button({ label: b.importing ? "Adding…" : `Add ${b.picked.length || ""} to assets`, icon: "plus", small: true, variant: "primary", help: "assets.browse.add",
+          disabled: !b.picked.length || b.importing, onClick: () => importPicked(ctx) })),
+    ],
+  });
+}
+
+// ---- describe with a vision LLM (added 2026-11-02 v0.2.0) ----
+
+const DESCRIBE_PROMPTS = {
+  subject: "Describe the person or character: build, face, hair, clothing and accessories.",
+  location: "Describe this place: setting, architecture, materials, lighting and time of day.",
+  prop: "Describe the main object: what it is, shape, material, colour and condition.",
+  style: "Describe the visual style: medium, palette, lighting, texture and lens look.",
+  keyframe: "Describe what is visible in this frame and how it is composed.",
+  motion: "Describe the subject and how it moves across these frames.",
+  camera: "Describe the camera movement across these frames.",
+  edit_source: "Describe what this clip shows.",
+};
+
+export async function describeAssets(ctx, ids, prompt, key) {
+  ctx.store.setEph({ describe: { key, busy: true } });
+  try {
+    const r = await rw.describe(ctx.p, ids, prompt);
+    ctx.store.setEph({ describe: { key, text: r.text, model: r.model, ms: r.ms } });
+  } catch (err) {
+    ctx.store.setEph({ describe: { key, error: err.message } });
+  }
+}
+
+// prompt box + button + suggestion; `apply(text, mode)` writes the result ("use" or "append")
+export function describeBox(ctx, { key, ids, defaultPrompt, apply, help = "assets.describe" }) {
+  const prompts = ctx.eph.describePrompts || (ctx.eph.describePrompts = {});
+  const d = ctx.eph.describe?.key === key ? ctx.eph.describe : null;
+  const prompt = h("input", { class: "rw-input grow", key: "describe-q-" + key, placeholder: defaultPrompt, value: prompts[key] || "", help: help + ".prompt",
+    onInput: e => { prompts[key] = e.target.value; },
+    onKeydown: e => { if (e.key === "Enter") { e.preventDefault(); describeAssets(ctx, ids, prompts[key] || defaultPrompt, key); } } });
+  return h("div", { class: "rw-describe" },
+    h("div", { class: "rw-row" }, prompt,
+      button({ label: d?.busy ? "Looking…" : "Describe", icon: "wand", small: true, variant: "pink", help, disabled: !!d?.busy || !ids.length,
+        onClick: () => describeAssets(ctx, ids, prompts[key] || defaultPrompt, key) })),
+    d?.error ? h("div", { class: "rw-note err" }, icon("warn", 12), d.error) : null,
+    d?.text ? h("div", { class: "rw-suggest", help: help + ".result" },
+      h("div", { class: "rw-suggest-text" }, d.text),
+      h("div", { class: "rw-row" },
+        h("span", { class: "rw-dim small mono rw-ellipsis grow" }, [d.model, d.ms ? d.ms + " ms" : ""].filter(Boolean).join(" · ")),
+        button({ label: "Use", small: true, variant: "primary", help: help + ".use", onClick: () => { apply(d.text, "use"); ctx.store.setEph({ describe: null }); } }),
+        button({ label: "Append", small: true, help: help + ".append", onClick: () => { apply(d.text, "append"); ctx.store.setEph({ describe: null }); } }),
+        button({ label: "Dismiss", small: true, variant: "ghost", help: "common.close", onClick: () => ctx.store.setEph({ describe: null }) }))) : null);
 }
 
 function budgetMatrix(ctx) {
@@ -152,6 +304,20 @@ function inspector(ctx) {
           text({ value: a.name, key: "asset-name-" + a.id, help: "assets.name", onChange: v => edit(x => { x.name = v; }) })),
         h("div", { class: "rw-dim small mono rw-ellipsis", help: "assets.file" }, a.file),
         field("Category", select({ options: ASSET_CATEGORIES[a.kind], value: a.category, help: "assets.category", onChange: v => edit(x => { x.category = v; }) }), { help: "assets.category" }),
+      ],
+    }),
+    // added 2026-11-02 v0.2.0: the description becomes this asset's subject line ("<Subject 1> is …")
+    a.kind !== "audio" && section({
+      title: "Description", help: "assets.description",
+      actions: h("span", { class: "rw-dim small" }, "goes into subject_definitions"),
+      children: [
+        textarea({ value: a.description || "", rows: 3, key: "asset-desc-" + a.id, help: "assets.description",
+          placeholder: a.category === "location" ? "the wooden pier at dusk, wet planks, iron lamps" : "the young woman with long dark hair and a blue cardigan",
+          onChange: v => edit(x => { x.description = v.trim(); }) }),
+        describeBox(ctx, {
+          key: "asset-" + a.id, ids: [a.id], defaultPrompt: DESCRIBE_PROMPTS[a.category] || "Describe the main subject.",
+          apply: (t, mode) => edit(x => { x.description = mode === "append" && x.description ? x.description.replace(/[.\s]*$/, "") + "; " + t : t; }),
+        }),
       ],
     }),
     section({

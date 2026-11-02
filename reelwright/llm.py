@@ -16,13 +16,43 @@ TIMEOUT = aiohttp.ClientTimeout(total=180)
 TAG_RE = re.compile(r"@\{[^}]+\}|@[A-Za-z][\w-]*")
 DIALOGUE_RE = re.compile(r"<d>.*?</d>", re.S)
 
-H3_RULES = """You write prompts for MiniMax H3 ref2va, a reference-to-video-with-audio model.
+# [OLD 2026-11-02 v0.1.0->v0.2.0] rules used "[Shot1]"; MiniMax's guide writes "[Shot 1]" and the guides
+# themselves are now sent along (see GUIDES below)
+# H3_RULES = """You write prompts for MiniMax H3 ref2va, a reference-to-video-with-audio model.
+# Rules you must follow:
+# - Keep every reference token exactly as written: @P1, @V2, @A1, @Name, @{Two Words}, @tail. Never invent new ones, never rename them.
+# - Keep every dialogue span <d>[Language] ...</d> exactly as written, word for word.
+# - Keep shot markers like [Shot1] and timestamps like "At 00:05.000" unless asked to change them; timestamps mark cuts.
+# - One main action per shot, physically achievable in the time given. State camera framing and movement or say the camera is static.
+# - Concrete visual and sound detail; no camera brand names, no meta commentary."""
+# [/OLD]
+H3_RULES = """You write prompts for MiniMax H3 Ref2VA, a reference-to-video-with-audio model.
 Rules you must follow:
-- Keep every reference token exactly as written: @P1, @V2, @A1, @Name, @{Two Words}, @tail. Never invent new ones, never rename them.
+- Keep every reference token exactly as written: @P1, @V2, @A1, @Name, @{Two Words}, @tail. Never invent new ones, never rename them. The editor turns them into <Subject N>, <Picture N>, <Video N> and <Audio N> labels later.
 - Keep every dialogue span <d>[Language] ...</d> exactly as written, word for word.
-- Keep shot markers like [Shot1] and timestamps like "At 00:05.000" unless asked to change them; timestamps mark cuts.
-- One main action per shot, physically achievable in the time given. State camera framing and movement or say the camera is static.
-- Concrete visual and sound detail; no camera brand names, no meta commentary."""
+- Keep shot markers like [Shot 2] and cut times like "At 00:05.000" unless asked to change them; cut times mark cuts and the first shot has none.
+- Write in English. Describe each shot by composition, subject appearance and position, environment and lighting, action, camera movement and sound.
+- One main action per shot, physically achievable in the time given. Concrete visual and sound detail; no plot summaries, no meta commentary."""
+
+# added 2026-11-02 v0.2.0: MiniMax's official prompt guides. They are published under the MiniMax H3
+# Community License, so Reelwright downloads them on request instead of shipping copies.
+GUIDES = {
+    "ref-en.txt": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/main/skills/h3-prompt-writing/references/ref-en.txt",
+    "base-en.txt": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/main/skills/h3-prompt-writing/references/base-en.txt",
+}
+GUIDE_FALLBACK = """Ref2VA output format (summary used until the official guides are downloaded):
+Six sections in this order, each label on its own line followed by its text: subject_definitions:, summary:,
+retention_analysis:, detailed_description:, overall_soundscape:, non_diegetic_music:.
+subject_definitions: one line per tracked item, e.g. "<Subject 1> is the young woman in <Picture 1>, with long dark hair."
+Standalone <Picture N> lines only for frame anchors ("<Picture 2> is the first frame of [Shot 1], ...").
+summary: starts with the task types in brackets joined by " + ", e.g. "[reference generation + audio reference]".
+retention_analysis: one line per label, e.g. "<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - ...";
+visual markers fully_preserved, partially_preserved, attribute_transfer, weak_reference; audio markers fully_copy,
+partially_copy, reference, weak_reference. No speaker IDs here.
+detailed_description: one or two style sentences, then "[Shot 1] ..." and "[Shot N] At MM:SS.mmm, the shot cuts to ...".
+Speakers get (S1), (S2) in the order they first speak; dialogue is <d>[Language] exact words.</d>.
+Generation tasks usually run 350-500 English words here.
+overall_soundscape: ambience and physical sounds, no dialogue. non_diegetic_music: score only the audience hears, or N/A."""
 
 PRESETS = {
     "h3_ref2va": "Write in the six-section structure (subject definitions, summary, retention, detailed shot description, soundscape, music). Be precise and complete.",
@@ -49,14 +79,78 @@ def save_settings(user_root, update):
     return s
 
 
+def guides_dir(user_root):
+    return os.path.join(user_root, "reelwright", "guides")
+
+
+def guide_status(user_root):
+    out = {}
+    for name in GUIDES:
+        path = os.path.join(guides_dir(user_root), name)
+        if os.path.isfile(path):
+            st = os.stat(path)
+            out[name] = {"bytes": st.st_size, "fetched": int(st.st_mtime)}
+    return out
+
+
+def load_guides(user_root):
+    texts = {}
+    for name in GUIDES:
+        path = os.path.join(guides_dir(user_root), name)
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                texts[name] = f.read()
+    return texts
+
+
+async def fetch_guides(user_root):
+    os.makedirs(guides_dir(user_root), exist_ok=True)
+    # trust_env: honour HTTP(S)_PROXY / NO_PROXY like a browser would, since this is a public download
+    async with aiohttp.ClientSession(timeout=TIMEOUT, trust_env=True) as s:
+        for name, url in GUIDES.items():
+            async with s.get(url) as r:
+                if r.status >= 400:
+                    raise RuntimeError("Could not download {} (HTTP {})".format(name, r.status))
+                text = await r.text()
+            tmp = os.path.join(guides_dir(user_root), name + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(tmp, os.path.join(guides_dir(user_root), name))
+    return guide_status(user_root)
+
+
+def system_prompt(cfg, extra=""):
+    """H3 rules, then MiniMax's guides (or the built-in summary), then the preset style."""
+    parts = [H3_RULES]
+    if cfg.get("include_guides", True):
+        g = cfg.get("guides") or {}
+        if g.get("ref-en.txt"):
+            parts.append("Official MiniMax H3 full-reference (Ref2VA) prompt guide. Follow its section names, labels "
+                         "and formats exactly:\n\n" + g["ref-en.txt"])
+            if g.get("base-en.txt"):
+                parts.append("Official MiniMax H3 video prompt guide, for shots, camera wording, speakers, dialogue and "
+                             "sound sections:\n\n" + g["base-en.txt"])
+        else:
+            parts.append(GUIDE_FALLBACK)
+    if extra:
+        parts.append(extra)
+    return "\n\n".join(parts)
+
+
 def resolve(project_llm, stored):
     """Project values win for URL/model; the key always comes from the user folder."""
     base = (project_llm.get("base_url") or stored["base_url"] or "").rstrip("/")
     if not base:
         raise ValueError("Set the LLM base URL in Global -> Prompt rewriter")
+    # [OLD 2026-11-02 v0.1.0->v0.2.0] guides were not part of the config
+    # return {"base_url": base, "model": project_llm.get("model") or stored["model"], "api_key": stored["api_key"],
+    #         "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
+    #         "preset": project_llm.get("preset", "h3_ref2va")}
+    # [/OLD]
     return {"base_url": base, "model": project_llm.get("model") or stored["model"], "api_key": stored["api_key"],
             "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
-            "preset": project_llm.get("preset", "h3_ref2va")}
+            "preset": project_llm.get("preset", "h3_ref2va"), "include_guides": bool(project_llm.get("include_guides", True)),
+            "guides": stored.get("guides") or {}}
 
 
 def _headers(key):
@@ -86,6 +180,7 @@ def _err(data, status):
 
 
 async def chat(cfg, system, user, max_tokens=None):
+    # `user` may be a list of OpenAI content parts (text + image_url) for vision models (added 2026-11-02 v0.2.0)
     body = {"model": cfg["model"], "temperature": cfg["temperature"],
             "max_tokens": max_tokens or cfg["max_tokens"],
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
@@ -148,7 +243,7 @@ def scene_context(p, scene):
         cast="\n".join(people) or "(none)", shots="\n".join(shots) or "(none)", lines="\n".join(lines) or "(none)"))
 
 
-async def rewrite(cfg, p, scene, instruction):
+async def rewrite(cfg, p, scene, instruction, built=""):  # built: added 2026-11-02 v0.2.0
     pr = scene["prompt"]
     ctx = scene_context(p, scene)
     preset = PRESETS.get(cfg["preset"], PRESETS["h3_ref2va"])
@@ -156,17 +251,34 @@ async def rewrite(cfg, p, scene, instruction):
         before = pr["raw"]
         user = ("{}\n\nCurrent prompt:\n{}\n\nInstruction: {}\n\nReturn only the rewritten prompt text.").format(
             ctx, before, instruction or "Improve clarity and visual precision.")
-        text, _, _ = await chat(cfg, H3_RULES + "\n" + preset, user)
+        # [OLD 2026-11-02 v0.1.0->v0.2.0] text, _, _ = await chat(cfg, H3_RULES + "\n" + preset, user)
+        text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
         text = re.sub(r"^```\w*\n|```$", "", text.strip()).strip()
         return {"raw": text, "warnings": preserved_warnings(before, text)}
     sections = pr["sections"]
     before = json.dumps(sections, ensure_ascii=False)
-    user = ("{}\n\nCurrent sections (JSON):\n{}\n\nInstruction: {}\n\n"
+    # [OLD 2026-11-02 v0.1.0->v0.2.0] the model did not see what the editor adds around its sections
+    # user = ("{}\n\nCurrent sections (JSON):\n{}\n\nInstruction: {}\n\n"
+    #         "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
+    #         "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
+    #         "Shots and dialogue are added automatically from the timeline, so detailed_description only holds extra direction.").format(
+    #     ctx, before, instruction or "Improve clarity and visual precision.")
+    # text, _, _ = await chat(cfg, H3_RULES + "\n" + preset, user)
+    # [/OLD]
+    auto = pr["auto"]
+    added = [x for x, on in (("the <Subject N>/<Picture N>/<Audio N> definition lines", auto.get("subjects")),
+                             ("the retention lines for every reference", auto.get("retention")),
+                             ("the [Shot N] lines with their cut times and the dialogue", auto.get("shots"))) if on]
+    user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}Instruction: {}\n\n"
             "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
             "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
-            "Shots and dialogue are added automatically from the timeline, so detailed_description only holds extra direction.").format(
-        ctx, before, instruction or "Improve clarity and visual precision.")
-    text, _, _ = await chat(cfg, H3_RULES + "\n" + preset, user)
+            "Do not repeat what the editor adds automatically: {}. In detailed_description write the one or two "
+            "style sentences that open the description and any extra direction. Write overall_soundscape and "
+            "non_diegetic_music as the guide describes.").format(
+        ctx, before,
+        ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
+        instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing")
+    text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
     data = parse_json(text)
     out = {k: str(data.get(k, sections.get(k, "")) or "") for k in sections}
     return {"sections": out, "warnings": preserved_warnings(before, json.dumps(out, ensure_ascii=False))}
@@ -176,12 +288,14 @@ async def split(cfg, p, scene, passes, built_prompts):
     ranges = "\n".join("Pass {}: scene time {:.3f}s to {:.3f}s ({} frames, seam before: {})".format(
         x["index"], max(0.0, x["start"]), x["end"], x["gen_frames"], x["seam_before"]) for x in passes)
     user = ("{}\n\nThis scene is generated in {} passes:\n{}\n\nThe automatic per-pass prompts are:\n{}\n\n"
-            "Rewrite one prompt per pass. Inside each pass, timestamps start at 00:00.000. A pass after an "
+            "Rewrite one complete prompt per pass, in the six-section Ref2VA format of the guide. Inside each pass, "
+            "cut times start at 00:00.000 and [Shot 1] has none. A pass after an "
             "'overlap' seam starts by continuing the previous pass, so open it as a continuation of the same shot. "
             "Return JSON: {{\"1\": \"...\", \"2\": \"...\"}}. Use @ tokens (not <Picture N>) for references.").format(
         scene_context(p, scene), len(passes), ranges,
         "\n\n".join("--- pass {} ---\n{}".format(i + 1, t) for i, t in enumerate(built_prompts)))
-    text, _, _ = await chat(cfg, H3_RULES + "\n" + PRESETS.get(cfg["preset"], ""), user)
+    # [OLD 2026-11-02 v0.1.0->v0.2.0] text, _, _ = await chat(cfg, H3_RULES + "\n" + PRESETS.get(cfg["preset"], ""), user)
+    text, _, _ = await chat(cfg, system_prompt(cfg, PRESETS.get(cfg["preset"], "")), user)
     data = parse_json(text)
     return {str(k): str(v) for k, v in data.items() if str(k).isdigit()}
 
@@ -195,7 +309,8 @@ async def script_to_scenes(cfg, p, script):
             "\"dialogue\": [{{\"speaker\": name, \"t\": seconds, \"text\", \"language\", \"delivery\"}}]}}]}}.\n"
             "Give each speaking character a speaker id S1, S2... Leave timings realistic for the action and lines.\n\n"
             "Script:\n{}").format(names, script)
-    text, _, _ = await chat(cfg, H3_RULES, user, max_tokens=max(cfg["max_tokens"], 6000))
+    # [OLD 2026-11-02 v0.1.0->v0.2.0] text, _, _ = await chat(cfg, H3_RULES, user, max_tokens=max(cfg["max_tokens"], 6000))
+    text, _, _ = await chat(cfg, system_prompt(cfg), user, max_tokens=max(cfg["max_tokens"], 6000))
     data = parse_json(text)
     if not isinstance(data, dict):
         raise ValueError("The LLM did not return a JSON object")
@@ -205,3 +320,29 @@ async def script_to_scenes(cfg, p, script):
 async def test(cfg):
     text, ms, model = await chat(cfg, "Reply with the single word OK.", "ping", max_tokens=8)
     return {"ok": True, "ms": ms, "model": model, "reply": text[:40]}
+
+
+# ---- vision (added 2026-11-02 v0.2.0) ------------------------------------------------------
+
+DESCRIBE_SYSTEM = """You describe reference media for MiniMax H3 video generation.
+Answer with one or two English sentences that can follow "<Subject 1> is ..." in a subject definition, for
+example: "the young woman with long dark hair, a blue cardigan and a thin silver necklace".
+Describe only what is visible: appearance, clothing, colours, materials, layout and lighting. Do not guess names,
+ages beyond what is obvious, or story. No preamble, no labels, no quotes."""
+
+
+def image_part(data, mime="image/jpeg"):
+    import base64
+    return {"type": "image_url", "image_url": {"url": "data:{};base64,{}".format(mime, base64.b64encode(data).decode("ascii"))}}
+
+
+async def describe(cfg, images, prompt):
+    """images: list of (bytes, mime). Needs a vision-capable model."""
+    if not images:
+        raise ValueError("Nothing to describe")
+    parts = [{"type": "text", "text": prompt or "Describe the main subject."}] + [image_part(d, m) for d, m in images]
+    text, ms, model = await chat(cfg, DESCRIBE_SYSTEM, parts, max_tokens=400)
+    text = text.strip().strip('"').strip()
+    if not text:
+        raise RuntimeError("The model returned no text. Is it a vision model?")
+    return {"text": text, "ms": ms, "model": model}

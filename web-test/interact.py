@@ -95,6 +95,102 @@ def main():
         seed.press("Tab")
         page.wait_for_timeout(500)
         check(project(page)["global"]["sampling"]["seed"] == 42, "seed edit not persisted")
+
+        # ---- added 2026-11-02 v0.2.0 ----
+        shots = __import__("shoot").SHOTS
+
+        # LLM model combobox filters as you type and accepts a typed id.
+        page.click("button[data-help='global.llm.listModels']")
+        page.wait_for_timeout(300)
+        model = page.locator(".rw-combo input[data-help='global.llm.model']")
+        model.click()
+        model.fill("minimax")
+        page.wait_for_timeout(150)
+        opts = page.locator(".rw-combo-list .rw-combo-opt:not(.free)").all_inner_texts()
+        check(opts and all("minimax" in o.lower() for o in opts), f"model filter showed {opts}")
+        page.screenshot(path=str(shots / "v020_model_filter.png"), clip={"x": 0, "y": 0, "width": 1600, "height": 1000})
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(400)
+        check(project(page)["global"]["llm"]["model"] == opts[1], f"arrow+Enter did not pick {opts[1:2]}")
+        model.click()
+        model.fill("my-custom-vl")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(400)
+        check(project(page)["global"]["llm"]["model"] == "my-custom-vl", "free model id not accepted")
+
+        # Language accepts a value that is not in the list.
+        lang = page.locator(".rw-combo input[data-help='global.defaults.language']")
+        lang.click()
+        lang.fill("Turk")
+        page.wait_for_timeout(150)
+        lang.fill("Klingon")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(400)
+        check(project(page)["global"]["defaults"]["language"] == "Klingon", "free language not accepted")
+
+        # Guides download updates the status.
+        page.click("button[data-help='global.llm.guidesFetch']")
+        page.wait_for_timeout(400)
+        check("official" in page.inner_text("[data-help='global.llm.guidesStatus']"), "guide status not updated")
+
+        # ? popover opens to the right of its icon, stays inside the node and can be dragged.
+        q = page.locator(".rw-card-head .rw-q").first
+        q.click()
+        page.wait_for_timeout(200)
+        qb, pb, rb = q.bounding_box(), page.locator(".rw-pop").bounding_box(), page.locator(".rw-root").bounding_box()
+        check(pb["x"] >= qb["x"] + qb["width"] - 1 or pb["x"] + pb["width"] <= qb["x"] + 1, f"popover not beside the ?: {qb} {pb}")
+        check(pb["x"] >= rb["x"] and pb["x"] + pb["width"] <= rb["x"] + rb["width"] and pb["y"] + pb["height"] <= rb["y"] + rb["height"], "popover leaves the node")
+        hb = page.locator(".rw-pop-head").bounding_box()
+        page.mouse.move(hb["x"] + 40, hb["y"] + 10)
+        page.mouse.down()
+        page.mouse.move(hb["x"] + 240, hb["y"] + 130, steps=6)
+        page.mouse.up()
+        pb2 = page.locator(".rw-pop").bounding_box()
+        check(abs(pb2["x"] - pb["x"] - 200) < 3 and abs(pb2["y"] - pb["y"] - 120) < 3, f"popover drag moved {pb} -> {pb2}")
+        page.screenshot(path=str(shots / "v020_popover.png"))
+        page.keyboard.press("Escape")
+
+        # Scene preview uses the Ref2VA section labels.
+        page.click(".rw-tab:has-text('Scene')")
+        page.wait_for_timeout(400)
+        pre = page.inner_text(".rw-prompt-preview")
+        check(pre.startswith("subject_definitions:\n") and "\nretention_analysis:\n" in pre and "Subjects:" not in pre, f"preview format: {pre[:80]!r}")
+
+        # Assets: add a generated file from ComfyUI's output folder, then describe it.
+        page.click(".rw-tab:has-text('Assets')")
+        page.wait_for_timeout(300)
+        page.click("button[data-help='assets.browse']")
+        page.wait_for_timeout(300)
+        page.click("button[data-help='assets.browse.root'] >> text=Output")
+        page.wait_for_timeout(300)
+        n_assets = len(project(page)["assets"])
+        page.locator(".rw-browse-tile").nth(2).click()
+        page.wait_for_timeout(150)
+        page.screenshot(path=str(shots / "v020_browse.png"))
+        page.click("button[data-help='assets.browse.add']")
+        page.wait_for_timeout(500)
+        assets = project(page)["assets"]
+        check(len(assets) == n_assets + 1 and "from_output/" in assets[-1]["file"], "output file not imported")
+        page.locator(".rw-asset-card:has-text('mara_portrait')").click()
+        page.wait_for_timeout(300)
+        page.click("button[data-help='assets.describe']")
+        page.wait_for_timeout(400)
+        page.screenshot(path=str(shots / "v020_describe.png"))
+        page.click("button[data-help='assets.describe.use']")
+        page.wait_for_timeout(400)
+        check("pea coat" in project(page)["assets"][-1]["description"], "describe result not used")
+
+        # Render tab: Merge lives next to the takes, and every scene shows its rendered file.
+        check(page.locator(".rw-tabbar button[data-help='app.merge']").count() == 0, "Merge still in the tab bar")
+        page.click(".rw-tab:has-text('Render')")
+        page.wait_for_timeout(400)
+        files = page.locator(".rw-tfile").all_inner_texts()
+        check(files and files[0].startswith("harbor_lights_01_harbor_at_dusk_"), f"file column: {files[:2]}")
+        page.click(".rw-card-head button[data-help='app.merge']")
+        page.wait_for_timeout(400)
+        check(page.locator("a[data-help='render.lastCut']").count() == 1, "last cut link missing after merge")
+        page.screenshot(path=str(shots / "v020_render.png"))
         browser.close()
     httpd.shutdown()
 

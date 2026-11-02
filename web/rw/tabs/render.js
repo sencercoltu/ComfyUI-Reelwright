@@ -41,6 +41,14 @@ function runBanner(ctx) {
     prog?.steps ? h("span", { class: "rw-meter-bar grow" }, h("span", { class: "rw-meter-fill rw-bg-pic", style: { width: Math.round((prog.step / prog.steps) * 100) + "%" } })) : h("span", { class: "rw-flex" }));
 }
 
+// added 2026-11-02 v0.2.0: the take a merge would use for a scene (starred, or newest when Merge uses latest)
+function mergeTake(ctx, sceneId) {
+  const t = ctx.takesFor(sceneId);
+  if (ctx.p.global.merge.use === "latest") return [...t.takes].sort((a, b) => (b.created || 0) - (a.created || 0))[0] || null;
+  return ctx.starredTake(sceneId);
+}
+const baseName = rel => (rel || "").split("/").pop();
+
 function takesTable(ctx) {
   const p = ctx.p;
   const open = ctx.eph.openTakes || {};
@@ -59,6 +67,13 @@ function takesTable(ctx) {
         busy ? `${prog.phase} ${prog.pass}/${prog.passes}${prog.steps ? " · " + prog.step + "/" + prog.steps : ""}` : label),
       h("button", { type: "button", class: "link mono", help: "render.table.takes", onClick: () => ctx.store.setEph({ openTakes: { ...open, [s.id]: !open[s.id] } }) },
         t.takes.length ? `${t.starred || "—"} ★ /${t.takes.length}` : "—", icon(open[s.id] ? "chevDown" : "chevRight", 11)),
+      // added 2026-11-02 v0.2.0: rendered file of the take the merge uses
+      (() => {
+        const tk = mergeTake(ctx, s.id);
+        const rel = tk?.files?.video;
+        return rel ? h("a", { class: "rw-tfile mono rw-ellipsis", href: viewURL(rel), target: "_blank", rel: "noopener", title: "output/" + rel, help: "render.table.file" }, baseName(rel))
+          : h("span", { class: "rw-dim", help: "render.table.file" }, "—");
+      })(),
       h("span", { class: "mono rw-dim", help: "render.cacheKey" }, plan?.key ? plan.key.slice(0, 4) + "…" + plan.key.slice(-2) : "—"),
       h("span", { class: "rw-dim small", help: "render.table.passes" }, plan?.passes ? `${plan.passes.length} pass${plan.passes.length > 1 ? "es" : ""}` : ""),
       h("span", { class: "mono", style: { "text-align": "right" } }, s.duration.toFixed(2) + " s")));
@@ -70,6 +85,8 @@ function takesTable(ctx) {
         tk.files?.first ? h("img", { class: "rw-take-thumb", src: viewURL(tk.files.first), alt: "" }) : h("span", { class: "rw-take-thumb" }),
         h("b", { class: "mono" }, tk.id),
         h("span", { class: "rw-tag" }, tk.quality || "final"),
+        // added 2026-11-02 v0.2.0: file name of this take
+        tk.files?.video && h("span", { class: "mono small rw-dim rw-ellipsis rw-take-file", title: "output/" + tk.files.video, help: "render.take.file" }, baseName(tk.files.video)),
         h("span", { class: "mono rw-dim" }, `${(tk.seconds ?? 0).toFixed(2)} s · ${tk.frames ?? "?"} f`),
         h("span", { class: "rw-dim small" }, tk.created ? new Date(tk.created * (tk.created < 1e12 ? 1000 : 1)).toLocaleString() : ""),
         tk.face && Object.keys(tk.face).length ? h("span", { class: "mono small rw-c-aud", help: "cast.appearances.score" }, "face " + Object.values(tk.face).map(v => Number(v).toFixed(2)).join(" / ")) : null,
@@ -83,11 +100,27 @@ function takesTable(ctx) {
         : h("div", { class: "rw-empty sm" }, "No takes yet. Render this scene to create one.")));
     }
   });
+  /* [OLD 2026-11-02 v0.1.0->v0.2.0] Merge moved here from the tab bar; table gains a File column
   return section({
     title: "Scenes and takes", help: "render.table",
     actions: [button({ label: "Refresh", icon: "refresh", small: true, help: "render.refresh", onClick: async () => { await ctx.actions.refreshTakes(); ctx.store.refreshPlan(); } })],
     children: [
       h("div", { class: "rw-trow head" }, ["#", "Scene", "Status", "Takes", "Cache key", "Passes", "Length"].map(x => h("span", null, x))),
+  [/OLD] */
+  const res = ctx.eph.merge;
+  const merging = res?.phase === "start" || res?.phase === "progress";
+  const nReady = p.scenes.filter(s => mergeTake(ctx, s.id)).length;
+  return section({
+    title: "Scenes and takes", help: "render.table",
+    actions: [
+      res?.files?.video && h("a", { class: "rw-btn rw-btn-ghost rw-btn-sm", href: viewURL(res.files.video), target: "_blank", rel: "noopener", title: "output/" + res.files.video, help: "render.lastCut" },
+        icon("eye", 12), h("span", { class: "mono" }, baseName(res.files.video))),
+      button({ label: "Refresh", icon: "refresh", small: true, help: "render.refresh", onClick: async () => { await ctx.actions.refreshTakes(); ctx.store.refreshPlan(); } }),
+      button({ label: merging ? `Merging… ${res.percent ? Math.round(res.percent) + "%" : ""}` : `Merge ${nReady}/${p.scenes.length}`, icon: "merge", small: true, variant: "accent-ghost",
+        help: "app.merge", disabled: merging || nReady === 0 || (p.global.merge.missing === "block" && nReady < p.scenes.length), onClick: () => ctx.actions.merge() }),
+    ],
+    children: [
+      h("div", { class: "rw-trow head" }, ["#", "Scene", "Status", "Takes", "File", "Cache key", "Passes", "Length"].map(x => h("span", null, x))),
       rows,
     ],
   });

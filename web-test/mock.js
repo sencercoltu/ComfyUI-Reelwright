@@ -185,11 +185,14 @@ function demoProject() {
 // ---------- Render state ----------
 
 const takes = {};
+// added 2026-11-02 v0.2.0: titles for the per-take file names (render.py: slug_NN_title_take.mp4)
+const SCENE_TITLES = { s_01: "Harbor at dusk", s_02: "Mara on the pier", s_03: "The letter", s_04: "Flashback: the lighthouse, 1962", s_05: "Storm rolls in", s_06: "Lights come on", s_07: "The long walk home", s_08: "Insert: hand on the door" };
 const status = { s_01: "cached", s_02: "cached", s_03: "stale", s_04: "cached", s_05: "cached", s_06: "cached", s_07: "pending", s_08: "pending" };
 function take(scene, id, extra = {}) {
   const base = `reelwright/${SLUG}/scenes/${scene}/takes/${id}`;
   return { id, key: "k" + scene + id + "9f3ac2", created: 1793560000 + Math.floor(Math.random() * 9000), quality: "final", seconds: 8, frames: 192, face: {},
-    files: { video: base + "/video.mp4", first: base + "/first.png", last: base + "/last.png", tail: base + "/tail.mp4" }, ...extra };
+    // [OLD 2026-11-02 v0.1.0->v0.2.0] files: { video: base + "/video.mp4", first: base + "/first.png", last: base + "/last.png", tail: base + "/tail.mp4" }, ...extra };
+    files: { video: `${base}/${SLUG}_${scene.slice(2)}_${(SCENE_TITLES[scene] || "scene").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40)}_${id}.mp4`, first: base + "/first.png", last: base + "/last.png", tail: base + "/tail.mp4" }, ...extra };
 }
 function initTakes() {
   const add = (s, list, starred) => { takes[s] = { starred, takes: list }; };
@@ -251,6 +254,7 @@ function promptFor(p, s, pass) {
   if (s.refs.some(r => r.role !== "reference") || s.start.mode === "last_frame") tags.push("keyframe completion");
   if (s.start.mode === "tail" || pass.seam_before === "overlap") tags.push("video continuation");
   if (auds.length) tags.push("audio reference");
+  /* [OLD 2026-11-02 v0.1.0->v0.2.0] mock prompt used the pre-guide layout; the block below mirrors prompt.py's six sections
   const lines = [];
   if (tags.length) lines.push(`[${tags.join(" + ")}] ${sub(s.prompt.sections.summary || "")}`.trim());
   subj.forEach((c, i) => lines.push(`<Subject ${i + 1}>: <Picture ${i + 1}> — ${c.description}`));
@@ -268,6 +272,31 @@ function promptFor(p, s, pass) {
   if (s.prompt.sections.overall_soundscape) lines.push("Soundscape: " + s.prompt.sections.overall_soundscape);
   if (s.prompt.sections.non_diegetic_music) lines.push("Music: " + s.prompt.sections.non_diegetic_music);
   return lines.join("\n");
+  [/OLD] */
+  const sec = s.prompt.sections;
+  const spk = [];
+  const inPass = s.dialogue.filter(x => x.t >= pass.start && x.t < pass.end);
+  for (const d of inPass) if (!spk.includes(d.speaker)) spk.push(d.speaker);
+  const sid = id => "S" + (spk.indexOf(id) + 1);
+  const defs = subj.map((c, i) => `<Subject ${i + 1}> is ${c.name}, ${c.description.replace(/\.$/, "")}, shown in <Picture ${i + 1}>.`);
+  auds.forEach((id, i) => { const c = subj.find(x => x.voice === id); if (c) defs.push(`<Audio ${i + 1}> is the voice-timbre reference for <Subject ${subj.indexOf(c) + 1}> (${sid(c.id)}).`); });
+  const ret = subj.map((c, i) => `<Subject ${i + 1}> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.`);
+  const shots = s.shots.filter(x => x.t >= pass.start - 0.001 && x.t < pass.end);
+  const cam = c => c ? "a " + c.toLowerCase().replace(/ shot$/, "") + " shot: " : "";
+  const desc = shots.map((x, i) => i ? `[Shot ${i + 1}] At ${fmt(x.t - pass.start)}, the shot cuts to ${cam(x.camera)}${sub(x.text)}.` : `[Shot 1] ${cam(x.camera).replace(/^a/, "A")}${sub(x.text)}.`);
+  for (const d of inPass) {
+    const c = subj.findIndex(x => x.id === d.speaker);
+    desc.push(`<Subject ${c + 1}> (${sid(d.speaker)}) ${d.delivery || "says"}, <d>[${d.language}] ${d.text}</d>`);
+  }
+  const body = {
+    subject_definitions: defs.join("\n"),
+    summary: `${tags.length ? `[${tags.join(" + ")}] ` : ""}${sub(sec.summary || "")}`.trim(),
+    retention_analysis: ret.join("\n"),
+    detailed_description: [sub(sec.detailed_description || ""), ...desc].filter(Boolean).join("\n"),
+    overall_soundscape: sec.overall_soundscape || "",
+    non_diegetic_music: sec.non_diegetic_music || "",
+  };
+  return Object.entries(body).map(([k, v]) => `${k}:\n${v.trim() || "N/A"}`).join("\n\n");
 }
 
 function fmt(t) {
@@ -300,12 +329,32 @@ function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
+// added 2026-11-02 v0.2.0: fake ComfyUI input/output listings
+let guidesHave = {};
+const MEDIA = {
+  input: [
+    { rel: "reelwright/harbor_lights/mara_front.png", kind: "image", bytes: 812000, mtime: 1793600000 },
+    { rel: "portraits/old_keeper.png", kind: "image", bytes: 640000, mtime: 1793500000 },
+    { rel: "portraits/mara_window.jpg", kind: "image", bytes: 420000, mtime: 1793400000 },
+    { rel: "locations/pier_dusk.png", kind: "image", bytes: 910000, mtime: 1793300000 },
+    { rel: "clips/waves_loop.mp4", kind: "video", bytes: 5200000, mtime: 1793200000 },
+    { rel: "audio/gulls.wav", kind: "audio", bytes: 1400000, mtime: 1793100000 },
+  ],
+  output: [
+    { rel: "ComfyUI_00412_.png", kind: "image", bytes: 1200000, mtime: 1793650000 },
+    { rel: "ComfyUI_00411_.png", kind: "image", bytes: 1180000, mtime: 1793640000 },
+    { rel: "flux/mara_portrait_00007_.png", kind: "image", bytes: 1500000, mtime: 1793630000 },
+    { rel: "flux/lighthouse_00003_.png", kind: "image", bytes: 1460000, mtime: 1793620000 },
+    { rel: "reelwright/harbor_lights/scenes/s_02/takes/v2/harbor_lights_02_mara_walks_home_v2.mp4", kind: "video", bytes: 9100000, mtime: 1793610000 },
+  ],
+};
+
 async function route(path, opts = {}) {
   const url = new URL(path, "http://mock");
   const body = opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : null;
   await new Promise(r => setTimeout(r, 20));
   switch (url.pathname) {
-    case "/reelwright/info": return json({ version: "0.1.0", ffmpeg: "ffmpeg 7.1", insightface: true, h3_nodes: true });
+    case "/reelwright/info": return json({ version: "0.2.0", ffmpeg: "ffmpeg 7.1", insightface: true, h3_nodes: true });
     case "/reelwright/models": return json({
       diffusion_models: ["minimax_h3_ref2va_pruned_int8_convrot.safetensors", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"],
       text_encoders: ["qwen3vl_32b_minimax_h3_int8_convrot.safetensors", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"],
@@ -322,8 +371,22 @@ async function route(path, opts = {}) {
     case "/reelwright/autosave": return json({ ok: true, version: "project_20261102_101500.json" });
     case "/reelwright/versions": return json({ versions: [{ name: "project_20261102_101500.json", created: 1793614500, size: 18400 }, { name: "project_20261102_094012.json", created: 1793612412, size: 17200 }] });
     case "/reelwright/version": return json({ project: demoProject() });
-    case "/reelwright/llm/settings": return json({ base_url: "http://llm.local:30000/v1", model: "qwen3-32b-instruct", has_key: true, ok: true });
-    case "/reelwright/llm/models": return json({ models: ["qwen3-32b-instruct", "qwen3.8-flash-next", "llama-4-70b"] });
+    // [OLD 2026-11-02 v0.1.0->v0.2.0] case "/reelwright/llm/settings": return json({ base_url: "http://llm.local:30000/v1", model: "qwen3-32b-instruct", has_key: true, ok: true });
+    case "/reelwright/llm/settings": return json({ base_url: "http://llm.local:30000/v1", model: "qwen3-32b-instruct", has_key: true, ok: true,
+      guides: guidesHave, guide_urls: { "ref-en.txt": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/main/skills/h3-prompt-writing/references/ref-en.txt", "base-en.txt": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/main/skills/h3-prompt-writing/references/base-en.txt" } });
+    // [OLD 2026-11-02 v0.1.0->v0.2.0] case "/reelwright/llm/models": return json({ models: ["qwen3-32b-instruct", "qwen3.8-flash-next", "llama-4-70b"] });
+    case "/reelwright/llm/models": return json({ models: ["qwen3-32b-instruct", "qwen3-vl-32b-instruct", "qwen3.8-flash-next", "llama-4-70b", "MiniMax-M2.5", "MiniMax-VL-02", "minimax-text-01"] });
+    // added 2026-11-02 v0.2.0: guides, describe, ComfyUI file browser
+    case "/reelwright/llm/guides": guidesHave = { "ref-en.txt": { bytes: 23553, fetched: 1793620000 }, "base-en.txt": { bytes: 15773, fetched: 1793620000 } }; return json({ guides: guidesHave });
+    case "/reelwright/llm/describe": return json({ text: "the young woman with shoulder-length auburn hair, a navy pea coat with brass buttons and a grey knitted scarf", ms: 1840, model: "qwen3-vl-32b-instruct" });
+    case "/reelwright/files": {
+      const all = MEDIA[url.searchParams.get("root") || "input"] || [];
+      const kind = url.searchParams.get("kind"), terms = (url.searchParams.get("q") || "").toLowerCase().split(/\s+/).filter(Boolean);
+      const files = all.filter(f => (!kind || f.kind === kind) && terms.every(t => f.rel.toLowerCase().includes(t)));
+      return json({ files, total: files.length, truncated: false });
+    }
+    case "/reelwright/import": return json({ asset: { kind: /\.(mp4|webm)$/.test(body.rel) ? "video" : "image", name: body.rel.split("/").pop().replace(/\.[^.]+$/, ""),
+      file: body.root === "input" ? body.rel : `reelwright/${SLUG}/from_output/${body.rel.split("/").pop()}`, width: 1344, height: 768, category: "subject" } });
     case "/reelwright/llm/test": return json({ ok: true, ms: 412, model: "qwen3-32b-instruct" });
     case "/reelwright/llm/rewrite": {
       const s = body.project.scenes.find(x => x.id === body.scene_id);

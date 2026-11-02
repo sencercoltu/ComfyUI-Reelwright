@@ -62,7 +62,8 @@ lives on disk.
               "seam_mode": "auto", "cut_snap_seconds": 2.0 },       // auto | cuts | overlap
     "memory": { "policy": "free_cache", "encode_first": true, "group_by_lora": true },  // keep | free_cache | unload_all
     "continuity": { "reanchor_after": 2, "face_check": false, "face_threshold": 0.8, "on_drift": "flag" }, // flag | retake
-    "llm": { "base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va" },
+    "llm": { "base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
+             "include_guides": true },                    // v0.2.0: send MiniMax's guides when downloaded
     "merge": { "use": "starred", "missing": "skip",                 // skip | slate | block
                "hard_cut": "cut", "transition_frames": 12,           // cut | crossfade | dip
                "audio_fade_frames": 6, "loudness": -16.0, "normalize": true,
@@ -77,11 +78,12 @@ lives on disk.
       "name": "Mara — portrait", "file": "reelwright/harbor_lights/mara.png",   // relative to ComfyUI input dir
       "duration": 0, "width": 1024, "height": 1365, "category": "subject",
       "defaults": { "role": "reference", "retention": "fully_preserved", "keep": ["face", "hair"], "soundtrack": false },
-      "notes": "" }
+      "notes": "",
+      "description": "" }                                  // v0.2.0: the asset's subject line
   ],
   "cast": [
     { "id": "c_1", "kind": "character",                 // character | location | prop
-      "name": "Mara", "speaker": "S1", "description": "Woman, early 30s, …",
+      "name": "Mara", "speaker": "S1", "description": "Woman, early 30s, …",   // speaker is legacy: S-IDs are per clip since v0.2.0
       "anchors": ["a_1"], "pack_sheet": true,
       "outfits": [ { "id": "o_1", "name": "Navy pea coat", "retention": "fully_preserved", "keep": ["face","hair","coat"], "assets": [] } ],
       "default_outfit": "o_1",
@@ -135,7 +137,7 @@ mirrors the defaults).
 | POST | `/reelwright/autosave` | `{project}` | `{ok, version}` |
 | GET | `/reelwright/versions?slug=` | – | `{versions:[{name, created, size}]}` |
 | GET | `/reelwright/version?slug=&name=` | – | `{project}` |
-| GET | `/reelwright/llm/settings` | – | `{base_url, model, has_key}` |
+| GET | `/reelwright/llm/settings` | – | `{base_url, model, has_key, guides:{name:{bytes, fetched}}, guide_urls}` |
 | POST | `/reelwright/llm/settings` | `{base_url?, model?, api_key?}` | `{ok}` |
 | POST | `/reelwright/llm/models` | `{base_url?}` | `{models[]}` |
 | POST | `/reelwright/llm/test` | `{}` | `{ok, ms, model}` |
@@ -145,6 +147,10 @@ mirrors the defaults).
 | POST | `/reelwright/promote_frame` | `{slug, scene_id, take_id, which: first\|last\|time, t?}` | `{asset}` |
 | POST | `/reelwright/cast/export` | `{project, cast_id}` | `{folder, files}` |
 | POST | `/reelwright/continuity/check` | `{project, scene_id}` | `{scores:{cast_id: value}, available}` |
+| POST | `/reelwright/llm/guides` | `{}` | `{guides}`: downloads MiniMax's `ref-en.txt` and `base-en.txt` into `user/reelwright/guides/` |
+| POST | `/reelwright/llm/describe` | `{project, asset_ids[≤4], prompt}` | `{text, ms, model}`; pictures as JPEG, videos as 3 frames, OpenAI `image_url` parts |
+| GET | `/reelwright/files?root=input\|output&q=&kind=&limit=` | – | `{files:[{rel, kind, bytes, mtime}], total, truncated}`, newest first |
+| POST | `/reelwright/import` | `{slug, root, rel}` | `{asset}`; output files are hard-linked or copied into `input/reelwright/<slug>/from_output/` |
 
 File previews use ComfyUI's own `/view?filename=&subfolder=&type=output|input`.
 
@@ -171,12 +177,13 @@ output/reelwright/<slug>/
   project.json                       latest autosave
   versions/project_YYYYmmdd_HHMMSS.json
   scenes/<scene_id>/index.json       {starred, takes:[...]}
-  scenes/<scene_id>/takes/<take_id>/video.mp4 first.png last.png tail.mp4 meta.json
+  scenes/<scene_id>/takes/<take_id>/<slug>_<NN>_<title>_<take_id>.mp4 first.png last.png tail.mp4 meta.json   (video.mp4 before v0.2.0)
   scenes/<scene_id>/takes/<take_id>/passes/p1.mp4 …
   cuts/<slug>_cut_vN.mp4 .srt .otio .fcpxml .chapters.txt .zip
   cast/<cast_id>/training/…
-input/reelwright/<slug>/             uploaded assets
+input/reelwright/<slug>/             uploaded assets (from_output/: files picked from ComfyUI's output)
 user/reelwright/llm.json     LLM base URL, model, API key (never in workflows)
+user/reelwright/guides/      MiniMax's H3 prompt guides, downloaded on request
 ```
 
 Every path that comes from the project or a request goes through

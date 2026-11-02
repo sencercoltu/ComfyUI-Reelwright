@@ -107,3 +107,68 @@ def trim(frames, audio, keep_in_frames, keep_out_frames):
     f = frames[keep_in_frames:keep_out_frames]
     a = slice_audio(audio, keep_in_frames / spec.FPS, keep_out_frames / spec.FPS) if audio is not None else None
     return f, a
+
+
+# ---- stills for the vision describer (added 2026-11-02 v0.2.0) -------------------------------
+
+def jpeg_bytes(im, max_side=1024):
+    import io
+    im = ImageOps.exif_transpose(im).convert("RGB")
+    im.thumbnail((max_side, max_side))
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=88)
+    return buf.getvalue()
+
+
+def stills_for_vision(path, max_side=1024, frames=3):
+    """[(bytes, mime)] for an image, or `frames` evenly spaced frames of a video."""
+    import subprocess
+    import tempfile
+    kind = kind_of(path)
+    if kind == "image":
+        with Image.open(path) as im:
+            return [(jpeg_bytes(im, max_side), "image/jpeg")]
+    if kind != "video":
+        raise ValueError("Only pictures and videos can be described")
+    ff = merge.ffmpeg_bin()
+    if not ff:
+        raise ValueError("ffmpeg is needed to grab frames from a video")
+    dur = max(0.1, float(merge.probe(path)["duration"]))
+    out = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for i in range(frames):
+            t = dur * (i + 0.5) / frames
+            dst = os.path.join(tmp, "f{}.png".format(i))
+            subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-y", "-ss", "{:.3f}".format(t), "-i", path,
+                            "-frames:v", "1", dst], check=True)
+            with Image.open(dst) as im:
+                out.append((jpeg_bytes(im, max_side), "image/jpeg"))
+    return out
+
+
+def list_media(root, query="", kind="", limit=400, scan_cap=20000):
+    """Media files under `root`, newest first: [{rel, kind, bytes, mtime}]."""
+    terms = [t for t in (query or "").lower().split() if t]
+    found, scanned = [], 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for name in filenames:
+            scanned += 1
+            if scanned > scan_cap:
+                break
+            k = kind_of(name)
+            if not k or (kind and kind != "all" and k != kind):
+                continue
+            full = os.path.join(dirpath, name)
+            rel = os.path.relpath(full, root).replace(os.sep, "/")
+            if terms and not all(t in rel.lower() for t in terms):
+                continue
+            try:
+                st = os.stat(full)
+            except OSError:
+                continue
+            found.append({"rel": rel, "kind": k, "bytes": st.st_size, "mtime": int(st.st_mtime)})
+        if scanned > scan_cap:
+            break
+    found.sort(key=lambda x: -x["mtime"])
+    return {"files": found[:limit], "total": len(found), "truncated": scanned > scan_cap or len(found) > limit}

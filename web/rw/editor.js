@@ -4,7 +4,10 @@
 import { rw, setHost } from "./api.js";
 import { createStore } from "./store.js";
 import { installTooltips } from "./tooltip.js";
+/* [OLD 2026-11-02 v0.1.0->v0.2.0] comboState is needed for the render guard
 import { h, icon, button } from "./ui.js";
+[/OLD] */
+import { h, icon, button, comboState } from "./ui.js";
 import { VERSION } from "./version.js";
 import {
   normalizeProject, defaultScene, newId, sceneIndex, sceneStarts, assembledDuration, fmtTime,
@@ -223,7 +226,9 @@ export function mountEditor(container, host) {
         label: issues.length ? `${issues.length} issue${issues.length > 1 ? "s" : ""}` : "Valid", icon: issues.length ? "warn" : "check",
         help: "app.issues", variant: errors ? "danger-ghost" : issues.length ? "warn-ghost" : "ok-ghost", onClick: () => actions.toggleIssues(),
       }),
+      /* [OLD 2026-11-02 v0.1.0->v0.2.0] Merge moved into the Render tab, next to scene states and takes
       button({ label: "Merge scenes", icon: "merge", help: "app.merge", onClick: () => actions.merge() }),
+      [/OLD] */
       button({
         label: pend ? `Render pending · ${pend}` : "Render pending", icon: "play", help: "app.renderPending", variant: "primary",
         onClick: () => actions.run("pending"),
@@ -284,6 +289,9 @@ export function mountEditor(container, host) {
   let frame = 0;
   function render() {
     frame = 0;
+    // added 2026-11-02 v0.2.0: an open combobox list lives in the root; re-rendering under it would
+    // orphan the list, so wait until it closes
+    if (comboState.open) { comboState.onClose = () => { if (!frame) frame = requestAnimationFrame(render); }; return; }
     const scroll = {};
     root.querySelectorAll("[data-scroll]").forEach(el => { scroll[el.dataset.scroll] = [el.scrollLeft, el.scrollTop]; });
     const focused = root.querySelector(":focus");
@@ -304,7 +312,11 @@ export function mountEditor(container, host) {
     if (focusKey) {
       const el = root.querySelector(`[data-key="${CSS.escape(focusKey)}"]`);
       if (el) {
+        /* [OLD 2026-11-02 v0.1.0->v0.2.0] re-focusing a combobox would reopen its list
         el.focus({ preventScroll: true });
+        [/OLD] */
+        comboState.restoring = true;
+        try { el.focus({ preventScroll: true }); } finally { comboState.restoring = false; }
         if (sel && typeof el.setSelectionRange === "function") { try { el.setSelectionRange(sel[0], sel[1]); } catch { /* not a text field */ } }
       }
     } else if (focused === root || !root.contains(document.activeElement)) {

@@ -21,7 +21,8 @@ tip("app.undo", "Undo the last edit (Ctrl+Z). Selection and zoom changes are not
 tip("app.redo", "Redo (Ctrl+Shift+Z or Ctrl+Y).");
 more("app.issues", "Issues", "Problems found in the project: references over H3's limits, unknown @tags, dialogue without a language, shots after the end of a scene, missing files, a continuation without a previous scene and more. Errors stop a render; warnings and notes do not.\n\nClick an issue to jump to its scene.", "Problems that may stop or degrade a render. Click to list them.");
 tip("app.issueItem", "Open the scene this issue belongs to.");
-tip("app.merge", "Join the starred take of every rendered scene into one film, with seams, audio fades and extras from the Render tab. Nothing is re-rendered.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] merge moved into the Render tab: tip("app.merge", "Join the starred take of every rendered scene into one film, with seams, audio fades and extras from the Render tab. Nothing is re-rendered.");
+tip("app.merge", "Join the starred (or latest) take of every rendered scene into one film, using the Merge scenes settings on the right. Nothing is re-rendered.");
 tip("app.renderPending", "Queue a render of every scene that is new or stale. Scenes whose cache key matches a take on disk are reused.");
 tip("footer.issues", "The first issue in the project, or confirmation that every scene is within H3's limits.");
 tip("footer.output", "Output size and quality from the Global tab. H3 always renders 24 fps video with 32 kHz stereo audio.");
@@ -124,7 +125,8 @@ tip("timeline.lane.scenes", "Scene blocks. Status dot: green on disk, amber stal
 tip("timeline.lane.pictures", "Picture references (bars) and keyframes (diamonds). A hollow diamond is the previous scene's last frame used as frame 0.");
 tip("timeline.lane.video", "Video references, and the hatched tail clip a continuing scene starts from.");
 tip("timeline.lane.audio", "Audio references, voice samples of speaking cast and video soundtracks.");
-tip("timeline.lane.dialogueLane", "Dialogue lines at their time in the scene, with speaker ID and language.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now: tip("timeline.lane.dialogueLane", "Dialogue lines at their time in the scene, with speaker ID and language.");
+tip("timeline.lane.dialogueLane", "Dialogue lines at their time in the scene, with speaker and language.");
 tip("timeline.lane.cameraLane", "Camera wording of each shot.");
 tip("timeline.lane.loras", "Top bar: the Global LoRA stack. Below: scene LoRAs, Global strengths a scene overrides (coral) and cast identity LoRAs (blue).");
 tip("timeline.lane.castAnchors", "A cast member's anchor pictures, sent as one sheet or separately.");
@@ -137,7 +139,8 @@ tip("timeline.lane.vidRef", "A video reference (motion, camera or edit source). 
 tip("timeline.lane.audRef", "An audio reference with its retention label. Uses one of the 3 audio slots.");
 tip("timeline.lane.soundtrack", "The soundtrack of a video reference, sent as its own <Audio n>.");
 tip("timeline.lane.voice", "Voice sample of a speaking cast member, sent so their lines keep the same voice.");
-tip("timeline.lane.dialogue", "A spoken line. Written into the prompt as <Subject n> (S1) says <d>[Language] …</d>.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now: tip("timeline.lane.dialogue", "A spoken line. Written into the prompt as <Subject n> (S1) says <d>[Language] …</d>.");
+tip("timeline.lane.dialogue", "A spoken line. Written into the prompt as <Subject n> (S1) says, <d>[Language] …</d>, with S1, S2… in speaking order.");
 tip("timeline.lane.camera", "Camera wording written into this shot's line.");
 tip("timeline.lane.lora.global", "LoRAs from the Global tab, applied to every scene first.");
 tip("timeline.lane.lora.override", "A Global LoRA whose strength this scene changes.");
@@ -210,16 +213,20 @@ tip("scene.shots.time", "When the shot starts, in seconds from the start of the 
 tip("scene.shots.camera", "Camera wording, such as shot size and movement. Pick a preset or type your own.");
 tip("scene.shots.text", "What happens in this shot. Use @tags for assets and cast.");
 tip("scene.shots.remove", "Remove this shot.");
-more("scene.dialogue", "Dialogue", "Each line is written as <Subject n> (S1) says <d>[English] …</d>. The speaker ID (S1, S2) stays the same for a character across the whole project, and their voice sample is sent as an audio reference so the voice matches.\n\nH3 speaks 11 languages reliably: Arabic, Chinese, English, French, German, Italian, Japanese, Korean, Portuguese, Russian and Spanish.", "Spoken lines in this scene.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now: more("scene.dialogue", "Dialogue", "Each line is written as <Subject n> (S1) says <d>[English] …</d>. The speaker ID (S1, S2) stays the same for a character across the whole project, and their voice sample is sent as an audio reference so the voice matches.\n\nH3 speaks 11 languages reliably: Arabic, Chinese, English, French, German, Italian, Japanese, Korean, Portuguese, Russian and Spanish.", "Spoken lines in this scene.");
+more("scene.dialogue", "Dialogue", "Each line is written as <Subject n> (S1) says, <d>[English] …</d>. As MiniMax's guide asks, speaker IDs follow speaking order inside each clip: whoever speaks first is S1, the next new voice S2, and so on. The character's voice sample is sent as an audio reference so the voice matches across scenes.\n\nH3 speaks 11 languages reliably: Arabic, Chinese, English, French, German, Italian, Japanese, Korean, Portuguese, Russian and Spanish. You can type any other language name; it is sent as written.", "Spoken lines in this scene.");
 tip("scene.dialogue.add", "Add a spoken line.");
-tip("scene.dialogue.speaker", "Who speaks. Characters come from the Cast tab.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are now per clip: tip("scene.dialogue.speaker", "Who speaks. Characters come from the Cast tab.");
+tip("scene.dialogue.speaker", "Who speaks. Type to filter; characters come from the Cast tab. Speaker IDs (S1, S2…) are given in speaking order in each clip, as H3's guide asks.");
 tip("scene.dialogue.time", "When the line starts, in seconds from the start of the scene.");
-tip("scene.dialogue.language", "Language tag written as <d>[Language] …</d>.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] free-text language: tip("scene.dialogue.language", "Language tag written as <d>[Language] …</d>.");
+tip("scene.dialogue.language", "Language tag written as <d>[Language] …</d>. Type to filter the list, or type any language name and press Enter to use it.");
 tip("scene.dialogue.delivery", "How it is said: whispers, shouts, says calmly …");
 tip("scene.dialogue.text", "The words, exactly as they should be spoken.");
 tip("scene.dialogue.remove", "Remove this line.");
 tip("scene.dialogue.noCast", "Lines need a speaker from the story bible.");
-more("scene.preview", "What H3 receives", "The final prompt of every pass, built by the backend from the sections, shots, dialogue, cast and references, with @tags renumbered for that pass.\n\nLong scenes have one prompt per pass. By default, shots and dialogue are assigned to the pass that contains them, with timestamps re-based to the start of the pass. Split with LLM can write the per-pass prompts for you, and you can edit any pass by hand.", "The exact prompt sent for each pass.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] describes the Ref2VA layout: more("scene.preview", "What H3 receives", "The final prompt of every pass, built by the backend from the sections, shots, dialogue, cast and references, with @tags renumbered for that pass.\n\nLong scenes have one prompt per pass. By default, shots and dialogue are assigned to the pass that contains them, with timestamps re-based to the start of the pass. Split with LLM can write the per-pass prompts for you, and you can edit any pass by hand.", "The exact prompt sent for each pass.");
+more("scene.preview", "What H3 receives", "The final prompt of every pass, built by the backend in MiniMax's Ref2VA format: six labelled sections in order (subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music), each label on its own line.\n\nReference pictures that define a character, place, prop or style become <Subject N> lines; standalone <Picture N> is kept for frame anchors. Shots are written as [Shot 1] …, [Shot 2] At 00:06.000, the shot cuts to …, and speakers are numbered S1, S2… in speaking order.\n\nLong scenes have one prompt per pass, with shots and dialogue re-based to the start of each pass. Split with LLM can write the per-pass prompts, and you can edit any pass by hand.", "The exact prompt sent for each pass, in Ref2VA format.");
 tip("scene.preview.pass", "Show the prompt of this pass: its time range, frame count and the seam before it. A coral dot means the pass prompt was edited by hand.");
 tip("scene.preview.splitLlm", "Ask the LLM to write one prompt per pass, keeping tags and dialogue as written. Runs only when you click.");
 tip("scene.preview.splitAuto", "Drop the hand-written pass prompts and go back to the automatic split.");
@@ -262,6 +269,21 @@ tip("scene.loras.cast", "Added automatically because a cast member with an ident
 tip("assets.filter", "Show all assets, or only pictures, videos or audio.");
 tip("assets.search", "Filter by code, name, category or file name.");
 tip("assets.upload", "Upload images, videos or audio. Files are stored in input/reelwright/<project>/.");
+// added 2026-11-02 v0.2.0: ComfyUI file browser and vision descriptions
+more("assets.browse", "Files already in ComfyUI", "Pick pictures, videos or audio that are already in ComfyUI's input folder (files you imported before) or output folder (files ComfyUI generated), without uploading them again.\n\nInput files are used where they are. Output files are hard-linked (or copied when linking is not possible) into input/reelwright/<project>/from_output/, because H3 reads references from the input folder.", "Add files from ComfyUI's input or output folders.");
+tip("assets.browse.root", "Input: files you imported into ComfyUI. Output: files ComfyUI generated.");
+tip("assets.browse.kind", "Show only pictures, videos or audio.");
+tip("assets.browse.search", "Filter by any part of the path; every word must match. Newest files are listed first.");
+tip("assets.browse.tile", "Click to select; click again to unselect. Then press Add.");
+tip("assets.browse.used", "Already an asset in this project.");
+tip("assets.browse.clear", "Unselect everything.");
+tip("assets.browse.add", "Add the selected files as assets.");
+more("assets.description", "Description", "A short visual description of what this asset shows. When the asset is used as a reference, it becomes its subject line, e.g. \"<Subject 2> is the wooden pier at dusk, shown in <Picture 3>.\" Without it the line is generic, which H3's guide warns against.\n\nWrite it yourself, or ask a vision LLM below.", "Visual description used in subject_definitions.");
+more("assets.describe", "Describe with LLM", "Sends this picture (or three frames of this video) to the LLM set on the Global tab with your question, for example \"describe the person on the left of this picture\" or \"describe the couch\". The model must accept images (a vision model).\n\nThe answer appears as a suggestion: Use replaces the description, Append adds to it, Dismiss throws it away.", "Ask a vision LLM to describe this asset.");
+tip("assets.describe.prompt", "What to ask about this asset. Empty uses the grey example. Enter sends it.");
+tip("assets.describe.result", "The model's answer. Nothing changes until you press Use or Append.");
+tip("assets.describe.use", "Replace the description with this answer.");
+tip("assets.describe.append", "Add this answer to the end of the description.");
 tip("assets.drop", "Drop files here to upload them.");
 for (const [k, t] of Object.entries({
   image: ["Pictures", "Identity, locations, props, styles and keyframes. Up to 9 picture references per pass, plus any number of guide frames (first, last, keyframes). 'match' resizes references to the output area; 'max' keeps up to 2048 px for better identity at a speed cost (Global → Output)."],
@@ -296,9 +318,11 @@ tip("assets.camera.text", "The exact wording written into the shot line.");
 tip("assets.camera.remove", "Delete this preset.");
 
 // ---------- Cast ----------
-more("cast.bible", "Story bible", "Characters, locations and props that recur. Tag one in a scene and its anchors, description, outfit, voice and identity LoRA are added to that scene automatically.\n\nSpeaker IDs (S1, S2 …) are unique per character and stay the same in every scene.", "Recurring characters, locations and props.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now: more("cast.bible", "Story bible", "Characters, locations and props that recur. Tag one in a scene and its anchors, description, outfit, voice and identity LoRA are added to that scene automatically.\n\nSpeaker IDs (S1, S2 …) are unique per character and stay the same in every scene.", "Recurring characters, locations and props.");
+more("cast.bible", "Story bible", "Characters, locations and props that recur. Tag one in a scene and its anchors, description, outfit, voice and identity LoRA are added to that scene automatically.\n\nIdentity stays the same through the anchors, description and voice sample; speaker IDs (S1, S2 …) are numbered per clip in speaking order.", "Recurring characters, locations and props.");
 tip("cast.item", "Edit this entry.");
-tip("cast.add.character", "Add a character. It gets the next free speaker ID.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now: tip("cast.add.character", "Add a character. It gets the next free speaker ID.");
+tip("cast.add.character", "Add a character.");
 tip("cast.add.location", "Add a recurring location.");
 tip("cast.add.prop", "Add a recurring prop.");
 more("cast.anchors", "Anchors", "Pictures that define this subject: ideally front, three-quarter, profile and full body. They are sent to every scene the subject is in, so identity never depends on earlier renders.\n\nPack into one sheet combines the anchors into a single 2×2 or 3×3 image, which uses one of H3's 9 picture slots instead of several.", "Pictures that define this subject.");
@@ -307,13 +331,22 @@ tip("cast.anchors.remove", "Remove this anchor (the asset stays in the project).
 tip("cast.anchors.sheet", "Combine the anchors into one grid image so they use a single picture slot.");
 tip("cast.promote", "Turn the first or last frame of a scene's starred take into a new anchor, for example a good angle H3 produced.");
 tip("cast.promote.scene", "Scene whose starred take provides the frame.");
-more("cast.profile", "Profile", "Name, speaker ID, description, voice, language and identity LoRA. The description is written into the subject definitions of every scene this entry is in.", "Details of this entry.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now: more("cast.profile", "Profile", "Name, speaker ID, description, voice, language and identity LoRA. The description is written into the subject definitions of every scene this entry is in.", "Details of this entry.");
+more("cast.profile", "Profile", "Name, description, voice, language and identity LoRA. The description is written into the subject definitions of every scene this entry is in; Describe from anchors can draft it with a vision LLM.", "Details of this entry.");
 tip("cast.name", "Name; in prompts write @Name, or @{Two Words} when it has spaces.");
 tip("cast.kind", "Character, location or prop.");
-tip("cast.speaker", "Speaker ID used in dialogue: <Subject n> (S1). Keep it stable.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] speaker field removed from the UI: tip("cast.speaker", "Speaker ID used in dialogue: <Subject n> (S1). Keep it stable.");
+tip("cast.speaker", "Older projects stored a fixed speaker ID here. H3's guide numbers speakers by speaking order in each clip, so the prompt builder now assigns S1, S2… itself.");
 tip("cast.description", "Short visual description written into every scene's subject definitions.");
+// added 2026-11-02 v0.2.0
+more("cast.describe", "Describe from anchors", "Sends up to four anchor pictures to the LLM set on the Global tab and asks your question, for example \"describe the person on the left\" or \"describe only the coat\". The model must accept images (a vision model).\n\nThe answer appears as a suggestion: Use replaces the description, Append adds to it, Dismiss throws it away. Nothing is sent during a render.", "Ask a vision LLM to describe this entry from its anchor pictures.");
+tip("cast.describe.prompt", "What to ask about the anchor pictures. Empty uses the grey example. Enter sends it.");
+tip("cast.describe.result", "The model's answer. Nothing changes until you press Use or Append.");
+tip("cast.describe.use", "Replace the description with this answer.");
+tip("cast.describe.append", "Add this answer to the end of the description.");
 tip("cast.voice", "Voice sample, sent as an audio reference in scenes where this character speaks.");
-tip("cast.language", "Default language for this character's new lines.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] free-text language: tip("cast.language", "Default language for this character's new lines.");
+tip("cast.language", "Default language for this character's new lines. Pick one of H3's stable languages or type another.");
 tip("cast.lora", "Identity LoRA, added automatically to every scene this entry appears in.");
 tip("cast.lora.strength", "Strength of the identity LoRA.");
 tip("cast.export", "Copy the anchors and starred frames of this entry into a folder ready for ai-toolkit LoRA training.");
@@ -350,7 +383,12 @@ tip("render.quality.final", "Full resolution and steps.");
 tip("render.stop", "Interrupt the current ComfyUI run. Finished scenes stay on disk.");
 tip("render.banner", "What is rendering right now.");
 tip("render.refresh", "Reload takes and statuses from disk.");
-more("render.table", "Scenes and takes", "Every render is kept as a take. The starred take is the one used for playback, continuation and merging. Click Takes to open the list, star another take, compare two with A and B, or delete one.\n\nThe cache key is a hash of everything that affects a scene's pixels, including the take it continues from.", "Every scene, its status and its takes.");
+// added 2026-11-02 v0.2.0
+tip("render.table.file", "The rendered video the merge will use for this scene (starred take, or the newest when Merge uses latest takes). Click to open it.");
+tip("render.take.file", "File name of this take in ComfyUI's output folder.");
+tip("render.lastCut", "Open the last merged film.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] file column and merge button: more("render.table", "Scenes and takes", "Every render is kept as a take. The starred take is the one used for playback, continuation and merging. Click Takes to open the list, star another take, compare two with A and B, or delete one.\n\nThe cache key is a hash of everything that affects a scene's pixels, including the take it continues from.", "Every scene, its status and its takes.");
+more("render.table", "Scenes and takes", "Every render is kept as a take. The starred take is the one used for playback, continuation and merging. Click Takes to open the list, star another take, compare two with A and B, or delete one.\n\nFile is the video of the take the merge will use, named project_scene#_title_take.mp4 in ComfyUI's output folder; click it to open. Merge joins those files using the settings in the Merge scenes card.\n\nThe cache key is a hash of everything that affects a scene's pixels, including the take it continues from.", "Every scene, its status, file and takes.");
 tip("render.table.scene", "Select this scene.");
 tip("render.table.takes", "Show this scene's takes. The starred one is used everywhere.");
 tip("render.table.passes", "How many H3 passes this scene needs.");
@@ -450,7 +488,8 @@ tip("global.draft.loraStrength", "Strength of the draft turbo LoRA.");
 more("global.defaults", "New scenes and long scenes", "Defaults for new scenes (length, how they start, language) and how scenes longer than one pass are split.\n\nThe longest pass can be up to 362 frames (15.08 s). Seams go on shot cuts when a cut falls within the snap window; otherwise the next pass starts from the previous pass's tail (the overlap) and the two are crossfaded in the cut.", "Defaults for new scenes and long-scene splitting.");
 tip("global.defaults.duration", "Length of new scenes, in seconds.");
 tip("global.defaults.start", "How new scenes start.");
-tip("global.defaults.language", "Default dialogue language.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] free-text language: tip("global.defaults.language", "Default dialogue language.");
+tip("global.defaults.language", "Default dialogue language. Pick one of H3's stable languages or type another.");
 tip("global.long.maxPass", "Longest single H3 pass in frames (on the 17k+5 grid, 124–362).");
 tip("global.long.overlap", "Frames of the previous pass that guide the next one at a mid-shot seam (17k+5: 22, 39, 56 …).");
 tip("global.long.crossfade", "Crossfade inside the overlap, in frames.");
@@ -460,11 +499,16 @@ more("global.llm", "Prompt rewriter · LLM", "Any OpenAI-compatible server (/v1/
 tip("global.llm.baseUrl", "Server base URL including /v1, for example http://localhost:30000/v1.");
 tip("global.llm.key", "API key. Stored in ComfyUI's user folder, never in the workflow. Leave empty for local servers without auth.");
 tip("global.llm.storeKey", "Save the API key on the ComfyUI server.");
-tip("global.llm.model", "Model id the server expects.");
+// [OLD 2026-11-02 v0.1.0->v0.2.0] model is a filterable combobox: tip("global.llm.model", "Model id the server expects.");
+tip("global.llm.model", "Model id the server expects. Type to filter the listed models (e.g. minimax), or type any id and press Enter. ↻ lists what the server offers. Empty uses the server default.");
 tip("global.llm.listModels", "Fetch the model list from the server's /models endpoint.");
 tip("global.llm.temperature", "Creativity of the rewrite. 0.2–0.5 keeps it close to your text.");
 tip("global.llm.maxTokens", "Maximum length of the LLM's answer.");
 tip("global.llm.preset", "System prompt style for rewrites.");
+// added 2026-11-02 v0.2.0
+more("global.llm.guides", "Official H3 prompt guides", "When on, Rewrite, Split and Import send MiniMax's own H3 prompt-writing guides to the LLM as part of its instructions: the Ref2VA guide (ref-en.txt) and the base guide (base-en.txt) from the MiniMax-H3 repository on GitHub.\n\nThe guides are under MiniMax's licence, so Reelwright does not ship them: press Download to fetch them into ComfyUI's user/reelwright/guides folder. Until then, a short built-in summary of the same rules is sent instead.\n\nTogether they are about 40 KB (roughly 10,000 tokens), so turn this off for small local models with short context windows.", "Send MiniMax's official prompt guides to the LLM.");
+tip("global.llm.guidesStatus", "Whether the official guides are downloaded, and when.");
+tip("global.llm.guidesFetch", "Download (or refresh) the official guides from the MiniMax-H3 GitHub repository.");
 tip("global.llm.test", "Send a tiny request to check the URL, key and model.");
 tip("global.llm.status", "Result of the last connection test.");
 more("global.script", "Import a script", "Paste a screenplay, in Fountain or plain text. The LLM proposes characters, locations and scenes with shots and dialogue; tick the ones you want and add them. Existing cast with the same names is reused.", "Turn a screenplay into scenes.");

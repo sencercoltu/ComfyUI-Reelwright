@@ -50,6 +50,11 @@ export const rw = {
   promoteFrame: (slug, scene_id, take_id, which, t) => req("POST", "/reelwright/promote_frame", { slug, scene_id, take_id, which, t }),
   castExport: (project, cast_id) => req("POST", "/reelwright/cast/export", { project, cast_id }),
   continuityCheck: (project, scene_id) => req("POST", "/reelwright/continuity/check", { project, scene_id }),
+  // added 2026-11-02 v0.2.0: official H3 guides, vision descriptions, ComfyUI input/output browser
+  llmGuides: () => req("POST", "/reelwright/llm/guides", {}),
+  describe: (project, asset_ids, prompt) => req("POST", "/reelwright/llm/describe", { project, asset_ids, prompt }),
+  files: (root, query, kind, limit = 400) => req("GET", `/reelwright/files?root=${q(root)}&q=${q(query)}&kind=${q(kind)}&limit=${limit}`),
+  importFile: (slug, root, rel) => req("POST", "/reelwright/import", { slug, root, rel }),
 };
 
 // `rel` is a path relative to ComfyUI's input or output folder.
