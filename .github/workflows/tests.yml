@@ -1,0 +1,18 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pip install pytest
+      - run: python -m pytest -c tests/pytest.ini tests
+      - name: JS syntax
+        run: for f in $(find web -name '*.js'); do node --check "$f"; done

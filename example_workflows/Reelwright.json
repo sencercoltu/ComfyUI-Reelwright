@@ -1,0 +1,213 @@
+{
+ "id": "392447db-eeb8-4e05-8931-8ff97f70d5ed",
+ "revision": 0,
+ "last_node_id": 1,
+ "last_link_id": 0,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "Reelwright",
+   "pos": [
+    40,
+    40
+   ],
+   "size": [
+    1600,
+    1000
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "showAdvanced": null,
+   "inputs": [
+    {
+     "color_off": null,
+     "color_on": null,
+     "dir": null,
+     "label": null,
+     "localized_name": "model",
+     "locked": null,
+     "name": "model",
+     "nameLocked": null,
+     "removable": null,
+     "shape": 7,
+     "type": "MODEL",
+     "pos": null,
+     "link": null
+    },
+    {
+     "color_off": null,
+     "color_on": null,
+     "dir": null,
+     "label": null,
+     "localized_name": "clip",
+     "locked": null,
+     "name": "clip",
+     "nameLocked": null,
+     "removable": null,
+     "shape": 7,
+     "type": "CLIP",
+     "pos": null,
+     "link": null
+    },
+    {
+     "color_off": null,
+     "color_on": null,
+     "dir": null,
+     "label": null,
+     "localized_name": "vae",
+     "locked": null,
+     "name": "vae",
+     "nameLocked": null,
+     "removable": null,
+     "shape": 7,
+     "type": "VAE",
+     "pos": null,
+     "link": null
+    },
+    {
+     "color_off": null,
+     "color_on": null,
+     "dir": null,
+     "label": null,
+     "localized_name": "audio_vae",
+     "locked": null,
+     "name": "audio_vae",
+     "nameLocked": null,
+     "removable": null,
+     "shape": 7,
+     "type": "VAE",
+     "pos": null,
+     "link": null
+    },
+    {
+     "color_off": null,
+     "color_on": null,
+     "dir": null,
+     "label": null,
+     "localized_name": "project",
+     "locked": null,
+     "name": "project",
+     "nameLocked": null,
+     "removable": null,
+     "shape": null,
+     "type": "STRING",
+     "widget": {
+      "name": "project"
+     },
+     "link": null
+    },
+    {
+     "color_off": null,
+     "color_on": null,
+     "dir": null,
+     "label": null,
+     "localized_name": "run_request",
+     "locked": null,
+     "name": "run_request",
+     "nameLocked": null,
+     "removable": null,
+     "shape": null,
+     "type": "STRING",
+     "widget": {
+      "name": "run_request"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "color_off": null,
+     "color_on": null,
+     "dir": null,
+     "label": null,
+     "localized_name": "video",
+     "locked": null,
+     "name": "video",
+     "nameLocked": null,
+     "removable": null,
+     "shape": null,
+     "type": "VIDEO",
+     "pos": null,
+     "slot_index": null,
+     "links": null
+    },
+    {
+     "color_off": null,
+     "color_on": null,
+     "dir": null,
+     "label": null,
+     "localized_name": "last_frame",
+     "locked": null,
+     "name": "last_frame",
+     "nameLocked": null,
+     "removable": null,
+     "shape": null,
+     "type": "IMAGE",
+     "pos": null,
+     "slot_index": null,
+     "links": null
+    },
+    {
+     "color_off": null,
+     "color_on": null,
+     "dir": null,
+     "label": null,
+     "localized_name": "audio",
+     "locked": null,
+     "name": "audio",
+     "nameLocked": null,
+     "removable": null,
+     "shape": null,
+     "type": "AUDIO",
+     "pos": null,
+     "slot_index": null,
+     "links": null
+    },
+    {
+     "color_off": null,
+     "color_on": null,
+     "dir": null,
+     "label": null,
+     "localized_name": "scene_plan",
+     "locked": null,
+     "name": "scene_plan",
+     "nameLocked": null,
+     "removable": null,
+     "shape": null,
+     "type": "STRING",
+     "pos": null,
+     "slot_index": null,
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "Reelwright"
+   },
+   "widgets_values": [
+    "{\"schema\":1,\"id\":\"p_v34l9x6qp\",\"name\":\"My Film\",\"slug\":\"my_film\",\"global\":{\"models\":{\"diffusion\":\"minimax_h3_ref2va_pruned_int8_convrot.safetensors\",\"weight_dtype\":\"default\",\"text_encoder\":\"qwen3vl_32b_minimax_h3_int8_convrot.safetensors\",\"clip_device\":\"default\",\"video_vae\":\"minimax_h3_video_vae_int8_convrot.safetensors\",\"audio_vae\":\"minimax_h3_audio_vae_fp32.safetensors\",\"latent_upscaler\":\"\"},\"loras\":[],\"output\":{\"aspect\":\"16:9\",\"width\":1344,\"height\":768,\"ref_image_size\":\"match\"},\"sampling\":{\"steps\":20,\"sampler\":\"res_multistep\",\"scheduler\":\"simple\",\"seed\":104729,\"seed_mode\":\"increment\",\"sigma_shift\":false,\"shift_video\":12,\"shift_audio\":3},\"quality\":\"final\",\"draft\":{\"scale\":0.5,\"steps\":8,\"lora\":\"\",\"lora_strength\":1},\"defaults\":{\"duration\":8,\"start_mode\":\"last_frame\",\"overlap_frames\":39,\"language\":\"English\"},\"long\":{\"max_pass_frames\":362,\"overlap_frames\":39,\"crossfade_frames\":12,\"seam_mode\":\"auto\",\"cut_snap_seconds\":2},\"memory\":{\"policy\":\"free_cache\",\"encode_first\":true,\"group_by_lora\":true},\"continuity\":{\"reanchor_after\":2,\"face_check\":false,\"face_threshold\":0.8,\"on_drift\":\"flag\"},\"llm\":{\"base_url\":\"\",\"model\":\"\",\"temperature\":0.4,\"max_tokens\":2048,\"preset\":\"h3_ref2va\"},\"merge\":{\"use\":\"starred\",\"missing\":\"skip\",\"hard_cut\":\"cut\",\"transition_frames\":12,\"audio_fade_frames\":6,\"loudness\":-16,\"normalize\":true,\"score\":{\"asset\":\"\",\"volume_db\":-12,\"duck\":true},\"color_match\":false,\"color_ref_scene\":\"\",\"codec\":\"h264\",\"crf\":16,\"subtitles\":true,\"chapters\":true,\"otio\":true,\"fcpxml\":true,\"bundle\":false,\"auto_after_render\":true}},\"assets\":[],\"cast\":[],\"camera_presets\":[{\"id\":\"k_sjvq8a6qp\",\"name\":\"Slow push-in\",\"text\":\"slow push-in toward the subject\"},{\"id\":\"k_aavm8s6qp\",\"name\":\"Locked-off\",\"text\":\"static locked-off camera\"},{\"id\":\"k_9o033t6qp\",\"name\":\"Crane up\",\"text\":\"slow crane up revealing the scene\"},{\"id\":\"k_cq44qt6qp\",\"name\":\"Handheld pan \u2192\",\"text\":\"handheld camera panning right\"},{\"id\":\"k_81d79s6qp\",\"name\":\"Rack focus\",\"text\":\"rack focus from foreground to background\"},{\"id\":\"k_er9tax6qp\",\"name\":\"Macro\",\"text\":\"macro close-up, shallow depth of field\"}],\"scenes\":[{\"id\":\"s_iwwgr56qp\",\"title\":\"Opening\",\"duration\":8,\"color\":\"\",\"start\":{\"mode\":\"fresh\",\"overlap_frames\":39},\"trim\":{\"keep\":\"start\",\"in\":0},\"refs\":[],\"cast\":[],\"shots\":[],\"dialogue\":[],\"prompt\":{\"mode\":\"structured\",\"auto\":{\"subjects\":true,\"retention\":true,\"shots\":true},\"sections\":{\"subject_definitions\":\"\",\"summary\":\"\",\"retention_analysis\":\"\",\"detailed_description\":\"\",\"overall_soundscape\":\"\",\"non_diegetic_music\":\"\"},\"raw\":\"\",\"pass_prompts\":{}},\"overrides\":{},\"lock\":false,\"notes\":\"\"}],\"markers\":[],\"ui\":{\"tab\":\"timeline\",\"selected\":\"s_iwwgr56qp\",\"zoom\":22,\"playhead\":0,\"snap\":true,\"ripple\":true}}",
+    "{\"action\": \"pending\"}"
+   ],
+   "widgets_values_named": {
+    "project": "{\"schema\":1,\"id\":\"p_v34l9x6qp\",\"name\":\"My Film\",\"slug\":\"my_film\",\"global\":{\"models\":{\"diffusion\":\"minimax_h3_ref2va_pruned_int8_convrot.safetensors\",\"weight_dtype\":\"default\",\"text_encoder\":\"qwen3vl_32b_minimax_h3_int8_convrot.safetensors\",\"clip_device\":\"default\",\"video_vae\":\"minimax_h3_video_vae_int8_convrot.safetensors\",\"audio_vae\":\"minimax_h3_audio_vae_fp32.safetensors\",\"latent_upscaler\":\"\"},\"loras\":[],\"output\":{\"aspect\":\"16:9\",\"width\":1344,\"height\":768,\"ref_image_size\":\"match\"},\"sampling\":{\"steps\":20,\"sampler\":\"res_multistep\",\"scheduler\":\"simple\",\"seed\":104729,\"seed_mode\":\"increment\",\"sigma_shift\":false,\"shift_video\":12,\"shift_audio\":3},\"quality\":\"final\",\"draft\":{\"scale\":0.5,\"steps\":8,\"lora\":\"\",\"lora_strength\":1},\"defaults\":{\"duration\":8,\"start_mode\":\"last_frame\",\"overlap_frames\":39,\"language\":\"English\"},\"long\":{\"max_pass_frames\":362,\"overlap_frames\":39,\"crossfade_frames\":12,\"seam_mode\":\"auto\",\"cut_snap_seconds\":2},\"memory\":{\"policy\":\"free_cache\",\"encode_first\":true,\"group_by_lora\":true},\"continuity\":{\"reanchor_after\":2,\"face_check\":false,\"face_threshold\":0.8,\"on_drift\":\"flag\"},\"llm\":{\"base_url\":\"\",\"model\":\"\",\"temperature\":0.4,\"max_tokens\":2048,\"preset\":\"h3_ref2va\"},\"merge\":{\"use\":\"starred\",\"missing\":\"skip\",\"hard_cut\":\"cut\",\"transition_frames\":12,\"audio_fade_frames\":6,\"loudness\":-16,\"normalize\":true,\"score\":{\"asset\":\"\",\"volume_db\":-12,\"duck\":true},\"color_match\":false,\"color_ref_scene\":\"\",\"codec\":\"h264\",\"crf\":16,\"subtitles\":true,\"chapters\":true,\"otio\":true,\"fcpxml\":true,\"bundle\":false,\"auto_after_render\":true}},\"assets\":[],\"cast\":[],\"camera_presets\":[{\"id\":\"k_sjvq8a6qp\",\"name\":\"Slow push-in\",\"text\":\"slow push-in toward the subject\"},{\"id\":\"k_aavm8s6qp\",\"name\":\"Locked-off\",\"text\":\"static locked-off camera\"},{\"id\":\"k_9o033t6qp\",\"name\":\"Crane up\",\"text\":\"slow crane up revealing the scene\"},{\"id\":\"k_cq44qt6qp\",\"name\":\"Handheld pan \u2192\",\"text\":\"handheld camera panning right\"},{\"id\":\"k_81d79s6qp\",\"name\":\"Rack focus\",\"text\":\"rack focus from foreground to background\"},{\"id\":\"k_er9tax6qp\",\"name\":\"Macro\",\"text\":\"macro close-up, shallow depth of field\"}],\"scenes\":[{\"id\":\"s_iwwgr56qp\",\"title\":\"Opening\",\"duration\":8,\"color\":\"\",\"start\":{\"mode\":\"fresh\",\"overlap_frames\":39},\"trim\":{\"keep\":\"start\",\"in\":0},\"refs\":[],\"cast\":[],\"shots\":[],\"dialogue\":[],\"prompt\":{\"mode\":\"structured\",\"auto\":{\"subjects\":true,\"retention\":true,\"shots\":true},\"sections\":{\"subject_definitions\":\"\",\"summary\":\"\",\"retention_analysis\":\"\",\"detailed_description\":\"\",\"overall_soundscape\":\"\",\"non_diegetic_music\":\"\"},\"raw\":\"\",\"pass_prompts\":{}},\"overrides\":{},\"lock\":false,\"notes\":\"\"}],\"markers\":[],\"ui\":{\"tab\":\"timeline\",\"selected\":\"s_iwwgr56qp\",\"zoom\":22,\"playhead\":0,\"snap\":true,\"ripple\":true}}",
+    "run_request": "{\"action\": \"pending\"}"
+   }
+  }
+ ],
+ "links": [],
+ "floatingLinks": null,
+ "groups": [],
+ "definitions": null,
+ "config": {},
+ "extra": {
+  "ds": {
+   "scale": 0.9,
+   "offset": [
+    416,
+    110
+   ]
+  },
+  "reroutes": null
+ },
+ "version": 0.4
+}

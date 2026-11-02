@@ -1,0 +1,62 @@
+// HTTP wrappers for the /reelwright routes. The host decides how requests are
+// sent: ComfyUI's api.fetchApi inside the app, a mock in the test harness.
+
+let host = null;
+
+export function setHost(h) {
+  host = h;
+}
+
+async function req(method, route, body, form) {
+  const opts = { method };
+  if (form) opts.body = form;
+  else if (body !== undefined) {
+    opts.headers = { "Content-Type": "application/json" };
+    opts.body = JSON.stringify(body);
+  }
+  const res = await host.fetchApi(route, opts);
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok) throw new Error(data?.error || data?.message || `${res.status} ${res.statusText}`);
+  return data;
+}
+
+const q = v => encodeURIComponent(v ?? "");
+
+export const rw = {
+  info: () => req("GET", "/reelwright/info"),
+  models: () => req("GET", "/reelwright/models"),
+  plan: project => req("POST", "/reelwright/plan", { project }),
+  upload(file, slug) {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    form.append("slug", slug);
+    return req("POST", "/reelwright/upload", undefined, form);
+  },
+  takes: slug => req("GET", "/reelwright/takes?slug=" + q(slug)),
+  star: (slug, scene_id, take_id) => req("POST", "/reelwright/takes/star", { slug, scene_id, take_id }),
+  deleteTake: (slug, scene_id, take_id) => req("POST", "/reelwright/takes/delete", { slug, scene_id, take_id }),
+  merge: project => req("POST", "/reelwright/merge", { project }),
+  autosave: project => req("POST", "/reelwright/autosave", { project }),
+  versions: slug => req("GET", "/reelwright/versions?slug=" + q(slug)),
+  version: (slug, name) => req("GET", "/reelwright/version?slug=" + q(slug) + "&name=" + q(name)),
+  llmSettings: () => req("GET", "/reelwright/llm/settings"),
+  saveLlmSettings: s => req("POST", "/reelwright/llm/settings", s),
+  llmModels: base_url => req("POST", "/reelwright/llm/models", { base_url }),
+  llmTest: () => req("POST", "/reelwright/llm/test", {}),
+  rewrite: (project, scene_id, instruction) => req("POST", "/reelwright/llm/rewrite", { project, scene_id, instruction }),
+  split: (project, scene_id) => req("POST", "/reelwright/llm/split", { project, scene_id }),
+  script: (project, script) => req("POST", "/reelwright/llm/script", { project, script }),
+  promoteFrame: (slug, scene_id, take_id, which, t) => req("POST", "/reelwright/promote_frame", { slug, scene_id, take_id, which, t }),
+  castExport: (project, cast_id) => req("POST", "/reelwright/cast/export", { project, cast_id }),
+  continuityCheck: (project, scene_id) => req("POST", "/reelwright/continuity/check", { project, scene_id }),
+};
+
+// `rel` is a path relative to ComfyUI's input or output folder.
+export function viewURL(rel, type = "output") {
+  if (!rel) return "";
+  const i = rel.lastIndexOf("/");
+  const subfolder = i >= 0 ? rel.slice(0, i) : "";
+  const filename = i >= 0 ? rel.slice(i + 1) : rel;
+  return host.apiURL(`/view?filename=${q(filename)}&subfolder=${q(subfolder)}&type=${type}`);
+}

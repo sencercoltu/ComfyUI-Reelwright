@@ -1,0 +1,18 @@
+[project]
+name = "comfyui-reelwright"
+description = "Reelwright: a timeline editor node for MiniMax H3 ref2va. Scenes of any length, per-scene overrides, cached renders, cast continuity and one-click merge."
+version = "0.1.0"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+face = ["insightface", "onnxruntime"]
+
+[project.urls]
+Repository = "https://github.com/sencercoltu/ComfyUI-Reelwright"
+
+[tool.comfy]
+PublisherId = "sencercoltu"
+DisplayName = "Reelwright"
+Icon = ""

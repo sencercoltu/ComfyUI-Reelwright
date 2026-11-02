@@ -1,0 +1,348 @@
+"""Join clips with ffmpeg: scene stitching (passes) and the final merge.
+
+The filter graph is built in Python and run in one ffmpeg call. Clips are
+normalised to one size, 24 fps and 48 kHz stereo, then joined pairwise with
+concat (cuts) or xfade/acrossfade (crossfades, dips, continuation overlaps).
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import zipfile
+from xml.sax.saxutils import escape
+
+from . import spec
+
+FPS = spec.FPS
+AUDIO_RATE = 48000
+
+
+class MergeError(RuntimeError):
+    pass
+
+
+def ffmpeg_bin():
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg  # optional fallback shipped by some ComfyUI installs
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return None
+
+
+def ffprobe_bin():
+    exe = shutil.which("ffprobe")
+    if exe:
+        return exe
+    ff = ffmpeg_bin()
+    if ff:
+        cand = os.path.join(os.path.dirname(ff), "ffprobe" + (".exe" if ff.endswith(".exe") else ""))
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def probe(path):
+    """{duration, width, height, has_audio} via ffprobe, falling back to PyAV."""
+    exe = ffprobe_bin()
+    if exe:
+        out = subprocess.run([exe, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path],
+                             capture_output=True, text=True, check=True).stdout
+        info = json.loads(out)
+        v = next((s for s in info["streams"] if s["codec_type"] == "video"), None)
+        a = next((s for s in info["streams"] if s["codec_type"] == "audio"), None)
+        dur = float(info["format"].get("duration") or (v or a or {}).get("duration") or 0)
+        return {"duration": dur, "width": int(v["width"]) if v else 0, "height": int(v["height"]) if v else 0,
+                "has_video": v is not None, "has_audio": a is not None}
+    import av
+    with av.open(path) as c:
+        v = c.streams.video[0] if c.streams.video else None
+        dur = float(c.duration / 1e6) if c.duration else 0.0
+        return {"duration": dur, "width": v.width if v else 0, "height": v.height if v else 0,
+                "has_video": v is not None, "has_audio": bool(c.streams.audio)}
+
+
+def _f(x):
+    return "{:.6f}".format(max(0.0, x)).rstrip("0").rstrip(".") or "0"
+
+
+def plan_timeline(segments):
+    """Start time of every segment in the output and the total length."""
+    starts, cur = [], 0.0
+    for i, seg in enumerate(segments):
+        length = seg["out"] - seg["in"]
+        if i == 0 or seg["join"] == "cut":
+            starts.append(cur)
+            cur += length
+        else:
+            starts.append(cur - seg["dur"])
+            cur += length - seg["dur"]
+    return starts, cur
+
+
+def build_command(segments, out_path, width, height, codec="h264", crf=16, audio_fade_frames=6,
+                  loudness=None, score=None, chapters_file=None, ffmpeg=None):
+    """segments: [{path|None, in, out, has_audio, join: first|cut|xfade|dip, dur, gain: (r,g,b)|None}].
+    A segment with path None is a dark slate of out-in seconds."""
+    if not segments:
+        raise MergeError("nothing to merge")
+    ffmpeg = ffmpeg or ffmpeg_bin()
+    if not ffmpeg:
+        raise MergeError("ffmpeg was not found on PATH")
+    starts, total = plan_timeline(segments)
+    args = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1"]
+    graph = []
+    n_in = 0
+    fade = audio_fade_frames / FPS
+    for k, seg in enumerate(segments):
+        length = seg["out"] - seg["in"]
+        if length <= 0:
+            raise MergeError("segment {} has no length".format(k))
+        if seg.get("path"):
+            args += ["-i", seg["path"]]
+            src = n_in
+            n_in += 1
+            v = ("[{s}:v]trim=start={a}:end={b},setpts=PTS-STARTPTS,fps={fps},"
+                 "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,"
+                 "setsar=1,format=yuv420p").format(s=src, a=_f(seg["in"]), b=_f(seg["out"]), fps=FPS, w=width, h=height)
+            if seg.get("gain"):
+                r, g, b = seg["gain"]
+                v += ",colorchannelmixer=rr={:.4f}:gg={:.4f}:bb={:.4f}".format(r, g, b)
+            graph.append(v + "[v{}]".format(k))
+            if seg.get("has_audio", True):
+                a = ("[{s}:a]atrim=start={a}:end={b},asetpts=PTS-STARTPTS,aresample={r},"
+                     "aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration={d}").format(
+                    s=src, a=_f(seg["in"]), b=_f(seg["out"]), r=AUDIO_RATE, d=_f(length))
+            else:
+                a = "anullsrc=r={}:cl=stereo,atrim=duration={}".format(AUDIO_RATE, _f(length))
+        else:
+            graph.append("color=c=0x15171C:s={}x{}:r={}:d={},format=yuv420p,setsar=1[v{}]".format(
+                width, height, FPS, _f(length), k))
+            a = "anullsrc=r={}:cl=stereo,atrim=duration={}".format(AUDIO_RATE, _f(length))
+        nxt = segments[k + 1]["join"] if k + 1 < len(segments) else None
+        if fade > 0 and k > 0 and seg["join"] == "cut":
+            a += ",afade=t=in:d={}".format(_f(min(fade, length / 2)))
+        if fade > 0 and nxt == "cut":
+            a += ",afade=t=out:st={}:d={}".format(_f(length - min(fade, length / 2)), _f(min(fade, length / 2)))
+        graph.append(a + "[a{}]".format(k))
+
+    vcur, acur = "v0", "a0"
+    for k in range(1, len(segments)):
+        seg = segments[k]
+        if seg["join"] == "cut":
+            graph.append("[{}][v{}]concat=n=2:v=1:a=0[vc{}]".format(vcur, k, k))
+            graph.append("[{}][a{}]concat=n=2:v=0:a=1[ac{}]".format(acur, k, k))
+        else:
+            trans = "fadeblack" if seg["join"] == "dip" else "fade"
+            graph.append("[{}][v{}]xfade=transition={}:duration={}:offset={}[vc{}]".format(
+                vcur, k, trans, _f(seg["dur"]), _f(starts[k]), k))
+            graph.append("[{}][a{}]acrossfade=d={}[ac{}]".format(acur, k, _f(seg["dur"]), k))
+        vcur, acur = "vc{}".format(k), "ac{}".format(k)
+
+    if score and score.get("path"):
+        args += ["-stream_loop", "-1", "-i", score["path"]]
+        sidx = n_in
+        n_in += 1
+        graph.append("[{}:a]aresample={},aformat=sample_fmts=fltp:channel_layouts=stereo,atrim=duration={},volume={}dB[score]".format(
+            sidx, AUDIO_RATE, _f(total), score.get("volume_db", -12.0)))
+        if score.get("duck", True):
+            graph.append("[{}]asplit=2[am1][am2]".format(acur))
+            graph.append("[score][am2]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[ducked]")
+            graph.append("[am1][ducked]amix=inputs=2:duration=first:normalize=0[amix]")
+        else:
+            graph.append("[{}][score]amix=inputs=2:duration=first:normalize=0[amix]".format(acur))
+        acur = "amix"
+    if loudness is not None:
+        graph.append("[{}]loudnorm=I={}:TP=-1.5:LRA=11,aresample={}[aout]".format(acur, loudness, AUDIO_RATE))
+    else:
+        graph.append("[{}]anull[aout]".format(acur))
+    graph.append("[{}]null[vout]".format(vcur))
+
+    if chapters_file:
+        args += ["-f", "ffmetadata", "-i", chapters_file]
+    args += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map", "[aout]"]
+    if chapters_file:
+        args += ["-map_chapters", str(n_in)]
+    if codec == "h265":
+        args += ["-c:v", "libx265", "-tag:v", "hvc1"]
+    else:
+        args += ["-c:v", "libx264"]
+    args += ["-preset", "medium", "-crf", str(int(crf)), "-pix_fmt", "yuv420p", "-r", str(FPS),
+             "-c:a", "aac", "-b:a", "192k", "-ar", str(AUDIO_RATE), "-movflags", "+faststart",
+             "-t", _f(total), out_path]
+    return args, starts, total
+
+
+def run_ffmpeg(args, total=None, progress=None):
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for line in proc.stdout:
+        if progress and total and line.startswith("out_time_us="):
+            try:
+                progress(min(1.0, int(line.split("=", 1)[1]) / 1e6 / total))
+            except ValueError:
+                pass
+    err = proc.stderr.read()
+    if proc.wait() != 0:
+        raise MergeError("ffmpeg failed: " + err.strip()[-2000:])
+
+
+def join(segments, out_path, width, height, progress=None, **kw):
+    args, starts, total = build_command(segments, out_path, width, height, **kw)
+    run_ffmpeg(args, total, progress)
+    return starts, total
+
+
+def mean_rgb(path, start, end, samples=5):
+    ff = ffmpeg_bin()
+    totals, count = [0.0, 0.0, 0.0], 0
+    for i in range(samples):
+        t = start + (end - start) * (i + 0.5) / samples
+        raw = subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-ss", _f(t), "-i", path, "-frames:v", "1",
+                              "-vf", "scale=32:18,format=rgb24", "-f", "rawvideo", "-"],
+                             capture_output=True, check=True).stdout
+        if not raw:
+            continue
+        for c in range(3):
+            totals[c] += sum(raw[c::3]) / (len(raw) / 3)
+        count += 1
+    return [x / count for x in totals] if count else None
+
+
+def color_gains(segments, ref_index):
+    """Per-channel gains that move every clip's mean colour to the reference clip's."""
+    means = [mean_rgb(s["path"], s["in"], s["out"]) if s.get("path") else None for s in segments]
+    ref = means[ref_index] if 0 <= ref_index < len(means) else None
+    if not ref:
+        return [None] * len(segments)
+    gains = []
+    for m in means:
+        if not m:
+            gains.append(None)
+            continue
+        gains.append(tuple(min(1.25, max(0.8, ref[c] / max(1.0, m[c]))) for c in range(3)))
+    return gains
+
+
+# ---- side files -------------------------------------------------------------
+
+def _srt_time(t):
+    ms = int(round(max(0.0, t) * 1000))
+    h, ms = divmod(ms, 3600000)
+    m, ms = divmod(ms, 60000)
+    s, ms = divmod(ms, 1000)
+    return "{:02d}:{:02d}:{:02d},{:03d}".format(h, m, s, ms)
+
+
+def subtitle_cues(entries):
+    """entries: [{start, src_in, src_out, dialogue:[{t, speaker, text}]}] -> [(start, end, text)]."""
+    cues = []
+    for e in entries:
+        lines = sorted(e.get("dialogue", []), key=lambda d: d["t"])
+        scene_end = e["start"] + (e["src_out"] - e["src_in"])
+        for i, d in enumerate(lines):
+            if d["t"] < e["src_in"] or d["t"] >= e["src_out"] or not d["text"].strip():
+                continue
+            a = e["start"] + d["t"] - e["src_in"]
+            b = a + max(1.2, 0.6 + 0.07 * len(d["text"]))
+            if i + 1 < len(lines):
+                b = min(b, e["start"] + lines[i + 1]["t"] - e["src_in"] - 0.05)
+            b = min(b, scene_end)
+            if b - a < 0.3:
+                b = a + 0.3
+            text = (d["speaker"] + ": " if d.get("speaker") else "") + d["text"].strip()
+            cues.append((a, b, text))
+    return cues
+
+
+def write_srt(entries, path):
+    cues = subtitle_cues(entries)
+    with open(path, "w", encoding="utf-8") as f:
+        for n, (a, b, text) in enumerate(cues, 1):
+            f.write("{}\n{} --> {}\n{}\n\n".format(n, _srt_time(a), _srt_time(b), text))
+    return len(cues)
+
+
+def write_chapters(entries, total, path):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(";FFMETADATA1\n")
+        for i, e in enumerate(entries):
+            end = entries[i + 1]["start"] if i + 1 < len(entries) else total
+            title = re.sub(r"[=;#\\\n]", " ", e["title"])
+            f.write("[CHAPTER]\nTIMEBASE=1/1000\nSTART={}\nEND={}\ntitle={}\n".format(
+                int(e["start"] * 1000), int(end * 1000), title))
+
+
+def _rt(seconds):
+    return {"OTIO_SCHEMA": "RationalTime.1", "rate": float(FPS), "value": float(round(seconds * FPS))}
+
+
+def write_otio(name, entries, path):
+    """A/B-roll OpenTimelineIO: alternating tracks so crossfading clips can overlap."""
+    def clip(e):
+        return {"OTIO_SCHEMA": "Clip.2", "name": e["title"], "metadata": {"reelwright": {"scene_id": e["scene_id"]}},
+                "source_range": {"OTIO_SCHEMA": "TimeRange.1", "start_time": _rt(e["src_in"]),
+                                 "duration": _rt(e["src_out"] - e["src_in"])},
+                "media_references": {"DEFAULT_MEDIA": {
+                    "OTIO_SCHEMA": "ExternalReference.1", "target_url": "file://" + os.path.abspath(e["path"]).replace(os.sep, "/"),
+                    "available_range": {"OTIO_SCHEMA": "TimeRange.1", "start_time": _rt(0), "duration": _rt(e["src_len"])}}},
+                "active_media_reference_key": "DEFAULT_MEDIA", "effects": [], "markers": [], "enabled": True}
+
+    def track(kind, label, sub):
+        children, cur = [], 0.0
+        for e in sub:
+            if e["start"] > cur + 1e-6:
+                children.append({"OTIO_SCHEMA": "Gap.1", "source_range": {"OTIO_SCHEMA": "TimeRange.1",
+                                 "start_time": _rt(0), "duration": _rt(e["start"] - cur)}})
+            children.append(clip(e))
+            cur = e["start"] + e["src_out"] - e["src_in"]
+        return {"OTIO_SCHEMA": "Track.1", "name": label, "kind": kind, "children": children,
+                "effects": [], "markers": [], "enabled": True, "metadata": {}}
+
+    tracks = []
+    for kind in ("Video", "Audio"):
+        for parity, label in ((0, "A"), (1, "B")):
+            sub = [e for i, e in enumerate(entries) if i % 2 == parity]
+            if sub:
+                tracks.append(track(kind, kind + " " + label, sub))
+    doc = {"OTIO_SCHEMA": "Timeline.1", "name": name, "global_start_time": _rt(0), "metadata": {},
+           "tracks": {"OTIO_SCHEMA": "Stack.1", "name": "tracks", "children": tracks,
+                      "effects": [], "markers": [], "enabled": True, "metadata": {}}}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=1)
+
+
+def _fr(seconds):
+    return "{}/{}s".format(int(round(seconds * FPS)), FPS)
+
+
+def write_fcpxml(name, entries, total, width, height, path):
+    """Single-spine FCPXML 1.10; overlapping clips are cut where the next one starts."""
+    res = ['<format id="r0" name="FFVideoFormat{}p{}" frameDuration="1/{}s" width="{}" height="{}"/>'.format(
+        height, FPS, FPS, width, height)]
+    clips = []
+    for i, e in enumerate(entries):
+        res.append('<asset id="r{}" name="{}" start="0s" duration="{}" hasVideo="1" hasAudio="1" format="r0">'
+                   '<media-rep kind="original-media" src="{}"/></asset>'.format(
+                       i + 1, escape(e["title"]), _fr(e["src_len"]),
+                       escape("file://" + os.path.abspath(e["path"]).replace(os.sep, "/"))))
+        end = entries[i + 1]["start"] if i + 1 < len(entries) else total
+        clips.append('<asset-clip ref="r{}" name="{}" offset="{}" start="{}" duration="{}"/>'.format(
+            i + 1, escape(e["title"]), _fr(e["start"]), _fr(e["src_in"]), _fr(end - e["start"])))
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE fcpxml>\n<fcpxml version="1.10">\n'
+           '<resources>\n{}\n</resources>\n<library><event name="{}"><project name="{}">'
+           '<sequence format="r0" duration="{}" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">'
+           '<spine>\n{}\n</spine></sequence></project></event></library>\n</fcpxml>\n').format(
+        "\n".join(res), escape(name), escape(name), _fr(total), "\n".join(clips))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(xml)
+
+
+def write_bundle(path, files):
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for arcname, src in files.items():
+            if src and os.path.isfile(src):
+                z.write(src, arcname)

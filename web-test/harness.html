@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reelwright editor harness</title>
+<link rel="stylesheet" href="../web/rw/reelwright.css">
+<style>
+html, body { margin: 0; height: 100%; background: #0b0c0f; }
+#node { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+<div id="node"></div>
+<script type="module">
+import { createMockHost } from "./mock.js";
+import { mountEditor } from "../web/rw/editor.js";
+
+const host = createMockHost();
+window.__host = host;
+window.__editor = mountEditor(document.getElementById("node"), host);
+setTimeout(() => host.emit("reelwright.progress", { slug: "harbor_lights", scene_id: "s_07", pass: 3, passes: 3, step: 18, steps: 28, phase: "sample" }), 300);
+</script>
+</body>
+</html>

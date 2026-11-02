@@ -1,0 +1,192 @@
+# Reelwright — architecture and contracts
+
+```
+ComfyUI-Reelwright/
+  __init__.py            ComfyUI entry: comfy_entrypoint() + WEB_DIRECTORY + routes
+  reelwright/
+    __init__.py          VERSION
+    spec.py              H3 constants and frame/canvas math (pure)
+    model.py             project defaults, migration, effective settings (pure)
+    planner.py           scene -> passes (long/short), seams, re-based shots (pure)
+    prompt.py            per-pass prompt assembly and tag numbering (pure)
+    validate.py          lint rules (pure)
+    cache.py             cache keys, take index, staleness (pure + file hashing)
+    storage.py           folders, path containment, autosave/versions (pure + fs)
+    media.py             load images/video/audio to tensors, write files (comfy)
+    render.py            render run using the native H3 nodes (comfy + torch)
+    merge.py             ffmpeg merge, srt/chapters/otio/fcpxml/color match (ffmpeg)
+    llm.py               OpenAI-compatible client and prompt templates (aiohttp)
+    continuity.py        optional face-match drift check (insightface)
+    routes.py            /reelwright/* HTTP routes
+    node.py              the V3 node
+  web/
+    reelwright.js        ComfyUI extension: registers the DOM widget
+    rw/*.js, rw/reelwright.css
+  tests/                 pytest for the pure modules and merge
+```
+
+The pure modules import nothing from ComfyUI or torch, so they can be tested
+outside ComfyUI.
+
+## Project JSON (schema 1)
+
+The node's hidden `project` widget holds the project as JSON. The editor owns
+this state. Anything that comes from rendering (takes, stars, face scores)
+lives on disk.
+
+```jsonc
+{
+  "schema": 1,
+  "id": "p_8f3a…",                       // stable id
+  "name": "Harbor Lights",
+  "slug": "harbor_lights",               // folder name; [a-z0-9_-], derived from name if empty
+  "global": {
+    "models": {
+      "diffusion": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default",         // default | fp8_e4m3fn | fp8_e4m3fn_fast | fp8_e5m2
+      "text_encoder": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+      "clip_device": "default",          // default | cpu
+      "video_vae": "minimax_h3_video_vae_int8_convrot.safetensors",
+      "audio_vae": "minimax_h3_audio_vae_fp32.safetensors",
+      "latent_upscaler": ""
+    },
+    "loras": [ { "id": "l_1", "name": "film_grain_v2.safetensors", "strength": 0.6, "enabled": true } ],
+    "output": { "aspect": "16:9", "width": 1344, "height": 768, "ref_image_size": "match" },
+    "sampling": { "steps": 20, "sampler": "res_multistep", "scheduler": "simple",
+                  "seed": 104729, "seed_mode": "increment",          // fixed | increment | random
+                  "sigma_shift": false, "shift_video": 12.0, "shift_audio": 3.0 },
+    "quality": "final",                                              // final | draft
+    "draft": { "scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0 },
+    "defaults": { "duration": 8.0, "start_mode": "last_frame", "overlap_frames": 39, "language": "English" },
+    "long": { "max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
+              "seam_mode": "auto", "cut_snap_seconds": 2.0 },       // auto | cuts | overlap
+    "memory": { "policy": "free_cache", "encode_first": true, "group_by_lora": true },  // keep | free_cache | unload_all
+    "continuity": { "reanchor_after": 2, "face_check": false, "face_threshold": 0.8, "on_drift": "flag" }, // flag | retake
+    "llm": { "base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va" },
+    "merge": { "use": "starred", "missing": "skip",                 // skip | slate | block
+               "hard_cut": "cut", "transition_frames": 12,           // cut | crossfade | dip
+               "audio_fade_frames": 6, "loudness": -16.0, "normalize": true,
+               "score": { "asset": "", "volume_db": -12.0, "duck": true },
+               "color_match": false, "color_ref_scene": "",
+               "codec": "h264", "crf": 16,
+               "subtitles": true, "chapters": true, "otio": true, "fcpxml": true, "bundle": false,
+               "auto_after_render": true }
+  },
+  "assets": [
+    { "id": "a_1", "code": "P1", "kind": "image",             // image | video | audio
+      "name": "Mara — portrait", "file": "reelwright/harbor_lights/mara.png",   // relative to ComfyUI input dir
+      "duration": 0, "width": 1024, "height": 1365, "category": "subject",
+      "defaults": { "role": "reference", "retention": "fully_preserved", "keep": ["face", "hair"], "soundtrack": false },
+      "notes": "" }
+  ],
+  "cast": [
+    { "id": "c_1", "kind": "character",                 // character | location | prop
+      "name": "Mara", "speaker": "S1", "description": "Woman, early 30s, …",
+      "anchors": ["a_1"], "pack_sheet": true,
+      "outfits": [ { "id": "o_1", "name": "Navy pea coat", "retention": "fully_preserved", "keep": ["face","hair","coat"], "assets": [] } ],
+      "default_outfit": "o_1",
+      "voice": "a_7", "language": "English",
+      "lora": { "name": "", "strength": 0.8 } }
+  ],
+  "camera_presets": [ { "id": "k_1", "name": "Slow push-in", "text": "slow push-in" } ],
+  "scenes": [
+    { "id": "s_1", "title": "Harbor at dusk", "duration": 8.0,
+      "color": "",                                        // optional tint for the timeline block
+      "start": { "mode": "fresh", "overlap_frames": 39 },  // fresh | last_frame | tail
+      "trim": { "keep": "start", "in": 0.0 },             // short scenes: start | middle | end | custom
+      "refs": [ { "id": "r_1", "asset": "a_2", "role": "reference",   // reference | first_frame | last_frame | keyframe
+                  "time": 0.0, "retention": "weak_reference", "keep": [], "soundtrack": false } ],
+      "cast": [ { "id": "c_1", "outfit": "o_1" } ],
+      "shots": [ { "id": "h_1", "t": 0.0, "camera": "Wide · slow push-in", "text": "The harbor at dusk…" } ],
+      "dialogue": [ { "id": "d_1", "speaker": "c_1", "t": 3.5, "language": "English", "delivery": "calls out", "text": "Is anyone still out there?" } ],
+      "prompt": { "mode": "structured",                   // structured | raw
+                  "auto": { "subjects": true, "retention": true, "shots": true },
+                  "sections": { "subject_definitions": "", "summary": "", "retention_analysis": "",
+                                "detailed_description": "", "overall_soundscape": "", "non_diegetic_music": "" },
+                  "raw": "",
+                  "pass_prompts": {} },                     // long scenes: {"1": "...", "2": "..."} overrides per pass
+      "overrides": {},                                     // any of: seed, steps, sampler, scheduler, width, height,
+                                                           //   diffusion, video_vae, audio_vae, text_encoder,
+                                                           //   loras: { "mode": "add"|"replace", "items": [ {id,name,strength,enabled} ],
+                                                           //            "strengths": { "<global lora id>": 0.35 } }
+      "lock": false, "notes": "" }
+  ],
+  "markers": [ { "id": "m_1", "t": 12.0, "text": "music swell", "color": "amber" } ],
+  "ui": { "tab": "timeline", "selected": "s_1", "zoom": 22, "playhead": 0.0, "snap": true, "ripple": true }
+}
+```
+
+Ids are short random strings with a type prefix. Missing keys are filled in by
+`model.normalize_project()`, which runs in both Python and JS (`rw/model.js`
+mirrors the defaults).
+
+## HTTP routes (all JSON unless noted)
+
+| Method | Path | Body / query | Returns |
+|---|---|---|---|
+| GET | `/reelwright/info` | – | `{version, ffmpeg, insightface, h3_nodes}` |
+| GET | `/reelwright/models` | – | `{diffusion_models[], text_encoders[], vae[], loras[], latent_upscale_models[], samplers[], schedulers[]}` |
+| POST | `/reelwright/plan` | `{project}` | `{scenes: {<scene_id>: {passes[], status, key, starred, takes[], issues[], prompts[]}}, issues[], timeline: {starts:{id:t}, total}}` |
+| POST | `/reelwright/upload` | multipart `file`, `slug` | `{asset}` with kind, file, duration, width, height |
+| GET | `/reelwright/takes?slug=` | – | `{scenes: {<id>: {starred, takes:[{id, key, created, quality, seconds, frames, face, files:{video, first, last, tail}}]}}}` |
+| POST | `/reelwright/takes/star` | `{slug, scene_id, take_id}` | `{ok}` |
+| POST | `/reelwright/takes/delete` | `{slug, scene_id, take_id}` | `{ok}` |
+| POST | `/reelwright/merge` | `{project}` | `{ok, files:{video, srt, otio, fcpxml, chapters, bundle}, duration}` |
+| POST | `/reelwright/autosave` | `{project}` | `{ok, version}` |
+| GET | `/reelwright/versions?slug=` | – | `{versions:[{name, created, size}]}` |
+| GET | `/reelwright/version?slug=&name=` | – | `{project}` |
+| GET | `/reelwright/llm/settings` | – | `{base_url, model, has_key}` |
+| POST | `/reelwright/llm/settings` | `{base_url?, model?, api_key?}` | `{ok}` |
+| POST | `/reelwright/llm/models` | `{base_url?}` | `{models[]}` |
+| POST | `/reelwright/llm/test` | `{}` | `{ok, ms, model}` |
+| POST | `/reelwright/llm/rewrite` | `{project, scene_id, instruction}` | `{sections?, raw?, warnings[]}` |
+| POST | `/reelwright/llm/split` | `{project, scene_id}` | `{pass_prompts:{n: text}}` |
+| POST | `/reelwright/llm/script` | `{project, script}` | `{scenes[], cast[]}` |
+| POST | `/reelwright/promote_frame` | `{slug, scene_id, take_id, which: first\|last\|time, t?}` | `{asset}` |
+| POST | `/reelwright/cast/export` | `{project, cast_id}` | `{folder, files}` |
+| POST | `/reelwright/continuity/check` | `{project, scene_id}` | `{scores:{cast_id: value}, available}` |
+
+File previews use ComfyUI's own `/view?filename=&subfolder=&type=output|input`.
+
+## Websocket events (`api.addEventListener(name, e => e.detail)`)
+
+| Event | Detail |
+|---|---|
+| `reelwright.progress` | `{slug, scene_id, pass: 1, passes: 3, step, steps, phase: "encode"\|"sample"\|"decode"\|"save"\|"cached"\|"done"\|"error", message}` |
+| `reelwright.run` | `{slug, phase: "start"\|"end", targets: [scene_id], reused: [scene_id], error?}` |
+| `reelwright.merge` | `{slug, phase: "start"\|"progress"\|"end", percent?, files?, error?}` |
+
+## Running a render
+
+The editor writes `{"action": "pending"|"selected"|"from"|"all"|"take", "scenes": [..], "token": <time>}`
+into the hidden `run_request` widget, then calls `app.queuePrompt(0, 1)`.
+`fingerprint_inputs` hashes project + run_request, so each click re-runs the
+node and an unchanged queue does not. After queueing, the editor resets the
+request to `{"action": "pending"}`.
+
+## Disk layout
+
+```
+output/reelwright/<slug>/
+  project.json                       latest autosave
+  versions/project_YYYYmmdd_HHMMSS.json
+  scenes/<scene_id>/index.json       {starred, takes:[...]}
+  scenes/<scene_id>/takes/<take_id>/video.mp4 first.png last.png tail.mp4 meta.json
+  scenes/<scene_id>/takes/<take_id>/passes/p1.mp4 …
+  cuts/<slug>_cut_vN.mp4 .srt .otio .fcpxml .chapters.txt .zip
+  cast/<cast_id>/training/…
+input/reelwright/<slug>/             uploaded assets
+user/reelwright/llm.json     LLM base URL, model, API key (never in workflows)
+```
+
+Every path that comes from the project or a request goes through
+`storage.safe_join`, which refuses anything outside its root.
+
+## Editor ↔ backend details
+
+- The editor hides the `project` and `run_request` widgets. It attaches a non-serialized DOM widget named `reelwright_editor`.
+- Queueing runs only this node: `app.queuePrompt(0, 1, [String(node.id)])`. **Stop** calls `api.interrupt()`.
+- `/plan` scene status is one of `cached | stale | missing | locked | error`. The editor adds `queued` and live progress from `reelwright.progress`.
+- Take and merge file paths are relative to the output directory. Asset `file` paths are relative to the input directory. Both are previewed through `/view`.
+- `scene.prompt.pass_prompts` is keyed by 1-based pass numbers as strings. `scene.overrides.loras.strengths` is keyed by global LoRA id. `scene.trim.in` is seconds inside the generated pass.
+- When a render runs, the node writes `wired.json` (which inputs are wired) into the project folder. `/plan` reads it, so its cache keys match the renderer's.
