@@ -50,8 +50,15 @@ def probe(path):
     """{duration, width, height, has_audio} via ffprobe, falling back to PyAV."""
     exe = ffprobe_bin()
     if exe:
-        out = subprocess.run([exe, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path],
-                             capture_output=True, text=True, check=True).stdout
+        # [OLD 2026-11-02 v0.2.0->v0.2.1] a broken or half-written file raised CalledProcessError out of the node
+        # out = subprocess.run([exe, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path],
+        #                      capture_output=True, text=True, check=True).stdout
+        # [/OLD]
+        r = subprocess.run([exe, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise MergeError("ffprobe could not read {}: {}".format(os.path.basename(path), (r.stderr or "").strip()[-400:]))
+        out = r.stdout
         info = json.loads(out)
         v = next((s for s in info["streams"] if s["codec_type"] == "video"), None)
         a = next((s for s in info["streams"] if s["codec_type"] == "audio"), None)
@@ -156,10 +163,18 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
         else:
             graph.append("[{}][score]amix=inputs=2:duration=first:normalize=0[amix]".format(acur))
         acur = "amix"
+    # [OLD 2026-11-02 v0.2.0->v0.2.1] newer ffmpeg builds (8.x) let the aac encoder take any channel layout, so
+    # the link after this last aresample had no layout to pick: "Cannot select channel layout ... format_out"
+    # if loudness is not None:
+    #     graph.append("[{}]loudnorm=I={}:TP=-1.5:LRA=11,aresample={}[aout]".format(acur, loudness, AUDIO_RATE))
+    # else:
+    #     graph.append("[{}]anull[aout]".format(acur))
+    # [/OLD]
+    pin = "aformat=sample_fmts=fltp:sample_rates={}:channel_layouts=stereo".format(AUDIO_RATE)
     if loudness is not None:
-        graph.append("[{}]loudnorm=I={}:TP=-1.5:LRA=11,aresample={}[aout]".format(acur, loudness, AUDIO_RATE))
+        graph.append("[{}]loudnorm=I={}:TP=-1.5:LRA=11,aresample={},{}[aout]".format(acur, loudness, AUDIO_RATE, pin))
     else:
-        graph.append("[{}]anull[aout]".format(acur))
+        graph.append("[{}]{}[aout]".format(acur, pin))
     graph.append("[{}]null[vout]".format(vcur))
 
     if chapters_file:
@@ -171,8 +186,13 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
         args += ["-c:v", "libx265", "-tag:v", "hvc1"]
     else:
         args += ["-c:v", "libx264"]
+    # [OLD 2026-11-02 v0.2.0->v0.2.1] no explicit channel count for the encoder
+    # args += ["-preset", "medium", "-crf", str(int(crf)), "-pix_fmt", "yuv420p", "-r", str(FPS),
+    #          "-c:a", "aac", "-b:a", "192k", "-ar", str(AUDIO_RATE), "-movflags", "+faststart",
+    #          "-t", _f(total), out_path]
+    # [/OLD]
     args += ["-preset", "medium", "-crf", str(int(crf)), "-pix_fmt", "yuv420p", "-r", str(FPS),
-             "-c:a", "aac", "-b:a", "192k", "-ar", str(AUDIO_RATE), "-movflags", "+faststart",
+             "-c:a", "aac", "-b:a", "192k", "-ar", str(AUDIO_RATE), "-ac", "2", "-movflags", "+faststart",
              "-t", _f(total), out_path]
     return args, starts, total
 
@@ -190,9 +210,24 @@ def run_ffmpeg(args, total=None, progress=None):
         raise MergeError("ffmpeg failed: " + err.strip()[-2000:])
 
 
+# [OLD 2026-11-02 v0.2.0->v0.2.1] ffmpeg wrote straight to the cut, so a failed merge left a broken
+# <slug>_cut_vN.mp4 behind that the node then tried to play
+# def join(segments, out_path, width, height, progress=None, **kw):
+#     args, starts, total = build_command(segments, out_path, width, height, **kw)
+#     run_ffmpeg(args, total, progress)
+#     return starts, total
+# [/OLD]
 def join(segments, out_path, width, height, progress=None, **kw):
-    args, starts, total = build_command(segments, out_path, width, height, **kw)
-    run_ffmpeg(args, total, progress)
+    """Render into <name>.partial.mp4 and rename only when ffmpeg succeeded."""
+    root, ext = os.path.splitext(out_path)
+    tmp = root + ".partial" + ext
+    args, starts, total = build_command(segments, tmp, width, height, **kw)
+    try:
+        run_ffmpeg(args, total, progress)
+        os.replace(tmp, out_path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
     return starts, total
 
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.1 — 2026-11-02
+
+Fixes a crash after a render when the automatic merge failed.
+
+- Merge: the final audio is pinned to 48 kHz stereo (`aformat` plus `-ac 2`). Newer ffmpeg builds (for example conda-forge's) failed with "Cannot select channel layout for the link between filters … and format_out".
+- Merge writes to `<cut>.partial.mp4` and renames it only on success, so a failed merge no longer leaves a broken `<slug>_cut_vN.mp4`.
+- Node: after a failed merge it outputs the last scene's take instead of the newest cut, and skips any video ffprobe can't read. `merge.probe` now raises a readable `MergeError` instead of `CalledProcessError`.
+- Editor: a failed automatic merge now shows a toast and the error in the Merge card.
+
 ## v0.2.0 — 2026-11-02
 
 Prompts now follow MiniMax's official Ref2VA guide, and the editor gets searchable pickers, ComfyUI file browsing and vision descriptions.

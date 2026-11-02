@@ -140,3 +140,26 @@ def test_pass_segments_for_long_scene(harbor):
     segs = assemble.pass_segments(plan, ["p{}.mp4".format(x["index"]) for x in plan["passes"]], 12)
     _, total = merge.plan_timeline(segs)
     assert total == pytest.approx(32.0, abs=1 / 24)
+
+
+# added 2026-11-02 v0.2.1: ffmpeg 8 lets aac take any channel layout, so the last audio link must be pinned
+def test_final_audio_link_is_pinned_to_stereo(tmp_path):
+    segs = [{"path": "a.mp4", "in": 0, "out": 2, "has_audio": True, "join": "first", "dur": 0}]
+    for loudness in (-16.0, None):
+        args, _, _ = merge.build_command(segs, str(tmp_path / "o.mp4"), 320, 180, loudness=loudness)
+        graph = args[args.index("-filter_complex") + 1]
+        last = [x for x in graph.split(";") if x.endswith("[aout]")][0]
+        assert "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[aout]" in last
+        assert args[args.index("-ac") + 1] == "2"
+
+
+def test_failed_join_leaves_no_cut_and_probe_raises(tmp_path):
+    bad = tmp_path / "broken.mp4"
+    bad.write_bytes(b"not a video")
+    with pytest.raises(merge.MergeError):
+        merge.probe(str(bad))
+    out = tmp_path / "cut_v1.mp4"
+    segs = [{"path": str(bad), "in": 0, "out": 2, "has_audio": True, "join": "first", "dur": 0}]
+    with pytest.raises(merge.MergeError):
+        merge.join(segs, str(out), 320, 180, loudness=-16.0)
+    assert not out.exists() and not (tmp_path / "cut_v1.partial.mp4").exists()

@@ -61,6 +61,7 @@ export function mountEditor(container, host) {
     actions: null,
   };
 
+  let mergeInFlight = false; // added 2026-11-02 v0.2.1
   const actions = ctx.actions = {
     setTab(tab) {
       store.update(p => { p.ui.tab = tab; }, { history: false, plan: false, autosave: false });
@@ -149,6 +150,7 @@ export function mountEditor(container, host) {
     },
     async merge() {
       store.setEph({ merge: { phase: "start" } });
+      mergeInFlight = true; // added 2026-11-02 v0.2.1: the HTTP reply reports errors, so the websocket toast is skipped
       try {
         const res = await rw.merge(store.project);
         store.setEph({ merge: { phase: "end", files: res.files, duration: res.duration } });
@@ -156,6 +158,8 @@ export function mountEditor(container, host) {
       } catch (err) {
         store.setEph({ merge: { phase: "error", error: err.message } });
         actions.toast("Merge failed: " + err.message, "error");
+      } finally {
+        mergeInFlight = false;
       }
     },
     async refreshTakes() {
@@ -367,8 +371,19 @@ export function mountEditor(container, host) {
       else actions.toast(`Render finished · ${d.targets?.length || 0} generated · ${d.reused?.length || 0} reused`, "ok");
     }
   });
+  /* [OLD 2026-11-02 v0.2.0->v0.2.1] a failed merge (e.g. the automatic one after a render) was not shown
   host.on("reelwright.merge", d => {
     if (d.slug !== store.project.slug) return;
+    store.setEph({ merge: d });
+  });
+  [/OLD] */
+  host.on("reelwright.merge", d => {
+    if (d.slug !== store.project.slug) return;
+    if (d.error) {
+      store.setEph({ merge: { ...d, phase: "error" } });
+      if (!mergeInFlight) actions.toast("Merge failed: " + d.error.split("\n").filter(Boolean).slice(-1)[0], "error");
+      return;
+    }
     store.setEph({ merge: d });
   });
 

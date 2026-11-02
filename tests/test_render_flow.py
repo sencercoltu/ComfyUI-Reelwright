@@ -176,3 +176,25 @@ def test_node_execute_returns_outputs(stubs, harbor, roots):
     assert json.loads(plan)["scenes"]["s_long"]["status"] == "cached"
     assert video.get_duration() == pytest.approx(8 + 32 - 39 / 24 + 2.5, abs=0.1)
     assert Reelwright.fingerprint_inputs("a", "b") != Reelwright.fingerprint_inputs("a", "c")
+
+
+# added 2026-11-02 v0.2.1: a failed auto-merge must not break the node (it used to probe its own broken cut)
+def test_node_survives_a_failed_merge(stubs, harbor, roots, monkeypatch):
+    render, calls, events = stubs
+    from reelwright import assemble as asm, merge
+    from reelwright.node import Reelwright
+    from reelwright.storage import ProjectStore
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    store = ProjectStore(roots, harbor["slug"])
+    os.makedirs(store.cuts_dir(), exist_ok=True)
+    with open(os.path.join(store.cuts_dir(), harbor["slug"] + "_cut_v9.mp4"), "wb") as f:
+        f.write(b"half-written")
+
+    def boom(*a, **k):
+        raise merge.MergeError("ffmpeg failed: Cannot select channel layout")
+    monkeypatch.setattr(asm, "merge_project", boom)
+    out = Reelwright.execute(json.dumps(harbor), json.dumps({"action": "pending"}))
+    video, last, audio, plan = out.result
+    assert video.get_duration() == pytest.approx(2.5, abs=0.1)   # the last scene's take, not the broken cut
+    assert audio["waveform"].shape[1] == 2

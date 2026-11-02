@@ -20,6 +20,15 @@ from .storage import ProjectStore, Roots, write_json
 log = logging.getLogger("reelwright")
 
 
+def _send(event, data):
+    """Websocket event to the editor; never fails the node (added 2026-11-02 v0.2.1)."""
+    try:
+        from server import PromptServer
+        PromptServer.instance.send_sync(event, data)
+    except Exception:  # noqa: BLE001 - no server in tests
+        pass
+
+
 def _roots():
     return Roots(folder_paths.get_output_directory(), folder_paths.get_input_directory(),
                  folder_paths.get_user_directory())
@@ -83,28 +92,70 @@ class Reelwright(io.ComfyNode):
         wired_flags = {"diffusion": model is not None, "text_encoder": clip is not None,
                        "video_vae": vae is not None, "audio_vae": audio_vae is not None}
         result = analyze(p, store, wired_flags)
-        video_path = None
+        # [OLD 2026-11-02 v0.2.0->v0.2.1] after a failed merge this fell back to the newest cut file, which could be the
+        # half-written cut of that same failed merge, and probing it raised out of the node
+        # video_path = None
+        # if rendered and p["global"]["merge"]["auto_after_render"]:
+        #     try:
+        #         video_path = store.output_path(assemble.merge_project(result, store)["files"]["video"])
+        #     except merge.MergeError as e:
+        #         log.warning("Reelwright: merge skipped: %s", e)
+        # if not video_path:
+        #     cuts = sorted(glob.glob(os.path.join(store.cuts_dir(), "*_cut_v*.mp4")), key=os.path.getmtime)
+        #     video_path = cuts[-1] if cuts else None
+        #
+        # last_take = None
+        # for s in reversed(p["scenes"]):
+        #     last_take = store.starred_take(s["id"])
+        #     if last_take:
+        #         break
+        # if not video_path and last_take:
+        #     video_path = store.output_path(last_take["files"]["video"])
+        #
+        # video = InputImpl.VideoFromFile(video_path) if video_path else _placeholder_video()
+        # last = media.load_image(store.output_path(last_take["files"]["last"])) if last_take else torch.zeros(1, 64, 64, 3)
+        # audio = {"waveform": torch.zeros(1, 2, 1), "sample_rate": 48000}
+        # if video_path and merge.probe(video_path)["has_audio"]:
+        #     audio = media.load_audio(video_path)
+        # [/OLD]
+        merged, merge_failed = None, False
         if rendered and p["global"]["merge"]["auto_after_render"]:
             try:
-                video_path = store.output_path(assemble.merge_project(result, store)["files"]["video"])
+                out = assemble.merge_project(result, store)
+                merged = store.output_path(out["files"]["video"])
+                _send("reelwright.merge", {"slug": p["slug"], "phase": "end", "files": out["files"],
+                                           "duration": out.get("duration")})
             except merge.MergeError as e:
+                merge_failed = True
                 log.warning("Reelwright: merge skipped: %s", e)
-        if not video_path:
-            cuts = sorted(glob.glob(os.path.join(store.cuts_dir(), "*_cut_v*.mp4")), key=os.path.getmtime)
-            video_path = cuts[-1] if cuts else None
+                # added 2026-11-02 v0.2.1: tell the editor, which used to show nothing for a failed auto-merge
+                _send("reelwright.merge", {"slug": p["slug"], "phase": "error", "error": str(e)[-600:]})
 
         last_take = None
         for s in reversed(p["scenes"]):
             last_take = store.starred_take(s["id"])
             if last_take:
                 break
-        if not video_path and last_take:
-            video_path = store.output_path(last_take["files"]["video"])
+        take_video = store.output_path(last_take["files"]["video"]) if last_take else None
+        cuts = sorted((c for c in glob.glob(os.path.join(store.cuts_dir(), "*_cut_v*.mp4")) if ".partial." not in c),
+                      key=os.path.getmtime, reverse=True)
+        # an older cut does not show what was just rendered, so after a failed merge the last take comes first
+        candidates = [merged] + ([take_video] + cuts if merge_failed else cuts + [take_video])
+        video_path, info = None, None
+        for c in candidates:
+            if c and os.path.isfile(c):
+                try:
+                    info = merge.probe(c)
+                except (merge.MergeError, ValueError, OSError) as e:
+                    log.warning("Reelwright: skipping unreadable video %s: %s", c, e)
+                    continue
+                video_path = c
+                break
 
         video = InputImpl.VideoFromFile(video_path) if video_path else _placeholder_video()
         last = media.load_image(store.output_path(last_take["files"]["last"])) if last_take else torch.zeros(1, 64, 64, 3)
         audio = {"waveform": torch.zeros(1, 2, 1), "sample_rate": 48000}
-        if video_path and merge.probe(video_path)["has_audio"]:
+        if video_path and info["has_audio"]:
             audio = media.load_audio(video_path)
         plan = plan_response(result)
         for s in plan["scenes"].values():
