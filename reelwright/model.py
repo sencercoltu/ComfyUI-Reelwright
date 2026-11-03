@@ -61,8 +61,21 @@ def default_global():
         # "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
         #         "include_guides": True},
         # [/OLD]
+        # [OLD 2026-11-03 v0.4.1->v0.4.2] no limits: a fixed 180 s timeout, Import used max(Max tokens, 6000) for the whole script
+        # "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
+        #         "include_guides": True, "thinking": "auto"},  # thinking: auto (model default) | off
+        # [/OLD]
         "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
-                "include_guides": True, "thinking": "auto"},  # thinking: auto (model default) | off
+                "include_guides": True, "thinking": "auto",  # thinking: auto (model default) | off
+                # added 2026-11-03 v0.4.2: limits. timeout_s: no data from the server for this long ends a request;
+                # max_wait_s: longest a request may take; retries: extra attempts after a timeout, a cut-off or
+                # unreadable reply or a server error; context_tokens: the model's context window, 0 = ask the server
+                "timeout_s": 120, "max_wait_s": 900, "retries": 2, "context_tokens": 0,
+                # script import: the script is sent in parts of about this many characters (0 = all at once),
+                # each part may answer with up to import_max_tokens; import_thinking: same | off;
+                # import_guides: also send MiniMax's H3 guides (about 10k tokens) with every part
+                "import_part_chars": 3000, "import_max_tokens": 16384, "import_thinking": "same",
+                "import_guides": False},
         "merge": {"use": "starred", "missing": "skip", "hard_cut": "cut", "transition_frames": 12,
                   "audio_fade_frames": 6, "loudness": -16.0, "normalize": True,
                   "score": {"asset": "", "volume_db": -12.0, "duck": True},

@@ -19,6 +19,7 @@ from server import PromptServer
 # [OLD 2026-11-03 v0.3.9->v0.4.0] from . import VERSION, assemble, continuity, llm, media, merge, profiles
 from . import VERSION, assemble, continuity, llm, media, merge, profiles
 from . import files as diskuse  # added 2026-11-03 v0.4.0 ("files" is already the name of a route below)
+from . import scriptparts  # added 2026-11-03 v0.4.2
 from .analysis import analyze, plan_response
 # [OLD 2026-11-02 v0.3.3->v0.3.4] from .model import normalize_project, project_index
 from .model import cast_description, normalize_project, project_index
@@ -37,16 +38,38 @@ def wired_flags(store):
     return read_json(os.path.join(store.dir, "wired.json"), {}) or {}
 
 
+# [OLD 2026-11-03 v0.4.1->v0.4.2] an exception without a message (asyncio.TimeoutError) answered {"error": ""}, which the editor showed as
+# nothing at all; LLM failures were logged with a full traceback
+# def json_route(fn):
+#     @functools.wraps(fn)
+#     async def wrapper(request):
+#         try:
+#             return web.json_response(await fn(request))
+#         except (ValueError, KeyError, FileNotFoundError, merge.MergeError, json.JSONDecodeError) as e:
+#             return web.json_response({"error": str(e)}, status=400)
+#         except Exception as e:
+#             log.exception("Reelwright route %s failed", request.path)
+#             return web.json_response({"error": str(e)}, status=500)
+#     return wrapper
+# [/OLD]
+def _message(e):
+    return str(e) or e.__class__.__name__
+
+
 def json_route(fn):
     @functools.wraps(fn)
     async def wrapper(request):
         try:
             return web.json_response(await fn(request))
+        except (llm.LLMError, llm.NoAnswer) as e:
+            # added 2026-11-03 v0.4.2: the LLM failed; say why, and give the editor the reason (e.g. "cut")
+            log.warning("Reelwright %s: %s", request.path, _message(e))
+            return web.json_response({"error": _message(e), "reason": e.reason}, status=502)
         except (ValueError, KeyError, FileNotFoundError, merge.MergeError, json.JSONDecodeError) as e:
-            return web.json_response({"error": str(e)}, status=400)
+            return web.json_response({"error": _message(e)}, status=400)
         except Exception as e:
             log.exception("Reelwright route %s failed", request.path)
-            return web.json_response({"error": str(e)}, status=500)
+            return web.json_response({"error": _message(e)}, status=500)
     return wrapper
 
 
@@ -371,8 +394,11 @@ async def llm_rewrite(request):
     prompts = result["scenes"][scene["id"]]["prompts"]
     # [OLD 2026-11-03 v0.4.0->v0.4.1] return await llm.rewrite(cfg, p, scene, b.get("instruction", ""), prompts[0] if prompts else "")
     builds = result["scenes"][scene["id"]]["builds"]  # added 2026-11-03 v0.4.1: labels back to @ tokens
-    return await llm.rewrite(cfg, p, scene, b.get("instruction", ""), prompts[0] if prompts else "",
-                             builds[0]["tag_map"] if builds else None)
+    # [OLD 2026-11-03 v0.4.1->v0.4.2] return await llm.rewrite(cfg, p, scene, b.get("instruction", ""), prompts[0] if prompts else "",
+    #                              builds[0]["tag_map"] if builds else None)
+    job = _job_id(b)
+    return await _llm_job(job, llm.rewrite(cfg, p, scene, b.get("instruction", ""), prompts[0] if prompts else "",
+                                           builds[0]["tag_map"] if builds else None, progress=_llm_progress(job)))
 
 
 @routes.post("/reelwright/llm/split")
@@ -383,8 +409,12 @@ async def llm_split(request):
     cfg = _cfg(p)  # [OLD 2026-11-02 v0.1.0->v0.2.0] llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
     result = await asyncio.to_thread(analyze, p, store, wired_flags(store))
     sr = result["scenes"][_scene(p, b["scene_id"])["id"]]
-    pass_prompts = await llm.split(cfg, p, _scene(p, b["scene_id"]), sr["passes"], sr["prompts"])
-    return {"pass_prompts": pass_prompts}
+    # [OLD 2026-11-03 v0.4.1->v0.4.2] pass_prompts = await llm.split(cfg, p, _scene(p, b["scene_id"]), sr["passes"], sr["prompts"])
+    # return {"pass_prompts": pass_prompts}
+    job = _job_id(b)
+    out = await _llm_job(job, llm.split(cfg, p, _scene(p, b["scene_id"]), sr["passes"], sr["prompts"],
+                                        progress=_llm_progress(job)))
+    return out if out.get("cancelled") else {"pass_prompts": out}
 
 
 @routes.post("/reelwright/llm/script")
@@ -395,7 +425,70 @@ async def llm_script(request):
     cfg = _cfg(p)  # [OLD 2026-11-02 v0.1.0->v0.2.0] llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
     if not (b.get("script") or "").strip():
         raise ValueError("Paste a script first")
-    return await llm.script_to_scenes(cfg, p, b["script"])
+    # [OLD 2026-11-03 v0.4.1->v0.4.2] return await llm.script_to_scenes(cfg, p, b["script"])
+    # added 2026-11-03 v0.4.2: one part of a script (see /reelwright/llm/script/parts), with progress events and Cancel
+    job = _job_id(b)
+    part, parts = max(1, int(b.get("part") or 1)), max(1, int(b.get("parts") or 1))
+    return await _llm_job(job, llm.script_part(
+        cfg, p, b["script"], part=part, parts=parts, notes=str(b.get("notes") or ""),
+        known_cast=b.get("known_cast") or [], progress=_llm_progress(job, part=part, parts=parts),
+        retry_cut=not b.get("can_split")))
+
+
+# ---- long LLM requests: parts, progress, cancel (added 2026-11-03 v0.4.2) -----------------------
+
+LLM_JOBS = {}  # job id -> the asyncio task doing the request
+LLM_CANCELLED = set()
+
+
+def _job_id(b):
+    return str(b.get("job") or "")[:64]
+
+
+def _llm_progress(job, **extra):
+    """progress() for llm.ask: reelwright.llm websocket events, tagged with the editor's job id."""
+    if not job:
+        return None
+    server = PromptServer.instance
+    return lambda d: server.send_sync("reelwright.llm", dict(d, job=job, **extra))
+
+
+async def _llm_job(job, coro):
+    """Run an LLM request as a task that POST /reelwright/llm/cancel can stop; a cancelled one answers
+    {"cancelled": true}."""
+    task = asyncio.ensure_future(coro)
+    if job:
+        LLM_JOBS[job] = task
+    try:
+        return await task
+    except asyncio.CancelledError:
+        if job in LLM_CANCELLED:
+            return {"cancelled": True}
+        raise
+    finally:
+        if job:
+            LLM_JOBS.pop(job, None)
+            LLM_CANCELLED.discard(job)
+
+
+@routes.post("/reelwright/llm/cancel")
+@json_route
+async def llm_cancel(request):
+    job = _job_id(await body_of(request))
+    task = LLM_JOBS.get(job)
+    if not task or task.done():
+        return {"ok": True, "cancelled": False}
+    LLM_CANCELLED.add(job)
+    task.cancel()
+    return {"ok": True, "cancelled": True}
+
+
+@routes.post("/reelwright/llm/script/parts")
+@json_route
+async def llm_script_parts(request):
+    b = await body_of(request)
+    size = llm.limits({"import_part_chars": b.get("part_chars", 3000)})["import_part_chars"]
+    return scriptparts.split_script(str(b.get("script") or ""), size)
 
 
 # added 2026-11-02 v0.2.0: describe pictures (or video frames) with a vision model

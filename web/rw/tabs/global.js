@@ -4,6 +4,7 @@
 // [OLD 2026-11-02 v0.2.2->v0.3.0] import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, dot } from "../ui.js";
 import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, dot, confirmDialog } from "../ui.js";
 import { rw } from "../api.js";
+import { newJob, jobLine } from "../llmjob.js"; // added 2026-11-03 v0.4.2
 import {
   ASPECTS, START_MODES, STABLE_LANGUAGES, OVERRIDE_KEYS, adaptCanvas, newId, slugify, defaultScene, effective, FPS,
   sceneIndex, // added 2026-11-02 v0.3.1
@@ -265,7 +266,8 @@ function llmCard(ctx) {
           catch (err) { ctx.store.setEph({ llm: { ...st, error: err.message } }); }
         } })), { help: "global.llm.model" }),
       field("Temperature", number({ value: l.temperature, min: 0, max: 2, step: 0.05, help: "global.llm.temperature", onChange: v => set(x => { x.temperature = v ?? 0.4; }) }), { help: "global.llm.temperature" }),
-      field("Max tokens", number({ value: l.max_tokens, min: 128, max: 32768, step: 128, help: "global.llm.maxTokens", onChange: v => set(x => { x.max_tokens = v ?? 2048; }) }), { help: "global.llm.maxTokens" }),
+      // [OLD 2026-11-03 v0.4.1->v0.4.2] field("Max tokens", number({ value: l.max_tokens, min: 128, max: 32768, step: 128, help: "global.llm.maxTokens", onChange: v => set(x => { x.max_tokens = v ?? 2048; }) }), { help: "global.llm.maxTokens" }),
+      field("Max tokens", number({ value: l.max_tokens, min: 128, max: 1000000, step: 128, width: "96px", help: "global.llm.maxTokens", onChange: v => set(x => { x.max_tokens = v ?? 2048; }) }), { help: "global.llm.maxTokens" }),
       // added 2026-11-02 v0.3.2: thinking models (Qwen3 and similar) can spend the whole budget reasoning
       field("Thinking", segmented({ small: true, value: l.thinking === "off" ? "off" : "auto", help: "global.llm.thinking", options: [
         { value: "auto", label: "Model default", help: "global.llm.thinking.auto" }, { value: "off", label: "Off", help: "global.llm.thinking.off" }],
@@ -287,7 +289,8 @@ function llmCard(ctx) {
           try {
             const r = await rw.llmTestProject(ctx.p);
             // [OLD 2026-11-02 v0.3.1->v0.3.2] ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: false, ok: true, ms: r.ms, error: null, testedModel: r.model, testedUrl: r.base_url, reply: r.reply } });
-            ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: false, ok: true, ms: r.ms, error: null, testedModel: r.model, testedUrl: r.base_url, reply: r.reply, note: r.note || "" } });
+            // [OLD 2026-11-03 v0.4.1->v0.4.2] ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: false, ok: true, ms: r.ms, error: null, testedModel: r.model, testedUrl: r.base_url, reply: r.reply, note: r.note || "" } });
+            ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: false, ok: true, ms: r.ms, error: null, testedModel: r.model, testedUrl: r.base_url, reply: r.reply, note: r.note || "", context: r.context || 0 } });
             ctx.actions.toast(`LLM answered in ${r.ms} ms · ${r.model || "server default model"}`, "ok");
           } catch (err) {
             ctx.store.setEph({ llm: { ...ctx.eph.llm, testing: false, ok: false, error: err.message } });
@@ -299,8 +302,43 @@ function llmCard(ctx) {
       st.ok && st.testedUrl ? h("div", { class: "rw-note ok small", help: "global.llm.status" }, icon("check", 12), `${st.testedUrl} · ${st.testedModel || "default model"} · ${st.ms} ms${st.reply ? ` · replied “${st.reply}”` : ""}`) : null,
       st.error ? h("div", { class: "rw-note err small", help: "global.llm.status" }, icon("warn", 12), st.error) : null,
       st.ok && st.note ? h("div", { class: "rw-note small", help: "global.llm.thinking" }, icon("info", 12), st.note) : null, // added 2026-11-02 v0.3.2
+      ...limitFields(l, st, set), // added 2026-11-03 v0.4.2
     ],
   });
+}
+
+// added 2026-11-03 v0.4.2: timeouts, retries, context window, and script import's own budget
+function limitFields(l, st, set) {
+  const n = v => Math.round(v).toLocaleString("en-US");
+  const hint = (t, help) => h("span", { class: "rw-dim small", help }, t);
+  return [
+    h("div", { class: "rw-subhead", help: "global.llm.limits" }, "Limits"),
+    field("Stall timeout", h("span", { class: "rw-row grow" },
+      number({ value: l.timeout_s, min: 10, max: 3600, step: 10, unit: "s", help: "global.llm.timeout", onChange: v => set(x => { x.timeout_s = v ?? 120; }) }),
+      hint("no data from the server for this long ends the request", "global.llm.timeout")), { help: "global.llm.timeout" }),
+    field("Give up after", h("span", { class: "rw-row grow" },
+      number({ value: l.max_wait_s, min: 30, max: 7200, step: 30, unit: "s", help: "global.llm.maxWait", onChange: v => set(x => { x.max_wait_s = v ?? 900; }) }),
+      hint("longest one request may take, even while text keeps arriving", "global.llm.maxWait")), { help: "global.llm.maxWait" }),
+    field("Retries", h("span", { class: "rw-row grow" },
+      number({ value: l.retries, min: 0, max: 5, step: 1, help: "global.llm.retries", onChange: v => set(x => { x.retries = v ?? 2; }) }),
+      hint("after a timeout, a dropped connection, a server error or an unreadable answer", "global.llm.retries")), { help: "global.llm.retries" }),
+    field("Context window", h("span", { class: "rw-row grow" },
+      number({ value: l.context_tokens, min: 0, max: 4000000, step: 1024, width: "96px", unit: "tokens", help: "global.llm.context", onChange: v => set(x => { x.context_tokens = v ?? 0; }) }),
+      hint(l.context_tokens ? "prompt + answer must fit" : st.context ? `0 = ask the server · it says ${n(st.context)} tokens` : "0 = ask the server (Test connection shows its answer)", "global.llm.context")), { help: "global.llm.context" }),
+    h("div", { class: "rw-subhead", help: "global.llm.import" }, "Script import"),
+    field("Part size", h("span", { class: "rw-row grow" },
+      number({ value: l.import_part_chars, min: 0, max: 1000000, step: 500, width: "96px", unit: "chars", help: "global.llm.importPart", onChange: v => set(x => { x.import_part_chars = v ?? 3000; }) }),
+      hint(l.import_part_chars ? "a long script is sent in parts of about this size" : "0 = the whole script in one request", "global.llm.importPart")), { help: "global.llm.importPart" }),
+    field("Max tokens", h("span", { class: "rw-row grow" },
+      number({ value: l.import_max_tokens, min: 256, max: 1000000, step: 1024, width: "96px", unit: "tokens", help: "global.llm.importTokens", onChange: v => set(x => { x.import_max_tokens = v ?? 16384; }) }),
+      hint("per part, thinking included; a part that runs out is split in two", "global.llm.importTokens")), { help: "global.llm.importTokens" }),
+    field("Thinking", segmented({ small: true, value: l.import_thinking === "off" ? "off" : "same", help: "global.llm.importThinking", options: [
+      { value: "same", label: "Same as above", help: "global.llm.importThinking.same" }, { value: "off", label: "Off", help: "global.llm.importThinking.off" }],
+    onChange: v => set(x => { x.import_thinking = v; }) }), { help: "global.llm.importThinking" }),
+    field("H3 guides", h("span", { class: "rw-row grow" },
+      toggle({ value: !!l.import_guides, help: "global.llm.importGuides", onChange: v => set(x => { x.import_guides = v; }) }),
+      hint(l.import_guides ? "sent with every part (about 10,000 tokens)" : "not sent: about 10,000 fewer prompt tokens per part", "global.llm.importGuides")), { help: "global.llm.importGuides" }),
+  ];
 }
 
 // added 2026-11-02 v0.2.0: guide status, download button and the include switch
@@ -331,6 +369,7 @@ function guidesField(ctx, l, st, set) {
 
 function scriptCard(ctx) {
   const draft = ctx.eph.scriptDraft;
+  /* [OLD 2026-11-03 v0.4.1->v0.4.2] one request for the whole script; a long script timed out or came back cut off
   const run = async () => {
     const script = ctx.eph.scriptText || "";
     if (!script.trim()) { ctx.actions.toast("Paste a script first.", "warn"); return; }
@@ -342,6 +381,25 @@ function scriptCard(ctx) {
       ctx.store.setEph({ scriptDraft: null });
       ctx.actions.toast("Script import failed: " + err.message, "error");
     }
+  };
+  [/OLD] */
+  // added 2026-11-03 v0.4.2: the script is cut into parts (Global → Limits → Part size) and each part is its own request
+  const run = async () => {
+    const script = ctx.eph.scriptText || "";
+    if (!script.trim()) { ctx.actions.toast("Paste a script first.", "warn"); return; }
+    const old = ctx.store.eph.scriptDraft;
+    if (old?.busy) return;
+    let sp;
+    try { sp = await rw.scriptParts(script, ctx.p.global.llm.import_part_chars ?? 3000); }
+    catch (err) { ctx.actions.toast("Script import failed: " + err.message, "error"); return; }
+    const draft = { busy: false, notes: sp.notes || "", chars: sp.chars, parts: (sp.parts || []).map(blocks => ({ blocks, status: "wait", scenes: [], cast: [] })), scenes: [], cast: [], splits: 0 };
+    await runParts(ctx, draft);
+  };
+  const stop = () => {
+    if (!draft?.busy) return;
+    draft.stop = true;
+    if (draft.job) rw.llmCancel(draft.job).catch(() => {});
+    ctx.store.setEph({ scriptDraft: draft });
   };
   /* [OLD 2026-11-02 v0.3.0->v0.3.1] scenes were always appended at the end
   const apply = () => {
@@ -437,9 +495,17 @@ function scriptCard(ctx) {
     children: [
       textarea({ value: ctx.eph.scriptText || "", rows: 5, mono: true, key: "script-text", help: "global.script.text", placeholder: "Paste a screenplay (Fountain or plain text). The LLM proposes scenes, shots, dialogue and cast; you choose what to add.",
         onInput: v => { ctx.eph.scriptText = v; } }),
+      /* [OLD 2026-11-03 v0.4.1->v0.4.2] one busy label, no progress, no way to stop
       h("div", { class: "rw-row" }, button({ label: draft?.busy ? "Reading script…" : "Propose scenes", icon: "wand", variant: "pink", help: "global.script.run", disabled: !!draft?.busy, onClick: run }),
         draft?.scenes && button({ label: "Discard", small: true, help: "global.script.discard", onClick: () => ctx.store.setEph({ scriptDraft: null }) })),
       draft?.scenes && h("div", { class: "rw-script-review" },
+      [/OLD] */
+      h("div", { class: "rw-row" }, button({ label: draft?.busy ? `Reading part ${runningIndex(draft) + 1} of ${draft.parts.length}…` : "Propose scenes", icon: "wand", variant: "pink", help: "global.script.run", disabled: !!draft?.busy, onClick: run }),
+        draft?.busy && button({ label: draft.stop ? "Stopping…" : "Stop", icon: "close", small: true, help: "global.script.stop", disabled: !!draft.stop, onClick: stop }),
+        draft && !draft.busy && draft.parts.some(p => p.status !== "done") && button({ label: draft.parts.some(p => p.status === "failed") ? "Retry failed parts" : "Continue", icon: "refresh", small: true, help: "global.script.retry", onClick: () => runParts(ctx, draft) }),
+        draft && !draft.busy && button({ label: "Discard", small: true, help: "global.script.discard", onClick: () => ctx.store.setEph({ scriptDraft: null }) })),
+      draft && partsView(ctx, draft),
+      draft && (draft.scenes.length > 0 || draft.cast.length > 0) && h("div", { class: "rw-script-review" },
         // [OLD 2026-11-02 v0.3.0->v0.3.1] said "1 scenes"
         // h("div", { class: "rw-subhead" }, `${draft.cast.length} cast · ${draft.scenes.length} scenes proposed`),
         h("div", { class: "rw-subhead" }, `${draft.cast.length} cast · ${draft.scenes.length} scene${draft.scenes.length === 1 ? "" : "s"} proposed`),
@@ -450,16 +516,112 @@ function scriptCard(ctx) {
         // [OLD 2026-11-02 v0.3.0->v0.3.1] one button that always appended: button({ label: "Add selected to the project", icon: "plus", variant: "primary", small: true, help: "global.script.apply", onClick: apply })),
       ),
       // added 2026-11-02 v0.3.1: choose where the scenes go
-      draft?.scenes && field("Add scenes", segmented({ small: true, value: mode, help: "global.script.mode", options: [
+      // [OLD 2026-11-03 v0.4.1->v0.4.2] draft?.scenes && field("Add scenes", segmented({ small: true, value: mode, help: "global.script.mode", options: [
+      draft && !draft.busy && (draft.scenes.length > 0 || draft.cast.length > 0) && field("Add scenes", segmented({ small: true, value: mode, help: "global.script.mode", options: [
         { value: "append", label: "At the end", help: "global.script.mode.append" },
         { value: "insert", label: `After ${String(sceneIndex(ctx.p, selScene?.id) + 1).padStart(2, "0")} · ${short(selScene?.title || "selected")}`, help: "global.script.mode.insert" },
         { value: "replace", label: "Replace all scenes", help: "global.script.mode.replace" }],
       onChange: v => ctx.store.setEph({ scriptMode: v }) }), { help: "global.script.mode", wide: true }),
-      draft?.scenes && h("div", { class: "rw-row" },
+      // [OLD 2026-11-03 v0.4.1->v0.4.2] draft?.scenes && h("div", { class: "rw-row" },
+      draft && !draft.busy && (draft.scenes.length > 0 || draft.cast.length > 0) && h("div", { class: "rw-row" },
         button({ label: mode === "replace" ? "Replace scenes with the selected" : "Add selected to the project", icon: mode === "replace" ? "refresh" : "plus",
           variant: mode === "replace" ? "danger" : "primary", small: true, help: "global.script.apply", onClick: apply })),
     ],
   });
+}
+
+// ---- script import in parts (added 2026-11-03 v0.4.2) ---------------------------------------------------------
+
+function runningIndex(draft) {
+  const i = draft.parts.findIndex(p => p.status === "run");
+  return i < 0 ? 0 : i;
+}
+
+// Cast proposed by the parts, one entry per name; a later part may fill in a missing description. Speaker ids are
+// numbered again when the cast is added (each part numbers its own from S1).
+function addCast(draft, list) {
+  for (const c of list) {
+    const key = (c.name || "").trim().toLowerCase();
+    if (!key) continue;
+    const had = draft.cast.find(x => (x.name || "").trim().toLowerCase() === key);
+    if (had) { if (!had.description && c.description) had.description = c.description; continue; }
+    draft.cast.push({ ...c, speaker: "", _on: true });
+  }
+}
+
+// Two halves of a part's blocks by size, for a part whose answer did not fit the token budget.
+function halves(blocks) {
+  const total = blocks.reduce((a, b) => a + b.length, 0);
+  let acc = 0, i = 0;
+  while (i < blocks.length - 1 && acc + blocks[i].length <= total / 2) acc += blocks[i++].length;
+  i = Math.max(1, i);
+  return [blocks.slice(0, i), blocks.slice(i)];
+}
+
+async function runParts(ctx, draft) {
+  const store = ctx.store;
+  Object.assign(draft, { busy: true, stop: false });
+  store.setEph({ scriptDraft: draft });
+  for (let i = 0; i < draft.parts.length; i++) {
+    const part = draft.parts[i];
+    if (part.status === "done") continue;
+    if (draft.stop || store.eph.scriptDraft !== draft) break;
+    const job = newJob("import");
+    Object.assign(part, { status: "run", error: "" });
+    draft.job = job;
+    store.setEph({ scriptDraft: draft });
+    try {
+      const r = await rw.scriptPart(store.project, { script: part.blocks.join("\n"), part: i + 1, parts: draft.parts.length, notes: draft.notes,
+        known_cast: draft.cast.map(c => ({ name: c.name, kind: c.kind })), job, can_split: part.blocks.length > 1 });
+      if (r.cancelled) { part.status = "stopped"; break; }
+      Object.assign(part, { status: "done", scenes: (r.scenes || []).map(s => ({ ...s, _on: true })), cast: r.cast || [], tokens: r.tokens || 0, ms: r.ms || 0, attempts: r.attempts || 1 });
+      addCast(draft, r.cast || []);
+    } catch (err) {
+      if (err.reason === "cut" && part.blocks.length > 1) {
+        const [a, b] = halves(part.blocks);
+        draft.parts.splice(i, 1, { blocks: a, status: "wait", scenes: [], cast: [] }, { blocks: b, status: "wait", scenes: [], cast: [] });
+        draft.splits += 1;
+        i -= 1;
+      } else {
+        Object.assign(part, { status: "failed", error: err.message || "failed" });
+      }
+    } finally {
+      delete store.eph.llmJobs[job];
+    }
+    draft.scenes = draft.parts.flatMap(p => p.scenes || []);
+  }
+  Object.assign(draft, { busy: false, stop: false, job: "" });
+  for (const p of draft.parts) if (p.status === "run") p.status = "stopped";
+  draft.scenes = draft.parts.flatMap(p => p.scenes || []);
+  if (store.eph.scriptDraft !== draft) return; // discarded meanwhile
+  store.setEph({ scriptDraft: draft });
+  const failed = draft.parts.filter(p => p.status === "failed").length;
+  const open = draft.parts.filter(p => p.status !== "done").length;
+  const got = `${draft.scenes.length} scene${draft.scenes.length === 1 ? "" : "s"} and ${draft.cast.length} cast proposed`;
+  if (failed) ctx.actions.toast(`${failed} of ${draft.parts.length} parts failed (${got}). Retry them below.`, "error");
+  else if (open) ctx.actions.toast(`Stopped: ${got}. Continue picks up the remaining parts.`, "warn");
+  else if (!draft.scenes.length && !draft.cast.length) ctx.actions.toast("The LLM proposed nothing for this script.", "warn");
+}
+
+function partsView(ctx, draft) {
+  const n = v => Math.round(v || 0).toLocaleString("en-US");
+  const many = draft.parts.length > 1;
+  const rows = draft.parts.map((p, i) => {
+    const first = (p.blocks[0] || "").split("\n")[0];
+    const status = p.status === "done" ? `✓ ${p.scenes.length} scene${p.scenes.length === 1 ? "" : "s"} · ≈${n(p.tokens)} tokens · ${Math.round((p.ms || 0) / 1000)} s${p.attempts > 1 ? ` · ${p.attempts} tries` : ""}`
+      : p.status === "run" ? jobLine(ctx.eph.llmJobs[draft.job])
+      : p.status === "failed" ? p.error
+      : p.status === "stopped" ? "stopped" : "waiting";
+    return h("div", { class: ["rw-script-part", p.status], help: "global.script.part" },
+      h("span", { class: "mono rw-dim" }, many ? `Part ${i + 1}` : "Script"),
+      h("span", { class: "rw-ellipsis rw-dim small mono", title: first }, first.length > 48 ? first.slice(0, 47) + "…" : first),
+      h("span", { class: ["small", p.status === "failed" ? "rw-c-err" : p.status === "done" ? "rw-c-aud" : "rw-dim"] }, status));
+  });
+  const show = many || draft.parts.some(p => p.status !== "done");
+  return h("div", { class: "rw-script-parts" },
+    show ? rows : null,
+    draft.notes && many ? h("div", { class: "rw-dim small", help: "global.script.notes", title: draft.notes }, `Sent with every part: ${draft.notes.split("\n")[0].slice(0, 90)}${draft.notes.length > 90 ? "…" : ""}`) : null,
+    draft.splits ? h("div", { class: "rw-note small", help: "global.script.part" }, icon("info", 12), `${draft.splits} part${draft.splits === 1 ? " was" : "s were"} too long for the token budget and ${draft.splits === 1 ? "was" : "were"} split in two.`) : null);
 }
 
 function matrixCard(ctx) {

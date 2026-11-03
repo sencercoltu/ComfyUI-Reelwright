@@ -16,6 +16,7 @@ ComfyUI-Reelwright/
     render.py            render run using the native H3 nodes (comfy + torch)
     merge.py             ffmpeg merge, srt/chapters/otio/fcpxml/color match (ffmpeg)
     llm.py               OpenAI-compatible client and prompt templates (aiohttp)
+    scriptparts.py       cuts a long script into parts for the import (pure, v0.4.2)
     continuity.py        optional face-match drift check (insightface)
     routes.py            /reelwright/* HTTP routes
     profiles.py          saved Global settings in user/reelwright/profiles.json
@@ -65,7 +66,11 @@ lives on disk.
     "continuity": { "reanchor_after": 2, "face_check": false, "face_threshold": 0.8, "on_drift": "flag" }, // flag | retake
     "llm": { "base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
              "include_guides": true,                      // v0.2.0: send MiniMax's guides when downloaded
-             "thinking": "auto" },                        // v0.3.2: auto | off (chat_template_kwargs enable_thinking=false)
+             "thinking": "auto",                          // v0.3.2: auto | off (chat_template_kwargs enable_thinking=false)
+             "timeout_s": 120, "max_wait_s": 900,         // v0.4.2: stall timeout (no data), longest request
+             "retries": 2, "context_tokens": 0,           // v0.4.2: extra attempts; context window, 0 = ask GET /models
+             "import_part_chars": 3000,                   // v0.4.2: script import part size, 0 = whole script
+             "import_max_tokens": 16384, "import_thinking": "same", "import_guides": false },  // same | off
     "merge": { "use": "starred", "missing": "skip",                 // skip | slate | block
                "hard_cut": "cut", "transition_frames": 12,           // cut | crossfade | dip
                "audio_fade_frames": 6, "loudness": -16.0, "normalize": true,
@@ -147,9 +152,11 @@ mirrors the defaults).
 | POST | `/reelwright/llm/settings` | `{base_url?, model?, api_key?}` | `{ok}` |
 | POST | `/reelwright/llm/models` | `{base_url?}` | `{models[]}` |
 | POST | `/reelwright/llm/test` | `{project?}` | `{ok, ms, model, reply, base_url, thinking, note}`; 20 s limit, readable error when the server can't be reached; `thinking` is true when the reply carried reasoning |
-| POST | `/reelwright/llm/rewrite` | `{project, scene_id, instruction}` | `{sections?, raw?, warnings[]}` |
-| POST | `/reelwright/llm/split` | `{project, scene_id}` | `{pass_prompts:{n: text}}` |
-| POST | `/reelwright/llm/script` | `{project, script}` | `{scenes[], cast[]}` |
+| POST | `/reelwright/llm/rewrite` | `{project, scene_id, instruction, job?}` | `{sections?, raw?, warnings[]}` or `{cancelled: true}` |
+| POST | `/reelwright/llm/split` | `{project, scene_id, job?}` | `{pass_prompts:{n: text}}` or `{cancelled: true}` |
+| POST | `/reelwright/llm/script` | `{project, script, part?, parts?, notes?, known_cast?[], job?, can_split?}` | `{scenes[], cast[], tokens, ms, attempts, budget, input, context}` or `{cancelled: true}`; v0.4.2: `script` is one part, `notes` go with every part, `known_cast` keeps names; with `can_split` a cut-off answer is not retried (the editor splits the part) |
+| POST | `/reelwright/llm/script/parts` | `{script, part_chars}` | v0.4.2, `scriptparts.split_script`: `{notes, parts:[[block…]], chars, blocks}`; a part's text is its blocks joined by newlines |
+| POST | `/reelwright/llm/cancel` | `{job}` | v0.4.2: `{ok, cancelled}`; stops the running rewrite / split / script request with that job id, which then answers `{cancelled: true}` |
 | POST | `/reelwright/promote_frame` | `{slug, scene_id, take_id, which: first\|last\|time, t?}` | `{asset}` |
 | POST | `/reelwright/cast/export` | `{project, cast_id}` | `{folder, files}` |
 | POST | `/reelwright/continuity/check` | `{project, scene_id}` | `{scores:{cast_id: value}, available}` |
@@ -175,6 +182,7 @@ File previews use ComfyUI's own `/view?filename=&subfolder=&type=output|input`.
 | `reelwright.run` | `{slug, phase: "start"\|"end", targets: [scene_id], reused: [scene_id], error?}` |
 | `reelwright.preview` | `{slug, scene_id, pass, passes, step, steps, image: "data:image/jpeg;base64,…"}` every sampler step, at most one per 0.25 s, always the last step (v0.3.5; v0.3.8 was one a second). The editor turns `image` into a `blob:` URL (`web/rw/preview.js`) before showing it. Made with ComfyUI's own previewer under any extension wrapper (`render.stock_previewer`, v0.3.9; VideoHelperSuite's animated previews wrap it). Replaces ComfyUI's own node preview |
 | `reelwright.merge` | `{slug, phase: "start"\|"progress"\|"end", percent?, files?, error?}` |
+| `reelwright.llm` | v0.4.2: `{job, phase: "waiting"\|"thinking"\|"writing"\|"done"\|"retry", tokens, reasoning, chars, elapsed, budget, input, context, attempt, attempts, note?, part?, parts?}` about twice a second while an LLM request with a `job` id runs (`llm.chat` streams the answer). `tokens` counts streamed chunks, about one token each; `input` is the estimated prompt size |
 
 ## Running a render
 

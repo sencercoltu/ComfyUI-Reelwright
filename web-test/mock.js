@@ -362,6 +362,38 @@ let profileSeq = 0;
 const profileStore = { profiles: [], default: "" };
 if (typeof window !== "undefined") window.__mockProfiles = profileStore;
 
+// added 2026-11-03 v0.4.2: a fake LLM request that sends reelwright.llm progress events and can be cancelled
+const llmLive = {};
+const llmCancelled = new Set();
+const failedOnce = new Set();
+export const scriptCalls = [];
+async function llmWork(job, ms, tokens) {
+  llmLive[job] = true;
+  const send = d => { for (const cb of listeners["reelwright.llm"] || []) cb({ job, budget: 16384, input: 2400, context: 32768, ...d }); };
+  send({ phase: "waiting", elapsed: 0, tokens: 0, reasoning: 0 });
+  const steps = 6;
+  for (let i = 1; i <= steps; i++) {
+    await new Promise(r => setTimeout(r, ms / steps));
+    if (llmCancelled.has(job)) { delete llmLive[job]; llmCancelled.delete(job); return true; }
+    send({ phase: "writing", elapsed: (ms / 1000) * (i / steps), tokens: Math.round(tokens * i / steps), reasoning: 0 });
+  }
+  delete llmLive[job];
+  return false;
+}
+function mockSplit(script, size) {
+  const text = script.replace(/\r\n?/g, "\n").replace(/^\n+|\n+$/g, "");
+  if (!size || text.length <= size) return { notes: "", parts: text.trim() ? [[text]] : [], chars: text.length, blocks: 1 };
+  const lines = text.split("\n");
+  const first = lines.findIndex(l => l.trim().startsWith("|"));
+  const notes = first > 0 ? lines.slice(0, first).join("\n").trim() : "";
+  const blocks = lines.slice(Math.max(0, first)).filter(l => l.trim());
+  const parts = [];
+  let cur = [], n = 0;
+  for (const b of blocks) { if (cur.length && n + b.length + 1 > size) { parts.push(cur); cur = []; n = 0; } cur.push(b); n += b.length + 1; }
+  if (cur.length) parts.push(cur);
+  return { notes, parts, chars: text.length, blocks: blocks.length };
+}
+
 async function route(path, opts = {}) {
   const url = new URL(path, "http://mock");
   const body = opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : null;
@@ -379,7 +411,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-02 v0.3.8->v0.3.9] case "/reelwright/info": return json({ version: "0.3.8", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // [OLD 2026-11-03 v0.3.9->v0.4.0] case "/reelwright/info": return json({ version: "0.3.9", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // [OLD 2026-11-03 v0.4.0->v0.4.1] case "/reelwright/info": return json({ version: "0.4.0", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
-    case "/reelwright/info": return json({ version: "0.4.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
+    // [OLD 2026-11-03 v0.4.1->v0.4.2] case "/reelwright/info": return json({ version: "0.4.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
+    case "/reelwright/info": return json({ version: "0.4.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -447,10 +480,27 @@ async function route(path, opts = {}) {
         thinking: body?.project?.global?.llm?.thinking !== "off", note: body?.project?.global?.llm?.thinking !== "off" ? "This model thinks before it answers, so Describe, Rewrite, Split and Import get a bigger token budget. Set Thinking to Off for faster answers." : "" });
     case "/reelwright/llm/rewrite": {
       const s = body.project.scenes.find(x => x.id === body.scene_id);
+      // added 2026-11-03 v0.4.2: progress events and Stop
+      if (body.job && await llmWork(body.job, 600, 900)) return json({ cancelled: true });
       return json({ sections: { ...s.prompt.sections, summary: (s.prompt.sections.summary || "") + " The candle gutters as she reads.", detailed_description: "Extreme close-ups, warm key light from the candle, shallow depth of field." }, warnings: [] });
     }
     case "/reelwright/llm/split": return json({ pass_prompts: { 1: "[reference generation] Wide: <Subject 1> leaves the pier…", 2: "[reference generation] Medium: the rain starts…", 3: "[video continuation] Wide, one take: she reaches the door." } });
-    case "/reelwright/llm/script": return json({ cast: [{ name: "Mara", kind: "character" }, { name: "Postman", kind: "character", description: "Young postman in a red cap." }], scenes: [{ title: "The postman arrives", duration: 9, summary: "A postman cycles up to the door.", shots: [{ t: 0, camera: "Wide", text: "He cycles along the seawall." }], dialogue: [{ speaker: "Postman", t: 4, text: "Letter for Mara!" }], cast: ["Postman"] }] });
+    // [OLD 2026-11-03 v0.4.1->v0.4.2] case "/reelwright/llm/script": return json({ cast: [{ name: "Mara", kind: "character" }, { name: "Postman", kind: "character", description: "Young postman in a red cap." }], scenes: [{ title: "The postman arrives", duration: 9, summary: "A postman cycles up to the door.", shots: [{ t: 0, camera: "Wide", text: "He cycles along the seawall." }], dialogue: [{ speaker: "Postman", t: 4, text: "Letter for Mara!" }], cast: ["Postman"] }] });
+    // added 2026-11-03 v0.4.2: script import in parts. Table rows become one scene each; a part containing CUT is
+    // "cut off" while it can still be split; a part containing FAILONCE fails the first time it is sent.
+    case "/reelwright/llm/script/parts": return json(mockSplit(body.script || "", body.part_chars || 0));
+    case "/reelwright/llm/cancel": { const live = !!llmLive[body.job]; if (live) llmCancelled.add(body.job); return json({ ok: true, cancelled: live }); }
+    case "/reelwright/llm/script": {
+      const text = body.script || "";
+      const rows = text.split("\n").filter(l => l.trim().startsWith("|"));
+      if (!rows.length) return json({ cast: [{ name: "Mara", kind: "character" }, { name: "Postman", kind: "character", description: "Young postman in a red cap." }], scenes: [{ title: "The postman arrives", duration: 9, summary: "A postman cycles up to the door.", shots: [{ t: 0, camera: "Wide", text: "He cycles along the seawall." }], dialogue: [{ speaker: "Postman", t: 4, text: "Letter for Mara!" }], cast: ["Postman"] }] });
+      scriptCalls.push({ part: body.part, parts: body.parts, rows: rows.length, notes: body.notes || "", known: (body.known_cast || []).map(c => c.name) });
+      if (body.job && await llmWork(body.job, 500, 40 * rows.length)) return json({ cancelled: true });
+      if (text.includes("CUT") && body.can_split) return json({ error: "The answer for part " + body.part + " was cut off at 16,384 tokens before its JSON was complete.", reason: "cut" }, 502);
+      if (text.includes("FAILONCE") && !failedOnce.has(text)) { failedOnce.add(text); return json({ error: "No answer from http://llm.local:30000/v1 for 120 s. Raise “Stall timeout”. (tried 3 times)", reason: "stall" }, 502); }
+      const scenes = rows.map(r => { const c = r.split("|").map(x => x.trim()).filter(Boolean); return { title: c[c.length - 1].slice(0, 40), duration: Number(c[2]) || 8, summary: c[c.length - 1], shots: [{ t: 0, camera: "Static", text: c[c.length - 1] }], dialogue: [], cast: ["Ada"] }; });
+      return json({ scenes, cast: [{ name: "Ada", kind: "character", description: body.part === 1 ? "" : "A young necromancer." }, { name: "Crypt " + body.part, kind: "location" }], tokens: 300 * rows.length, ms: 900, attempts: 1 });
+    }
     case "/reelwright/promote_frame": return json({ asset: { id: "a_new", name: "Mara frame", file: `reelwright/${SLUG}/frames/s_02_last.png`, width: 1344, height: 768 } });
     case "/reelwright/cast/export": return json({ folder: `output/reelwright/${SLUG}/cast/${body.cast_id}/training`, files: ["a.png", "b.png", "c.png"] });
     case "/reelwright/continuity/check": return json({ available: true, scores: { c_mara: 0.91 } });
@@ -483,6 +533,7 @@ export function createMockHost() {
     },
     on(type, cb) { (listeners[type] ||= []).push(cb); },
     emit(type, detail) { for (const cb of listeners[type] || []) cb(detail); },
+    scriptCalls, // added 2026-11-03 v0.4.2: what each script-import request carried
     async queue(request) { queued.push(request); },
     interrupt() { queued.push({ action: "interrupt" }); },
     // added 2026-11-02 v0.3.0: title and canvas-zoom hooks the real host provides

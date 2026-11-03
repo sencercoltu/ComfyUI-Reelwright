@@ -21,6 +21,7 @@ export function createStore(project, { persist }) {
     backend: "connecting", saveState: "saved", progress: {}, running: false, merge: null,
     playing: false, toasts: [], rewrite: null, scriptDraft: null, compare: null, seam: null,
     assetFilter: "all", assetQuery: "", selectedAsset: "", selectedCast: "", openPasses: {},
+    llmJobs: {}, // added 2026-11-03 v0.4.2: latest reelwright.llm progress event per job id
   };
 
   function notify() {

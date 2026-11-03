@@ -519,6 +519,14 @@ export function mountEditor(container, host) {
     const now = Date.now();
     if (now - lastProgressRender.at > 250 || d.phase !== "sample") { lastProgressRender.at = now; store.notify(); }
   });
+  // added 2026-11-03 v0.4.2: progress of LLM requests (Import, Rewrite, Split), at most four redraws a second
+  const lastLlmRender = { at: 0 };
+  host.on("reelwright.llm", d => {
+    if (!d?.job) return;
+    store.eph.llmJobs[d.job] = d;
+    const now = Date.now();
+    if (now - lastLlmRender.at > 250 || d.phase !== "writing") { lastLlmRender.at = now; store.notify(); }
+  });
   // added 2026-11-02 v0.3.5: the latest latent preview, shown only in the Render tab's run banner
   /* [OLD 2026-11-02 v0.3.6->v0.3.7] only the backend's reelwright.preview events were shown
   host.on("reelwright.preview", d => {
@@ -641,6 +649,7 @@ export function mountEditor(container, host) {
     },
     load(json) { store.load(json); },
     get project() { return store.project; },
+    get eph() { return store.eph; }, // added 2026-11-03 v0.4.2: session state, read by the test harness
     // [OLD 2026-11-02 v0.3.7->v0.3.8] destroy() { timeline.stopPlayback(ctx); root.remove(); },
     destroy() { timeline.stopPlayback(ctx); previewView.clear(); root.remove(); },
   };

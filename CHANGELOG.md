@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.4.2 — 2026-11-03
+
+- **Script import works for long scripts: it sends them in parts.** The whole script used to go out as one request with a 6,000-token budget and a fixed 180 s timeout. A 46-shot table answers with roughly 15,000 tokens of JSON, so the answer was cut off (unreadable JSON) or timed out. A timeout showed no message at all, because the error had no text.
+  - The script is cut at its own structure: screenplay scene headings (INT. / EXT., Fountain `.HEADING`), table rows, Markdown headings, "Scene N" lines, or paragraphs when there are none. Parts are about **Part size** characters (default 3,000); a scene is cut only if it is more than twice that.
+  - Text before the first scene (a premise or style note) and a table's column headings go with every part. Each part also gets the cast found so far, so names stay the same. Cast is merged by name across parts.
+  - The Import card lists the parts with live progress ("writing · ≈3,120 tokens of 16,384 · 48 s"). **Stop** keeps the finished parts and **Continue** picks up the rest. A failed part can be retried on its own, and the other parts' scenes are kept.
+  - A part whose answer is cut off at the token budget is split in two and sent again automatically.
+- **New LLM limits** (Global → Prompt rewriter → Limits; saved with the project and in profiles):
+  - *Stall timeout* (120 s): no data for this long ends a request.
+  - *Give up after* (900 s): the longest a request may take, even while text keeps arriving.
+  - *Retries* (2): after a timeout, a dropped connection, a server error or unreadable JSON. A wrong model name or a prompt too big for the context window is not retried.
+  - *Context window* (0 = ask the server): vLLM and SGLang report it on `/models`, and Test connection shows it. When it is known, the answer budget is lowered so prompt + answer fit, and a request that can't fit is refused before it is sent, with the numbers.
+  - Script import: *Part size*, *Max tokens* per part (16,384), *Thinking* (same as above, or off for Import only), and *H3 guides* (off by default: Import writes scenes, not H3 prompts, so this saves about 10,000 prompt tokens per part).
+- **Every LLM request streams its answer.** A slow model that is still writing is no longer mistaken for a dead server. Servers that ignore streaming and answer with one JSON body still work.
+  - Rewrite and Split show the same progress line and have a Stop button.
+  - Stopping a request closes the connection, so SGLang and vLLM stop generating too.
+- **Errors say what happened**, for example "No answer from … for 120 s; raise Stall timeout", "Gave up after 900 s with about 9,800 tokens received", or "cut off at 16,384 tokens before its JSON was complete". Any route error without a message now reports the error type.
+- New routes: `POST /reelwright/llm/script/parts`, `POST /reelwright/llm/cancel`; `/reelwright/llm/script` takes one part (`part`, `parts`, `notes`, `known_cast`, `job`, `can_split`); `reelwright.llm` progress events.
+
 ## v0.4.1 — 2026-11-03
 
 - **"What H3 receives" no longer repeats sections after a rewrite.** With subject definitions, retention or shot lines set to automatic, a rewritten section used to be added after the automatic lines instead of replacing them, so the same subject or shot appeared twice. Now:

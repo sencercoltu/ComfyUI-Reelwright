@@ -842,6 +842,82 @@ def main():
         size = page.locator("[data-help='cast.anchors.size']").inner_text()
         check("px" in size, f"anchor size note: {size!r}")
         page.screenshot(path=str(shots / "v041_cast_sheet.png"))
+
+        # ---- added 2026-11-03 v0.4.2 ----
+        # LLM limits in Global; a long script imported in parts: progress, Stop/Continue, a cut part split in two,
+        # a failed part retried on its own, the premise sent with every part, cast merged across parts.
+        page.evaluate("() => clearInterval(window.__tick)")
+        page.click(".rw-tab:has-text('Global')")
+        page.wait_for_timeout(300)
+        for hid in ("timeout", "maxWait", "retries", "context", "importPart", "importTokens"):
+            check(page.locator(f"input[data-help='global.llm.{hid}']").count() == 1, f"limit field {hid} missing")
+        part = page.locator("input[data-help='global.llm.importPart']")
+        part.fill("600")
+        part.press("Tab")
+        page.click("button[data-help='global.llm.importThinking.off']")
+        page.wait_for_timeout(200)
+        llm_cfg = project(page)["global"]["llm"]
+        check(llm_cfg["import_part_chars"] == 600 and llm_cfg["import_thinking"] == "off" and llm_cfg["timeout_s"] == 120, f"limits not saved: {llm_cfg}")
+        page.locator("[data-help='global.llm.limits']").first.scroll_into_view_if_needed()
+        page.screenshot(path=str(shots / "v042_limits.png"))
+        rows = []
+        for i in range(1, 13):
+            tag = " CUT" if i == 5 else " FAILONCE" if i == 10 else ""
+            rows.append(f"| {i:02d} | 00:{i:02d}:00 | 8.00 | Verse | Ada walks past grave number {i} in the mist, candles burning{tag} |")
+        script = "Ada is a young necromancer singing the song from <audio 1>. No dialogue.\n\n" + "\n".join(rows)
+        page.fill("textarea[data-help='global.script.text']", script)
+        page.click("button[data-help='global.script.run']")
+        page.wait_for_timeout(250)
+        check(page.locator(".rw-script-part.run").count() == 1, "no running part shown")
+        line = page.locator(".rw-script-part.run span").last.inner_text()
+        check("tokens" in line, f"progress line: {line!r}")
+        page.screenshot(path=str(shots / "v042_import_running.png"))
+        page.click("button[data-help='global.script.stop']")
+        page.wait_for_timeout(700)
+        check(page.locator(".rw-script-part.stopped").count() == 1 and page.locator("button[data-help='global.script.retry']").count() == 1, "stop did not leave a Continue button")
+        check("Continue" in page.locator("button[data-help='global.script.retry']").inner_text(), "button should say Continue")
+        page.click("button[data-help='global.script.retry']")
+        for _ in range(80):
+            page.wait_for_timeout(250)
+            if page.evaluate("!window.__editor.eph?.scriptDraft?.busy && document.querySelector(\"button[data-help='global.script.retry']\") !== null"):
+                break
+        failed = page.locator(".rw-script-part.failed")
+        check(failed.count() == 1 and "Stall timeout" in failed.inner_text(), "the FAILONCE part should have failed")
+        check("Retry failed parts" in page.locator("button[data-help='global.script.retry']").inner_text(), "retry label")
+        check(page.locator(".rw-script-parts .rw-note").count() == 1 and "split in two" in page.locator(".rw-script-parts .rw-note").inner_text(), "split note missing")
+        page.screenshot(path=str(shots / "v042_import_failed.png"))
+        page.click("button[data-help='global.script.retry']")
+        for _ in range(40):
+            page.wait_for_timeout(250)
+            if page.evaluate("!window.__editor.eph?.scriptDraft?.busy"):
+                break
+        draft = page.evaluate("(() => { const d = window.__editor.eph.scriptDraft; return { parts: d.parts.map(p => p.status), scenes: d.scenes.map(s => s.summary), cast: d.cast.map(c => [c.name, c.description, c.speaker]) }; })()")
+        check(all(st == "done" for st in draft["parts"]) and len(draft["parts"]) >= 4, f"parts after retry: {draft['parts']}")
+        check(len(draft["scenes"]) == 12 and draft["scenes"][0].startswith("Ada walks past grave number 1 ") and "number 12 " in draft["scenes"][-1], f"scenes in order: {len(draft['scenes'])}")
+        names = [c[0] for c in draft["cast"]]
+        check(names.count("Ada") == 1 and dict((c[0], c[1]) for c in draft["cast"])["Ada"] == "A young necromancer.", f"cast merge: {draft['cast']}")
+        calls = page.evaluate("window.__host.scriptCalls.filter(c => c.rows > 0)")
+        check(all(c["notes"].startswith("Ada is a young necromancer") for c in calls) and all(c["rows"] >= 1 for c in calls), "premise not sent with every part")
+        check("Ada" in calls[-1]["known"], f"later parts should know the cast: {calls[-1]}")
+        page.screenshot(path=str(shots / "v042_import_done.png"))
+        n_before = len(project(page)["scenes"])
+        page.locator("[data-help='global.script.mode'] button").filter(has_text="At the end").first.click()
+        page.click("button[data-help='global.script.apply']")
+        page.wait_for_timeout(400)
+        check(len(project(page)["scenes"]) == n_before + 12, "imported scenes not added")
+        page.keyboard.press("Control+z")
+        page.wait_for_timeout(300)
+
+        # Rewrite shows what the LLM is doing and can be stopped.
+        page.click(".rw-tab:has-text('Scene')")
+        page.wait_for_timeout(300)
+        page.click("button[data-help='scene.rewrite.run']")
+        page.wait_for_timeout(250)
+        busy = page.locator(".rw-llm-busy")
+        check(busy.count() == 1 and ("tokens" in busy.inner_text() or "waiting" in busy.inner_text()), "rewrite progress line missing")
+        page.click("button[data-help='scene.rewrite.stop']")
+        page.wait_for_timeout(500)
+        check(page.locator(".rw-llm-busy").count() == 0 and page.evaluate("!window.__editor.eph.rewrite"), "rewrite did not stop")
         browser.close()
     httpd.shutdown()
 

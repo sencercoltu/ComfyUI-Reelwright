@@ -156,11 +156,43 @@ def resolve(project_llm, stored):
     #         "preset": project_llm.get("preset", "h3_ref2va"), "include_guides": bool(project_llm.get("include_guides", True)),
     #         "guides": stored.get("guides") or {}}
     # [/OLD]
-    return {"base_url": base, "model": project_llm.get("model") or stored["model"], "api_key": stored["api_key"],
-            "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
-            "preset": project_llm.get("preset", "h3_ref2va"), "include_guides": bool(project_llm.get("include_guides", True)),
-            "guides": stored.get("guides") or {},
-            "thinking": "off" if project_llm.get("thinking") == "off" else "auto"}  # added 2026-11-02 v0.3.2
+    # [OLD 2026-11-03 v0.4.1->v0.4.2] no limits
+    # return {"base_url": base, "model": project_llm.get("model") or stored["model"], "api_key": stored["api_key"],
+    #         "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
+    #         "preset": project_llm.get("preset", "h3_ref2va"), "include_guides": bool(project_llm.get("include_guides", True)),
+    #         "guides": stored.get("guides") or {},
+    #         "thinking": "off" if project_llm.get("thinking") == "off" else "auto"}  # added 2026-11-02 v0.3.2
+    # [/OLD]
+    cfg = {"base_url": base, "model": project_llm.get("model") or stored["model"], "api_key": stored["api_key"],
+           "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
+           "preset": project_llm.get("preset", "h3_ref2va"), "include_guides": bool(project_llm.get("include_guides", True)),
+           "guides": stored.get("guides") or {},
+           "thinking": "off" if project_llm.get("thinking") == "off" else "auto"}  # added 2026-11-02 v0.3.2
+    cfg.update(limits(project_llm))  # added 2026-11-03 v0.4.2
+    return cfg
+
+
+# added 2026-11-03 v0.4.2: tweakable limits (Global -> Prompt rewriter -> Limits)
+def _num(v, default, lo, hi, kind=int):
+    try:
+        v = kind(v)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, v))
+
+
+def limits(project_llm):
+    timeout_s = _num(project_llm.get("timeout_s"), 120, 10, 3600)
+    ctx = _num(project_llm.get("context_tokens"), 0, 0, 4_000_000)
+    part = _num(project_llm.get("import_part_chars"), 3000, 0, 1_000_000)
+    return {"timeout_s": timeout_s,
+            "max_wait_s": max(timeout_s, _num(project_llm.get("max_wait_s"), 900, 30, 7200)),
+            "retries": _num(project_llm.get("retries"), 2, 0, 5),
+            "context_tokens": ctx if ctx >= 1024 else 0,
+            "import_part_chars": part if part >= 500 else 0,
+            "import_max_tokens": _num(project_llm.get("import_max_tokens"), 16384, 256, 1_000_000),
+            "import_thinking": "off" if project_llm.get("import_thinking") == "off" else "same",
+            "import_guides": bool(project_llm.get("import_guides", False))}
 
 
 def _headers(key):
@@ -246,26 +278,251 @@ def no_answer(reasoning, finish, max_tokens):
 #     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
 #     return text, int((time.time() - t0) * 1000), data.get("model", cfg["model"])
 # [/OLD]
-async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None):
+# [OLD 2026-11-03 v0.4.1->v0.4.2] one non-streaming request with a fixed 180 s total timeout. A long answer (a 46-scene script import)
+# could take longer than that; the timeout surfaced as an empty error message, and a reply cut off at the token budget
+# only showed up later as unreadable JSON.
+# async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None):
+#     # `user` may be a list of OpenAI content parts (text + image_url) for vision models (added 2026-11-02 v0.2.0)
+#     limit = max_tokens or cfg["max_tokens"]
+#     body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit,
+#             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+#     if cfg.get("thinking") == "off":
+#         # Qwen3-style chat templates (SGLang, vLLM) skip the think block with this
+#         body["chat_template_kwargs"] = {"enable_thinking": False}
+#     t0 = time.time()
+#     async with aiohttp.ClientSession(timeout=timeout or TIMEOUT) as s:
+#         async with s.post(cfg["base_url"] + "/chat/completions", headers=_headers(cfg["api_key"]), json=body) as r:
+#             data = await r.json(content_type=None)
+#             if r.status >= 400:
+#                 raise RuntimeError(_err(data, r.status))
+#     text, reasoning, finish = read_reply(data if isinstance(data, dict) else {}, limit)
+#     if info is not None:
+#         info.update(finish=finish, reasoning_chars=len(reasoning))
+#     if not text and require_text:
+#         raise no_answer(reasoning, finish, limit)
+#     return text, int((time.time() - t0) * 1000), data.get("model", cfg["model"])
+# [/OLD]
+
+
+# ---- transport (added 2026-11-03 v0.4.2) ------------------------------------------------------
+
+class LLMError(RuntimeError):
+    """A request that failed on the way: reason is stall | gave_up | connect | server | http | context | cut | bad_json."""
+
+    def __init__(self, message, reason, retry=True):
+        super().__init__(message)
+        self.reason = reason
+        self.retry = retry
+
+
+def estimate_tokens(content):
+    """Rough prompt size: about 3.5 characters per token for English and JSON, about 1000 per picture."""
+    if isinstance(content, list):
+        return sum(estimate_tokens(p.get("text", "")) if p.get("type") == "text" else 1000
+                   for p in content if isinstance(p, dict))
+    return int(len(content or "") / 3.5) + 1
+
+
+_SERVER_CONTEXT = {}  # (base_url, model) -> context window the server reported, or None
+
+
+async def server_context(cfg):
+    """The model's context window from GET /models (vLLM and SGLang: max_model_len), cached; None if unknown."""
+    key = (cfg["base_url"], cfg.get("model") or "")
+    if key in _SERVER_CONTEXT:
+        return _SERVER_CONTEXT[key]
+    found = None
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as s:
+            async with s.get(cfg["base_url"] + "/models", headers=_headers(cfg["api_key"])) as r:
+                data = await r.json(content_type=None) if r.status < 400 else {}
+        models = [m for m in (data.get("data") or []) if isinstance(m, dict)] if isinstance(data, dict) else []
+        pick = next((m for m in models if m.get("id") == cfg.get("model")), models[0] if models else {})
+        for k in ("max_model_len", "context_length", "max_context_length", "context_window", "n_ctx"):
+            if isinstance(pick.get(k), int) and pick[k] > 0:
+                found = pick[k]
+                break
+    except Exception:
+        found = None
+    _SERVER_CONTEXT[key] = found
+    return found
+
+
+async def context_window(cfg):
+    return cfg.get("context_tokens") or await server_context(cfg)
+
+
+async def budget(cfg, system, user, want):
+    """(max_tokens to ask for, estimated prompt tokens, context window or None). With a known context window the
+    answer is capped so prompt + answer fit; a prompt that leaves less than 512 tokens is refused before sending."""
+    est = estimate_tokens(system) + estimate_tokens(user) + 16
+    ctx = await context_window(cfg)
+    if not ctx:
+        return want, est, None
+    room = ctx - est - 64
+    if room < min(want, 512):
+        raise LLMError("The request is about {:,} tokens, but the model's context window is {:,} tokens. Lower Script part "
+                       "size, turn off the H3 guides, or raise Context window (Global → Prompt rewriter → Limits)."
+                       .format(est, ctx), "context", retry=False)
+    return min(want, room), est, ctx
+
+
+def _context_hint(message):
+    low = message.lower()
+    if any(x in low for x in ("context length", "context_length", "maximum context", "context window", "too many tokens",
+                              "exceeds the model", "prompt is too long")):
+        return message + " — lower Max tokens or Script part size, or set Context window (Global → Prompt rewriter → Limits)."
+    return message
+
+
+def _split_reasoning(content, reasoning):
+    """Answer text without inline <think> blocks, and all the reasoning (same rules as read_reply)."""
+    inline = re.findall(r"<think>(.*?)</think>", content, flags=re.S)
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.S)
+    if "<think>" in content:
+        head, _, tail = content.partition("<think>")
+        content, inline = head, inline + [tail]
+    return content.strip(), (reasoning + "".join(inline)).strip()
+
+
+async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None, progress=None):
+    """Stream one chat completion. timeout: a fixed aiohttp timeout (Test connection); otherwise no data for
+    cfg timeout_s seconds, or cfg max_wait_s in all, ends the request. progress(dict) gets the running counts about
+    twice a second. Servers that ignore "stream" and answer with one JSON body work too."""
     # `user` may be a list of OpenAI content parts (text + image_url) for vision models (added 2026-11-02 v0.2.0)
-    limit = max_tokens or cfg["max_tokens"]
-    body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit,
+    want = max_tokens or cfg["max_tokens"]
+    if timeout is None:
+        limit, est, ctx = await budget(cfg, system, user, want)
+    else:
+        limit, est, ctx = want, estimate_tokens(system) + estimate_tokens(user), None
+    body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit, "stream": True,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     if cfg.get("thinking") == "off":
         # Qwen3-style chat templates (SGLang, vLLM) skip the think block with this
         body["chat_template_kwargs"] = {"enable_thinking": False}
+    stall = cfg.get("timeout_s", 120)
+    total = cfg.get("max_wait_s", 900)
+    tmo = timeout or aiohttp.ClientTimeout(total=total, sock_connect=min(15, stall), sock_read=stall)
     t0 = time.time()
-    async with aiohttp.ClientSession(timeout=timeout or TIMEOUT) as s:
-        async with s.post(cfg["base_url"] + "/chat/completions", headers=_headers(cfg["api_key"]), json=body) as r:
-            data = await r.json(content_type=None)
-            if r.status >= 400:
-                raise RuntimeError(_err(data, r.status))
-    text, reasoning, finish = read_reply(data if isinstance(data, dict) else {}, limit)
+    state = {"tokens": 0, "reasoning": 0, "chars": 0, "last": 0.0}
+    content, reasoning, finish, model = [], [], "", cfg["model"]
+
+    def report(phase, force=False):
+        now = time.time()
+        if progress and (force or now - state["last"] >= 0.5):
+            state["last"] = now
+            progress({"phase": phase, "tokens": state["tokens"], "reasoning": state["reasoning"], "chars": state["chars"],
+                      "elapsed": round(now - t0, 1), "budget": limit, "input": est, "context": ctx})
+
+    report("waiting", force=True)
+    try:
+        async with aiohttp.ClientSession(timeout=tmo) as s:
+            async with s.post(cfg["base_url"] + "/chat/completions", headers=_headers(cfg["api_key"]), json=body) as r:
+                if r.status >= 400:
+                    raw = await r.text()
+                    try:
+                        msg = _err(json.loads(raw), r.status)
+                    except ValueError:
+                        msg = raw.strip()[:300] or "HTTP {}".format(r.status)
+                    raise LLMError(_context_hint(msg), "server" if r.status >= 500 else "http", retry=r.status >= 500)
+                if "text/event-stream" not in (r.headers.get("Content-Type") or ""):
+                    data = await r.json(content_type=None)
+                    data = data if isinstance(data, dict) else {}
+                    text, why, finish = read_reply(data, limit)
+                    content, reasoning = [text], [why]
+                    model = data.get("model") or model
+                else:
+                    async for raw in r.content:
+                        line = raw.decode("utf-8", "replace").strip()
+                        if not line.startswith("data:"):
+                            continue
+                        payload = line[5:].strip()
+                        if payload == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(payload)
+                        except ValueError:
+                            continue
+                        if not isinstance(chunk, dict):
+                            continue
+                        if chunk.get("error"):
+                            raise LLMError(_context_hint(_err(chunk, 500)), "server")
+                        model = chunk.get("model") or model
+                        for choice in chunk.get("choices") or []:
+                            delta = choice.get("delta") or choice.get("message") or {}
+                            piece = delta.get("content") or ""
+                            if isinstance(piece, list):
+                                piece = "".join(x.get("text", "") for x in piece if isinstance(x, dict))
+                            why = delta.get("reasoning_content") or delta.get("reasoning") or ""
+                            if piece:
+                                content.append(piece)
+                                state["tokens"] += 1
+                                state["chars"] += len(piece)
+                            if why:
+                                reasoning.append(why)
+                                state["reasoning"] += 1
+                            finish = choice.get("finish_reason") or finish
+                        report("thinking" if state["reasoning"] and not state["chars"] else "writing")
+    except asyncio.TimeoutError:
+        if timeout is not None:
+            raise
+        took = time.time() - t0
+        got = state["tokens"] + state["reasoning"]
+        if took >= total - 1:
+            raise LLMError("Gave up after {:.0f} s with about {:,} tokens received. Raise “Give up after”, or send less "
+                           "at once (Global → Prompt rewriter → Limits).".format(took, got), "gave_up")
+        raise LLMError(("No answer from {} for {} s" + (" after about {:,} tokens".format(got) if got else "") +
+                        ". The server may be busy or still reading a long prompt; raise “Stall timeout” "
+                        "(Global → Prompt rewriter → Limits).").format(cfg["base_url"], stall), "stall")
+    except aiohttp.ClientConnectorError as e:
+        if timeout is not None:
+            raise
+        raise LLMError("Cannot connect to {}: {}".format(cfg["base_url"], e.os_error or e), "connect")
+    except (aiohttp.ClientPayloadError, aiohttp.ServerDisconnectedError) as e:
+        raise LLMError("The server closed the connection after about {:,} tokens ({}).".format(
+            state["tokens"] + state["reasoning"], e.__class__.__name__), "server")
+    text, why = _split_reasoning("".join(content), "".join(reasoning))
+    ms = int((time.time() - t0) * 1000)
     if info is not None:
-        info.update(finish=finish, reasoning_chars=len(reasoning))
+        info.update(finish=finish, reasoning_chars=len(why), tokens=state["tokens"], ms=ms, budget=limit, input=est,
+                    context=ctx)
+    report("done", force=True)
     if not text and require_text:
-        raise no_answer(reasoning, finish, limit)
-    return text, int((time.time() - t0) * 1000), data.get("model", cfg["model"])
+        raise no_answer(why, finish, limit)
+    return text, ms, model
+
+
+async def ask(cfg, system, user, parse=None, max_tokens=None, progress=None, info=None, retry_cut=True):
+    """chat() with cfg retries: a timeout, a dropped connection, a server error, an unreadable or cut-off answer are
+    tried again. parse(text, info) turns the answer into the result and raises LLMError(reason "bad_json" or "cut")."""
+    info = {} if info is None else info
+    tries = cfg.get("retries", 2) + 1
+    for attempt in range(1, tries + 1):
+        info["attempt"] = attempt
+        step = (lambda d, a=attempt: progress(dict(d, attempt=a, attempts=tries))) if progress else None
+        try:
+            text, ms, model = await chat(cfg, system, user, max_tokens=max_tokens, info=info, progress=step)
+            return parse(text, info) if parse else text
+        except (LLMError, NoAnswer) as e:
+            again = getattr(e, "retry", True) and (retry_cut or e.reason not in ("cut", "thinking_cut"))
+            if not again or attempt == tries:
+                if attempt > 1:
+                    e.args = (str(e) + " (tried {} times)".format(attempt),)
+                raise
+            if progress:
+                progress({"phase": "retry", "attempt": attempt + 1, "attempts": tries, "note": str(e)})
+            await asyncio.sleep(min(cfg.get("retry_wait", 2) * attempt, 6))  # retry_wait: tests use 0
+
+
+def json_answer(text, info, what="answer"):
+    """parse() for ask(): the JSON in an answer, with a clear reason when it was cut off or is not JSON."""
+    try:
+        return parse_json(text)
+    except ValueError:
+        if info.get("finish") == "length":
+            raise LLMError("The {} was cut off at {:,} tokens before its JSON was complete. Raise the token budget "
+                           "(Global → Prompt rewriter), or send less at once.".format(what, info.get("budget") or 0), "cut")
+        raise LLMError("The {} was not valid JSON.".format(what), "bad_json")
 
 
 def parse_json(text):
@@ -323,7 +580,8 @@ def scene_context(p, scene):
 
 
 # [OLD 2026-11-03 v0.4.0->v0.4.1] async def rewrite(cfg, p, scene, instruction, built=""):  # built: added 2026-11-02 v0.2.0
-async def rewrite(cfg, p, scene, instruction, built="", tag_map=None):  # tag_map: added 2026-11-03 v0.4.1
+# [OLD 2026-11-03 v0.4.1->v0.4.2] async def rewrite(cfg, p, scene, instruction, built="", tag_map=None):  # tag_map: added 2026-11-03 v0.4.1
+async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=None):  # progress: added 2026-11-03 v0.4.2
     pr = scene["prompt"]
     ctx = scene_context(p, scene)
     preset = PRESETS.get(cfg["preset"], PRESETS["h3_ref2va"])
@@ -332,7 +590,8 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None):  # tag_ma
         user = ("{}\n\nCurrent prompt:\n{}\n\nInstruction: {}\n\nReturn only the rewritten prompt text.").format(
             ctx, before, instruction or "Improve clarity and visual precision.")
         # [OLD 2026-11-02 v0.1.0->v0.2.0] text, _, _ = await chat(cfg, H3_RULES + "\n" + preset, user)
-        text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
+        # [OLD 2026-11-03 v0.4.1->v0.4.2] text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
+        text = await ask(cfg, system_prompt(cfg, preset), user, progress=progress)  # retries and limits
         text = re.sub(r"^```\w*\n|```$", "", text.strip()).strip()
         return {"raw": text, "warnings": preserved_warnings(before, text)}
     sections = pr["sections"]
@@ -358,15 +617,20 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None):  # tag_ma
         ctx, before,
         ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
         instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing")
-    text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
-    data = parse_json(text)
+    # [OLD 2026-11-03 v0.4.1->v0.4.2] an unreadable or cut-off answer raised a bare JSON error
+    # text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
+    # data = parse_json(text)
+    # [/OLD]
+    data = await ask(cfg, system_prompt(cfg, preset), user, parse=lambda t, i: json_answer(t, i, "rewrite"),
+                     progress=progress)
     # [OLD 2026-11-03 v0.4.0->v0.4.1] the reply was used as it came: repeated automatic parts, "<Subject 1>" instead of @Name, labels inside values
     # out = {k: str(data.get(k, sections.get(k, "")) or "") for k in sections}
     out = dict(sections, **tidy_rewrite(data if isinstance(data, dict) else {}, sections, auto, tag_map))  # added 2026-11-03 v0.4.1
     return {"sections": out, "warnings": preserved_warnings(before, json.dumps(out, ensure_ascii=False))}
 
 
-async def split(cfg, p, scene, passes, built_prompts):
+# [OLD 2026-11-03 v0.4.1->v0.4.2] async def split(cfg, p, scene, passes, built_prompts):
+async def split(cfg, p, scene, passes, built_prompts, progress=None):
     ranges = "\n".join("Pass {}: scene time {:.3f}s to {:.3f}s ({} frames, seam before: {})".format(
         x["index"], max(0.0, x["start"]), x["end"], x["gen_frames"], x["seam_before"]) for x in passes)
     user = ("{}\n\nThis scene is generated in {} passes:\n{}\n\nThe automatic per-pass prompts are:\n{}\n\n"
@@ -377,26 +641,94 @@ async def split(cfg, p, scene, passes, built_prompts):
         scene_context(p, scene), len(passes), ranges,
         "\n\n".join("--- pass {} ---\n{}".format(i + 1, t) for i, t in enumerate(built_prompts)))
     # [OLD 2026-11-02 v0.1.0->v0.2.0] text, _, _ = await chat(cfg, H3_RULES + "\n" + PRESETS.get(cfg["preset"], ""), user)
-    text, _, _ = await chat(cfg, system_prompt(cfg, PRESETS.get(cfg["preset"], "")), user)
-    data = parse_json(text)
+    # [OLD 2026-11-03 v0.4.1->v0.4.2] text, _, _ = await chat(cfg, system_prompt(cfg, PRESETS.get(cfg["preset"], "")), user)
+    # data = parse_json(text)
+    # [/OLD]
+    data = await ask(cfg, system_prompt(cfg, PRESETS.get(cfg["preset"], "")), user,
+                     parse=lambda t, i: json_answer(t, i, "split"), progress=progress)
+    if not isinstance(data, dict):
+        raise LLMError("The split answer was not a JSON object.", "bad_json")
     return {str(k): str(v) for k, v in data.items() if str(k).isdigit()}
 
 
-async def script_to_scenes(cfg, p, script):
-    names = ", ".join(c["name"] for c in p["cast"]) or "(none yet)"
-    user = ("Break this script into scenes for a video timeline. Existing cast: {}.\n\n"
-            "Return JSON: {{\"cast\": [{{\"name\", \"kind\": \"character|location|prop\", \"description\", \"speaker\": \"S1\", \"language\"}}], "
-            "\"scenes\": [{{\"title\", \"duration\": seconds (any length), \"summary\", \"soundscape\", \"music\", "
-            "\"cast\": [names], \"shots\": [{{\"t\": seconds from scene start, \"camera\", \"text\"}}], "
-            "\"dialogue\": [{{\"speaker\": name, \"t\": seconds, \"text\", \"language\", \"delivery\"}}]}}]}}.\n"
-            "Give each speaking character a speaker id S1, S2... Leave timings realistic for the action and lines.\n\n"
-            "Script:\n{}").format(names, script)
-    # [OLD 2026-11-02 v0.1.0->v0.2.0] text, _, _ = await chat(cfg, H3_RULES, user, max_tokens=max(cfg["max_tokens"], 6000))
-    text, _, _ = await chat(cfg, system_prompt(cfg), user, max_tokens=max(cfg["max_tokens"], 6000))
-    data = parse_json(text)
-    if not isinstance(data, dict):
-        raise ValueError("The LLM did not return a JSON object")
-    return {"scenes": list(data.get("scenes") or []), "cast": list(data.get("cast") or [])}
+# [OLD 2026-11-03 v0.4.1->v0.4.2] the whole script in one request with max(Max tokens, 6000) tokens and the H3 guides: a long script's answer
+# ran past the budget or the 180 s timeout (see script_part)
+# async def script_to_scenes(cfg, p, script):
+#     names = ", ".join(c["name"] for c in p["cast"]) or "(none yet)"
+#     user = ("Break this script into scenes for a video timeline. Existing cast: {}.\n\n"
+#             "Return JSON: {{\"cast\": [{{\"name\", \"kind\": \"character|location|prop\", \"description\", \"speaker\": \"S1\", \"language\"}}], "
+#             "\"scenes\": [{{\"title\", \"duration\": seconds (any length), \"summary\", \"soundscape\", \"music\", "
+#             "\"cast\": [names], \"shots\": [{{\"t\": seconds from scene start, \"camera\", \"text\"}}], "
+#             "\"dialogue\": [{{\"speaker\": name, \"t\": seconds, \"text\", \"language\", \"delivery\"}}]}}]}}.\n"
+#             "Give each speaking character a speaker id S1, S2... Leave timings realistic for the action and lines.\n\n"
+#             "Script:\n{}").format(names, script)
+#     # [OLD 2026-11-02 v0.1.0->v0.2.0] text, _, _ = await chat(cfg, H3_RULES, user, max_tokens=max(cfg["max_tokens"], 6000))
+#     text, _, _ = await chat(cfg, system_prompt(cfg), user, max_tokens=max(cfg["max_tokens"], 6000))
+#     data = parse_json(text)
+#     if not isinstance(data, dict):
+#         raise ValueError("The LLM did not return a JSON object")
+#     return {"scenes": list(data.get("scenes") or []), "cast": list(data.get("cast") or [])}
+# [/OLD]
+async def script_to_scenes(cfg, p, script, progress=None):
+    """The whole script as one part (the old request shape)."""
+    return await script_part(cfg, p, script, progress=progress)
+
+
+def import_cfg(cfg):
+    """Import's own settings: thinking can be switched off for it, and the H3 guides are left out unless asked for."""
+    c = dict(cfg, include_guides=bool(cfg.get("import_guides", False)))
+    if cfg.get("import_thinking") == "off":
+        c["thinking"] = "off"
+    return c
+
+
+def _cast_line(c):
+    return "{} ({})".format(c.get("name", "?"), c.get("kind") or "character")
+
+
+async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), progress=None, retry_cut=True):
+    """Scenes and cast for one part of a script (added 2026-11-03 v0.4.2). known_cast: cast proposed by earlier
+    parts, so names stay the same across parts."""
+    known = [_cast_line(c) for c in p["cast"]]
+    seen = {c["name"].lower() for c in p["cast"]}
+    for c in known_cast or ():
+        if isinstance(c, dict) and c.get("name") and c["name"].lower() not in seen:
+            seen.add(c["name"].lower())
+            known.append(_cast_line(c))
+    lines = ["Break this script into scenes for a video timeline. Existing cast (reuse these exact names): {}.".format(
+        ", ".join(known) or "(none yet)")]
+    if parts > 1:
+        lines.append("This is part {} of {} of a longer script. Make scenes only from the text under \"Script part\"; "
+                     "the other parts are imported separately. Keep the script's order and any numbering it uses."
+                     .format(part, parts))
+    if notes:
+        lines.append("Notes from the start of the script (they apply to every part; do not make scenes from them):\n"
+                     + notes)
+    lines.append(
+        "Return JSON: {\"cast\": [{\"name\", \"kind\": \"character|location|prop\", \"description\", \"speaker\": \"S1\", "
+        "\"language\"}], \"scenes\": [{\"title\", \"duration\": seconds (any length), \"summary\", \"soundscape\", \"music\", "
+        "\"cast\": [names], \"shots\": [{\"t\": seconds from scene start, \"camera\", \"text\"}], "
+        "\"dialogue\": [{\"speaker\": name, \"t\": seconds, \"text\", \"language\", \"delivery\"}]}]}.\n"
+        "In \"cast\" list only characters, locations and props that are not in the existing cast. Give each speaking "
+        "character a speaker id S1, S2... Leave timings realistic for the action and lines; when the script gives "
+        "durations or times, use them.")
+    lines.append(("Script part:\n" if parts > 1 else "Script:\n") + text)
+    user = "\n\n".join(lines)
+    icfg = import_cfg(cfg)
+
+    def parse(answer, info):
+        data = json_answer(answer, info, "answer" if parts == 1 else "answer for part {}".format(part))
+        if not isinstance(data, dict):
+            raise LLMError("The answer was not a JSON object.", "bad_json")
+        return data
+
+    info = {}
+    data = await ask(icfg, system_prompt(icfg), user, parse=parse, max_tokens=cfg.get("import_max_tokens", 16384),
+                     progress=progress, info=info, retry_cut=retry_cut)
+    return {"scenes": [s for s in (data.get("scenes") or []) if isinstance(s, dict)],
+            "cast": [c for c in (data.get("cast") or []) if isinstance(c, dict)],
+            "tokens": info.get("tokens", 0), "ms": info.get("ms", 0), "attempts": info.get("attempt", 1),
+            "budget": info.get("budget"), "input": info.get("input"), "context": info.get("context")}
 
 
 async def test(cfg):
@@ -417,7 +749,14 @@ async def test(cfg):
         raise RuntimeError("Cannot connect to {}: {}".format(cfg["base_url"], e.os_error or e))
     # [OLD 2026-11-02 v0.3.1->v0.3.2] return {"ok": True, "ms": ms, "model": model, "reply": text[:40], "base_url": cfg["base_url"]}
     thinking = info.get("reasoning_chars", 0) > 0
+    # [OLD 2026-11-03 v0.4.1->v0.4.2] no context window in the answer
+    # return {"ok": True, "ms": ms, "model": model, "reply": text[:40], "base_url": cfg["base_url"], "thinking": thinking,
+    #         "note": ("This model thinks before it answers, so Describe, Rewrite, Split and Import get a bigger token budget. "
+    #                  "Set Thinking to Off for faster answers.") if thinking and cfg.get("thinking") != "off" else ""}
+    # [/OLD]
+    _SERVER_CONTEXT.pop((cfg["base_url"], cfg.get("model") or ""), None)  # ask again on every test
     return {"ok": True, "ms": ms, "model": model, "reply": text[:40], "base_url": cfg["base_url"], "thinking": thinking,
+            "context": await server_context(cfg),
             "note": ("This model thinks before it answers, so Describe, Rewrite, Split and Import get a bigger token budget. "
                      "Set Thinking to Off for faster answers.") if thinking and cfg.get("thinking") != "off" else ""}
 

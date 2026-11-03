@@ -2,6 +2,7 @@
 
 import { h, icon, button, toggle, segmented, select, number, text, textarea, chip, dot, section, field, meter, keepChips, slider } from "../ui.js";
 import { rw, viewURL } from "../api.js";
+import { newJob, jobLine } from "../llmjob.js"; // added 2026-11-03 v0.4.2
 import { codeEditor } from "../codeedit.js";
 import { sceneMenu } from "./timeline.js"; // added 2026-11-02 v0.2.2
 import { highlightHTML, diffLines, unknownTags } from "../prompttext.js";
@@ -331,9 +332,11 @@ function previewCard(ctx, s) {
   const long = passes.length > 1 || estimatePasses(s.duration, ctx.p.global.long).count > 1;
   const overrides = s.prompt.pass_prompts || {};
   const hasOverride = overrides[String(open + 1)] !== undefined;
+  const splitting = ctx.eph.splitJob?.scene_id === s.id ? ctx.eph.splitJob : null; // added 2026-11-03 v0.4.2
   return section({
     title: "What H3 receives", help: "scene.preview",
     actions: [
+      /* [OLD 2026-11-03 v0.4.1->v0.4.2] no busy state, no progress, no way to stop
       long && button({ label: "Split with LLM", icon: "wand", small: true, help: "scene.preview.splitLlm", onClick: async () => {
         try {
           const res = await rw.split(ctx.p, s.id);
@@ -341,9 +344,22 @@ function previewCard(ctx, s) {
           ctx.actions.toast("Pass prompts written by the LLM. Edit them below.", "ok");
         } catch (err) { ctx.actions.toast("Split failed: " + err.message, "error"); }
       } }),
+      [/OLD] */
+      long && button({ label: splitting ? "Splitting…" : "Split with LLM", icon: "wand", small: true, help: "scene.preview.splitLlm", disabled: !!splitting, onClick: async () => {
+        const job = newJob("split");
+        ctx.store.setEph({ splitJob: { scene_id: s.id, job } });
+        try {
+          const res = await rw.split(ctx.p, s.id, job);
+          if (res.cancelled) { ctx.actions.toast("Split stopped.", "warn"); return; }
+          ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts = res.pass_prompts || {}; });
+          ctx.actions.toast("Pass prompts written by the LLM. Edit them below.", "ok");
+        } catch (err) { ctx.actions.toast("Split failed: " + err.message, "error"); }
+        finally { delete ctx.store.eph.llmJobs[job]; ctx.store.setEph({ splitJob: null }); }
+      } }),
       long && Object.keys(overrides).length > 0 && button({ label: "Automatic split", small: true, help: "scene.preview.splitAuto", onClick: () => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts = {}; }) }),
     ],
     children: [
+      splitting && llmBusyRow(ctx, splitting.job, "scene.preview.splitStop"), // added 2026-11-03 v0.4.2
       prompts.length > 1 && h("div", { class: "rw-pass-tabs" }, prompts.map((_, i) => {
         const ps = passes[i];
         return h("button", {
@@ -369,6 +385,7 @@ function rewriteCard(ctx, s) {
   const instr = h("input", { class: "rw-input grow", key: "rewrite-instr", placeholder: "Optional instruction, e.g. make shot 2 more intimate", help: "scene.rewrite.instruction", value: ctx.eph.rewriteInstr || "",
     onInput: e => { ctx.eph.rewriteInstr = e.target.value; } });
   const llm = ctx.p.global.llm;
+  /* [OLD 2026-11-03 v0.4.1->v0.4.2] no job id: no progress line and no Stop
   const run = async () => {
     ctx.store.setEph({ rewrite: { scene_id: s.id, busy: true } });
     try {
@@ -377,6 +394,21 @@ function rewriteCard(ctx, s) {
     } catch (err) {
       ctx.store.setEph({ rewrite: null });
       ctx.actions.toast("Rewrite failed: " + err.message, "error");
+    }
+  };
+  [/OLD] */
+  const run = async () => {
+    const job = newJob("rewrite");
+    ctx.store.setEph({ rewrite: { scene_id: s.id, busy: true, job } });
+    try {
+      const res = await rw.rewrite(ctx.p, s.id, ctx.eph.rewriteInstr || "", job);
+      if (res.cancelled) { ctx.store.setEph({ rewrite: null }); ctx.actions.toast("Rewrite stopped.", "warn"); return; }
+      ctx.store.setEph({ rewrite: { scene_id: s.id, proposal: res, warnings: res.warnings || [], editing: false } });
+    } catch (err) {
+      ctx.store.setEph({ rewrite: null });
+      ctx.actions.toast("Rewrite failed: " + err.message, "error");
+    } finally {
+      delete ctx.store.eph.llmJobs[job];
     }
   };
   const accept = () => {
@@ -414,10 +446,18 @@ function rewriteCard(ctx, s) {
     children: [
       h("div", { class: "rw-row" }, instr,
         button({ label: rwState?.busy ? "Rewriting…" : "Rewrite", icon: "wand", variant: "pink", help: "scene.rewrite.run", disabled: !!rwState?.busy, onClick: run })),
+      rwState?.busy && llmBusyRow(ctx, rwState.job, "scene.rewrite.stop"), // added 2026-11-03 v0.4.2
       h("div", { class: "rw-dim small" }, "Runs only when you press Rewrite, never during a render. Tags and <d>…</d> lines are kept as written."),
       diffView,
     ],
   });
+}
+
+// added 2026-11-03 v0.4.2: what a running LLM request is doing, and a button to stop it
+function llmBusyRow(ctx, job, stopHelp) {
+  return h("div", { class: "rw-row rw-llm-busy" },
+    h("span", { class: "rw-dim small mono grow", help: "global.llm.progress" }, jobLine(ctx.eph.llmJobs[job])),
+    button({ label: "Stop", icon: "close", small: true, help: stopHelp, onClick: () => rw.llmCancel(job).catch(() => {}) }));
 }
 
 function budgetCard(ctx, s) {

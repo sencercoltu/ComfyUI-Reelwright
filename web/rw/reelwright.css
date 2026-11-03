@@ -691,3 +691,11 @@
 .rw-ftree-label.clickable { cursor: pointer; }
 .rw-ftree-label.clickable:hover { color: var(--accent-text); text-decoration: underline; }
 .rw-ftree-row.previewed { box-shadow: inset 2px 0 0 var(--accent); background: var(--accent-soft); }
+
+/* added 2026-11-03 v0.4.2: script import in parts, LLM progress lines */
+.rw-script-parts { display: flex; flex-direction: column; gap: 3px; }
+.rw-script-part { display: grid; grid-template-columns: 52px minmax(0, 0.9fr) minmax(0, 1.4fr); gap: 8px; align-items: baseline; padding: 3px 8px; border-radius: 6px; background: var(--panel2); }
+.rw-script-part.run { box-shadow: inset 2px 0 0 var(--accent); }
+.rw-script-part.failed { box-shadow: inset 2px 0 0 var(--err, #e5484d); }
+.rw-script-part > span:last-child { overflow-wrap: anywhere; }
+.rw-llm-busy { padding: 2px 0; }

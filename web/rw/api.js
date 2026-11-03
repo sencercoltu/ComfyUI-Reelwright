@@ -17,7 +17,14 @@ async function req(method, route, body, form) {
   const res = await host.fetchApi(route, opts);
   let data = null;
   try { data = await res.json(); } catch { data = null; }
-  if (!res.ok) throw new Error(data?.error || data?.message || `${res.status} ${res.statusText}`);
+  // [OLD 2026-11-03 v0.4.1->v0.4.2] if (!res.ok) throw new Error(data?.error || data?.message || `${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    // added 2026-11-03 v0.4.2: LLM failures carry a reason (stall, gave_up, cut, …); the import splits a "cut" part
+    const err = new Error(data?.error || data?.message || `${res.status} ${res.statusText}`);
+    err.reason = data?.reason || "";
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -47,9 +54,16 @@ export const rw = {
   saveLlmSettings: s => req("POST", "/reelwright/llm/settings", s),
   llmModels: base_url => req("POST", "/reelwright/llm/models", { base_url }),
   llmTest: () => req("POST", "/reelwright/llm/test", {}),
-  rewrite: (project, scene_id, instruction) => req("POST", "/reelwright/llm/rewrite", { project, scene_id, instruction }),
-  split: (project, scene_id) => req("POST", "/reelwright/llm/split", { project, scene_id }),
+  // [OLD 2026-11-03 v0.4.1->v0.4.2] rewrite: (project, scene_id, instruction) => req("POST", "/reelwright/llm/rewrite", { project, scene_id, instruction }),
+  // [OLD 2026-11-03 v0.4.1->v0.4.2] split: (project, scene_id) => req("POST", "/reelwright/llm/split", { project, scene_id }),
+  // job: added 2026-11-03 v0.4.2, so progress events can be matched and the request cancelled
+  rewrite: (project, scene_id, instruction, job) => req("POST", "/reelwright/llm/rewrite", { project, scene_id, instruction, job }),
+  split: (project, scene_id, job) => req("POST", "/reelwright/llm/split", { project, scene_id, job }),
   script: (project, script) => req("POST", "/reelwright/llm/script", { project, script }),
+  // added 2026-11-03 v0.4.2: script import in parts, and stopping a running LLM request
+  scriptParts: (script, part_chars) => req("POST", "/reelwright/llm/script/parts", { script, part_chars }),
+  scriptPart: (project, body) => req("POST", "/reelwright/llm/script", { project, ...body }),
+  llmCancel: job => req("POST", "/reelwright/llm/cancel", { job }),
   promoteFrame: (slug, scene_id, take_id, which, t) => req("POST", "/reelwright/promote_frame", { slug, scene_id, take_id, which, t }),
   castExport: (project, cast_id) => req("POST", "/reelwright/cast/export", { project, cast_id }),
   continuityCheck: (project, scene_id) => req("POST", "/reelwright/continuity/check", { project, scene_id }),
