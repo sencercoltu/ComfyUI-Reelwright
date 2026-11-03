@@ -269,6 +269,48 @@ export function overlapSeconds(scene) {
   return scene.start.mode === "tail" ? scene.start.overlap_frames / FPS : 0;
 }
 
+// ---- scene length vs shots (added 2026-11-03 v0.4.3) ----
+// A shot lasts until the next one starts; the last one until the scene ends.
+export function shotLengths(scene) {
+  return scene.shots.map((sh, i) => {
+    const next = i + 1 < scene.shots.length ? scene.shots[i + 1].t : scene.duration;
+    return { length: Math.max(0, Math.min(next, scene.duration) - sh.t), last: i === scene.shots.length - 1, past: sh.t >= scene.duration };
+  });
+}
+
+// Median gap between shot starts (1–15 s), the length given to a last shot that starts after the end.
+export function typicalShot(scene) {
+  const gaps = scene.shots.slice(1).map((sh, i) => sh.t - scene.shots[i].t).filter(g => g > 0).sort((a, b) => a - b);
+  return gaps.length ? Math.max(1, Math.min(15, gaps[Math.floor(gaps.length / 2)])) : 4;
+}
+
+// Shots and dialogue lines that start at or after the scene's end (the same rule as validate.py).
+export function overruns(scene) {
+  const shots = scene.shots.filter(x => x.t >= scene.duration).length;
+  const lines = scene.dialogue.filter(x => x.t >= scene.duration).length;
+  return shots + lines ? { shots, lines } : null;
+}
+
+// The length a scene needs so every shot and line fits: the last shot gets a typical shot length, a line 2 s.
+export function fitLength(scene) {
+  let need = scene.duration;
+  const lastShot = scene.shots.length ? Math.max(...scene.shots.map(x => x.t)) : -1;
+  if (lastShot >= scene.duration) need = Math.max(need, lastShot + typicalShot(scene));
+  const lastLine = scene.dialogue.length ? Math.max(...scene.dialogue.map(x => x.t)) : -1;
+  if (lastLine >= scene.duration) need = Math.max(need, lastLine + 2);
+  return Math.ceil(need * FPS - 1e-6) / FPS;
+}
+
+export function lengthenToFit(scene) {
+  scene.duration = fitLength(scene);
+}
+
+// Keep the length and move every shot and line closer together, in proportion.
+export function squeezeToFit(scene) {
+  const k = scene.duration / fitLength(scene);
+  for (const x of [...scene.shots, ...scene.dialogue]) x.t = Math.round(x.t * k * FPS) / FPS;
+}
+
 export function assembledDuration(project) {
   return project.scenes.reduce((t, s, i) => t + s.duration - (i > 0 ? overlapSeconds(s) : 0), 0);
 }

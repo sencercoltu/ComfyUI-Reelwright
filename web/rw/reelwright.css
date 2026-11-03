@@ -699,3 +699,8 @@
 .rw-script-part.failed { box-shadow: inset 2px 0 0 var(--err, #e5484d); }
 .rw-script-part > span:last-child { overflow-wrap: anywhere; }
 .rw-llm-busy { padding: 2px 0; }
+
+/* added 2026-11-03 v0.4.3: shot length beside its start, and the fix for shots after the end */
+.rw-shot-len { flex: none; width: 116px; white-space: nowrap; }
+.rw-overrun { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rw-drawer-fix { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line); }

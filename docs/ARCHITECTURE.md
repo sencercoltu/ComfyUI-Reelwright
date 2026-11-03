@@ -16,7 +16,7 @@ ComfyUI-Reelwright/
     render.py            render run using the native H3 nodes (comfy + torch)
     merge.py             ffmpeg merge, srt/chapters/otio/fcpxml/color match (ffmpeg)
     llm.py               OpenAI-compatible client and prompt templates (aiohttp)
-    scriptparts.py       cuts a long script into parts for the import (pure, v0.4.2)
+    scriptparts.py       cuts a long script into parts for the import (v0.4.2); imported scene length vs shots (v0.4.3) (pure)
     continuity.py        optional face-match drift check (insightface)
     routes.py            /reelwright/* HTTP routes
     profiles.py          saved Global settings in user/reelwright/profiles.json
@@ -154,7 +154,7 @@ mirrors the defaults).
 | POST | `/reelwright/llm/test` | `{project?}` | `{ok, ms, model, reply, base_url, thinking, note}`; 20 s limit, readable error when the server can't be reached; `thinking` is true when the reply carried reasoning |
 | POST | `/reelwright/llm/rewrite` | `{project, scene_id, instruction, job?}` | `{sections?, raw?, warnings[]}` or `{cancelled: true}` |
 | POST | `/reelwright/llm/split` | `{project, scene_id, job?}` | `{pass_prompts:{n: text}}` or `{cancelled: true}` |
-| POST | `/reelwright/llm/script` | `{project, script, part?, parts?, notes?, known_cast?[], job?, can_split?}` | `{scenes[], cast[], tokens, ms, attempts, budget, input, context}` or `{cancelled: true}`; v0.4.2: `script` is one part, `notes` go with every part, `known_cast` keeps names; with `can_split` a cut-off answer is not retried (the editor splits the part) |
+| POST | `/reelwright/llm/script` | `{project, script, part?, parts?, notes?, known_cast?[], job?, can_split?}` | `{scenes[], cast[], tokens, ms, attempts, budget, input, context}` or `{cancelled: true}`; v0.4.3: shots carry `duration`, and `scriptparts.fit_scene` makes each scene's length fit its shots and dialogue (a changed scene gets `fit_note`); v0.4.2: `script` is one part, `notes` go with every part, `known_cast` keeps names; with `can_split` a cut-off answer is not retried (the editor splits the part) |
 | POST | `/reelwright/llm/script/parts` | `{script, part_chars}` | v0.4.2, `scriptparts.split_script`: `{notes, parts:[[block…]], chars, blocks}`; a part's text is its blocks joined by newlines |
 | POST | `/reelwright/llm/cancel` | `{job}` | v0.4.2: `{ok, cancelled}`; stops the running rewrite / split / script request with that job id, which then answers `{cancelled: true}` |
 | POST | `/reelwright/promote_frame` | `{slug, scene_id, take_id, which: first\|last\|time, t?}` | `{asset}` |

@@ -21,6 +21,7 @@ tip("app.undo", "Undo the last edit (Ctrl+Z). Selection and zoom changes are not
 tip("app.redo", "Redo (Ctrl+Shift+Z or Ctrl+Y).");
 more("app.issues", "Issues", "Problems found in the project: references over H3's limits, unknown @tags, dialogue without a language, shots after the end of a scene, missing files, a continuation without a previous scene and more. Errors stop a render; warnings and notes do not.\n\nClick an issue to jump to its scene.", "Problems that may stop or degrade a render. Click to list them.");
 tip("app.issueItem", "Open the scene this issue belongs to.");
+tip("app.issues.fitShots", "Lengthen every scene whose shots or dialogue start after its end, so they fit (the last shot gets the scene's typical shot length). Ctrl+Z undoes it."); // added 2026-11-03 v0.4.3
 // [OLD 2026-11-02 v0.1.0->v0.2.0] merge moved into the Render tab: tip("app.merge", "Join the starred take of every rendered scene into one film, with seams, audio fades and extras from the Render tab. Nothing is re-rendered.");
 tip("app.merge", "Join the starred (or latest) take of every rendered scene into one film, using the Merge scenes settings on the right. Nothing is re-rendered.");
 tip("app.renderPending", "Queue a render of every scene that is new or stale. Scenes whose cache key matches a take on disk are reused.");
@@ -225,6 +226,12 @@ tip("scene.shots.time", "When the shot starts, in seconds from the start of the 
 tip("scene.shots.camera", "Camera wording, such as shot size and movement. Pick a preset or type your own.");
 tip("scene.shots.text", "What happens in this shot. Use @tags for assets and cast.");
 tip("scene.shots.remove", "Remove this shot.");
+// added 2026-11-03 v0.4.3: shot length and shots after the end
+tip("scene.shots.length", "How long the shot lasts: until the next shot starts. The last shot runs to the end of the scene (· end); a shot that starts after the end is never rendered.");
+more("scene.shots.overrun", "Shots after the end", "A shot or dialogue line that starts at or after the end of the scene is never rendered.\n\nLengthen: the scene gets longer so everything fits; the last shot gets the scene's typical shot length (the middle of its shot lengths), a dialogue line 2 s. Later scenes move along on the timeline.\n\nFit into: the scene keeps its length and every shot and line moves closer to the start, in proportion.\n\nBoth can be undone with Ctrl+Z. The Issues list has a button that lengthens every such scene at once.", "Shots or lines start after the scene ends.");
+tip("scene.shots.lengthen", "Make the scene long enough for every shot and line. Ctrl+Z undoes it.");
+tip("scene.shots.squeeze", "Keep the scene's length and move every shot and line closer together, in proportion.");
+tip("global.script.fitNote", "The LLM's scene length did not match its shots, so it was changed to fit them.");
 // [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now: more("scene.dialogue", "Dialogue", "Each line is written as <Subject n> (S1) says <d>[English] …</d>. The speaker ID (S1, S2) stays the same for a character across the whole project, and their voice sample is sent as an audio reference so the voice matches.\n\nH3 speaks 11 languages reliably: Arabic, Chinese, English, French, German, Italian, Japanese, Korean, Portuguese, Russian and Spanish.", "Spoken lines in this scene.");
 more("scene.dialogue", "Dialogue", "Each line is written as <Subject n> (S1) says, <d>[English] …</d>. As MiniMax's guide asks, speaker IDs follow speaking order inside each clip: whoever speaks first is S1, the next new voice S2, and so on. The character's voice sample is sent as an audio reference so the voice matches across scenes.\n\nH3 speaks 11 languages reliably: Arabic, Chinese, English, French, German, Italian, Japanese, Korean, Portuguese, Russian and Spanish. You can type any other language name; it is sent as written.", "Spoken lines in this scene.");
 tip("scene.dialogue.add", "Add a spoken line.");

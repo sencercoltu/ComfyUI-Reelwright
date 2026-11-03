@@ -13,6 +13,7 @@ import aiohttp
 
 from .model import cast_description  # added 2026-11-02 v0.3.4
 from .prompt import tidy_rewrite  # added 2026-11-03 v0.4.1
+from .scriptparts import fit_scene  # added 2026-11-03 v0.4.3
 from .storage import read_json, write_json
 
 TIMEOUT = aiohttp.ClientTimeout(total=180)
@@ -704,14 +705,27 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
     if notes:
         lines.append("Notes from the start of the script (they apply to every part; do not make scenes from them):\n"
                      + notes)
+    # [OLD 2026-11-03 v0.4.2->v0.4.3] shots had only a start time, and nothing tied them to the scene's length: a scene made of several
+    # table rows came back 30 s long with shots starting up to 61.8 s
+    # lines.append(
+    #     "Return JSON: {\"cast\": [{\"name\", \"kind\": \"character|location|prop\", \"description\", \"speaker\": \"S1\", "
+    #     "\"language\"}], \"scenes\": [{\"title\", \"duration\": seconds (any length), \"summary\", \"soundscape\", \"music\", "
+    #     "\"cast\": [names], \"shots\": [{\"t\": seconds from scene start, \"camera\", \"text\"}], "
+    #     "\"dialogue\": [{\"speaker\": name, \"t\": seconds, \"text\", \"language\", \"delivery\"}]}]}.\n"
+    #     "In \"cast\" list only characters, locations and props that are not in the existing cast. Give each speaking "
+    #     "character a speaker id S1, S2... Leave timings realistic for the action and lines; when the script gives "
+    #     "durations or times, use them.")
+    # [/OLD]
     lines.append(
         "Return JSON: {\"cast\": [{\"name\", \"kind\": \"character|location|prop\", \"description\", \"speaker\": \"S1\", "
         "\"language\"}], \"scenes\": [{\"title\", \"duration\": seconds (any length), \"summary\", \"soundscape\", \"music\", "
-        "\"cast\": [names], \"shots\": [{\"t\": seconds from scene start, \"camera\", \"text\"}], "
+        "\"cast\": [names], \"shots\": [{\"t\": seconds from scene start, \"duration\": seconds, \"camera\", \"text\"}], "
         "\"dialogue\": [{\"speaker\": name, \"t\": seconds, \"text\", \"language\", \"delivery\"}]}]}.\n"
         "In \"cast\" list only characters, locations and props that are not in the existing cast. Give each speaking "
-        "character a speaker id S1, S2... Leave timings realistic for the action and lines; when the script gives "
-        "durations or times, use them.")
+        "character a speaker id S1, S2... Every shot has a duration; a shot's t is the sum of the durations of the shots "
+        "before it in the same scene, and the scene's duration is the sum of all its shot durations, so no shot starts "
+        "after the scene ends. Leave timings realistic for the action and lines; when the script gives durations or "
+        "times, use them (a scene made of several timed rows lasts as long as those rows together).")
     lines.append(("Script part:\n" if parts > 1 else "Script:\n") + text)
     user = "\n\n".join(lines)
     icfg = import_cfg(cfg)
@@ -725,7 +739,13 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
     info = {}
     data = await ask(icfg, system_prompt(icfg), user, parse=parse, max_tokens=cfg.get("import_max_tokens", 16384),
                      progress=progress, info=info, retry_cut=retry_cut)
-    return {"scenes": [s for s in (data.get("scenes") or []) if isinstance(s, dict)],
+    # [OLD 2026-11-03 v0.4.2->v0.4.3] return {"scenes": [s for s in (data.get("scenes") or []) if isinstance(s, dict)],
+    scenes = [s for s in (data.get("scenes") or []) if isinstance(s, dict)]
+    for s in scenes:  # added 2026-11-03 v0.4.3: no shot or line after the scene's end
+        note = fit_scene(s)
+        if note:
+            s["fit_note"] = note
+    return {"scenes": scenes,
             "cast": [c for c in (data.get("cast") or []) if isinstance(c, dict)],
             "tokens": info.get("tokens", 0), "ms": info.get("ms", 0), "attempts": info.get("attempt", 1),
             "budget": info.get("budget"), "input": info.get("input"), "context": info.get("context")}

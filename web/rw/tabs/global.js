@@ -8,6 +8,7 @@ import { newJob, jobLine } from "../llmjob.js"; // added 2026-11-03 v0.4.2
 import {
   ASPECTS, START_MODES, STABLE_LANGUAGES, OVERRIDE_KEYS, adaptCanvas, newId, slugify, defaultScene, effective, FPS,
   sceneIndex, // added 2026-11-02 v0.3.1
+  overruns, lengthenToFit, // added 2026-11-03 v0.4.3
 } from "../model.js";
 import { VERSION } from "../version.js";
 
@@ -469,6 +470,9 @@ function scriptCard(ctx) {
         sc.dialogue = (s.dialogue || []).map(d => ({ id: newId("d"), speaker: ids[(d.speaker || "").toLowerCase()] || "", t: Number(d.t) || 0, language: d.language || p.global.defaults.language, delivery: d.delivery || "says", text: d.text || "" }));
         const names = new Set([...(s.cast || []), ...(s.dialogue || []).map(d => d.speaker)].map(n => (n || "").toLowerCase()));
         sc.cast = [...names].filter(n => ids[n]).map(n => ({ id: ids[n], outfit: "" }));
+        // added 2026-11-03 v0.4.3: the backend already fits the length to the shots; this catches anything left
+        sc.shots.sort((a, b) => a.t - b.t);
+        if (overruns(sc)) lengthenToFit(sc);
         return sc;
       });
       if (!made.length) return;
@@ -512,7 +516,9 @@ function scriptCard(ctx) {
         draft.cast.map(c => h("label", { class: "rw-check", help: "global.script.pick" }, h("input", { type: "checkbox", checked: c._on, onChange: e => { c._on = e.target.checked; } }),
           h("b", null, c.name), h("span", { class: "rw-dim small" }, ` ${c.kind || "character"}${c.description ? " · " + c.description.slice(0, 60) : ""}`))),
         draft.scenes.map(s => h("label", { class: "rw-check", help: "global.script.pick" }, h("input", { type: "checkbox", checked: s._on, onChange: e => { s._on = e.target.checked; } }),
-          h("b", null, s.title || "Untitled"), h("span", { class: "rw-dim small mono" }, ` ${Number(s.duration || 0).toFixed(1)} s · ${(s.shots || []).length} shots · ${(s.dialogue || []).length} lines`))),
+          // [OLD 2026-11-03 v0.4.2->v0.4.3] h("b", null, s.title || "Untitled"), h("span", { class: "rw-dim small mono" }, ` ${Number(s.duration || 0).toFixed(1)} s · ${(s.shots || []).length} shots · ${(s.dialogue || []).length} lines`))),
+          h("b", null, s.title || "Untitled"), h("span", { class: "rw-dim small mono" }, ` ${Number(s.duration || 0).toFixed(1)} s · ${(s.shots || []).length} shots · ${(s.dialogue || []).length} lines`),
+          s.fit_note ? h("span", { class: "rw-c-warn small", help: "global.script.fitNote" }, ` · ${s.fit_note}`) : null)), // added 2026-11-03 v0.4.3
         // [OLD 2026-11-02 v0.3.0->v0.3.1] one button that always appended: button({ label: "Add selected to the project", icon: "plus", variant: "primary", small: true, help: "global.script.apply", onClick: apply })),
       ),
       // added 2026-11-02 v0.3.1: choose where the scenes go

@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.3 — 2026-11-03
+
+- **Imported scenes no longer have shots after their end.** A scene made from several timed rows of a script could come back with the wrong length: for example a 68 s chorus came back as 30 s, with shots starting up to 61.8 s. Those shots were never rendered.
+  - Import now asks for each shot's duration, and the scene lasts the sum of its shots. Each shot starts where the one before it ends. Durations are easier for a model to copy from a table than running start times, so they win over the given starts and the given scene length.
+  - Without durations, the shots are sorted and a scene that is too short is lengthened; its last shot gets the scene's typical shot length (the median gap between shots). A dialogue line after the end lengthens the scene to the line plus 2 s.
+  - The review list notes each scene whose length was changed ("length set from its shots (68.04 s; the LLM gave 30.00 s)").
+- **Fixing existing scenes:**
+  - the Shots card says how many shots or lines start after the end and offers **Lengthen to …** (make the scene long enough) or **Fit into …** (keep the length and move every shot and line closer together in proportion);
+  - the Issues list has **Lengthen them to fit** for every such scene at once.
+
+  All three can be undone with Ctrl+Z, and focus stays in the editor so Ctrl+Z works right away.
+- **Shot length beside each shot's start** ("for 8.42 s"). A shot lasts until the next one starts; the last one runs to the end of the scene ("· end"). A shot after the end says so.
+
 ## v0.4.2 — 2026-11-03
 
 - **Script import works for long scripts: it sends them in parts.** The whole script used to go out as one request with a 6,000-token budget and a fixed 180 s timeout. A 46-shot table answers with roughly 15,000 tokens of JSON, so the answer was cut off (unreadable JSON) or timed out. A timeout showed no message at all, because the error had no text.

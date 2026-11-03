@@ -12,6 +12,7 @@ import {
   sceneBudget, tagCandidates, newId, effectiveLoras,
   castDescription, // added 2026-11-02 v0.3.4
   castPacks, sheetURL, // added 2026-11-03 v0.4.1
+  shotLengths, overruns, fitLength, lengthenToFit, squeezeToFit, // added 2026-11-03 v0.4.3
 } from "../model.js";
 
 const SECTION_LABEL = {
@@ -262,6 +263,8 @@ function shotsCard(ctx, s) {
   const presets = p.camera_presets.map(c => c.text);
   const listId = "rw-cam-" + s.id;
   const edit = (id, fn) => ctx.actions.editScene(s.id, sc => { const x = sc.shots.find(q => q.id === id); if (x) fn(x, sc); });
+  const lens = shotLengths(s); // added 2026-11-03 v0.4.3
+  const over = overruns(s);
   return section({
     title: "Shots", help: "scene.shots",
     actions: button({ label: "Shot", icon: "plus", small: true, help: "scene.shots.add", onClick: () => ctx.actions.editScene(s.id, sc => {
@@ -278,12 +281,22 @@ function shotsCard(ctx, s) {
           h("span", { class: "mono rw-dim", help: "scene.shots.index" }, `[Shot ${i + 1}]`),
           number({ value: Number(sh.t.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "86px", unit: "s", help: "scene.shots.time",
             onChange: v => edit(sh.id, (x, sc) => { x.t = Math.round((v ?? 0) * FPS) / FPS; sc.shots.sort((a, b) => a.t - b.t); }) }),
+          // added 2026-11-03 v0.4.3: how long the shot lasts (until the next shot, the last one until the scene ends)
+          h("span", { class: ["mono small rw-shot-len", lens[i].past ? "rw-c-warn" : "rw-dim"], help: "scene.shots.length" },
+            lens[i].past ? "after the end" : `for ${lens[i].length.toFixed(2)} s${lens[i].last ? " · end" : ""}`),
           h("input", { class: "rw-input", list: listId, placeholder: "camera", value: sh.camera, key: `shot-cam-${sh.id}`, help: "scene.shots.camera",
             onChange: e => edit(sh.id, x => { x.camera = e.target.value; }) }),
           h("input", { class: "rw-input grow", placeholder: "what happens in this shot", value: sh.text, key: `shot-text-${sh.id}`, help: "scene.shots.text",
             onChange: e => edit(sh.id, x => { x.text = e.target.value; }) }),
           button({ icon: "trash", small: true, variant: "ghost", help: "scene.shots.remove", onClick: () => ctx.actions.editScene(s.id, sc => { sc.shots = sc.shots.filter(x => x.id !== sh.id); }) }))),
-      s.shots.some(x => x.t > s.duration) && h("div", { class: "rw-note warn" }, "A shot starts after the end of the scene."),
+      // [OLD 2026-11-03 v0.4.2->v0.4.3] s.shots.some(x => x.t > s.duration) && h("div", { class: "rw-note warn" }, "A shot starts after the end of the scene."),
+      // added 2026-11-03 v0.4.3: say how many, and offer to lengthen the scene or move the shots closer together
+      over && h("div", { class: "rw-note warn rw-overrun", help: "scene.shots.overrun" }, icon("warn", 12),
+        h("span", { class: "grow" }, [over.shots && `${over.shots} shot${over.shots === 1 ? "" : "s"}`, over.lines && `${over.lines} dialogue line${over.lines === 1 ? "" : "s"}`]
+          .filter(Boolean).join(" and ") + ` start${over.shots + over.lines === 1 ? "s" : ""} after the scene ends (${s.duration.toFixed(2)} s).`),
+        // the buttons vanish once it fits: focus goes back to the editor so Ctrl+Z works right away
+        button({ label: `Lengthen to ${fitLength(s).toFixed(2)} s`, small: true, help: "scene.shots.lengthen", onClick: () => { ctx.actions.editScene(s.id, sc => lengthenToFit(sc)); ctx.root.focus?.({ preventScroll: true }); } }),
+        button({ label: `Fit into ${s.duration.toFixed(2)} s`, small: true, help: "scene.shots.squeeze", onClick: () => { ctx.actions.editScene(s.id, sc => squeezeToFit(sc)); ctx.root.focus?.({ preventScroll: true }); } })),
     ],
   });
 }

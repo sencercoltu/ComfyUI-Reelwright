@@ -98,3 +98,76 @@ def split_script(text, part_chars=3000):
     if cur:
         parts.append(cur)
     return {"notes": "\n\n".join(notes), "parts": parts, "chars": len(text), "blocks": len(sized)}
+
+
+# ---- scene length vs shots (added 2026-11-03 v0.4.3) -------------------------------------------------------------
+# An imported scene could list shots that start after its end: the LLM grouped several table rows into one scene,
+# wrote their start times, and gave the scene a shorter length (a 68 s chorus came back as 30 s with shots up to
+# 61.8 s). Shot durations are easier for a model to copy from a script than running start times, so the import asks
+# for both and the durations win.
+
+FPS = 24
+
+
+def _num(v):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if v == v and abs(v) != float("inf") else None
+
+
+def _frames_up(t):
+    return -(-round(t * FPS * 1000) // 1000) / FPS  # round up to a whole frame
+
+
+def typical_shot(starts):
+    """Median gap between consecutive shot starts, 1-15 s; 4 s with fewer than two shots."""
+    gaps = sorted(b - a for a, b in zip(starts, starts[1:]) if b - a > 0)
+    if not gaps:
+        return 4.0
+    return max(1.0, min(15.0, gaps[len(gaps) // 2]))
+
+
+def fit_scene(scene):
+    """Make an imported scene's timing consistent, in place; returns a note ("" when nothing changed).
+    - every shot has a duration: shots start one after another and the scene lasts their sum;
+    - otherwise shots are sorted by start and the scene is lengthened so no shot starts in its last half second
+      (the last shot gets the scene's typical shot length);
+    - a dialogue line after the end lengthens the scene to the line plus 2 s."""
+    given = _num(scene.get("duration"))
+    shots = [s for s in (scene.get("shots") or []) if isinstance(s, dict)]
+    lengths = [_num(s.get("duration")) for s in shots]
+    length = given if given and given > 0 else None
+    how = ""
+    if shots and all(x and x > 0 for x in lengths):
+        t = 0.0
+        for s, d in zip(shots, lengths):
+            s["t"] = round(t, 3)
+            t += d
+        total = round(t, 3)
+        if length is None or abs(total - length) > 0.5:
+            how = "length set from its shots"
+        length = total
+    elif shots:
+        for s in shots:
+            s["t"] = max(0.0, _num(s.get("t")) or 0.0)
+        shots.sort(key=lambda s: s["t"])
+        starts = [s["t"] for s in shots]
+        need = starts[-1] + typical_shot(starts)
+        if length is None or starts[-1] > length - 0.5:
+            how = "lengthened to fit its shots" if length is not None else "length taken from its shots"
+            length = max(length or 0.0, need)
+    lines = [t for t in (_num(d.get("t")) for d in (scene.get("dialogue") or []) if isinstance(d, dict)) if t is not None]
+    last_line = max(lines) if lines else None
+    if last_line is not None and (length is None or last_line > length - 0.5):
+        length = max(length or 0.0, last_line + 2.0)
+        how = how or "lengthened to fit its dialogue"
+    if length is None:
+        return ""
+    length = round(_frames_up(length), 4)
+    scene["shots"] = shots
+    scene["duration"] = length
+    if how and given is not None and abs(length - given) > 0.01:
+        return "{} ({:.2f} s; the LLM gave {:.2f} s)".format(how, length, given)
+    return how if given is None and how else ""

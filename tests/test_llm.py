@@ -322,3 +322,20 @@ def test_script_part_prompt_settings_and_cut_answer():
     assert seen[0]["max_tokens"] == 12000 and seen[0]["chat_template_kwargs"] == {"enable_thinking": False}
     assert "Official MiniMax" not in seen[0]["messages"][0]["content"] and "Ref2VA output format" not in seen[0]["messages"][0]["content"]
     assert err.reason == "cut" and "cut off at 12,000 tokens" in str(err) and len(seen) == 2   # a cut part is not retried
+
+
+def test_script_part_asks_for_shot_durations_and_fits_the_scene():  # added 2026-11-03 v0.4.3
+    from reelwright.model import default_project
+    seen = []
+    answer = {"scenes": [{"title": "Chorus", "duration": 30, "shots": [{"t": 0, "duration": 13}, {"t": 13, "duration": 12.96},
+                                                                       {"t": 25.96, "duration": 12.08}]}], "cast": []}
+
+    async def handler(request):
+        seen.append(await request.json())
+        return await stream_response(request, sse((json.dumps(answer), "")))
+
+    out = run_app(lambda cfg: llm.script_part(cfg, default_project("Demo"), "| 01 | x |"), handler)
+    scene = out["scenes"][0]
+    assert "\"duration\": seconds, \"camera\"" in seen[0]["messages"][1]["content"]
+    assert "sum of all its shot durations" in seen[0]["messages"][1]["content"]
+    assert scene["duration"] == 38.0417 and scene["fit_note"].startswith("length set from its shots (38.04 s")

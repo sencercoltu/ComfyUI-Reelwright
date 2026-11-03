@@ -918,6 +918,53 @@ def main():
         page.click("button[data-help='scene.rewrite.stop']")
         page.wait_for_timeout(500)
         check(page.locator(".rw-llm-busy").count() == 0 and page.evaluate("!window.__editor.eph.rewrite"), "rewrite did not stop")
+
+        # ---- added 2026-11-03 v0.4.3 ----
+        # Shots after the end of a scene: shot lengths beside the start, Lengthen / Fit into, and the Issues button.
+        saved = json.dumps(project(page))
+        bad = json.loads(saved)
+        sc = bad["scenes"][0]
+        sc["duration"] = 30.0
+        sc["shots"] = [{"id": f"h_x{i}", "t": t, "camera": "", "text": f"shot {i}"} for i, t in enumerate([0, 8.42, 16.59, 24.76, 33.76, 41.81, 50.81, 61.81])]
+        sc["dialogue"] = []
+        bad["scenes"][1]["shots"] = [{"id": "h_y1", "t": 0, "camera": "", "text": "a"}, {"id": "h_y2", "t": bad["scenes"][1]["duration"] + 3, "camera": "", "text": "b"}]
+        bad["ui"]["selected"] = sc["id"]
+        page.evaluate("j => window.__editor.load(j)", json.dumps(bad))
+        page.wait_for_timeout(400)
+        page.click(".rw-tab:has-text('Scene')")
+        page.wait_for_timeout(300)
+        lens = page.locator("[data-help='scene.shots.length']").all_inner_texts()
+        check(lens[:4] == ["for 8.42 s", "for 8.17 s", "for 8.17 s", "for 5.24 s"] and lens[4:] == ["after the end"] * 4, f"shot lengths: {lens}")
+        note = page.locator(".rw-overrun")
+        check(note.count() == 1 and "4 shots start after the scene ends (30.00 s)" in note.inner_text(), f"overrun note: {note.inner_text() if note.count() else None}")
+        page.screenshot(path=str(shots / "v043_overrun.png"))
+        page.click("button[data-help='scene.shots.lengthen']")
+        page.wait_for_timeout(300)
+        d = project(page)["scenes"][0]["duration"]
+        check(abs(d - 70.25) < 1e-6 and page.locator(".rw-overrun").count() == 0, f"lengthen: {d}")
+        lens = page.locator("[data-help='scene.shots.length']").all_inner_texts()
+        check(lens[-1] == "for 8.44 s · end", f"last shot runs to the end: {lens[-1]}")
+        page.keyboard.press("Control+z")
+        page.wait_for_timeout(300)
+        check(project(page)["scenes"][0]["duration"] == 30.0, "undo lengthen")
+        page.click("button[data-help='scene.shots.squeeze']")
+        page.wait_for_timeout(300)
+        p0 = project(page)["scenes"][0]
+        check(p0["duration"] == 30.0 and max(x["t"] for x in p0["shots"]) < 30 and page.locator(".rw-overrun").count() == 0, f"fit into: {[x['t'] for x in p0['shots']]}")
+        page.keyboard.press("Control+z")
+        page.wait_for_timeout(300)
+        page.click("button[data-help='app.issues']")
+        page.wait_for_timeout(300)
+        fix = page.locator(".rw-drawer-fix")
+        check(fix.count() == 1 and "2 scenes have" in fix.inner_text(), f"issues fix row: {fix.inner_text() if fix.count() else None}")
+        page.screenshot(path=str(shots / "v043_issues.png"))
+        page.click("button[data-help='app.issues.fitShots']")
+        page.wait_for_timeout(300)
+        pj = project(page)
+        check(pj["scenes"][0]["duration"] == 70.25 and pj["scenes"][1]["duration"] > pj["scenes"][1]["shots"][-1]["t"] and page.locator(".rw-drawer-fix").count() == 0, "lengthen all")
+        page.click("button[data-help='app.issues']")
+        page.evaluate("j => window.__editor.load(j)", saved)
+        page.wait_for_timeout(300)
         browser.close()
     httpd.shutdown()
 

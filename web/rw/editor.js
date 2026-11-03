@@ -19,6 +19,7 @@ import {
   normalizeProject, defaultScene, newId, sceneIndex, sceneStarts, assembledDuration, fmtTime,
   sceneBudget, budgetIssues, FPS,
   normalizeGlobal, assetUsage, assetCastUse, findAsset, // added 2026-11-02 v0.3.0
+  overruns, lengthenToFit, // added 2026-11-03 v0.4.3
 } from "./model.js";
 import * as timeline from "./tabs/timeline.js";
 import * as sceneTab from "./tabs/scene.js";
@@ -392,11 +393,21 @@ export function mountEditor(container, host) {
     drawer.classList.toggle("on", !!store.eph.issuesOpen);
     if (!store.eph.issuesOpen) { drawer.replaceChildren(); return; }
     const issues = allIssues();
+    // added 2026-11-03 v0.4.3: one click for every scene whose shots or lines start after its end
+    const overrun = store.project.scenes.filter(s => overruns(s));
     drawer.replaceChildren(
       h("div", { class: "rw-drawer-head" }, h("b", null, "Issues"), h("span", { class: "rw-dim" }, `${issues.length}`),
         h("button", { type: "button", class: "rw-q", dataset: { more: "app.issues" }, help: "app.issues", "aria-label": "Help" }, "?"),
         h("span", { class: "rw-flex" }),
         button({ icon: "close", help: "common.close", variant: "ghost", onClick: () => actions.toggleIssues(false) })),
+      overrun.length ? h("div", { class: "rw-drawer-fix" },
+        h("span", { class: "small grow" }, `${overrun.length} scene${overrun.length === 1 ? " has" : "s have"} shots or lines after the end.`),
+        button({ label: `Lengthen ${overrun.length === 1 ? "it" : "them"} to fit`, small: true, help: "app.issues.fitShots", onClick: () => {
+          const ids = new Set(overrun.map(s => s.id));
+          actions.edit(p => { for (const s of p.scenes) if (ids.has(s.id)) lengthenToFit(s); });
+          actions.toast(`Lengthened ${ids.size} scene${ids.size === 1 ? "" : "s"} to fit their shots. Ctrl+Z undoes it.`, "ok");
+          root.focus?.({ preventScroll: true });
+        } })) : null,
       issues.length ? h("div", { class: "rw-issue-list", dataset: { scroll: "issues" } }, issues.map(i => h("button", {
         type: "button", class: ["rw-issue", i.level], help: "app.issueItem", onClick: () => actions.gotoIssue(i),
       }, icon(i.level === "info" ? "info" : "warn", 13), h("span", null, i.message)))) : h("div", { class: "rw-empty" }, "No issues. Every scene fits H3's limits."));
