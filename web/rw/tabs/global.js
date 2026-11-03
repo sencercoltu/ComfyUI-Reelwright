@@ -303,17 +303,32 @@ function llmCard(ctx) {
       st.ok && st.testedUrl ? h("div", { class: "rw-note ok small", help: "global.llm.status" }, icon("check", 12), `${st.testedUrl} · ${st.testedModel || "default model"} · ${st.ms} ms${st.reply ? ` · replied “${st.reply}”` : ""}`) : null,
       st.error ? h("div", { class: "rw-note err small", help: "global.llm.status" }, icon("warn", 12), st.error) : null,
       st.ok && st.note ? h("div", { class: "rw-note small", help: "global.llm.thinking" }, icon("info", 12), st.note) : null, // added 2026-11-02 v0.3.2
-      ...limitFields(l, st, set), // added 2026-11-03 v0.4.2
+      // [OLD 2026-11-03 v0.5.0->v0.5.1] ...limitFields(l, st, set), // added 2026-11-03 v0.4.2
+      ...limitFields(ctx, l, st, set), // added 2026-11-03 v0.4.2; ctx: v0.5.1 (the groups fold)
     ],
   });
 }
 
 // added 2026-11-03 v0.4.2: timeouts, retries, context window, and script import's own budget
-function limitFields(l, st, set) {
+// [OLD 2026-11-03 v0.5.0->v0.5.1] function limitFields(l, st, set) {
+// added 2026-11-03 v0.5.1: Limits and Script import fold away (closed by default); a closed group shows its values
+function limitFields(ctx, l, st, set) {
   const n = v => Math.round(v).toLocaleString("en-US");
   const hint = (t, help) => h("span", { class: "rw-dim small", help }, t);
+  const opened = ctx.eph.llmOpen || {};
+  const group = (key, label, help, summary, fields) => [
+    h("button", {
+      type: "button", class: ["rw-subhead", "rw-fold", opened[key] && "open"], help, "aria-expanded": opened[key] ? "true" : "false",
+      onClick: () => ctx.store.setEph({ llmOpen: { ...(ctx.eph.llmOpen || {}), [key]: !opened[key] } }),
+    }, icon(opened[key] ? "chevDown" : "chevRight", 12), h("span", { class: "rw-fold-label" }, label),
+    !opened[key] && h("span", { class: "rw-fold-sum" }, summary)),
+    ...(opened[key] ? fields : []),
+  ];
+  const limitsSummary = `stall ${l.timeout_s} s · give up ${l.max_wait_s} s · ${l.retries} retr${l.retries === 1 ? "y" : "ies"} · context ${l.context_tokens ? n(l.context_tokens) : st.context ? n(st.context) + " (server)" : "from the server"}`;
+  const importSummary = `${l.import_part_chars ? "parts of " + n(l.import_part_chars) + " chars" : "whole script"} · ${n(l.import_max_tokens)} tokens · thinking ${l.import_thinking === "off" ? "off" : "as above"} · guides ${l.import_guides ? "on" : "off"}`;
   return [
-    h("div", { class: "rw-subhead", help: "global.llm.limits" }, "Limits"),
+    // [OLD 2026-11-03 v0.5.0->v0.5.1] h("div", { class: "rw-subhead", help: "global.llm.limits" }, "Limits"),
+    ...group("limits", "Limits", "global.llm.limits", limitsSummary, [
     field("Stall timeout", h("span", { class: "rw-row grow" },
       number({ value: l.timeout_s, min: 10, max: 3600, step: 10, unit: "s", help: "global.llm.timeout", onChange: v => set(x => { x.timeout_s = v ?? 120; }) }),
       hint("no data from the server for this long ends the request", "global.llm.timeout")), { help: "global.llm.timeout" }),
@@ -326,7 +341,9 @@ function limitFields(l, st, set) {
     field("Context window", h("span", { class: "rw-row grow" },
       number({ value: l.context_tokens, min: 0, max: 4000000, step: 1024, width: "96px", unit: "tokens", help: "global.llm.context", onChange: v => set(x => { x.context_tokens = v ?? 0; }) }),
       hint(l.context_tokens ? "prompt + answer must fit" : st.context ? `0 = ask the server · it says ${n(st.context)} tokens` : "0 = ask the server (Test connection shows its answer)", "global.llm.context")), { help: "global.llm.context" }),
-    h("div", { class: "rw-subhead", help: "global.llm.import" }, "Script import"),
+    ]),
+    // [OLD 2026-11-03 v0.5.0->v0.5.1] h("div", { class: "rw-subhead", help: "global.llm.import" }, "Script import"),
+    ...group("import", "Script import", "global.llm.import", importSummary, [
     field("Part size", h("span", { class: "rw-row grow" },
       number({ value: l.import_part_chars, min: 0, max: 1000000, step: 500, width: "96px", unit: "chars", help: "global.llm.importPart", onChange: v => set(x => { x.import_part_chars = v ?? 3000; }) }),
       hint(l.import_part_chars ? "a long script is sent in parts of about this size" : "0 = the whole script in one request", "global.llm.importPart")), { help: "global.llm.importPart" }),
@@ -339,6 +356,7 @@ function limitFields(l, st, set) {
     field("H3 guides", h("span", { class: "rw-row grow" },
       toggle({ value: !!l.import_guides, help: "global.llm.importGuides", onChange: v => set(x => { x.import_guides = v; }) }),
       hint(l.import_guides ? "sent with every part (about 10,000 tokens)" : "not sent: about 10,000 fewer prompt tokens per part", "global.llm.importGuides")), { help: "global.llm.importGuides" }),
+    ]),
   ];
 }
 

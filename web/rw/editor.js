@@ -97,7 +97,23 @@ export function mountEditor(container, host) {
   const footer = h("div", { class: "rw-footer" });
   const toasts = h("div", { class: "rw-toasts" });
   const drawer = h("div", { class: "rw-drawer" });
-  root.append(tabbar, body, footer, drawer, toasts);
+  // [OLD 2026-11-03 v0.5.0->v0.5.1] root.append(tabbar, body, footer, drawer, toasts);
+  // added 2026-11-03 v0.5.1: ComfyUI watches every key press on the page (a capture listener on window, which runs
+  // before anything in the editor) and runs its own workflow undo on Ctrl+Z unless the focused element is a text field.
+  // Its undo rebuilt the whole graph, so the editor's Ctrl+Z also undid the workflow (and with Nodes 2.0 the node
+  // went blank). Keyboard focus in the editor sits on this hidden read-only field, which ComfyUI leaves alone; the
+  // editor's own key handler below still sees every key.
+  const keys = h("input", { class: "rw-keys", readonly: true, tabindex: "-1", "aria-hidden": "true", autocomplete: "off" });
+  root.append(tabbar, body, footer, drawer, toasts, keys);
+  const focusRoot = opts => keys.focus(opts || { preventScroll: true });
+  root.focus = focusRoot; // every root.focus() in the editor and its tabs lands on the key field
+  root.addEventListener("focusin", e => { if (e.target === root) focusRoot(); });
+  // a button clicked with the mouse would keep focus; give it to the key field. Capture phase: the editor's buttons
+  // stop their click from bubbling. Keyboard presses (detail 0) leave focus on the button.
+  root.addEventListener("click", e => {
+    const a = document.activeElement;
+    if (e.detail > 0 && a && a !== keys && root.contains(a) && a.matches("button, [role=switch], [role=radio], a")) focusRoot();
+  }, true);
   container.replaceChildren(root);
   const tips = installTooltips(root);
 
@@ -429,7 +445,10 @@ export function mountEditor(container, host) {
     if (comboState.open) { comboState.onClose = () => { if (!frame) frame = requestAnimationFrame(render); }; return; }
     const scroll = {};
     root.querySelectorAll("[data-scroll]").forEach(el => { scroll[el.dataset.scroll] = [el.scrollLeft, el.scrollTop]; });
-    const focused = root.querySelector(":focus");
+    // [OLD 2026-11-03 v0.5.0->v0.5.1] const focused = root.querySelector(":focus");
+    const focused = root.querySelector(":focus:not(.rw-keys)"); // the key field survives every render
+    // added 2026-11-03 v0.5.1: focus was in the editor before this render (see the end of render)
+    const hadFocus = root.contains(document.activeElement);
     const focusKey = focused?.dataset?.key;
     const sel = focused && typeof focused.selectionStart === "number" ? [focused.selectionStart, focused.selectionEnd] : null;
     // added 2026-11-03 v0.4.1: a text field being typed in keeps what is typed. Most fields store their value on
@@ -469,6 +488,10 @@ export function mountEditor(container, host) {
     } else if (focused === root || !root.contains(document.activeElement)) {
       /* keep focus where it was */
     }
+    // added 2026-11-03 v0.5.1: the button that was clicked (Add scene, a tab, a toggle) is rebuilt by the render, so
+    // focus fell to the page body. The next Ctrl+Z then went to ComfyUI, which undid the workflow instead of the
+    // edit: it rebuilt the node and, with Nodes 2.0 on, the editor went blank. Focus stays in the editor now.
+    if (hadFocus && !root.contains(document.activeElement)) root.focus({ preventScroll: true });
     tab.mod.afterRender?.(ctx);
   }
   ctx.render = render;
@@ -487,7 +510,8 @@ export function mountEditor(container, host) {
   root.addEventListener("pointerdown", e => { if (e.rwOwned) e.stopPropagation(); });
   root.addEventListener("keydown", e => {
     e.stopPropagation();
-    const typing = e.target.matches?.("input, textarea, select, [contenteditable]");
+    // [OLD 2026-11-03 v0.5.0->v0.5.1] const typing = e.target.matches?.("input, textarea, select, [contenteditable]");
+    const typing = e.target !== keys && e.target.matches?.("input, textarea, select, [contenteditable]"); // the key field is not typing
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); store.saveNow(); actions.toast("Saved.", "ok"); return; }
     if (typing) return;

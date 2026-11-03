@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.1 — 2026-11-03
+
+- **Ctrl+Z no longer blanks the node.** ComfyUI watches every key press on the page and runs its own workflow undo on Ctrl+Z unless a text field has focus. Its undo rebuilds the whole graph, so pressing Ctrl+Z in the editor undid the workflow as well as the edit. With Nodes 2.0 on, the rebuilt node then showed nothing, because Vue kept showing the old node's emptied element.
+  - Keyboard focus in the editor now sits on a hidden read-only field that ComfyUI leaves alone. Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z only undo and redo the editor, and the other shortcuts work as before.
+  - Focus stays in the editor after a click on a button that the editor redraws (Add scene, a tab, a toggle). Before, focus fell to the page, so the next Ctrl+Z went to ComfyUI.
+  - When ComfyUI's own undo does rebuild the node (Ctrl+Z with the canvas focused), the editor moves into the element Vue is showing, so it stays visible.
+- **The LLM's Limits and Script import settings fold away** (Global → Prompt rewriter). Both groups start closed and show their values on one line (for example "stall 120 s · give up 900 s · 2 retries · context from the server"); click the heading to open or close a group.
+
 ## v0.5.0 — 2026-11-03
 
 - **Soundtrack lanes: cut a film to a song.** Audio files can now be laid on the timeline, each on its own lane under the scenes, with its waveform. Add as many as you like:

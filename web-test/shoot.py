@@ -37,7 +37,9 @@ AUDIT = """async () => {
   const missing = [...new Set(ids.filter(i => !HELP[i]))];
   const noMore = [...new Set(more.filter(i => !HELP[i] || !HELP[i].more))];
   const bare = [...root.querySelectorAll('button, input, select, textarea')]
-    .filter(e => !e.closest('[data-help]') && e.offsetParent !== null)
+    // [OLD 2026-11-03 v0.5.0->v0.5.1] .filter(e => !e.closest('[data-help]') && e.offsetParent !== null)
+    // added 2026-11-03 v0.5.1: the editor's hidden key field (rw-keys) is not a control
+    .filter(e => !e.closest('[data-help]') && e.offsetParent !== null && !e.classList.contains('rw-keys'))
     .map(e => e.outerHTML.slice(0, 120));
   return { missing, noMore, bare };
 }"""

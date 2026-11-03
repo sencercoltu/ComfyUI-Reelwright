@@ -414,7 +414,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-03 v0.4.1->v0.4.2] case "/reelwright/info": return json({ version: "0.4.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // [OLD 2026-11-03 v0.4.2->v0.4.3] case "/reelwright/info": return json({ version: "0.4.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // [OLD 2026-11-03 v0.4.3->v0.5.0] case "/reelwright/info": return json({ version: "0.4.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
-    case "/reelwright/info": return json({ version: "0.5.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
+    // [OLD 2026-11-03 v0.5.0->v0.5.1] case "/reelwright/info": return json({ version: "0.5.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
+    case "/reelwright/info": return json({ version: "0.5.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {

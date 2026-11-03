@@ -88,7 +88,7 @@ output, and `video` points at them.
 - ✅ **Script import**: paste a screenplay (Fountain or plain text). The LLM proposes scenes, shots, dialogue and cast. You review them before they are added, and choose where the scenes go: at the end, right after the selected scene, or in place of all current scenes (asks first; cast, assets and Global stay). Ctrl+Z undoes the import.
 - ✅ **Script import in parts** (v0.4.2): a long script is cut at scene headings, table rows, Markdown headings or "Scene N" lines (paragraphs otherwise) into parts of about *Part size* characters; the premise before the first scene and table column headings go with every part, and each part sees the cast found so far. Live progress per part, Stop / Continue, retry a failed part on its own; a part cut off at the token budget is split in two automatically.
 - ✅ **Scene length from shots** (v0.4.3): Import asks for each shot's duration; a scene lasts the sum of its shots (`scriptparts.fit_scene`), or is lengthened so no shot or line starts after its end. The Shots card shows each shot's length and offers Lengthen / Fit into for shots after the end; the Issues list lengthens every such scene at once.
-- ✅ **Limits** (v0.4.2): stall timeout, give-up time, retries, context window (asked from the server when 0), and Import's own part size, token budget, thinking switch and guides switch. Every request streams; Rewrite and Split show progress and can be stopped.
+- ✅ **Limits** (v0.4.2): stall timeout, give-up time, retries, context window (asked from the server when 0), and Import's own part size, token budget, thinking switch and guides switch. Every request streams; Rewrite and Split show progress and can be stopped. Both groups fold away (closed by default, v0.5.1) and show their values on one line when closed.
 - ✅ **Test connection**, and the model list from `/models`. The test says when the model thinks before answering.
 - ✅ **Thinking models** (Qwen3 and similar): reasoning is read from `reasoning_content` / `reasoning` / `<think>` and never mistaken for the answer. Calls get at least 6000 tokens; if a reply is cut off mid-thought the error says so. *Thinking: Off* sends `chat_template_kwargs: {enable_thinking: false}` (SGLang, vLLM). Describe retries once with thinking off when the budget runs out.
 
@@ -189,7 +189,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Keyboard (when the node has focus):
   - Space play/pause; J/K/L back/stop/forward; I/O in/out; ←/→ step one frame;
   - S split; D duplicate; Delete remove;
-  - Ctrl+Z / Ctrl+Shift+Z undo/redo; Ctrl+S save; ? opens the help.
+  - Ctrl+Z / Ctrl+Shift+Z undo/redo; Ctrl+S save; ? opens the help. Keyboard focus sits on a hidden read-only field (v0.5.1), so ComfyUI's own workflow undo never also runs on the editor's Ctrl+Z.
 - ✅ Undo/redo history, autosave.
 - ✅ Lint panel: missing or unused tags, dialogue without a language, timestamps past the end of a scene, over-budget references, missing files, a continuation without a previous scene, cast without anchors.
 - ✅ Zoom, snap to the frame grid, ripple edit. Alt + wheel zooms the timeline; Ctrl + wheel anywhere on the node zooms the ComfyUI canvas, except over a text field or list.

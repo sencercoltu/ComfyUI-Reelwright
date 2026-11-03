@@ -741,3 +741,11 @@
 .rw-track-grid .rw-unit-wrap > input { flex: 1 1 auto; min-width: 0; width: auto !important; }
 .rw-track-insp { gap: 6px; }
 .rw-track-insp .rw-toggle-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px 10px; }
+
+/* added 2026-11-03 v0.5.1: Global → LLM Limits / Script import fold away */
+.rw-fold { display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0; padding: 3px 0; border: 0; background: none; cursor: pointer; text-align: left; font-family: inherit; }
+.rw-fold:hover { color: var(--text); }
+.rw-fold > svg, .rw-fold-label { flex: none; white-space: nowrap; }
+.rw-fold-sum { margin-left: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text3); font-family: var(--mono); font-size: 10.5px; }
+/* added 2026-11-03 v0.5.1: hidden read-only field that holds keyboard focus in the editor (see editor.js) */
+.rw-keys { position: absolute; left: 0; top: 0; width: 1px; height: 1px; padding: 0; border: 0; margin: 0; opacity: 0; pointer-events: none; caret-color: transparent; }

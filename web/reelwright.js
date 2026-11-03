@@ -16,6 +16,11 @@ const IDLE_REQUEST = JSON.stringify({ action: "pending" });
 // Reelwright node that image is moved into the editor's Render tab instead. This covers previews from any
 // source (an older Reelwright backend, or anything else that reports previews for this node).
 const editors = new Set(); // {node, editor}
+// added 2026-11-03 v0.5.1: with Nodes 2.0, ComfyUI's own undo (Ctrl+Z on the canvas) rebuilds the graph, and Vue
+// keeps showing the DOM element of the node it replaced (same id) instead of the new node's. That element was
+// emptied when the old node was removed, so the node went blank. The old element is remembered here for a moment,
+// and the new editor moves into it while its own element is not on the page.
+const orphans = new Map(); // node id -> container of a removed Reelwright node
 let executingId = null;
 let swallowedBlob = null;
 function editorFor(id) {
@@ -114,6 +119,16 @@ app.registerExtension({
     const editor = mountEditor(container, host);
     const entry = { node, editor }; // added 2026-11-02 v0.3.7: for the preview redirect
     editors.add(entry);
+    // added 2026-11-03 v0.5.1: keep the editor on the page (see orphans above)
+    const editorRoot = container.firstElementChild;
+    const keepShown = setInterval(() => {
+      if (!editorRoot || editorRoot.isConnected) return;
+      if (container.isConnected) { container.appendChild(editorRoot); return; }
+      const old = orphans.get(String(node.id));
+      if (old && old !== container && old.isConnected) {
+        old.replaceChildren(editorRoot);
+      }
+    }, 250);
     if (!projectW.value) host.setProject(JSON.stringify(editor.project));
     // added 2026-11-02 v0.3.0: a workflow load configures the node right after creating it; a node that is
     // still unconfigured a moment later was just added, so offer the saved Global profiles
@@ -134,7 +149,12 @@ app.registerExtension({
     const onRemoved = node.onRemoved;
     node.onRemoved = function () {
       editors.delete(entry); // added 2026-11-02 v0.3.7
+      clearInterval(keepShown); // added 2026-11-03 v0.5.1
+      // added 2026-11-03 v0.5.1: the element Vue may go on showing for the node that replaces this one
+      const id = String(node.id), shown = editorRoot?.parentElement || container;
       editor.destroy();
+      orphans.set(id, shown);
+      setTimeout(() => { if (orphans.get(id) === shown) orphans.delete(id); }, 10000);
       return onRemoved?.apply(this, arguments);
     };
   },

@@ -849,6 +849,12 @@ def main():
         page.evaluate("() => clearInterval(window.__tick)")
         page.click(".rw-tab:has-text('Global')")
         page.wait_for_timeout(300)
+        # [OLD 2026-11-03 v0.5.0->v0.5.1] the limit fields were always shown; now both groups fold (closed by default)
+        check(page.locator("input[data-help='global.llm.timeout']").count() == 0, "Limits should start folded")
+        check("stall 120 s" in page.locator("button.rw-fold[data-help='global.llm.limits']").inner_text(), "folded Limits shows no summary")
+        page.click("button.rw-fold[data-help='global.llm.limits']")
+        page.click("button.rw-fold[data-help='global.llm.import']")
+        page.wait_for_timeout(200)
         for hid in ("timeout", "maxWait", "retries", "context", "importPart", "importTokens"):
             check(page.locator(f"input[data-help='global.llm.{hid}']").count() == 1, f"limit field {hid} missing")
         part = page.locator("input[data-help='global.llm.importPart']")
@@ -1095,6 +1101,29 @@ def main():
         check(live()["global"]["merge"]["score"]["asset"] == "", "score not cleared")
         page.evaluate("j => window.__editor.load(j)", saved)
         page.wait_for_timeout(300)
+
+        # ---- added 2026-11-03 v0.5.1 ----
+        # A click on a button the render rebuilds (Add scene) used to leave focus on the page body, so Ctrl+Z went to
+        # ComfyUI instead of the editor. Focus stays in the editor, and Ctrl+Z undoes the edit.
+        page.click(".rw-tab:has-text('Timeline')")
+        page.wait_for_timeout(300)
+        n = len(live()["scenes"])
+        page.click("button[data-help='timeline.addScene'] >> nth=0")
+        page.wait_for_timeout(400)
+        check(page.evaluate("document.activeElement.classList.contains('rw-root') || !!document.activeElement.closest('.rw-root')"),
+              f"focus left the editor: {page.evaluate('document.activeElement.className')}")
+        page.keyboard.press("Control+z")
+        page.wait_for_timeout(300)
+        check(len(live()["scenes"]) == n, "Ctrl+Z right after Add scene did not undo it")
+        page.click(".rw-tab:has-text('Global')")
+        page.wait_for_timeout(300)
+        check(page.evaluate("!!document.activeElement.closest('.rw-root')"), "focus left the editor after a tab click")
+        fold = page.locator("button.rw-fold[data-help='global.llm.import']")
+        if fold.get_attribute("aria-expanded") == "true":
+            fold.click()
+            page.wait_for_timeout(200)
+        check(page.locator("input[data-help='global.llm.importPart']").count() == 0 and "parts of" in fold.inner_text(), "Script import did not fold")
+        page.screenshot(path=str(shots / "v051_llm_folded.png"))
         browser.close()
     httpd.shutdown()
 
