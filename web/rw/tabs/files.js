@@ -177,6 +177,66 @@ function pick(ctx, ix, roots, test) {
   if (!n) ctx.actions.toast("Nothing more of that kind.", "info");
 }
 
+// added 2026-11-03 v0.4.1: preview next to the tree. Pictures, videos, audio and text files (subtitles, timelines,
+// project JSON) open in a pane; a take or a cut previews its video. The media element survives re-renders (progress
+// events re-render the tab several times a second), so a playing video keeps playing.
+const MEDIA = [
+  ["image", /\.(png|jpe?g|webp|gif|bmp)$/i], ["video", /\.(mp4|webm|mov|mkv|m4v)$/i],
+  ["audio", /\.(wav|mp3|flac|ogg|m4a|aac|opus)$/i], ["text", /\.(json|txt|srt|otio|fcpxml|xml|md|csv|log)$/i],
+];
+export const mediaKind = name => (MEDIA.find(([, re]) => re.test(name || "")) || [""])[0];
+function previewTarget(n) {
+  if (!n) return null;
+  if (n.view) return n;
+  const kids = n.children || [];
+  if (n.kind === "take") return kids.find(c => c.view && mediaKind(c.label) === "video" && c.label !== "tail.mp4") || null;
+  if (n.kind === "cut") return kids.find(c => mediaKind(c.label) === "video" && !c.flags.includes("unfinished")) || kids.find(c => c.view) || null;
+  return null;
+}
+const panes = new WeakMap(); // ctx -> { key, media }
+
+function previewMedia(ctx, file) {
+  const url = viewURL(file.view, file.type);
+  const kind = mediaKind(file.label);
+  if (kind === "image") return h("img", { class: "rw-fprev-media", src: url, alt: file.label });
+  if (kind === "video") return h("video", { class: "rw-fprev-media", src: url, controls: true, preload: "metadata", playsInline: true });
+  if (kind === "audio") return h("audio", { class: "rw-fprev-audio", src: url, controls: true, preload: "metadata" });
+  if (kind === "text") {
+    const pre = h("pre", { class: "rw-fprev-text mono" }, "Loading…");
+    fetch(url).then(r => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.text(); })
+      .then(t => {
+        const odd = (t.slice(0, 4000).match(/[\u0000\ufffd]/g) || []).length;
+        pre.textContent = odd > 8 ? "This file doesn't look like text." : t.length > 200000 ? t.slice(0, 200000) + "\n… (" + fmtBytes(t.length) + ", first 200 KB shown)" : t;
+      })
+      .catch(err => { pre.textContent = "Couldn't load the file: " + err.message; });
+    return pre;
+  }
+  return h("div", { class: "rw-empty sm" }, "No preview for this kind of file.");
+}
+
+function previewPane(ctx, ix) {
+  const id = ctx.eph.filesPreview;
+  const n = id && ix.node.get(id);
+  const file = previewTarget(n);
+  if (!n || !file) { panes.delete(ctx); return null; }
+  let cached = panes.get(ctx);
+  if (!cached || cached.key !== file.id) { cached = { key: file.id, media: previewMedia(ctx, file) }; panes.set(ctx, cached); }
+  const lock = blocked(ctx, ix, n);
+  const cover = coveredBy(ix, selection(ctx), n.id);
+  return h("div", { class: "rw-fprev", help: "files.preview" },
+    h("div", { class: "rw-fprev-head" },
+      h("span", { class: "rw-ftree-icon" }, icon(ICON[n.kind] || "file", 13)),
+      h("b", { class: "rw-ellipsis grow", title: file.view }, n === file ? n.label : `${n.label} · ${file.label}`),
+      button({ icon: "link", small: true, variant: "ghost", help: "files.open", onClick: () => window.open(viewURL(file.view, file.type), "_blank", "noopener") }),
+      n.del && !cover ? button({ icon: "trash", small: true, variant: "danger-ghost", help: "files.delete", disabled: lock, onClick: () => remove(ctx, [n.id]) }) : null,
+      button({ icon: "close", small: true, variant: "ghost", help: "files.preview.close", onClick: () => ctx.store.setEph({ filesPreview: "" }) })),
+    cached.media,
+    h("div", { class: "rw-fprev-meta mono rw-dim small" },
+      h("div", { class: "rw-ellipsis", title: file.view }, (file.type === "input" ? "input/" : "output/") + file.view),
+      h("div", null, [fmtBytes(file.size), fmtWhen(file.mtime)].filter(Boolean).join(" · ")),
+      n.note ? h("div", { class: "rw-fprev-note" }, n.note) : null));
+}
+
 function row(ctx, ix, n, depth, parentSize) {
   const sel = selection(ctx);
   const open = ctx.eph.filesOpen || {};
@@ -192,23 +252,28 @@ function row(ctx, ix, n, depth, parentSize) {
   // a row that can never be selected on its own (a take's video, index.json) gets no box; covered or locked rows keep a disabled one
   const tick = n.del || kids.some(hasDeletable) ? box : h("span", { class: "rw-ftree-check-ph" });
   const expand = () => { ctx.store.setEph({ filesOpen: { ...open, [n.id]: !open[n.id] } }); };
+  const target = previewTarget(n); // added 2026-11-03 v0.4.1
+  const showPreview = () => ctx.store.setEph({ filesPreview: n.id });
   const pct = parentSize ? Math.max(1, Math.round((n.size / parentSize) * 100)) : 100;
   const out = [h("div", {
-    class: ["rw-ftree-row", "k-" + n.kind, st === "on" && "sel", lock && "locked"], dataset: { id: n.id },
+    // [OLD 2026-11-03 v0.4.0->v0.4.1] class: ["rw-ftree-row", "k-" + n.kind, st === "on" && "sel", lock && "locked"], dataset: { id: n.id },
+    class: ["rw-ftree-row", "k-" + n.kind, st === "on" && "sel", lock && "locked", ctx.eph.filesPreview === n.id && "previewed"], dataset: { id: n.id },
     style: { "--depth": depth },
   },
     tick,
     kids.length ? h("button", { type: "button", class: ["rw-ftree-caret", open[n.id] && "open"], help: "files.expand", "aria-label": open[n.id] ? "Collapse" : "Expand", onClick: e => { e.stopPropagation(); expand(); } }, icon("chevRight", 12))
       : h("span", { class: "rw-ftree-caret" }),
     h("span", { class: "rw-ftree-icon" }, icon(ICON[n.kind] || "file", 13)),
-    h("span", { class: "rw-ftree-label", help: "files.kind." + (ICON[n.kind] ? n.kind : "file"), onClick: kids.length ? expand : undefined }, n.label),
+    // [OLD 2026-11-03 v0.4.0->v0.4.1] h("span", { class: "rw-ftree-label", help: "files.kind." + (ICON[n.kind] ? n.kind : "file"), onClick: kids.length ? expand : undefined }, n.label),
+    h("span", { class: ["rw-ftree-label", !kids.length && target && "clickable"], help: "files.kind." + (ICON[n.kind] ? n.kind : "file"), onClick: kids.length ? expand : target ? showPreview : undefined }, n.label),
     ...n.flags.filter(f => FLAG[f]).map(f => h("span", { class: ["rw-ftree-flag", FLAG[f][1]], help: "files.flag." + f }, FLAG[f][0])),
     h("span", { class: "rw-ftree-note rw-ellipsis", title: n.note || "" }, n.note || (n.why && !n.del ? "kept: " + n.why : "")),
     h("span", { class: "rw-ftree-bar", help: "files.size" }, h("span", { style: { width: pct + "%" } })),
     h("span", { class: "rw-ftree-size mono", help: "files.size" }, fmtBytes(n.size), n.count > 1 && h("span", { class: "rw-dim" }, ` · ${n.count}`)),
     h("span", { class: "rw-ftree-when mono rw-dim" }, fmtWhen(n.mtime)),
     h("span", { class: "rw-ftree-actions" },
-      n.view ? button({ icon: "eye", small: true, variant: "ghost", help: "files.open", onClick: () => window.open(viewURL(n.view, n.type), "_blank", "noopener") }) : null,
+      // [OLD 2026-11-03 v0.4.0->v0.4.1] n.view ? button({ icon: "eye", small: true, variant: "ghost", help: "files.open", onClick: () => window.open(viewURL(n.view, n.type), "_blank", "noopener") }) : null,
+      target ? button({ icon: "eye", small: true, variant: ctx.eph.filesPreview === n.id ? "default" : "ghost", help: "files.preview.show", onClick: showPreview }) : null,
       n.del && !cover ? button({ icon: "trash", small: true, variant: "danger-ghost", help: "files.delete", disabled: lock, onClick: () => remove(ctx, [n.id]) }) : null))];
   if (kids.length && open[n.id]) {
     const order = ctx.eph.filesOrder === "size" ? [...kids].sort((a, b) => b.size - a.size) : kids;
@@ -258,7 +323,10 @@ export function render(ctx) {
   const body = ctx.eph.filesError ? h("div", { class: "rw-banner warn" }, icon("warn", 14), h("span", null, "Couldn't read the folders: " + ctx.eph.filesError))
     : !data ? h("div", { class: "rw-empty" }, "Scanning Reelwright's folders…")
       : !roots.length ? h("div", { class: "rw-empty" }, "Nothing on disk yet. Takes, cuts and uploaded assets show up here.")
-        : h("div", { class: "rw-ftree", dataset: { scroll: "files" }, help: "files.tree" }, roots.flatMap(p => row(ctx, ix, p, 0, data.size)));
+        // [OLD 2026-11-03 v0.4.0->v0.4.1] : h("div", { class: "rw-ftree", dataset: { scroll: "files" }, help: "files.tree" }, roots.flatMap(p => row(ctx, ix, p, 0, data.size)));
+        : h("div", { class: "rw-files-main" },
+          h("div", { class: "rw-ftree", dataset: { scroll: "files" }, help: "files.tree" }, roots.flatMap(p => row(ctx, ix, p, 0, data.size))),
+          previewPane(ctx, ix));
 
   return h("div", { class: "rw-files-tab" },
     section({

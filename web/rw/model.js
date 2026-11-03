@@ -247,6 +247,7 @@ export function normalizeProject(raw) {
   for (const c of p.cast) {
     fill(c, { id: newId("c"), kind: "character", name: "", speaker: "", description: "", anchors: [], pack_sheet: true,
       outfits: [], default_outfit: "", voice: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 } });
+    if (![true, false, "auto"].includes(c.pack_sheet)) c.pack_sheet = true; // added 2026-11-03 v0.4.1 (see prompt.py)
   }
   if (!p.scenes.length) p.scenes.push(defaultScene(p, { title: "Scene 1" }));
   if (!p.scenes.some(s => s.id === p.ui.selected)) p.ui.selected = p.scenes[0].id;
@@ -328,6 +329,48 @@ export function retentionOptions(kind) {
   return kind === "audio" ? AUDIO_RETENTION : VISUAL_RETENTION;
 }
 
+// added 2026-11-03 v0.4.1: anchor sheets, matching prompt.collect_refs and media.sheet_image.
+// pack_sheet: true (one sheet), false (separate pictures), "auto" (a sheet only when the scene's pictures don't fit
+// H3's 9 slots otherwise). Outfit pictures are left out here; the backend adds them to the anchors.
+export function sceneAutoPacks(project, scene) {
+  const anchors = new Set();
+  for (const sc of scene.cast) for (const id of findCast(project, sc.id)?.anchors || []) if (findAsset(project, id)?.kind === "image") anchors.add(id);
+  const refs = new Set(scene.refs.filter(r => r.role === "reference" && findAsset(project, r.asset)?.kind === "image" && !anchors.has(r.asset)).map(r => r.asset));
+  return anchors.size + refs.size > 9;
+}
+export function castPacks(project, scene, c) {
+  const n = c.anchors.filter(id => findAsset(project, id)?.kind === "image").length;
+  if (n < 2) return false;
+  return c.pack_sheet === "auto" ? (scene ? sceneAutoPacks(project, scene) : false) : !!c.pack_sheet;
+}
+export function sheetGrid(n) {
+  const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
+  return [cols, Math.max(1, Math.ceil(n / cols))];
+}
+// about how many pixels wide one anchor reaches H3, packed or alone, at the given output size
+export function anchorPixels(project, c, packed, width, height) {
+  const pics = c.anchors.map(id => findAsset(project, id)).filter(a => a?.kind === "image");
+  if (!pics.length) return 0;
+  const area = width * height;
+  const max = project.global.output.ref_image_size === "max";
+  const ratios = pics.map(a => Math.max(0.5, Math.min(2, (a.width || 1) / (a.height || 1)))).sort((x, y) => x - y);
+  const r = ratios[Math.floor(ratios.length / 2)];
+  if (!packed) {
+    const a = pics[0], w = a.width || 1024, hgt = a.height || 1024;
+    const s = max ? Math.min(1, 2048 / Math.min(w, hgt)) : Math.min(1, Math.sqrt(area / (w * hgt)));
+    return Math.round(Math.min(w, hgt) * s);
+  }
+  const [cols, rows] = sheetGrid(pics.length);
+  const cw = 768 * Math.sqrt(r), ch = 768 / Math.sqrt(r);
+  const W = cols * cw, H = rows * ch;
+  const s = max ? Math.min(1, 2048 / Math.min(W, H)) : Math.min(1, Math.sqrt(area / (W * H)));
+  return Math.round(Math.min(cw, ch) * s);
+}
+export function sheetURL(project, c, cell = 192) {
+  const files = c.anchors.map(id => findAsset(project, id)).filter(a => a?.kind === "image" && a.file).map(a => a.file);
+  return files.length ? "/reelwright/sheet?cell=" + cell + "&files=" + encodeURIComponent(JSON.stringify(files)) : "";
+}
+
 // Reference budget for one pass of a scene, matching how the backend presents refs.
 export function sceneBudget(project, scene) {
   const b = { pictures: 0, videos: 0, videoSeconds: 0, audio: 0, audioSeconds: 0, files: 0 };
@@ -344,7 +387,8 @@ export function sceneBudget(project, scene) {
   for (const sc of scene.cast) {
     const c = findCast(project, sc.id);
     if (!c) continue;
-    if (c.anchors.length) b.pictures += c.pack_sheet ? 1 : c.anchors.length;
+    // [OLD 2026-11-03 v0.4.0->v0.4.1] if (c.anchors.length) b.pictures += c.pack_sheet ? 1 : c.anchors.length;
+    if (c.anchors.length) b.pictures += castPacks(project, scene, c) ? 1 : c.anchors.length;
     const voice = findAsset(project, c.voice);
     const speaks = scene.dialogue.some(d => d.speaker === c.id);
     if (voice && speaks) { b.audio++; b.audioSeconds += voice.duration || 0; }

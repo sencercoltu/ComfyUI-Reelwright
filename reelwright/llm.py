@@ -12,6 +12,7 @@ import asyncio  # added 2026-11-02 v0.3.0
 import aiohttp
 
 from .model import cast_description  # added 2026-11-02 v0.3.4
+from .prompt import tidy_rewrite  # added 2026-11-03 v0.4.1
 from .storage import read_json, write_json
 
 TIMEOUT = aiohttp.ClientTimeout(total=180)
@@ -321,7 +322,8 @@ def scene_context(p, scene):
         cast="\n".join(people) or "(none)", shots="\n".join(shots) or "(none)", lines="\n".join(lines) or "(none)"))
 
 
-async def rewrite(cfg, p, scene, instruction, built=""):  # built: added 2026-11-02 v0.2.0
+# [OLD 2026-11-03 v0.4.0->v0.4.1] async def rewrite(cfg, p, scene, instruction, built=""):  # built: added 2026-11-02 v0.2.0
+async def rewrite(cfg, p, scene, instruction, built="", tag_map=None):  # tag_map: added 2026-11-03 v0.4.1
     pr = scene["prompt"]
     ctx = scene_context(p, scene)
     preset = PRESETS.get(cfg["preset"], PRESETS["h3_ref2va"])
@@ -358,7 +360,9 @@ async def rewrite(cfg, p, scene, instruction, built=""):  # built: added 2026-11
         instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing")
     text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
     data = parse_json(text)
-    out = {k: str(data.get(k, sections.get(k, "")) or "") for k in sections}
+    # [OLD 2026-11-03 v0.4.0->v0.4.1] the reply was used as it came: repeated automatic parts, "<Subject 1>" instead of @Name, labels inside values
+    # out = {k: str(data.get(k, sections.get(k, "")) or "") for k in sections}
+    out = dict(sections, **tidy_rewrite(data if isinstance(data, dict) else {}, sections, auto, tag_map))  # added 2026-11-03 v0.4.1
     return {"sections": out, "warnings": preserved_warnings(before, json.dumps(out, ensure_ascii=False))}
 
 

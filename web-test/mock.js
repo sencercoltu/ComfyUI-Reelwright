@@ -378,7 +378,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-02 v0.3.7->v0.3.8] case "/reelwright/info": return json({ version: "0.3.7", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // [OLD 2026-11-02 v0.3.8->v0.3.9] case "/reelwright/info": return json({ version: "0.3.8", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // [OLD 2026-11-03 v0.3.9->v0.4.0] case "/reelwright/info": return json({ version: "0.3.9", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
-    case "/reelwright/info": return json({ version: "0.4.0", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
+    // [OLD 2026-11-03 v0.4.0->v0.4.1] case "/reelwright/info": return json({ version: "0.4.0", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
+    case "/reelwright/info": return json({ version: "0.4.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -473,6 +474,9 @@ export function createMockHost() {
       const file = u.searchParams.get("filename") || "";
       const sub = u.searchParams.get("subfolder") || "";
       if (/\.(mp4|wav|webm)$/.test(file)) return "";
+      // added 2026-11-03 v0.4.1: text files come back as text so the Files preview shows real content
+      if (/\.(srt|json|otio|fcpxml|txt|log)$/.test(file)) return "data:text/plain;charset=utf-8," + encodeURIComponent(
+        file.endsWith(".srt") ? "1\n00:00:01,000 --> 00:00:03,500\nMara: You came back.\n" : `{"file": ${JSON.stringify(file)}}\n`);
       const sceneId = (sub.match(/scenes\/(s_\d+)/) || [])[1];
       const key = sceneId ? SCENE_ART[sceneId] : FILE_ART[file] || (file.includes("mara") ? "mara" : "pier");
       return art[key] || "";

@@ -355,7 +355,8 @@ function scriptCard(ctx) {
         ids[(c.name || "").toLowerCase()] = id;
         const kind = c.kind || "character";
         p.cast.push({ id, kind, name: c.name || "Unnamed", speaker: kind === "character" ? c.speaker || "S" + (++sn) : "", description: c.description || "",
-          anchors: [], pack_sheet: true, outfits: [], default_outfit: "", voice: "", language: c.language || p.global.defaults.language, lora: { name: "", strength: 0.8 } });
+          // [OLD 2026-11-03 v0.4.0->v0.4.1] anchors: [], pack_sheet: true, outfits: [], ...
+          anchors: [], pack_sheet: "auto", outfits: [], default_outfit: "", voice: "", language: c.language || p.global.defaults.language, lora: { name: "", strength: 0.8 } });
       }
       for (const s of draft.scenes.filter(x => x._on)) {
         const sc = defaultScene(p, { title: s.title || "Imported scene", duration: Number(s.duration) > 0 ? Number(s.duration) : p.global.defaults.duration });
@@ -398,7 +399,8 @@ function scriptCard(ctx) {
         ids[(c.name || "").toLowerCase()] = id;
         const kind = c.kind || "character";
         p.cast.push({ id, kind, name: c.name || "Unnamed", speaker: kind === "character" ? c.speaker || "S" + (++sn) : "", description: c.description || "",
-          anchors: [], pack_sheet: true, outfits: [], default_outfit: "", voice: "", language: c.language || p.global.defaults.language, lora: { name: "", strength: 0.8 } });
+          // [OLD 2026-11-03 v0.4.0->v0.4.1] anchors: [], pack_sheet: true, outfits: [], ...
+          anchors: [], pack_sheet: "auto", outfits: [], default_outfit: "", voice: "", language: c.language || p.global.defaults.language, lora: { name: "", strength: 0.8 } });
       }
       const made = pickedScenes.map(s => {
         const sc = defaultScene(p, { title: s.title || "Imported scene", duration: Number(s.duration) > 0 ? Number(s.duration) : p.global.defaults.duration });
@@ -490,7 +492,8 @@ function infoCard(ctx) {
       row("Reelwright backend", true, "v" + (i.version || "?"), "", "global.info.backend"),
       row("Native MiniMax H3 nodes", i.h3_nodes, "found", "update ComfyUI", "global.info.h3"),
       row("ffmpeg", !!i.ffmpeg, typeof i.ffmpeg === "string" ? i.ffmpeg : "found", "merge needs ffmpeg on PATH", "global.info.ffmpeg"),
-      row("insightface", !!i.insightface, "face checks on", "face checks off", "global.info.insightface"),
+      // [OLD 2026-11-03 v0.4.0->v0.4.1] row("insightface", !!i.insightface, "face checks on", "face checks off", "global.info.insightface"),
+      row("insightface", !!i.insightface, "face checks on", i.insightface_error ? "failed to load: " + i.insightface_error : "face checks off", "global.info.insightface"),
     ] : h("div", { class: "rw-note warn" }, icon("warn", 12), "The Reelwright backend did not answer. Is the node installed and ComfyUI restarted?"),
   });
 }

@@ -36,6 +36,14 @@ DEFAULT_KEEP = {
 AUDIO_PHRASE = {"voice": "the voice reference", "ambience": "the ambience reference",
                 "music": "the music reference", "sfx": "the sound-effect reference"}
 
+# added 2026-11-03 v0.4.1: a written line (by hand or by the LLM rewriter) that starts with a label the editor also
+# writes automatically replaces the automatic line instead of repeating it. Labels count at the start of the text,
+# of a line or of a sentence.
+LABEL_START = re.compile(r"(?:^|(?<=\n)|(?<=[.!?] ))[ \t]*(?P<label><(?:Subject|Picture|Video|Audio) \d+>)")
+SHOT_START = re.compile(r"(?:^|(?<=\n)|(?<=[.!?] ))[ \t]*(?P<label>\[Shot \d+\])")
+DIALOGUE_SPAN = re.compile(r"<d>.*?</d>", re.S)
+LEADING_TAGS = re.compile(r"^\s*\[([a-z +]+)\]\s*")
+
 
 def _retention(ref, asset):
     return ref.get("retention") or asset["defaults"].get("retention") or (
@@ -93,14 +101,33 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=()):
         if sp in cast and not any(c["id"] == sp for c in cast_entries):
             cast_entries.append({"id": sp, "outfit": ""})
 
-    for n, entry in enumerate(e for e in cast_entries if e["id"] in cast):
+    # added 2026-11-03 v0.4.1: anchors first, so "auto" packing can count every picture of the pass
+    entries = []
+    for entry in (e for e in cast_entries if e["id"] in cast):
         c = cast[entry["id"]]
         outfit = next((o for o in c["outfits"] if o["id"] == (entry.get("outfit") or c["default_outfit"])), None)
         anchor_ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image"]
         if outfit:
             anchor_ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in anchor_ids]
+        entries.append((entry, c, outfit, anchor_ids))
+    unpacked = len({a for *_, ids in entries for a in ids}) + len(
+        {r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
+         (r["role"] == "reference" or assets[r["asset"]]["code"].upper() in mentioned_codes)} -
+        {a for *_, ids in entries for a in ids})
+    auto_pack = unpacked > spec.MAX_REF_IMAGES
+
+    # [OLD 2026-11-03 v0.4.0->v0.4.1] for n, entry in enumerate(e for e in cast_entries if e["id"] in cast):
+    #     c = cast[entry["id"]]
+    #     outfit = next((o for o in c["outfits"] if o["id"] == (entry.get("outfit") or c["default_outfit"])), None)
+    #     anchor_ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image"]
+    #     if outfit:
+    #         anchor_ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in anchor_ids]
+    #     first_pic = len(refs.images) + 1
+    #     if anchor_ids and c["pack_sheet"] and len(anchor_ids) > 1:
+    for n, (entry, c, outfit, anchor_ids) in enumerate(entries):
         first_pic = len(refs.images) + 1
-        if anchor_ids and c["pack_sheet"] and len(anchor_ids) > 1:
+        pack = auto_pack if c.get("pack_sheet", True) == "auto" else bool(c.get("pack_sheet", True))
+        if anchor_ids and pack and len(anchor_ids) > 1:
             refs.images.append({"assets": anchor_ids, "cast": c["id"], "ref": None})
         else:
             for a in anchor_ids:
@@ -389,6 +416,62 @@ def _labels(kind, numbers):
     return _join_and("<{} {}>".format(kind, k) for k in numbers)
 
 
+# added 2026-11-03 v0.4.1 (see LABEL_START)
+def _chunks(text, pattern):
+    """(text before the first label, [(label, chunk)]) where each chunk runs up to the next label."""
+    text = "\n".join(line.strip() for line in (text or "").strip().splitlines())
+    found = list(pattern.finditer(text))
+    if not found:
+        return text.strip(), []
+    out = []
+    for i, m in enumerate(found):
+        end = found[i + 1].start() if i + 1 < len(found) else len(text)
+        out.append((m.group("label"), text[m.start("label"):end].strip()))
+    return text[:found[0].start()].strip(), out
+
+
+def _merge(auto, written, pattern, fix=None, pre_first=False):
+    """auto: [(label, line)] from the editor; written: the section's own text. A written chunk replaces the
+    automatic line with the same label; written chunks with other labels follow. Unlabelled text comes first when
+    nothing is automatic or pre_first is set (style sentences before [Shot 1]), last otherwise.
+    fix(label, chunk, auto_line) may amend a chunk."""
+    fix = fix or (lambda label, chunk, line: chunk)
+    pre, chunks = _chunks(written, pattern)
+    if not auto:
+        return ([pre] if pre else []) + [fix(label, c, None) for label, c in chunks]
+    mine = {}
+    for label, c in chunks:
+        mine.setdefault(label, []).append(c)
+    out = []
+    for label, line in auto:
+        if label in mine:
+            out += [fix(label, c, line) for c in mine.pop(label)]
+        else:
+            out.append(line)
+    out += [fix(label, c, None) for label, c in chunks if label in mine]
+    if not pre:
+        return out
+    return [pre] + out if pre_first else out + [pre]
+
+
+def _with_sources(refs):
+    """fix() for subject lines: a written <Subject N> line that names none of the subject's pictures or videos
+    gets ", shown in <Picture k>" so H3 still knows which reference it is (the rewriter used to drop it)."""
+    src = {"<Subject {}>".format(s["number"]): (["<Picture {}>".format(k) for k in s["pictures"]] +
+                                                ["<Video {}>".format(k) for k in s["videos"]],
+                                                _labels("Picture", s["pictures"]) or _labels("Video", s["videos"]))
+           for s in refs.subjects}
+
+    def fix(label, chunk, line):
+        labels, phrase = src.get(label, ([], ""))
+        if not phrase or any(x in chunk for x in labels):
+            return chunk
+        body = chunk.rstrip()
+        end = body[-1] if body and body[-1] in ".!?" else ""
+        return "{}, shown in {}{}".format(body[:-1] if end else body, phrase, end or ".")
+    return fix
+
+
 def speaker_ids(pass_):
     """(S1), (S2)... in the order voices are heard in this pass (ref-en.txt 5.4)."""
     ids = {}
@@ -599,6 +682,13 @@ def _camera_phrase(cam):
 
 def shot_descriptions(p, scene, refs, pass_, ids, unknown):
     """[Shot 1] ... / [Shot N] At MM:SS.mmm, the shot cuts to ... with the lines spoken in each shot."""
+    # [OLD 2026-11-03 v0.4.0->v0.4.1] the lines were built here; the body moved to shot_parts(), which keeps each
+    # shot's spoken lines apart so a written [Shot N] can keep them
+    return [" ".join([x["text"]] + x["dialogue"]) for x in shot_parts(p, scene, refs, pass_, ids, unknown)]
+
+
+# added 2026-11-03 v0.4.1: one entry per shot: {label, text (without dialogue), dialogue: [sentences]}
+def shot_parts(p, scene, refs, pass_, ids, unknown):
     shots = pass_["shots"] or [{"number": 1, "continuing": False, "t": 0.0, "camera": "", "text": ""}]
     sub = lambda t: substitute(t, p, refs, unknown).strip()
     out = []
@@ -622,14 +712,28 @@ def shot_descriptions(p, scene, refs, pass_, ids, unknown):
                 parts.append(_sentence(at + _lower_lead(body or "a new angle")))
                 if cam:
                     parts.append(_sentence(cam))
+        spoken = []
         for d in pass_["dialogue"]:
             if float(d["t"]) < float(sh["t"]) - 1e-6 and n > 1:
                 continue
             if nxt is not None and float(d["t"]) >= float(nxt) - 1e-6:
                 continue
-            parts.append(_dialogue_sentence(p, refs, d, ids))
-        out.append(" ".join(parts))
+            # [OLD 2026-11-03 v0.4.0->v0.4.1] parts.append(_dialogue_sentence(p, refs, d, ids))
+            spoken.append(_dialogue_sentence(p, refs, d, ids))
+        # [OLD 2026-11-03 v0.4.0->v0.4.1] out.append(" ".join(parts))
+        out.append({"label": "[Shot {}]".format(n), "text": " ".join(parts), "dialogue": spoken})
     return out
+
+
+def _keep_dialogue(parts):
+    """fix() for shot lines: a written [Shot N] that left out a spoken line gets it back (word for word)."""
+    spoken = {x["label"]: x["dialogue"] for x in parts}
+
+    def fix(label, chunk, line):
+        missing = [d for d in spoken.get(label, []) if line is not None and
+                   not any(span in chunk for span in DIALOGUE_SPAN.findall(d))]
+        return " ".join([chunk] + missing)
+    return fix
 
 
 def _auto_summary(refs, pass_):
@@ -689,14 +793,32 @@ def build_pass(p, scene, scene_index, plan, pass_):
         sec = {k: substitute(v, p, refs, unknown).strip() for k, v in pr["sections"].items()}
         auto = pr["auto"]
         ids = speaker_ids(pass_)
-        subj = (subject_definitions(p, scene, refs, pass_, ids) if auto.get("subjects") else []) + \
-            ([sec["subject_definitions"]] if sec["subject_definitions"] else [])
-        summary = sec["summary"] or (_auto_summary(refs, pass_) if auto.get("subjects") else "")
+        # [OLD 2026-11-03 v0.4.0->v0.4.1] automatic lines and written sections were simply stacked, so a section the rewriter also wrote
+        # (or a summary that already started with the task tags) appeared twice
+        # subj = (subject_definitions(p, scene, refs, pass_, ids) if auto.get("subjects") else []) + \
+        #     ([sec["subject_definitions"]] if sec["subject_definitions"] else [])
+        # summary = sec["summary"] or (_auto_summary(refs, pass_) if auto.get("subjects") else "")
+        # summary = " ".join(x for x in (tag_line, summary) if x)
+        # ret = (retention_analysis(p, scene, refs, pass_) if auto.get("retention") else []) + \
+        #     ([sec["retention_analysis"]] if sec["retention_analysis"] else [])
+        # desc = ([sec["detailed_description"]] if sec["detailed_description"] else []) + \
+        #     (shot_descriptions(p, scene, refs, pass_, ids, unknown) if auto.get("shots") else [])
+        # [/OLD]
+        # added 2026-11-03 v0.4.1: written lines replace the automatic line with the same label
+        labelled = lambda lines, pattern: [((pattern.match(x).group("label") if pattern.match(x) else ""), x) for x in lines]
+        subj = _merge(labelled(subject_definitions(p, scene, refs, pass_, ids), LABEL_START) if auto.get("subjects") else [],
+                      sec["subject_definitions"], LABEL_START, _with_sources(refs))
+        written = sec["summary"]
+        lead = LEADING_TAGS.match(written)
+        if lead and all(t.strip() in spec.TASK_TAG_ORDER for t in lead.group(1).split("+")):
+            written = written[lead.end():]  # the task tags are always added below
+        summary = written or (_auto_summary(refs, pass_) if auto.get("subjects") else "")
         summary = " ".join(x for x in (tag_line, summary) if x)
-        ret = (retention_analysis(p, scene, refs, pass_) if auto.get("retention") else []) + \
-            ([sec["retention_analysis"]] if sec["retention_analysis"] else [])
-        desc = ([sec["detailed_description"]] if sec["detailed_description"] else []) + \
-            (shot_descriptions(p, scene, refs, pass_, ids, unknown) if auto.get("shots") else [])
+        ret = _merge(labelled(retention_analysis(p, scene, refs, pass_), LABEL_START) if auto.get("retention") else [],
+                     sec["retention_analysis"], LABEL_START)
+        parts = shot_parts(p, scene, refs, pass_, ids, unknown) if auto.get("shots") else []
+        desc = _merge([(x["label"], " ".join([x["text"]] + x["dialogue"])) for x in parts],
+                      sec["detailed_description"], SHOT_START, _keep_dialogue(parts), pre_first=True)
         body = {
             "subject_definitions": "\n".join(subj), "summary": summary, "retention_analysis": "\n".join(ret),
             "detailed_description": "\n".join(desc), "overall_soundscape": sec["overall_soundscape"],
@@ -725,3 +847,58 @@ def build_pass(p, scene, scene_index, plan, pass_):
     return {"prompt": text, "tags": tags, "tag_map": tag_map, "unknown": sorted(set(unknown)),
             "images": refs.images, "videos": refs.videos, "audios": refs.audios,
             "guides": refs.guides, "subjects": refs.subjects}
+
+
+# added 2026-11-03 v0.4.1: clean up what the LLM rewriter returns before it is offered as a proposal.
+SECTION_LABEL = re.compile(r"^[ \t]*(subject_definitions|summary|retention_analysis|detailed_description|"
+                           r"overall_soundscape|non_diegetic_music)[ \t]*:[ \t]*", re.M)
+
+
+def _token(key):
+    """'@Old Keeper' -> '@{Old Keeper}' (tag_map keys hold the plain name)."""
+    name = key[1:]
+    return "@{" + name + "}" if re.search(r"[^\w-]", name) else key
+
+
+def tidy_rewrite(proposal, before, auto, tag_map=None):
+    """proposal / before: the six sections. auto: the scene's automatic parts. tag_map: pass 1's "@P1" -> "<Picture 1>".
+
+    - a whole six-section prompt returned inside one key is split back into its sections;
+    - a value that starts with its own label ("summary: ...") loses the label;
+    - <Subject N>, <Picture N>, <Video N>, <Audio N> are turned back into the @ tokens they stand for, so the text
+      still works when a pass numbers references differently;
+    - parts the editor writes automatically are not taken from the LLM: subject definitions and retention lines
+      keep their previous text, and detailed_description keeps only what comes before [Shot 1].
+    """
+    out = {k: str(proposal.get(k) or "") for k in REF2VA_SECTIONS}
+    given = {k for k in REF2VA_SECTIONS if proposal.get(k) is not None}
+    for k in REF2VA_SECTIONS:
+        found = list(SECTION_LABEL.finditer(out[k]))
+        if len(found) >= 2:  # the whole prompt in one key
+            text = out[k]
+            for i, m in enumerate(found):
+                end = found[i + 1].start() if i + 1 < len(found) else len(text)
+                body = text[m.end():end].strip()
+                if m.group(1) == k or not out[m.group(1)].strip():
+                    out[m.group(1)] = body
+                    given.add(m.group(1))
+        elif len(found) == 1 and found[0].start() == len(out[k]) - len(out[k].lstrip()) and found[0].group(1) == k:
+            out[k] = out[k][found[0].end():]
+    inverse = {}
+    for key, label in (tag_map or {}).items():
+        if key.startswith("@"):
+            inverse.setdefault(label, _token(key))
+    if inverse:
+        pattern = re.compile("|".join(re.escape(x) for x in sorted(inverse, key=len, reverse=True)))
+        out = {k: pattern.sub(lambda m: inverse[m.group(0)], v) for k, v in out.items()}
+    if auto.get("subjects"):
+        out["subject_definitions"] = str(before.get("subject_definitions") or "")
+    if auto.get("retention"):
+        out["retention_analysis"] = str(before.get("retention_analysis") or "")
+    if auto.get("shots"):
+        pre, _ = _chunks(out["detailed_description"], SHOT_START)
+        out["detailed_description"] = pre
+    for k in REF2VA_SECTIONS:  # sections the reply left out keep their text
+        if k not in given and k not in ("subject_definitions", "retention_analysis"):
+            out[k] = str(before.get(k) or "")
+    return {k: v.strip() for k, v in out.items()}

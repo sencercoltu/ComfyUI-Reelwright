@@ -768,6 +768,80 @@ def main():
         page.click("button[data-help='files.expandAll']")
         page.wait_for_timeout(300)
         page.screenshot(path=str(shots / "v040_files.png"))
+
+        # ---- added 2026-11-03 v0.4.1 ----
+        # Files tab preview: a take previews its video in a pane that survives re-renders; files open on click.
+        page.click("button[data-help='files.collapseAll']")
+        page.click("button[data-help='files.order.natural']")
+        page.wait_for_timeout(200)
+        page.click(row("p:harbor_lights") + " .rw-ftree-caret")
+        page.wait_for_timeout(150)
+        page.click(row("o:reelwright/harbor_lights/scenes") + " .rw-ftree-caret")
+        page.wait_for_timeout(150)
+        s2 = "o:reelwright/harbor_lights/scenes/s_02"
+        page.click(row(s2) + " .rw-ftree-caret")
+        page.wait_for_timeout(200)
+        take = [r for r in rows() if r.startswith(s2 + "/takes/") and r.count("/") == 5][0]
+        page.click(row(take) + " button[data-help='files.preview.show']")
+        page.wait_for_timeout(300)
+        st = page.evaluate("""(() => { const v = document.querySelector('.rw-fprev video'); if (!v) return null; v.__mark = 1;
+          return { head: document.querySelector('.rw-fprev-head b').innerText, path: document.querySelector('.rw-fprev-meta div').innerText }; })()""")
+        check(st is not None and st["head"].endswith(".mp4") and st["path"].startswith("output/reelwright/harbor_lights/scenes/s_02"), f"take preview: {st}")
+        page.evaluate("""() => { for (let i = 0; i < 5; i++) window.__host.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_07', pass: 1, passes: 3, step: i, steps: 28, phase: 'sample' }); }""")
+        page.wait_for_timeout(300)
+        check(page.evaluate("document.querySelector('.rw-fprev video')?.__mark === 1"), "preview video was rebuilt by a re-render")
+        page.click(row(take) + " .rw-ftree-caret")
+        page.wait_for_timeout(200)
+        page.locator(row(take + "/first.png") + " .rw-ftree-label").click()
+        page.wait_for_timeout(300)
+        check(page.locator(".rw-fprev img.rw-fprev-media").count() == 1, "picture preview missing")
+        page.click(row("o:reelwright/harbor_lights/cuts") + " .rw-ftree-caret")
+        page.wait_for_timeout(200)
+        cut = [r for r in rows() if r.startswith("cut:")][1]
+        page.click(row(cut) + " .rw-ftree-caret")
+        page.wait_for_timeout(200)
+        srt = [r for r in rows() if r.endswith(".srt")][0]
+        page.locator(row(srt) + " .rw-ftree-label").click()
+        page.wait_for_timeout(400)
+        check(page.locator(".rw-fprev pre.rw-fprev-text").count() == 1, "text preview missing")
+        check("-->" in page.locator(".rw-fprev pre.rw-fprev-text").inner_text(), "srt preview does not show the subtitles")  # added 2026-11-03 v0.4.1
+        page.screenshot(path=str(shots / "v041_files_preview.png"))
+        page.click("button[data-help='files.preview.close']")
+        page.wait_for_timeout(200)
+        check(page.locator(".rw-fprev").count() == 0, "preview did not close")
+
+        # Typing while the editor re-renders keeps every character in place (was "Sencer" -> "Seernc").
+        page.evaluate("""() => { window.__tick = setInterval(() => window.__host.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_07', pass: 1, passes: 3, step: 3, steps: 28, phase: 'sample' }), 60); }""")
+        page.click(".rw-tab:has-text('Cast')")
+        page.wait_for_timeout(300)
+        name = page.locator("input[data-help='cast.name']").first
+        name.click()
+        name.press("Control+a")
+        page.keyboard.type("Sencer", delay=80)
+        page.wait_for_timeout(150)
+        typed = page.evaluate("document.activeElement.value")
+        page.keyboard.press("Enter")
+        page.evaluate("clearInterval(window.__tick)")
+        page.wait_for_timeout(200)
+        check(typed == "Sencer" and page.evaluate("window.__editor.project.cast[0].name") == "Sencer", f"typing during re-renders: {typed!r}")
+        page.keyboard.press("Control+z")
+        page.wait_for_timeout(200)
+
+        # Anchor packing: Auto / One sheet / Separate, with the sheet as the renderer builds it.
+        page.click("button[data-help='cast.anchors.sheet.off']")
+        page.wait_for_timeout(200)
+        check(page.evaluate("window.__editor.project.cast[0].pack_sheet") is False and page.locator(".rw-sheet-img").count() == 0, "separate anchors")
+        page.click("button[data-help='cast.anchors.sheet.on']")
+        page.wait_for_timeout(200)
+        src = page.evaluate("document.querySelector('.rw-sheet-img')?.getAttribute('src') || ''")
+        check(page.evaluate("window.__editor.project.cast[0].pack_sheet") is True and src != "", "one sheet shows the built sheet")
+        page.click("button[data-help='cast.anchors.sheet.auto']")
+        page.wait_for_timeout(200)
+        note = page.locator(".rw-sheet-row .rw-dim.small").first.inner_text()
+        check(page.evaluate("window.__editor.project.cast[0].pack_sheet") == "auto" and "9 pictures" in note, f"auto packing note: {note!r}")
+        size = page.locator("[data-help='cast.anchors.size']").inner_text()
+        check("px" in size, f"anchor size note: {size!r}")
+        page.screenshot(path=str(shots / "v041_cast_sheet.png"))
         browser.close()
     httpd.shutdown()
 

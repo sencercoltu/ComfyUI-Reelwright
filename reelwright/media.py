@@ -46,20 +46,49 @@ def load_image(path):
     return torch.from_numpy(arr)[None]
 
 
+# [OLD 2026-11-03 v0.4.0->v0.4.1] square cells, so portrait anchors were letterboxed (about a fifth of each
+# cell was background); the grid itself is unchanged (columns = ceil(sqrt(n)), any number of pictures)
+# def make_sheet(paths, cell=768):
+#     """Pack several anchor pictures into one grid image (one reference slot)."""
+#     n = len(paths)
+#     cols = math.ceil(math.sqrt(n))
+#     rows = math.ceil(n / cols)
+#     sheet = Image.new("RGB", (cols * cell, rows * cell), (21, 23, 28))
+#     for i, path in enumerate(paths):
+#         with Image.open(path) as im:
+#             im = ImageOps.exif_transpose(im).convert("RGB")
+#             im = ImageOps.contain(im, (cell, cell), Image.LANCZOS)
+#             x = (i % cols) * cell + (cell - im.width) // 2
+#             y = (i // cols) * cell + (cell - im.height) // 2
+#             sheet.paste(im, (x, y))
+#     return torch.from_numpy(np.asarray(sheet, dtype=np.float32) / 255.0)[None]
+# [/OLD]
+def sheet_grid(n):
+    """Columns and rows of an anchor sheet: ceil(sqrt(n)) columns, as many rows as needed. No upper limit."""
+    cols = max(1, math.ceil(math.sqrt(n)))
+    return cols, max(1, math.ceil(n / cols))
+
+
+def sheet_image(paths, cell=768):
+    """The anchor sheet as a PIL image: cells take the median shape of the pictures, each picture centred."""
+    pics = []
+    for path in paths:
+        with Image.open(path) as im:
+            pics.append(ImageOps.exif_transpose(im).convert("RGB"))
+    ratios = sorted(max(0.5, min(2.0, im.width / max(1, im.height))) for im in pics) or [1.0]
+    ratio = ratios[len(ratios) // 2]
+    cw, ch = round(cell * math.sqrt(ratio)), round(cell / math.sqrt(ratio))
+    cols, rows = sheet_grid(len(pics))
+    sheet = Image.new("RGB", (cols * cw, rows * ch), (21, 23, 28))
+    for i, im in enumerate(pics):
+        im = ImageOps.contain(im, (cw, ch), Image.LANCZOS)
+        sheet.paste(im, ((i % cols) * cw + (cw - im.width) // 2, (i // cols) * ch + (ch - im.height) // 2))
+    return sheet
+
+
 def make_sheet(paths, cell=768):
     """Pack several anchor pictures into one grid image (one reference slot)."""
-    n = len(paths)
-    cols = math.ceil(math.sqrt(n))
-    rows = math.ceil(n / cols)
-    sheet = Image.new("RGB", (cols * cell, rows * cell), (21, 23, 28))
-    for i, path in enumerate(paths):
-        with Image.open(path) as im:
-            im = ImageOps.exif_transpose(im).convert("RGB")
-            im = ImageOps.contain(im, (cell, cell), Image.LANCZOS)
-            x = (i % cols) * cell + (cell - im.width) // 2
-            y = (i // cols) * cell + (cell - im.height) // 2
-            sheet.paste(im, (x, y))
-    return torch.from_numpy(np.asarray(sheet, dtype=np.float32) / 255.0)[None]
+    return torch.from_numpy(np.asarray(sheet_image(paths, cell), dtype=np.float32) / 255.0)[None]
 
 
 def frame_to_png(frame, path):

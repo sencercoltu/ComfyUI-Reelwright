@@ -482,7 +482,14 @@ class Renderer:
             "face": {},
         }
         if self.p["global"]["continuity"]["face_check"] and continuity.available():
-            take["face"] = continuity.check_scene(self.p, scene, self.store, os.path.join(tdir, video_name))  # [OLD 2026-11-02] was "video.mp4"
+            # [OLD 2026-11-03 v0.4.0->v0.4.1] take["face"] = continuity.check_scene(self.p, scene, self.store, os.path.join(tdir, video_name))  # [OLD 2026-11-02] was "video.mp4"
+            # added 2026-11-03 v0.4.1: an optional check must not throw away a finished take (an insightface import
+            # error used to stop the run here, before the take was listed)
+            try:
+                take["face"] = continuity.check_scene(self.p, scene, self.store, os.path.join(tdir, video_name))
+            except Exception as e:
+                log.warning("Reelwright: face check skipped for %s: %s", sid, e)
+                self.progress(sid, n_pass, n_pass, "save", message="face check skipped: {}".format(str(e)[:160]))
         meta = dict(take, prompts=sr["prompts"], passes=sr["passes"],
                     settings={k: v for k, v in st.items() if k != "loras"}, loras=st["loras"])
         with open(os.path.join(tdir, "meta.json"), "w", encoding="utf-8") as f:

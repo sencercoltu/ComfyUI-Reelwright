@@ -70,6 +70,7 @@ output, and `video` points at them.
 
 - ✅ Runs only when you press a button. Never during a queue run.
 - ✅ **Rewrite**: optional instruction plus a preset. Shows a diff, and you Accept, Edit or Discard. Tags and `<d>…</d>` dialogue lines are kept exactly as written; this is checked after the rewrite.
+- ✅ Written subject and shot lines replace the automatic line with the same label (no duplicates); a subject line keeps a reference to its pictures; a shot keeps its dialogue. Sections the editor writes automatically are not taken from the rewriter.
 - ✅ **Split prompt**: for long scenes, gives each pass its own prompt with re-based timestamps. A rule-based split is the default; the LLM split is optional.
 - ✅ **Script import**: paste a screenplay (Fountain or plain text). The LLM proposes scenes, shots, dialogue and cast. You review them before they are added, and choose where the scenes go: at the end, right after the selected scene, or in place of all current scenes (asks first; cast, assets and Global stay). Ctrl+Z undoes the import.
 - ✅ **Test connection**, and the model list from `/models`. The test says when the model thinks before answering.
@@ -108,7 +109,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 
 - ✅ Story bible: characters, locations and props.
 - ✅ Character:
-  - anchor set (any number of angles), optionally packed into one 2×2 or 3×3 sheet so it uses 1 picture slot;
+  - anchor set (any number of angles). Packing: *Auto* (one sheet only when the pass would not fit 9 pictures otherwise), *One sheet* (always) or *Separate* (never). A sheet uses 1 picture slot and has no size limit (ceil(√n) columns; cells take the median shape of the anchors); the Cast tab shows the sheet and the pixels each anchor gets, and the Scene tab avatar shows it when packed;
   - description, written into subject definitions, optionally drafted from the anchors with a vision LLM; when it is empty, the description of the first anchor picture that has one is used;
   - outfits, each with its own retention and features to keep;
   - voice reference (speaker IDs are numbered per clip by the prompt builder);
@@ -116,7 +117,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
   - optional identity LoRA, added automatically to every scene the character is in.
 - ✅ Identity always comes from the anchors, never through a chain of rendered frames. Scene 10 gets the same identity inputs as scene 1.
 - ✅ "Re-anchor after N chained scenes": continuation stops passing identity after N scenes in a chain.
-- 🧪 Drift check (optional, needs the `insightface` package): after a render, face similarity against the anchors is compared with a threshold. On drift it flags the scene, or re-renders it with a new seed if you choose that. Without the package the check is shown as unavailable.
+- 🧪 Drift check (optional, needs the `insightface` package): after a render, face similarity against the anchors is compared with a threshold. On drift it flags the scene, or re-renders it with a new seed if you choose that. Without the package the check is shown as unavailable. A check that fails to load or run never fails the render: the take is kept and the reason is shown (Global → About, render progress).
 - ✅ "Promote a rendered frame" turns a frame from a finished take into a new anchor.
 - ✅ Export training set: copies the anchors and the best frames into a folder for ai-toolkit LoRA training.
 
@@ -164,6 +165,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Flags: starred, newest cut, not in the project (deleted scenes, cast members or assets), not in the take list (stopped renders), unfinished merge leftovers, hard links (free nothing alone), intermediate pass videos, assets used or unused.
 - ✅ Tick rows (a folder or take takes everything in it) and delete them, or use the bin on one row. Quick selections: unstarred takes, pass videos, older cuts, autosaves, things the project no longer lists. A confirmation shows the total and what it means for the open project.
 - ✅ Deleting a take also removes it from the scene's take list (the newest remaining take becomes starred). Deleting asset files the open project uses also removes those assets from the project (undoable; the files are not).
+- ✅ Preview (v0.4.1): a file's name or a row's eye shows it beside the tree: picture, video (a take or cut shows its video), audio, or text (first 200 KB).
 - ✅ Safety: only `output/reelwright/<slug>` and `input/reelwright/<slug>` are reachable; every id is checked again on the server; the open project can't be deleted as a whole and its `project.json` is kept; links are removed, not their targets; the open project's rows are locked while it renders.
 
 ## 10. Editor

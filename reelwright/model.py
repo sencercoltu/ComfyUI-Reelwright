@@ -173,6 +173,10 @@ def normalize_project(raw):
                   "language": lang, "lora": {"name": "", "strength": 0.8}})
         for o in c["outfits"]:
             _fill(o, {"id": new_id("o"), "name": "", "retention": "fully_preserved", "keep": [], "assets": []})
+        # added 2026-11-03 v0.4.1: True (one sheet), False (separate pictures) or "auto" (a sheet only when the
+        # pass would not fit H3's 9 pictures otherwise)
+        if c["pack_sheet"] not in (True, False, "auto"):
+            c["pack_sheet"] = True
     if not p["scenes"]:
         p["scenes"].append(default_scene(p, title="Scene 1"))
     return p

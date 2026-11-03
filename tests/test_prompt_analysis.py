@@ -205,3 +205,97 @@ def test_llm_context_uses_live_descriptions(harbor):
     p["assets"][3]["description"] = "a folded letter with a red wax seal"
     ctx = scene_context(p, p["scenes"][0])
     assert "a folded letter with a red wax seal" in ctx and "a woman with a grey wool coat" in ctx
+
+
+# ---- added 2026-11-03 v0.4.1: written sections no longer repeat the automatic ones -------------------------------
+
+def _sections(prompt):
+    out, key = {}, None
+    for line in prompt.split("\n"):
+        if line.rstrip(":") in ("subject_definitions", "summary", "retention_analysis", "detailed_description",
+                                "overall_soundscape", "non_diegetic_music") and line.endswith(":"):
+            key = line[:-1]
+            out[key] = []
+        elif key and line.strip():
+            out[key].append(line)
+    return {k: "\n".join(v) for k, v in out.items()}
+
+
+def test_written_subject_line_replaces_the_automatic_one(harbor):
+    s = harbor["scenes"][1]
+    s["prompt"]["auto"] = {"subjects": True, "retention": True, "shots": True}
+    s["prompt"]["sections"]["subject_definitions"] = "@Mara is a tall woman in a navy coat."
+    s["prompt"]["sections"]["retention_analysis"] = "@Mara (appears in [Shot 1]): fully_preserved - her face is retained."
+    s["prompt"]["sections"]["summary"] = "[reference generation + audio reference + keyframe completion] Mara walks home."
+    b, _ = _build(harbor, 1)
+    sec = _sections(b["prompt"])
+    subj = [x for x in sec["subject_definitions"].split("\n") if x.startswith("<Subject 1>")]
+    assert subj == ["<Subject 1> is a tall woman in a navy coat, shown in <Picture 1>."]  # the picture link is added back
+    assert sec["retention_analysis"].count("<Subject 1> (") == 1 and "her face is retained" in sec["retention_analysis"]
+    assert sec["summary"].count("[") == 1 and sec["summary"].endswith("Mara walks home.")
+
+
+def test_written_subject_line_without_auto_keeps_its_picture(harbor):
+    s = harbor["scenes"][0]
+    s["cast"] = [{"id": "c_mara"}]
+    s["prompt"]["auto"] = {"subjects": False, "retention": False, "shots": False}
+    s["prompt"]["sections"]["subject_definitions"] = "<Subject 1> is Mara, a woman with auburn hair."
+    b, _ = _build(harbor, 0)
+    assert _sections(b["prompt"])["subject_definitions"] == "<Subject 1> is Mara, a woman with auburn hair, shown in <Picture 1>."
+
+
+def test_written_shot_replaces_the_automatic_shot_and_keeps_its_dialogue(harbor):
+    s = harbor["scenes"][1]
+    s["prompt"]["auto"]["shots"] = True
+    s["prompt"]["sections"]["detailed_description"] = "Live-action, soft rain light.\n[Shot 1] A wide shot: @Mara walks along the pier in the drizzle."
+    plan = plan_scene(harbor, s, 1)
+    texts = [build_pass(harbor, s, 1, plan, x)["prompt"] for x in plan["passes"]]
+    first = _sections(texts[0])["detailed_description"].split("\n")
+    assert first[0] == "Live-action, soft rain light." and first[1].startswith("[Shot 1] A wide shot: <Subject 1> walks")
+    assert sum(x.startswith("[Shot 1]") for x in first) == 1
+    # the pass with the spoken line: written [Shot N] lines elsewhere don't drop it
+    spoken = [t for t in texts if "Almost home." in t]
+    assert spoken and all(t.count("<d>[English] Almost home.</d>") == 1 for t in spoken)
+
+
+def test_tidy_rewrite():
+    from reelwright.prompt import tidy_rewrite
+    before = {"subject_definitions": "", "summary": "old", "retention_analysis": "", "detailed_description": "",
+              "overall_soundscape": "", "non_diegetic_music": ""}
+    whole = ("subject_definitions:\n<Subject 1> is Mara, shown in <Picture 1>.\n\nsummary:\n[reference generation] "
+             "<Subject 1> walks home.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - face.\n\n"
+             "detailed_description:\nLive-action.\n[Shot 1] <Subject 1> walks.\n\noverall_soundscape:\nRain.\n\n"
+             "non_diegetic_music:\nN/A")
+    tag_map = {"@Mara": "<Subject 1>", "@P1": "<Picture 1>", "@Old Keeper": "<Subject 2>"}
+    out = tidy_rewrite({"detailed_description": whole}, before, {"subjects": True, "retention": True, "shots": True}, tag_map)
+    assert out["subject_definitions"] == "" and out["retention_analysis"] == ""   # the editor writes these
+    assert out["summary"] == "[reference generation] @Mara walks home."
+    assert out["detailed_description"] == "Live-action." and out["overall_soundscape"] == "Rain."
+    out = tidy_rewrite({"summary": "summary: <Subject 2> waits.", "subject_definitions": "<Subject 2> is old."}, before,
+                       {"subjects": False}, tag_map)
+    assert out["summary"] == "@{Old Keeper} waits." and out["subject_definitions"] == "@{Old Keeper} is old."
+
+
+# added 2026-11-03 v0.4.1: pack_sheet "auto" packs a character's anchors only when the pass would not fit 9 pictures
+def test_auto_packing(harbor):
+    s = harbor["scenes"][0]
+    s["cast"] = [{"id": "c_mara"}]
+    mara = harbor["cast"][0]
+    extra = [{"id": "a_x%d" % i, "code": "", "kind": "image", "name": "x%d" % i, "file": "reelwright/harbor_lights/x%d.png" % i,
+              "width": 800, "height": 1000, "defaults": {"role": "reference", "retention": "fully_preserved", "keep": [], "soundtrack": False}}
+             for i in range(8)]
+    harbor["assets"] += extra
+    from reelwright.model import normalize_project
+    p = normalize_project(harbor)
+    p["cast"][0]["pack_sheet"] = "auto"
+    p["cast"][0]["anchors"] = ["a_front", "a_side"] + [a["id"] for a in extra[:5]]   # 7 anchors
+    b, _ = _build(p, 0)
+    assert [len(x["assets"]) for x in b["images"]] == [1] * 7                          # fits: separate
+    p["scenes"][0]["refs"] = [{"id": "r%d" % i, "asset": a["id"], "role": "reference"} for i, a in enumerate(extra[5:])]
+    b, _ = _build(p, 0)
+    assert [len(x["assets"]) for x in b["images"]] == [7, 1, 1, 1]                     # 10 pictures: the anchors pack
+    assert "<Subject 1> is Mara" in b["prompt"] and "shown in <Picture 1>." in b["prompt"]
+    p["cast"][0]["pack_sheet"] = False
+    assert len(_build(p, 0)[0]["images"]) == 10
+    p["cast"][0]["pack_sheet"] = "nonsense"
+    assert normalize_project(p)["cast"][0]["pack_sheet"] is True

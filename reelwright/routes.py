@@ -68,6 +68,7 @@ def slug_store(slug):
 async def info(request):
     return {"version": VERSION, "ffmpeg": merge.ffmpeg_bin() or False,
             "insightface": continuity.available(),
+            "insightface_error": continuity.error() or "",  # added 2026-11-03 v0.4.1
             "h3_nodes": importlib.util.find_spec("comfy_extras.nodes_minimax_h3") is not None}
 
 
@@ -217,6 +218,32 @@ async def version(request):
     return {"project": store.read_version(request.query.get("name", ""))}
 
 
+# ---- anchor sheet preview (added 2026-11-03 v0.4.1) ------------------------------
+# The exact sheet the renderer sends for a character's anchors (media.sheet_image), as a JPEG.
+
+@routes.get("/reelwright/sheet")
+async def anchor_sheet(request):
+    try:
+        rels = json.loads(request.query.get("files", "[]"))
+        if not isinstance(rels, list) or not rels or len(rels) > 64:
+            raise ValueError("files must be a list of 1-64 input paths")
+        cell = max(64, min(768, int(request.query.get("cell", 256))))
+        paths = [safe_join(roots().input, str(r)) for r in rels]
+        missing = [r for r, path in zip(rels, paths) if not os.path.isfile(path)]
+        if missing:
+            raise FileNotFoundError("missing: " + ", ".join(missing))
+
+        def make():
+            import io as _io
+            buf = _io.BytesIO()
+            media.sheet_image(paths, cell).save(buf, "JPEG", quality=88)
+            return buf.getvalue()
+        return web.Response(body=await asyncio.to_thread(make), content_type="image/jpeg",
+                            headers={"Cache-Control": "no-store"})
+    except (ValueError, FileNotFoundError, json.JSONDecodeError) as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
 # ---- disk use (added 2026-11-03 v0.4.0) --------------------------------------
 # Every Reelwright project's files as a tree, and deleting parts of it (see files.py for what can be deleted).
 
@@ -342,7 +369,10 @@ async def llm_rewrite(request):
     scene = _scene(p, b["scene_id"])
     result = await asyncio.to_thread(analyze, p, store, wired_flags(store))
     prompts = result["scenes"][scene["id"]]["prompts"]
-    return await llm.rewrite(cfg, p, scene, b.get("instruction", ""), prompts[0] if prompts else "")
+    # [OLD 2026-11-03 v0.4.0->v0.4.1] return await llm.rewrite(cfg, p, scene, b.get("instruction", ""), prompts[0] if prompts else "")
+    builds = result["scenes"][scene["id"]]["builds"]  # added 2026-11-03 v0.4.1: labels back to @ tokens
+    return await llm.rewrite(cfg, p, scene, b.get("instruction", ""), prompts[0] if prompts else "",
+                             builds[0]["tag_map"] if builds else None)
 
 
 @routes.post("/reelwright/llm/split")

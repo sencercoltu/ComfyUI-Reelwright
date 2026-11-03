@@ -314,3 +314,41 @@ def test_preview_jpeg_explains_a_previewer_without_image(comfy):
     import torch
     with pytest.raises(RuntimeError, match="WrappedPreviewer.*no image"):
         render.preview_jpeg(WrappedPreviewer(), torch.zeros(1, 4, 2, 8, 8))
+
+
+# added 2026-11-03 v0.4.1: the anchor sheet keeps every anchor (no 3×3 cap) and shapes cells like the pictures
+def test_sheet_image_grid(comfy, tmp_path):
+    from PIL import Image
+    from reelwright import media
+    paths = []
+    for i in range(10):
+        path = str(tmp_path / "a{}.png".format(i))
+        Image.new("RGB", (600, 800), (i * 20, 10, 10)).save(path)
+        paths.append(path)
+    assert media.sheet_grid(9) == (3, 3) and media.sheet_grid(10) == (4, 3) and media.sheet_grid(1) == (1, 1)
+    im = media.sheet_image(paths, cell=100)
+    cw, ch = round(100 * (0.75 ** 0.5)), round(100 / (0.75 ** 0.5))
+    assert im.size == (4 * cw, 3 * ch)
+    assert im.getpixel((3 * cw + cw // 2, 2 * ch + ch // 2)) == (21, 23, 28)        # 10 of 12 cells used
+    assert im.getpixel((cw // 2, ch // 2))[0] == 0 and im.getpixel((cw + cw // 2, ch // 2))[0] == 20
+    t = media.make_sheet(paths[:2], cell=64)
+    assert tuple(t.shape)[0] == 1 and t.shape[-1] == 3
+
+
+# added 2026-11-03 v0.4.1: a failing face check no longer loses the finished take
+def test_face_check_failure_keeps_the_take(stubs, harbor, store, roots, monkeypatch, caplog):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    harbor["global"]["continuity"]["face_check"] = True
+    _real_assets(harbor, roots)
+    monkeypatch.setattr(render.continuity, "available", lambda: True)
+
+    def broken(*a, **k):
+        raise ImportError("cannot import name 'median_blur' from 'albucore'")
+    monkeypatch.setattr(render.continuity, "check_scene", broken)
+    with caplog.at_level("WARNING", logger="reelwright"):
+        render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_one"]}).run()
+    idx = store.read_index("s_one")
+    assert [t["id"] for t in idx["takes"]] == ["v1"] and idx["takes"][0]["face"] == {}
+    assert any("face check skipped" in r.getMessage() for r in caplog.records)
+    assert any(d.get("message", "").startswith("face check skipped") for e, d in events if e == "reelwright.progress")

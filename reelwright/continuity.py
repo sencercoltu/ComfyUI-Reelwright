@@ -7,24 +7,91 @@ unavailable and nothing else changes.
 """
 
 import importlib.util
+import logging  # added 2026-11-03 v0.4.1
 import os
+import sys  # added 2026-11-03 v0.4.1
+import types  # added 2026-11-03 v0.4.1
 
 import numpy as np
 
 from .model import project_index
 
+log = logging.getLogger("reelwright")  # added 2026-11-03 v0.4.1
 _app = None
 _anchor_cache = {}
+_error = None  # added 2026-11-03 v0.4.1: why insightface could not be loaded (shown in Global → About)
 
 
+# [OLD 2026-11-03 v0.4.0->v0.4.1] installed was taken to mean usable; a broken dependency only showed up after a render, as a crash
+# def available():
+#     return importlib.util.find_spec("insightface") is not None and importlib.util.find_spec("onnxruntime") is not None
 def available():
-    return importlib.util.find_spec("insightface") is not None and importlib.util.find_spec("onnxruntime") is not None
+    return _error is None and importlib.util.find_spec("insightface") is not None and importlib.util.find_spec("onnxruntime") is not None
+
+
+def error():
+    """The last reason face checks could not run, or None."""
+    return _error
+
+
+# added 2026-11-03 v0.4.1: insightface 0.7.x imports insightface.app.mask_renderer unconditionally, which imports
+# albumentations for its face-mask augmentation. A mismatched albumentations/albucore pair ("cannot import name
+# 'median_blur' from 'albucore'") then breaks every `import insightface`, although face analysis never uses it
+# (insightface 2.x guards that import). Load it once with a stand-in for albumentations, then put sys.modules back.
+def _albumentations_stub():
+    root = types.ModuleType("albumentations")
+    root.__path__ = []
+    core = types.ModuleType("albumentations.core")
+    core.__path__ = []
+    ti = types.ModuleType("albumentations.core.transforms_interface")
+
+    class ImageOnlyTransform:  # base class of insightface's MaskAugmentation; never instantiated here
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("albumentations is not usable in this environment")
+    ti.ImageOnlyTransform = ImageOnlyTransform
+    root.core, core.transforms_interface = core, ti
+    return {"albumentations": root, "albumentations.core": core, "albumentations.core.transforms_interface": ti}
+
+
+def _face_analysis_class():
+    try:
+        from insightface.app import FaceAnalysis
+        return FaceAnalysis
+    except ImportError as e:
+        tb, files = e.__traceback__, []
+        while tb:
+            files.append(tb.tb_frame.f_code.co_filename)
+            tb = tb.tb_next
+        if not any("albumentations" in f or "albucore" in f for f in files) and "albucore" not in str(e) and "albumentations" not in str(e):
+            raise
+        cause = e
+    saved = {k: v for k, v in sys.modules.items() if k == "albumentations" or k.startswith("albumentations.")}
+    for k in list(sys.modules):  # the failed attempt can leave half-imported modules behind
+        if k in saved or k == "insightface" or k.startswith("insightface."):
+            sys.modules.pop(k, None)
+    stub = _albumentations_stub()
+    sys.modules.update(stub)
+    try:
+        from insightface.app import FaceAnalysis
+    finally:
+        for k, v in stub.items():
+            if sys.modules.get(k) is v:
+                del sys.modules[k]
+        sys.modules.update(saved)
+    log.warning("Reelwright: insightface's optional albumentations import failed (%s); face checks load without it. "
+                "To repair the environment: python -m pip install -U albumentations albucore", cause)
+    return FaceAnalysis
 
 
 def _analyzer():
-    global _app
+    global _app, _error
     if _app is None:
-        from insightface.app import FaceAnalysis
+        # [OLD 2026-11-03 v0.4.0->v0.4.1] from insightface.app import FaceAnalysis
+        try:
+            FaceAnalysis = _face_analysis_class()
+        except Exception as e:
+            _error = "{}: {}".format(type(e).__name__, e)
+            raise
         _app = FaceAnalysis(name="buffalo_l", allowed_modules=["detection", "recognition"])
         _app.prepare(ctx_id=0, det_size=(640, 640))
     return _app

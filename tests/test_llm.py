@@ -32,7 +32,7 @@ def run_with_server(handler, coro_fn):
         await site.start()
         port = site._server.sockets[0].getsockname()[1]
         cfg = {"base_url": "http://127.0.0.1:{}/v1".format(port), "model": "stub", "api_key": "", "temperature": 0.4,
-               "max_tokens": 2048, "thinking": "auto"}
+               "max_tokens": 2048, "thinking": "auto", "preset": "h3_ref2va", "include_guides": False}
         try:
             return await coro_fn(cfg)
         finally:
@@ -115,3 +115,25 @@ def test_connection_test_reports_thinking_model():
     out = run_with_server(handler, llm.test)
     assert out["ok"] and out["thinking"] and out["reply"] == "" and "Thinking" in out["note"]
     assert json.dumps(out)
+
+
+# added 2026-11-03 v0.4.1: the rewrite proposal no longer repeats what the editor writes automatically
+def test_rewrite_is_tidied(harbor):
+    from reelwright.model import normalize_project
+    p = normalize_project(harbor)
+    scene = p["scenes"][1]
+    scene["prompt"]["auto"] = {"subjects": True, "retention": False, "shots": True}
+
+    async def handler(request):
+        whole = ("subject_definitions:\n<Subject 1> is Mara.\n\nsummary:\n[reference generation] <Subject 1> walks home.\n\n"
+                 "retention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - face.\n\n"
+                 "detailed_description:\nLive-action, rain.\n[Shot 1] <Subject 1> walks.\n\noverall_soundscape:\nRain.\n\n"
+                 "non_diegetic_music:\nN/A")
+        return web.json_response(reply(json.dumps({"detailed_description": whole})))
+
+    out = run_with_server(handler, lambda cfg: llm.rewrite(cfg, p, scene, "", "", {"@Mara": "<Subject 1>", "@P1": "<Picture 1>"}))
+    sec = out["sections"]
+    assert sec["subject_definitions"] == scene["prompt"]["sections"]["subject_definitions"]   # auto: kept as it was
+    assert sec["summary"] == "[reference generation] @Mara walks home."
+    assert sec["retention_analysis"] == "@Mara (appears in [Shot 1]): fully_preserved - face."
+    assert sec["detailed_description"] == "Live-action, rain." and sec["overall_soundscape"] == "Rain."

@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.4.1 — 2026-11-03
+
+- **"What H3 receives" no longer repeats sections after a rewrite.** With subject definitions, retention or shot lines set to automatic, a rewritten section used to be added after the automatic lines instead of replacing them, so the same subject or shot appeared twice. Now:
+  - a written `<Subject N>` line or `[Shot N]` replaces the automatic line with the same label; lines with new labels follow;
+  - the rewriter's reply is tidied before it is shown: a whole prompt returned in one field is split back into its sections, `summary:`-style labels are removed, `<Picture N>`-style names are turned back into the `@` tags they stand for, and sections the editor writes automatically keep their previous text;
+  - leading task tags in a written summary are not doubled.
+- **A subject keeps its picture reference.** A written `<Subject N>` line that names none of the subject's pictures or videos gets ", shown in `<Picture k>`" added, so H3 still knows which reference it is. A rewritten `[Shot N]` that drops a spoken `<d>` line gets it back word for word.
+- **Anchor sheets: Auto, One sheet or Separate.** Each character with several anchors has a three-way choice (new characters default to Auto):
+  - *Auto* packs the anchors into one sheet only when the pass would not fit H3's 9 pictures otherwise; when they fit, each anchor is sent on its own at full size;
+  - *One sheet* always packs (existing characters keep this, as before); *Separate* never packs.
+
+  The Cast tab shows the actual sheet the render sends and how many pixels each anchor gets in it, and the Scene tab's cast avatar shows the sheet when it is packed (it used to show the first anchor, which looked as if only that one was sent). Sheets have no 3×3 limit: the grid is ceil(√n) columns, as many rows as needed, and cells take the median shape of the pictures, so portrait anchors are no longer letterboxed into square cells. Each anchor gets less of the picture as the grid grows; the size note says how much.
+- **Files tab: preview.** Click a file's name, or the eye on any row, to see it next to the tree: pictures, videos (a take or cut shows its video), audio, and text files (`.srt`, `.json`, `.otio`, `.fcpxml`, logs; the first 200 KB). The preview stays put while the tree refreshes and has open-in-tab, delete and close buttons.
+- **Typing in a text field during a render no longer scrambles letters.** Progress events re-render the editor many times a second. A field without its own key was rebuilt, focus moved to the new copy, and the caret ended up in the wrong place, so "Sencer" became "Seernc". The focused field is now found again by its help id and position, and keeps what you typed and the caret.
+- **A failed face check no longer fails the render.** insightface 0.7.x imports `albumentations` on load, and a mismatched `albumentations`/`albucore` pair raised `ImportError: cannot import name 'median_blur' from 'albucore'` after the take was saved. Reelwright now:
+  - retries loading insightface without that part (face analysis does not use it);
+  - if the check still can't run, keeps the take, logs a warning and shows "face check skipped" in the render progress;
+  - shows the load error in Global → About instead of just "face checks off".
+- New route `GET /reelwright/sheet?files=[...]&cell=` returns a sheet as JPEG; `/reelwright/info` adds `insightface_error`.
+
 ## v0.4.0 — 2026-11-03
 
 - **New Files tab: disk use, and deleting.** Everything Reelwright wrote to disk, for every project on the server (the open one first), as a tree:

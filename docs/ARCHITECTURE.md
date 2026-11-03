@@ -87,7 +87,7 @@ lives on disk.
   "cast": [
     { "id": "c_1", "kind": "character",                 // character | location | prop
       "name": "Mara", "speaker": "S1", "description": "Woman, early 30s, …",   // speaker is legacy: S-IDs are per clip since v0.2.0
-      "anchors": ["a_1"], "pack_sheet": true,
+      "anchors": ["a_1"], "pack_sheet": true,  // true (one sheet), false (separate) or "auto" (v0.4.1: a sheet only when the pass would not fit 9 pictures)
       "outfits": [ { "id": "o_1", "name": "Navy pea coat", "retention": "fully_preserved", "keep": ["face","hair","coat"], "assets": [] } ],
       "default_outfit": "o_1",
       "voice": "a_7", "language": "English",
@@ -131,7 +131,7 @@ mirrors the defaults).
 
 | Method | Path | Body / query | Returns |
 |---|---|---|---|
-| GET | `/reelwright/info` | – | `{version, ffmpeg, insightface, h3_nodes}` |
+| GET | `/reelwright/info` | – | `{version, ffmpeg, insightface, insightface_error, h3_nodes}`; `insightface_error` (v0.4.1) is why face checks could not load or run, `""` otherwise |
 | GET | `/reelwright/models` | – | `{diffusion_models[], text_encoders[], vae[], loras[], latent_upscale_models[], samplers[], schedulers[]}` |
 | POST | `/reelwright/plan` | `{project}` | `{scenes: {<scene_id>: {passes[], status, key, starred, takes[], issues[], prompts[]}}, issues[], timeline: {starts:{id:t}, total}}` |
 | POST | `/reelwright/upload` | multipart `file`, `slug` | `{asset}` with kind, file, duration, width, height |
@@ -162,6 +162,7 @@ mirrors the defaults).
 | POST | `/reelwright/profiles/delete` | `{id}` | `{profiles, default}` |
 | POST | `/reelwright/profiles/default` | `{id}` (`""` clears) | `{profiles, default}` |
 | GET | `/reelwright/storage?current=<slug>` | – | v0.4.0, `files.scan`: `{projects:[node], size, current}`; node = `{id, label, kind: project\|group\|scene\|take\|passes\|cut\|version\|asset\|dir\|file, size, count, mtime, note, flags[], del, why?, view?, type?, children[]}`. Ids: `p:<slug>` (whole project), `o:<output-rel>`, `i:<input-rel>`, `cut:<slug>:<stem>` (one merged cut and its side files) |
+| GET | `/reelwright/sheet?files=<json list of input-relative paths>&cell=` | – | v0.4.1, JPEG of the anchor sheet `media.sheet_image` builds for those files (≤64, each checked with `safe_join` against the input folder) |
 | POST | `/reelwright/storage/delete` | `{ids[], current}` | `{removed, freed, errors:[{id, error}], deleted[]}`; ids inside another selected id go with it; takes go through `ProjectStore.delete_take`; refuses the open project as a whole, any `project.json`, the open project's `wired.json`, `scenes/*/index.json` and anything outside `reelwright/<slug>/` |
 
 File previews use ComfyUI's own `/view?filename=&subfolder=&type=output|input`.

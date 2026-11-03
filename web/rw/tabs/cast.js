@@ -4,7 +4,8 @@
 import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, confirmInline, chip } from "../ui.js";
 import { rw, viewURL } from "../api.js";
 // [OLD 2026-11-02 v0.3.3->v0.3.4] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes } from "../model.js";
-import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription } from "../model.js";
+// [OLD 2026-11-03 v0.4.0->v0.4.1] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription } from "../model.js";
+import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription, sheetGrid, anchorPixels, sheetURL, castPacks } from "../model.js";
 import { describeBox } from "./assets.js"; // added 2026-11-02 v0.2.0: describe from anchors
 
 const KINDS = [["character", "Characters"], ["location", "Locations"], ["prop", "Props"]];
@@ -21,7 +22,8 @@ function addEntry(ctx, kind) {
   ctx.actions.edit(p => {
     p.cast.push({
       id, kind, name: kind === "character" ? "New character" : kind === "location" ? "New location" : "New prop",
-      speaker: kind === "character" ? nextSpeaker(p) : "", description: "", anchors: [], pack_sheet: true,
+      // [OLD 2026-11-03 v0.4.0->v0.4.1] speaker: kind === "character" ? nextSpeaker(p) : "", description: "", anchors: [], pack_sheet: true,
+      speaker: kind === "character" ? nextSpeaker(p) : "", description: "", anchors: [], pack_sheet: "auto", // auto: added 2026-11-03 v0.4.1
       outfits: [], default_outfit: "", voice: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 },
     });
   });
@@ -73,7 +75,22 @@ function anchorsCard(ctx, c) {
     } catch (err) { ctx.actions.toast("Could not promote the frame: " + err.message, "error"); }
   };
   const anchors = c.anchors.map(id => findAsset(p, id)).filter(Boolean);
-  const sheetN = anchors.length <= 4 ? 2 : 3;
+  // [OLD 2026-11-03 v0.4.0->v0.4.1] const sheetN = anchors.length <= 4 ? 2 : 3;   (the preview stopped at 3×3; the renderer never did)
+  // added 2026-11-03 v0.4.1: the real grid, the sheet as the renderer makes it, and how big each anchor arrives
+  const [cols, rows] = sheetGrid(anchors.filter(a => a.kind === "image").length);
+  const scenesIn = p.scenes.filter(s => s.cast.some(e => e.id === c.id));
+  const packedSomewhere = anchors.length > 1 && (c.pack_sheet === true || (c.pack_sheet === "auto" && scenesIn.some(s => castPacks(p, s, c))));
+  const W = p.global.output.width, H = p.global.output.height, ds = p.global.draft.scale || 0.5;
+  const px = packed => [anchorPixels(p, c, packed, W, H), anchorPixels(p, c, packed, Math.round(W * ds), Math.round(H * ds))];
+  const [fullS, draftS] = px(true), [fullA, draftA] = px(false);
+  const autoScenes = c.pack_sheet === "auto" ? scenesIn.filter(s => castPacks(p, s, c)).length : 0;
+  const packNote = anchors.length < 2 ? "With one anchor there is nothing to pack."
+    : c.pack_sheet === "auto" ? (autoScenes ? `One ${cols}×${rows} sheet in ${autoScenes} of ${scenesIn.length} scene${scenesIn.length === 1 ? "" : "s"} (they would go over 9 pictures); separate pictures elsewhere.`
+      : `Separate pictures: every scene it is in fits within H3's 9 pictures. It switches to a ${cols}×${rows} sheet in a scene that would not.`)
+    : c.pack_sheet ? `Sent as one ${cols}×${rows} image: 1 picture slot instead of ${anchors.length}.`
+      : `Sent as ${anchors.length} separate pictures (${anchors.length} of the 9 slots).`;
+  const sizeNote = anchors.length > 1 && `Each anchor reaches H3 at about ${fullS} px in a sheet (${draftS} px in drafts), ${fullA} px on its own (${draftA} px in drafts)` +
+    (p.global.output.ref_image_size === "max" ? " (reference size: max)." : ". Global → Output → Reference size \"max\" sends them larger, but samples slower.");
   return section({
     title: "Anchors", help: "cast.anchors",
     actions: [
@@ -85,12 +102,25 @@ function anchorsCard(ctx, c) {
         h("span", { class: "rw-anchor-label" }, h("b", { class: "mono rw-c-pic" }, a.code), " ", a.name),
         h("button", { type: "button", class: "rw-anchor-x", "aria-label": "Remove anchor", help: "cast.anchors.remove", onClick: () => edit(x => { x.anchors = x.anchors.filter(y => y !== a.id); }) }, icon("close", 11)))))
         : h("div", { class: "rw-empty sm", help: "cast.anchors" }, "No anchors yet. Add front, ¾, profile and full-body pictures for the strongest identity."),
+      /* [OLD 2026-11-03 v0.4.0->v0.4.1] an on/off toggle and a CSS grid capped at 3×3
       h("div", { class: "rw-sheet-row" },
         h("div", { class: "grow" },
           toggle({ value: c.pack_sheet, label: "Pack into one sheet", help: "cast.anchors.sheet", onChange: v => edit(x => { x.pack_sheet = v; }) }),
           h("div", { class: "rw-dim small" }, c.pack_sheet ? `Sent as one ${sheetN}×${sheetN} image: 1 picture slot instead of ${anchors.length || "N"}.` : `Sent as ${anchors.length} separate pictures.`)),
         c.pack_sheet && anchors.length > 0 && h("div", { class: "rw-sheet", style: { "grid-template-columns": `repeat(${sheetN}, 1fr)` }, help: "cast.anchors.sheet" },
           anchors.slice(0, sheetN * sheetN).map(a => h("img", { src: viewURL(a.file, "input"), alt: "" })))),
+      [/OLD] */
+      h("div", { class: "rw-sheet-row" },
+        h("div", { class: "grow rw-col-tight" },
+          segmented({ small: true, value: c.pack_sheet === "auto" ? "auto" : c.pack_sheet ? "sheet" : "separate", help: "cast.anchors.sheet",
+            onChange: v => edit(x => { x.pack_sheet = v === "auto" ? "auto" : v === "sheet"; }), options: [
+              { value: "auto", label: "Auto", help: "cast.anchors.sheet.auto" },
+              { value: "sheet", label: "One sheet", help: "cast.anchors.sheet.on" },
+              { value: "separate", label: "Separate", help: "cast.anchors.sheet.off" }] }),
+          h("div", { class: "rw-dim small" }, packNote),
+          sizeNote && h("div", { class: ["small", (packedSomewhere ? draftS : draftA) < 200 ? "rw-c-warn" : "rw-dim"], help: "cast.anchors.size" }, sizeNote)),
+        packedSomewhere && h("img", { class: "rw-sheet-img", src: ctx.host.apiURL(sheetURL(p, c, 160)), alt: "", help: "cast.anchors.sheetPreview",
+          onClick: () => window.open(ctx.host.apiURL(sheetURL(p, c, 768)), "_blank", "noopener") })),
       h("div", { class: "rw-row wrap", help: "cast.promote" },
         h("span", { class: "rw-dim small" }, "Promote a rendered frame:"),
         select({ options: scenesWithTakes, value: ctx.eph.promoteScene || scenesWithTakes[0]?.value || "", placeholder: scenesWithTakes.length ? undefined : "no renders yet", help: "cast.promote.scene",

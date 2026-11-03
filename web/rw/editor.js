@@ -417,6 +417,14 @@ export function mountEditor(container, host) {
     const focused = root.querySelector(":focus");
     const focusKey = focused?.dataset?.key;
     const sel = focused && typeof focused.selectionStart === "number" ? [focused.selectionStart, focused.selectionEnd] : null;
+    // added 2026-11-03 v0.4.1: a text field being typed in keeps what is typed. Most fields store their value on
+    // change (Enter or leaving the field), so a re-render in between (progress, plan refresh, autosave status) rebuilt
+    // the field with the stored value and the caret landed in the wrong place: "Sencer" came out as "Seernc".
+    const textField = !!focused?.matches?.("input:not([type=checkbox]):not([type=radio]):not([type=range]), textarea");
+    const typing = textField ? focused.value : null;
+    // a field without a key is found again by its help id and position (it used to lose focus)
+    const helpId = textField && !focusKey ? focused.dataset.help : null;
+    const helpPos = helpId ? [...root.querySelectorAll(`${focused.tagName}[data-help="${CSS.escape(helpId)}"]`)].indexOf(focused) : -1;
 
     renderTabbar();
     const tab = TABS[store.project.ui.tab] || TABS.timeline;
@@ -429,12 +437,16 @@ export function mountEditor(container, host) {
       const s = scroll[el.dataset.scroll];
       if (s) { el.scrollLeft = s[0]; el.scrollTop = s[1]; }
     });
-    if (focusKey) {
-      const el = root.querySelector(`[data-key="${CSS.escape(focusKey)}"]`);
-      if (el) {
+    // [OLD 2026-11-03 v0.4.0->v0.4.1] if (focusKey) {
+    // [OLD 2026-11-03 v0.4.0->v0.4.1]   const el = root.querySelector(`[data-key="${CSS.escape(focusKey)}"]`);
+    if (focusKey || helpPos >= 0) {
+      const el = focusKey ? root.querySelector(`[data-key="${CSS.escape(focusKey)}"]`)
+        : root.querySelectorAll(`${focused.tagName}[data-help="${CSS.escape(helpId)}"]`)[helpPos];
+      if (el && el !== focused) {
         /* [OLD 2026-11-02 v0.1.0->v0.2.0] re-focusing a combobox would reopen its list
         el.focus({ preventScroll: true });
         [/OLD] */
+        if (typing !== null && "value" in el && el.value !== typing) el.value = typing; // added 2026-11-03 v0.4.1
         comboState.restoring = true;
         try { el.focus({ preventScroll: true }); } finally { comboState.restoring = false; }
         if (sel && typeof el.setSelectionRange === "function") { try { el.setSelectionRange(sel[0], sel[1]); } catch { /* not a text field */ } }

@@ -10,6 +10,7 @@ import {
   estimatePasses, sceneStarts, sceneIndex, findAsset, findCast, effective, overrideCount, retentionOptions,
   sceneBudget, tagCandidates, newId, effectiveLoras,
   castDescription, // added 2026-11-02 v0.3.4
+  castPacks, sheetURL, // added 2026-11-03 v0.4.1
 } from "../model.js";
 
 const SECTION_LABEL = {
@@ -485,8 +486,12 @@ function castCard(ctx, s) {
         const c = findCast(p, sc.id);
         if (!c) return null;
         const anchor = findAsset(p, c.anchors[0]);
+        // added 2026-11-03 v0.4.1: when the anchors go as one sheet in this scene, the sheet is what is shown
+        const packed = castPacks(p, s, c);
         return h("div", { class: "rw-list-row" },
-          anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
+          // [OLD 2026-11-03 v0.4.0->v0.4.1] anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
+          packed ? h("img", { class: "rw-avatar sheet", src: ctx.host.apiURL(sheetURL(p, c, 96)), alt: "", help: "scene.cast.sheet" })
+            : anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
           /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are assigned per clip now
           h("div", { class: "grow" }, h("b", null, c.name), h("div", { class: "rw-dim small" }, `${c.kind}${c.speaker ? " · " + c.speaker : ""} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`)),
           [/OLD] */
