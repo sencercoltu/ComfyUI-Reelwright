@@ -26,6 +26,7 @@ import * as assetsTab from "./tabs/assets.js";
 import * as castTab from "./tabs/cast.js";
 import * as renderTab from "./tabs/render.js";
 import * as globalTab from "./tabs/global.js";
+import * as filesTab from "./tabs/files.js"; // added 2026-11-03 v0.4.0
 // [OLD 2026-11-02 v0.3.8->v0.3.9] import { createPreviewView } from "./preview.js"; // added 2026-11-02 v0.3.8
 import { createPreviewView, imageBlob } from "./preview.js"; // added 2026-11-02 v0.3.8; imageBlob added v0.3.9
 
@@ -35,6 +36,7 @@ const TABS = {
   assets: { label: "Assets", icon: "assets", mod: assetsTab },
   cast: { label: "Cast", icon: "cast", mod: castTab },
   render: { label: "Render", icon: "render", mod: renderTab },
+  files: { label: "Files", icon: "disk", mod: filesTab }, // added 2026-11-03 v0.4.0: disk use and deleting
   global: { label: "Global", icon: "global", mod: globalTab },
 };
 
@@ -119,6 +121,8 @@ export function mountEditor(container, host) {
   const actions = ctx.actions = {
     setTab(tab) {
       store.update(p => { p.ui.tab = tab; }, { history: false, plan: false, autosave: false });
+      // added 2026-11-03 v0.4.0: renders, merges and other nodes change the folders; rescan (in the background) on every visit
+      if (tab === "files" && store.eph.files) filesTab.refresh(ctx);
     },
     select(id, tab) {
       store.update(p => { p.ui.selected = id; if (tab) p.ui.tab = tab; }, { history: false, plan: false, autosave: false });

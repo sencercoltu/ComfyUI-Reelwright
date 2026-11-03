@@ -158,6 +158,14 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
   - optional project bundle `.zip`.
 - ✅ Can merge automatically after a queue run (Global → Merge).
 
+## 9a. Files on disk (Files tab, v0.4.0)
+
+- ✅ A tree of everything Reelwright wrote, for every project on the server (the open one first): scenes and their takes (with the starred take marked and pass videos as their own folder), merged cuts grouped by version, autosaved versions, cast training sets and the project's asset folder. Sizes add up from the bottom; each row shows its share of the level above, its file count and date.
+- ✅ Flags: starred, newest cut, not in the project (deleted scenes, cast members or assets), not in the take list (stopped renders), unfinished merge leftovers, hard links (free nothing alone), intermediate pass videos, assets used or unused.
+- ✅ Tick rows (a folder or take takes everything in it) and delete them, or use the bin on one row. Quick selections: unstarred takes, pass videos, older cuts, autosaves, things the project no longer lists. A confirmation shows the total and what it means for the open project.
+- ✅ Deleting a take also removes it from the scene's take list (the newest remaining take becomes starred). Deleting asset files the open project uses also removes those assets from the project (undoable; the files are not).
+- ✅ Safety: only `output/reelwright/<slug>` and `input/reelwright/<slug>` are reachable; every id is checked again on the server; the open project can't be deleted as a whole and its `project.json` is kept; links are removed, not their targets; the open project's rows are locked while it renders.
+
 ## 10. Editor
 
 - ✅ Keyboard (when the node has focus):

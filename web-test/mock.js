@@ -1,10 +1,13 @@
 // Mock host for the editor harness: a demo "Harbor Lights" project, canned
 // /reelwright/* responses, generated preview images and fake progress events.
 
+import { createMockStorage } from "./mock_files.js"; // added 2026-11-03 v0.4.0
+
 const SLUG = "harbor_lights";
 const listeners = {};
 const art = {};
 let projectJSON = "";
+let storage = null; // added 2026-11-03 v0.4.0: mock of the Files tab's routes
 const queued = [];
 
 // ---------- Generated pictures ----------
@@ -374,7 +377,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-02 v0.3.6->v0.3.7] case "/reelwright/info": return json({ version: "0.3.6", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // [OLD 2026-11-02 v0.3.7->v0.3.8] case "/reelwright/info": return json({ version: "0.3.7", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // [OLD 2026-11-02 v0.3.8->v0.3.9] case "/reelwright/info": return json({ version: "0.3.8", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
-    case "/reelwright/info": return json({ version: "0.3.9", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
+    // [OLD 2026-11-03 v0.3.9->v0.4.0] case "/reelwright/info": return json({ version: "0.3.9", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
+    case "/reelwright/info": return json({ version: "0.4.0", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -415,6 +419,9 @@ async function route(path, opts = {}) {
       return json({ removed: before - mockVersions.length, versions: mockVersions });
     }
     case "/reelwright/version": return json({ project: demoProject() });
+    // added 2026-11-03 v0.4.0: Files tab
+    case "/reelwright/storage": return json(storage.tree());
+    case "/reelwright/storage/delete": return json(storage.remove(body.ids || [], body.current));
     // [OLD 2026-11-02 v0.1.0->v0.2.0] case "/reelwright/llm/settings": return json({ base_url: "http://llm.local:30000/v1", model: "qwen3-32b-instruct", has_key: true, ok: true });
     case "/reelwright/llm/settings": return json({ base_url: "http://llm.local:30000/v1", model: "qwen3-32b-instruct", has_key: true, ok: true,
       guides: guidesHave, guide_urls: { "ref-en.txt": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/main/skills/h3-prompt-writing/references/ref-en.txt", "base-en.txt": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/main/skills/h3-prompt-writing/references/base-en.txt" } });
@@ -455,6 +462,8 @@ export function createMockHost() {
   makeArt();
   initTakes();
   projectJSON = JSON.stringify(demoProject());
+  storage = createMockStorage({ slug: SLUG, takes, titles: SCENE_TITLES, versions: () => mockVersions, setVersions: v => { mockVersions = v; },
+    assets: () => { try { return JSON.parse(projectJSON).assets || []; } catch { return []; } } }); // added 2026-11-03 v0.4.0
   return {
     getProject: () => projectJSON,
     setProject: json => { projectJSON = json; },

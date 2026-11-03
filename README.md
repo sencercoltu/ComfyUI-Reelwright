@@ -96,6 +96,9 @@ node. A wired input replaces the matching Global-tab loader.
 Everything is stored in the workflow. The project is also autosaved, with
 versions, under `output/reelwright/<project>/`.
 
+The **Files** tab shows what every project takes on disk (takes, pass videos,
+cuts, autosaves, assets) as a tree, and deletes what you tick.
+
 ### How continuation works
 
 H3 places guide frames at any frame of a generation (`MiniMaxH3AddGuide`).

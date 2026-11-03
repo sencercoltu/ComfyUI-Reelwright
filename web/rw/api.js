@@ -64,6 +64,9 @@ export const rw = {
   deleteProfile: id => req("POST", "/reelwright/profiles/delete", { id }),
   defaultProfile: id => req("POST", "/reelwright/profiles/default", { id }),
   llmTestProject: project => req("POST", "/reelwright/llm/test", { project }),
+  // added 2026-11-03 v0.4.0: disk use of every project, and deleting parts of it
+  storage: current => req("GET", "/reelwright/storage?current=" + q(current)),
+  deleteStorage: (ids, current) => req("POST", "/reelwright/storage/delete", { ids, current }),
 };
 
 // `rel` is a path relative to ComfyUI's input or output folder.

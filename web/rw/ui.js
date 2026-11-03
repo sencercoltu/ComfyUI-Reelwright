@@ -99,6 +99,10 @@ const ICONS = {
   grip: '<circle cx="6" cy="4" r=".9"/><circle cx="10" cy="4" r=".9"/><circle cx="6" cy="8" r=".9"/><circle cx="10" cy="8" r=".9"/><circle cx="6" cy="12" r=".9"/><circle cx="10" cy="12" r=".9"/>',
   clapper: '<rect x="2" y="6" width="12" height="8" rx="1.5"/><path d="M2 6 3.5 2.5h9L14 6M6.5 2.5 5.3 6M10.5 2.5 9.3 6"/>',
   sheet: '<rect x="2" y="2" width="5.5" height="5.5" rx="1"/><rect x="8.5" y="2" width="5.5" height="5.5" rx="1"/><rect x="2" y="8.5" width="5.5" height="5.5" rx="1"/><rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1"/>',
+  // added 2026-11-03 v0.4.0: Files tab
+  disk: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 9.5h12"/><path d="M11 11.3h.8"/>',
+  folder: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/>',
+  file: '<path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/>',
 };
 
 export function icon(name, size = 14) {

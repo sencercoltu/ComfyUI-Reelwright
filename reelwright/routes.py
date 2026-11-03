@@ -16,7 +16,9 @@ from aiohttp import web
 from server import PromptServer
 
 # [OLD 2026-11-02 v0.2.2->v0.3.0] from . import VERSION, assemble, continuity, llm, media, merge
+# [OLD 2026-11-03 v0.3.9->v0.4.0] from . import VERSION, assemble, continuity, llm, media, merge, profiles
 from . import VERSION, assemble, continuity, llm, media, merge, profiles
+from . import files as diskuse  # added 2026-11-03 v0.4.0 ("files" is already the name of a route below)
 from .analysis import analyze, plan_response
 # [OLD 2026-11-02 v0.3.3->v0.3.4] from .model import normalize_project, project_index
 from .model import cast_description, normalize_project, project_index
@@ -213,6 +215,27 @@ async def versions_delete(request):
 async def version(request):
     store = slug_store(request.query.get("slug", ""))
     return {"project": store.read_version(request.query.get("name", ""))}
+
+
+# ---- disk use (added 2026-11-03 v0.4.0) --------------------------------------
+# Every Reelwright project's files as a tree, and deleting parts of it (see files.py for what can be deleted).
+
+@routes.get("/reelwright/storage")
+@json_route
+async def storage_tree(request):
+    current = request.query.get("current", "")
+    return await asyncio.to_thread(diskuse.scan, roots(), check_slug(current) if current else None)
+
+
+@routes.post("/reelwright/storage/delete")
+@json_route
+async def storage_delete(request):
+    b = await body_of(request)
+    current = check_slug(b["current"]) if b.get("current") else None
+    result = await asyncio.to_thread(diskuse.delete, roots(), b.get("ids") or [], current)
+    log.info("Reelwright: deleted %d item(s), %.1f MB freed%s", result["removed"], result["freed"] / 1048576,
+             "; {} refused".format(len(result["errors"])) if result["errors"] else "")
+    return result
 
 
 # ---- LLM -------------------------------------------------------------------

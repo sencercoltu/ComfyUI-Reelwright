@@ -161,6 +161,8 @@ mirrors the defaults).
 | POST | `/reelwright/profiles/save` | `{name, global, id?, default?}` | `{profile, profiles, default}`; with `id` it replaces that profile |
 | POST | `/reelwright/profiles/delete` | `{id}` | `{profiles, default}` |
 | POST | `/reelwright/profiles/default` | `{id}` (`""` clears) | `{profiles, default}` |
+| GET | `/reelwright/storage?current=<slug>` | – | v0.4.0, `files.scan`: `{projects:[node], size, current}`; node = `{id, label, kind: project\|group\|scene\|take\|passes\|cut\|version\|asset\|dir\|file, size, count, mtime, note, flags[], del, why?, view?, type?, children[]}`. Ids: `p:<slug>` (whole project), `o:<output-rel>`, `i:<input-rel>`, `cut:<slug>:<stem>` (one merged cut and its side files) |
+| POST | `/reelwright/storage/delete` | `{ids[], current}` | `{removed, freed, errors:[{id, error}], deleted[]}`; ids inside another selected id go with it; takes go through `ProjectStore.delete_take`; refuses the open project as a whole, any `project.json`, the open project's `wired.json`, `scenes/*/index.json` and anything outside `reelwright/<slug>/` |
 
 File previews use ComfyUI's own `/view?filename=&subfolder=&type=output|input`.
 

@@ -63,7 +63,8 @@ def main():
                 for item in r[k]:
                     problems.append(f"{name}: {k}: {item}")
 
-        for tab in ["Timeline", "Scene", "Assets", "Cast", "Render", "Global"]:
+        # [OLD 2026-11-03 v0.3.9->v0.4.0] for tab in ["Timeline", "Scene", "Assets", "Cast", "Render", "Global"]:
+        for tab in ["Timeline", "Scene", "Assets", "Cast", "Render", "Files", "Global"]:  # Files added 2026-11-03 v0.4.0
             page.click(f".rw-tab:has-text('{tab}')")
             page.mouse.move(1590, 990)
             page.wait_for_timeout(500)

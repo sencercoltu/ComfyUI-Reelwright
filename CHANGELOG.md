@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.4.0 — 2026-11-03
+
+- **New Files tab: disk use, and deleting.** Everything Reelwright wrote to disk, for every project on the server (the open one first), as a tree:
+  - each project, then its scenes and takes (starred take marked; pass videos as their own folder);
+  - merged cuts grouped by version (video plus side files), autosaved versions, cast training sets;
+  - the project's asset folder, each file marked used, unused or not in the project.
+
+  Every row shows its size, its share of the folder above, the number of files and the date. Rows can be sorted in timeline order or largest first. Files can be opened in a new tab.
+- **Deleting:** tick rows (a folder or a take takes everything in it) and press Delete, or use a row's bin. Quick selections add common clean-ups: unstarred takes, pass videos, older cuts, autosaves, and things the project no longer lists. The confirmation shows the total and what it means for the open project.
+  - A deleted take is also removed from its scene's take list; if it was starred, the newest remaining take becomes starred.
+  - Asset files the open project uses are also removed from the project (Ctrl+Z restores the project entries, not the files).
+  - Whole projects other than the open one can be deleted (output and input folders).
+- **Safety:**
+  - only `output/reelwright/<slug>` and `input/reelwright/<slug>` can be named, and the server checks every id again;
+  - the open project can't be deleted as a whole, and every `project.json` is kept;
+  - a symlink is removed, never its target, and hard links are counted as freeing nothing;
+  - the open project's rows are locked while it renders.
+- New routes `GET /reelwright/storage` and `POST /reelwright/storage/delete` (`reelwright/files.py`).
+- Confirmation dialogs keep line breaks in their message.
+
 ## v0.3.9 — 2026-11-02
 
 - **Render-tab preview works with VideoHelperSuite's animated previews turned on.** VHS's "Display animated previews when sampling" setting replaces ComfyUI's `latent_preview.get_previewer`. Its previewer sends its own animated frames to the frontend for whichever node is running, and returns no image. For Reelwright this meant:
