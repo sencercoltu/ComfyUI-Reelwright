@@ -26,7 +26,8 @@ from comfy_extras.nodes_custom_sampler import Guider_Basic, Noise_RandomNoise
 from comfy_extras.nodes_minimax_h3 import MiniMaxH3AddGuide, MiniMaxH3ReferenceToVideo, MiniMaxH3SigmaShift
 from server import PromptServer
 
-from . import assemble, continuity, media, merge, spec
+# [OLD 2026-11-03 v0.4.3->v0.5.0] from . import assemble, continuity, media, merge, spec
+from . import assemble, cache, continuity, media, merge, spec  # cache: added 2026-11-03 v0.5.0 for the soundtrack WAVs
 from .analysis import analyze
 from .model import project_index, slugify  # slugify: added 2026-11-02 v0.2.0 for take file names
 
@@ -251,6 +252,16 @@ class Renderer:
             raise FileNotFoundError("{} ({}) is missing: {}".format(a["code"], a["name"], a["file"]))
         return path
 
+    def _song_path(self, song):
+        """added 2026-11-03 v0.5.0: the part of the soundtrack a pass covers, as a WAV made once and kept under
+        output/reelwright/<project>/soundtrack/."""
+        pieces = []
+        for x in song["pieces"]:
+            path = self._asset_path(x["asset"])
+            pieces.append({"path": path, "src_in": x["src_in"], "src_out": x["src_out"], "at": x["at"]})
+        return merge.render_segment(pieces, song["length"], os.path.join(self.store.dir, "soundtrack"),
+                                    cache.file_digest)
+
     def encode(self, scene, sr, n):
         b = sr["builds"][n]
         x = sr["plan"]["passes"][n]
@@ -265,7 +276,11 @@ class Renderer:
             videos["ref_video_{}".format(k)] = frames
             if v["soundtrack"] and audio is not None:
                 video_audios["ref_video_audio_{}".format(k)] = audio
-        audios = {"ref_audio_{}".format(k): media.load_audio(self._asset_path(a["asset"])) for k, a in enumerate(b["audios"])}
+        # [OLD 2026-11-03 v0.4.3->v0.5.0] audios = {"ref_audio_{}".format(k): media.load_audio(self._asset_path(a["asset"])) for k, a in enumerate(b["audios"])}
+        # added 2026-11-03 v0.5.0: the soundtrack segment is cut to a WAV of its own first
+        audios = {"ref_audio_{}".format(k): media.load_audio(self._song_path(a["song"]) if a.get("song")
+                                                             else self._asset_path(a["asset"]))
+                  for k, a in enumerate(b["audios"])}
         out = MiniMaxH3ReferenceToVideo.execute(
             clip=self.models.clip(st), prompt=b["prompt"], width=st["width"], height=st["height"],
             length=x["gen_frames"], ref_image_size=st["ref_image_size"],

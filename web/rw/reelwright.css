@@ -704,3 +704,40 @@
 .rw-shot-len { flex: none; width: 116px; white-space: nowrap; }
 .rw-overrun { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rw-drawer-fix { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line); }
+
+/* added 2026-11-03 v0.5.0: soundtrack lanes (one per track), waveform clips, track inspector */
+.rw-lane.track { height: 40px; }
+.rw-lane.track.on .rw-lane-head { box-shadow: inset 2px 0 0 var(--aud); }
+.rw-lane.track.add { height: 30px; }
+.rw-lane-head.click { cursor: pointer; }
+.rw-lane-head.click:hover { background: #1d2128; }
+.rw-lane-body.track.add.drop { background: rgba(52, 211, 153, 0.08); box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.45); }
+.rw-track-hint { position: sticky; left: 8px; display: inline-block; margin: 7px 8px; font-size: 10.5px; color: var(--text3); white-space: nowrap; }
+.rw-track-clip { position: absolute; top: 4px; height: 32px; border-radius: 5px; background: rgba(52, 211, 153, 0.1); border: 1px solid rgba(52, 211, 153, 0.42); overflow: hidden; cursor: grab; touch-action: none; }
+.rw-track-clip.on { border: 1.5px solid var(--aud); background: rgba(52, 211, 153, 0.16); }
+.rw-track-clip.drag { cursor: grabbing; z-index: 3; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5); overflow: visible; }
+.rw-track-clip.muted { opacity: 0.4; }
+.rw-track-clip.ghost { cursor: pointer; border-style: dashed; opacity: 0.55; }
+.rw-track-clip.ghost.muted { opacity: 0.25; }
+.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: none; }
+.rw-track-label { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; margin: 2px 4px; padding: 0 5px; border-radius: 3px; background: rgba(11, 12, 15, 0.72); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; position: relative; z-index: 1; }
+.rw-track-label b { color: var(--aud-t); font-weight: 500; }
+.rw-track-flags { color: var(--text3); font-size: 9px; margin-left: 4px; }
+.rw-track-fade { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+.rw-track-fade.in { left: 0; background: linear-gradient(to bottom right, rgba(11, 12, 15, 0.65) 50%, transparent 50%); }
+.rw-track-fade.out { right: 0; background: linear-gradient(to bottom left, rgba(11, 12, 15, 0.65) 50%, transparent 50%); }
+.rw-track-trim { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 2; }
+.rw-track-trim.l { left: 0; } .rw-track-trim.r { right: 0; }
+.rw-track-trim:hover, .rw-track-clip.on .rw-track-trim { background: rgba(52, 211, 153, 0.35); }
+.rw-track-clip .rw-drag-tip { top: 2px; right: auto; left: 8px; }
+.rw-track-mute, .rw-track-add { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 5px; border: 1px solid var(--line3); background: transparent; color: var(--text2); cursor: pointer; }
+.rw-track-mute.on { color: var(--warn); border-color: var(--warn); }
+.rw-track-add:hover, .rw-track-mute:hover { color: var(--aud-t); border-color: var(--aud); }
+.rw-track-insp { overflow: auto; }
+.rw-track-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 10px; }
+.rw-track-grid .rw-field { min-width: 0; flex-direction: column; align-items: stretch; gap: 3px; }
+.rw-track-grid .rw-field-label { width: auto; font-size: 11px; }
+.rw-track-grid .rw-unit-wrap { display: flex; }
+.rw-track-grid .rw-unit-wrap > input { flex: 1 1 auto; min-width: 0; width: auto !important; }
+.rw-track-insp { gap: 6px; }
+.rw-track-insp .rw-toggle-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px 10px; }

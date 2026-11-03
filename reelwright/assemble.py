@@ -4,7 +4,9 @@ import os
 import time
 
 from . import merge, spec
-from .model import project_index
+# [OLD 2026-11-03 v0.4.3->v0.5.0] from .model import project_index
+from . import soundtrack  # added 2026-11-03 v0.5.0
+from .model import project_index, scene_starts
 
 
 def pass_segments(plan, pass_files, crossfade_frames):
@@ -40,6 +42,14 @@ def cut_plan(result, store):
     names = {c["id"]: c["name"] for c in p["cast"]}
     segments, entries, skipped = [], [], []
     prev_included = None
+    # added 2026-11-03 v0.5.0: with a soundtrack every scene must end where the timeline says (scene_starts), so
+    # missing scenes become slates, crossfades and dips stop overlapping the scenes, and takes are fitted
+    locked = soundtrack.locked(p)
+    cut_start = scene_starts(p)[0] if locked else {}
+
+    def cut_end(sc):
+        return cut_start[sc["id"]] + float(sc["duration"])
+
     for i, s in enumerate(p["scenes"]):
         sr = result["scenes"][s["id"]]
         take = pick_take(sr, m["use"])
@@ -47,6 +57,15 @@ def cut_plan(result, store):
         if not path or not os.path.isfile(path):
             if m["missing"] == "block":
                 raise merge.MergeError("{:02d} {} has no finished take".format(i + 1, s["title"]))
+            if locked:  # added 2026-11-03 v0.5.0
+                gap = cut_end(s) - merge.plan_timeline(segments)[1]
+                if gap > 0.5 / spec.FPS:
+                    segments.append({"path": None, "in": 0.0, "out": gap, "join": "first" if not segments else "cut",
+                                     "dur": 0.0})
+                    entries.append(None)
+                skipped.append(s["id"])
+                prev_included = i
+                continue
             if m["missing"] == "slate":
                 segments.append({"path": None, "in": 0.0, "out": float(s["duration"]), "join": "cut", "dur": 0.0})
                 entries.append(None)
@@ -87,16 +106,31 @@ def cut_plan(result, store):
             if hard in ("crossfade", "dip"):
                 prev_len = segments[-1]["out"] - segments[-1]["in"]
                 d = min(int(frames) / spec.FPS, prev_len / 2, (length - seg["in"]) / 2)
-                if d > 0:
+                # [OLD 2026-11-03 v0.4.3->v0.5.0] if d > 0:
+                if d > 0 and locked:  # added 2026-11-03 v0.5.0: a dip through black that keeps the timing
+                    segments[-1]["vfade_out"] = d / 2
+                    seg["vfade_in"] = d / 2
+                elif d > 0:
                     seg["join"] = "xfade" if hard == "crossfade" else "dip"
                     seg["dur"] = d
         afade = (s.get("transition") or {}).get("audio_fade_frames")
         if afade is not None:
             seg["fade"] = int(afade) / spec.FPS  # added 2026-11-02 v0.3.0: per-scene audio fade at its cut
+        gap = 0.0
+        if locked:  # added 2026-11-03 v0.5.0: a take of another length (rendered before the scene changed) is fitted
+            at = merge.plan_timeline(segments + [seg])[0][-1]
+            need = cut_end(s) - at
+            if need < seg["out"] - seg["in"] - 0.5 / spec.FPS:
+                seg["out"] = seg["in"] + max(1.0 / spec.FPS, need)
+            elif need > seg["out"] - seg["in"] + 0.5 / spec.FPS:
+                gap = need - (seg["out"] - seg["in"])
         segments.append(seg)
         lines = [{"t": float(d["t"]), "speaker": names.get(d["speaker"], ""), "text": d["text"]} for d in s["dialogue"]]
         entries.append({"scene_id": s["id"], "title": "{:02d} {}".format(i + 1, s["title"]), "path": path,
                         "src_in": seg["in"], "src_out": seg["out"], "src_len": length, "dialogue": lines})
+        if gap:  # added 2026-11-03 v0.5.0: a take shorter than its scene is followed by a slate
+            segments.append({"path": None, "in": 0.0, "out": gap, "join": "cut", "dur": 0.0})
+            entries.append(None)
         prev_included = i
     return segments, entries, skipped
 
@@ -125,17 +159,34 @@ def merge_project(result, store, progress=None):
         chapters = base + ".chapters.txt"
         merge.write_chapters(real, total, chapters)
         files["chapters"] = chapters
-    score = None
-    if m["score"].get("asset"):
-        a = project_index(p)["assets"].get(m["score"]["asset"])
-        if a and a.get("file"):
-            score = {"path": store.input_path(a["file"]), "volume_db": float(m["score"]["volume_db"]),
-                     "duck": bool(m["score"]["duck"])}
+    # [OLD 2026-11-03 v0.4.3->v0.5.0] score = None
+    # [OLD 2026-11-03 v0.4.3->v0.5.0] if m["score"].get("asset"):
+    # [OLD 2026-11-03 v0.4.3->v0.5.0]     a = project_index(p)["assets"].get(m["score"]["asset"])
+    # [OLD 2026-11-03 v0.4.3->v0.5.0]     if a and a.get("file"):
+    # [OLD 2026-11-03 v0.4.3->v0.5.0]         score = {"path": store.input_path(a["file"]), "volume_db": float(m["score"]["volume_db"]),
+    # [OLD 2026-11-03 v0.4.3->v0.5.0]                  "duck": bool(m["score"]["duck"])}
+    # added 2026-11-03 v0.5.0: the score is a soundtrack track now (model.normalize_project moves it)
+    tracks = []
+    for t in soundtrack.resolved(p):
+        if not t["mix"]:
+            continue
+        path = store.input_path(t["file"])
+        if not os.path.isfile(path):
+            raise merge.MergeError("soundtrack {} is missing: {}".format(t["code"], t["file"]))
+        tracks.append({"path": path, "start": t["start"], "in": t["in"], "length": t["length"],
+                       "volume_db": t["volume_db"], "fade_in": t["fade_in"], "fade_out": t["fade_out"],
+                       "duck": t["duck"], "loop": t["loop"]})
+    sa = m.get("scene_audio") or {"mix": False, "volume_db": -12.0}
     w, h = p["global"]["output"]["width"], p["global"]["output"]["height"]
+    # [OLD 2026-11-03 v0.4.3->v0.5.0] merge.join(segments, files["video"], w, h, progress=progress, codec=m["codec"], crf=m["crf"],
+    # [OLD 2026-11-03 v0.4.3->v0.5.0]            audio_fade_frames=int(m["audio_fade_frames"]),
+    # [OLD 2026-11-03 v0.4.3->v0.5.0]            loudness=float(m["loudness"]) if m["normalize"] else None,
+    # [OLD 2026-11-03 v0.4.3->v0.5.0]            score=score, chapters_file=chapters)
     merge.join(segments, files["video"], w, h, progress=progress, codec=m["codec"], crf=m["crf"],
                audio_fade_frames=int(m["audio_fade_frames"]),
                loudness=float(m["loudness"]) if m["normalize"] else None,
-               score=score, chapters_file=chapters)
+               chapters_file=chapters, tracks=tracks,
+               scene_audio={"mix": bool(sa.get("mix")), "volume_db": float(sa.get("volume_db", -12.0))})
     if m["subtitles"]:
         files["srt"] = base + ".srt"
         merge.write_srt(real, files["srt"])
@@ -151,4 +202,4 @@ def merge_project(result, store, progress=None):
         merge.write_bundle(files["bundle"], {os.path.basename(v): v for k, v in files.items() if k != "bundle"} |
                            {"project.json": project_json})
     return {"files": {k: store.rel_output(v) for k, v in files.items()}, "duration": total,
-            "skipped": skipped, "created": int(time.time())}
+            "skipped": skipped, "created": int(time.time()), "soundtrack": len(tracks)}

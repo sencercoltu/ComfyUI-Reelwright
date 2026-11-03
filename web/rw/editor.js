@@ -198,7 +198,10 @@ export function mountEditor(container, host) {
       const a = findAsset(p, id);
       if (!a) return false;
       const uses = assetUsage(p, id).length, castUses = assetCastUse(p, id).length;
-      const what = [uses ? `${uses} scene reference${uses > 1 ? "s" : ""}` : "", castUses ? `${castUses} cast link${castUses > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ");
+      // [OLD 2026-11-03 v0.4.3->v0.5.0] const what = [uses ? `${uses} scene reference${uses > 1 ? "s" : ""}` : "", castUses ? `${castUses} cast link${castUses > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ");
+      const trackUses = p.soundtrack.filter(t => t.asset === id).length; // added 2026-11-03 v0.5.0
+      const what = [uses ? `${uses} scene reference${uses > 1 ? "s" : ""}` : "", castUses ? `${castUses} cast link${castUses > 1 ? "s" : ""}` : "",
+        trackUses ? `${trackUses} soundtrack track${trackUses > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ");
       if (!(await confirmDialog(root, { title: `Delete ${a.code} “${a.name || a.file}”?`, confirmLabel: "Delete asset",
         message: (what ? `It is removed from the project together with its ${what}. ` : "It is removed from the project. ") +
           "The file stays in ComfyUI's input folder. Ctrl+Z undoes this." }))) return false;
@@ -207,6 +210,7 @@ export function mountEditor(container, host) {
         for (const s of q.scenes) s.refs = s.refs.filter(r => r.asset !== id);
         for (const c of q.cast) { c.anchors = c.anchors.filter(x => x !== id); if (c.voice === id) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => x !== id); }
         if (q.global.merge.score.asset === id) q.global.merge.score.asset = "";
+        q.soundtrack = q.soundtrack.filter(t => t.asset !== id); // added 2026-11-03 v0.5.0
       });
       store.setEph({ selectedAsset: "" });
       actions.toast(`Deleted ${a.code}.`, "info");

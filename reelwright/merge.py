@@ -91,10 +91,17 @@ def plan_timeline(segments):
     return starts, cur
 
 
+# [OLD 2026-11-03 v0.4.3->v0.5.0] def build_command(segments, out_path, width, height, codec="h264", crf=16, audio_fade_frames=6,
+# [OLD 2026-11-03 v0.4.3->v0.5.0]                   loudness=None, score=None, chapters_file=None, ffmpeg=None):
 def build_command(segments, out_path, width, height, codec="h264", crf=16, audio_fade_frames=6,
-                  loudness=None, score=None, chapters_file=None, ffmpeg=None):
+                  loudness=None, score=None, chapters_file=None, ffmpeg=None, tracks=None, scene_audio=None):
     """segments: [{path|None, in, out, has_audio, join: first|cut|xfade|dip, dur, gain: (r,g,b)|None}].
-    A segment with path None is a dark slate of out-in seconds."""
+    A segment with path None is a dark slate of out-in seconds.
+    added 2026-11-03 v0.5.0: a segment's vfade_in / vfade_out (seconds) fade its picture from / to black without
+    overlapping its neighbours (a dip that keeps the timing). tracks: soundtrack files laid on the cut,
+    [{path, start, in, length, volume_db, fade_in, fade_out, duck, loop}]; they are mixed unchanged (loudness
+    normalisation only touches the scenes' sound). scene_audio: {"mix": bool, "volume_db": float}, the scenes' own
+    sound under the tracks."""
     if not segments:
         raise MergeError("nothing to merge")
     ffmpeg = ffmpeg or ffmpeg_bin()
@@ -119,6 +126,7 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
             if seg.get("gain"):
                 r, g, b = seg["gain"]
                 v += ",colorchannelmixer=rr={:.4f}:gg={:.4f}:bb={:.4f}".format(r, g, b)
+            v += _vfades(seg, length)  # added 2026-11-03 v0.5.0
             graph.append(v + "[v{}]".format(k))
             if seg.get("has_audio", True):
                 a = ("[{s}:a]atrim=start={a}:end={b},asetpts=PTS-STARTPTS,aresample={r},"
@@ -158,6 +166,42 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
             graph.append("[{}][a{}]acrossfade=d={}[ac{}]".format(acur, k, _f(seg["dur"]), k))
         vcur, acur = "vc{}".format(k), "ac{}".format(k)
 
+    # added 2026-11-03 v0.5.0: soundtrack tracks. The scenes' sound (the bus built above) is normalised on its own,
+    # set to the scene level and laid under the tracks; the tracks pass through as they are.
+    tracks = [t for t in (tracks or []) if t.get("path") and t.get("length", 0) > 0]
+    if tracks:
+        sa = scene_audio or {"mix": True, "volume_db": 0.0}
+        labels = []
+        for j, t in enumerate(tracks):
+            args += ["-i", t["path"]]
+            labels.append(_track_filter(graph, n_in, j, t, total))
+            n_in += 1
+        scene_bus = None
+        if sa.get("mix"):
+            norm = "loudnorm=I={}:TP=-1.5:LRA=11,aresample={},".format(loudness, AUDIO_RATE) if loudness is not None else ""
+            graph.append("[{}]{}volume={}dB,{}[scn]".format(acur, norm, float(sa.get("volume_db", 0.0)), _PIN))
+            scene_bus = "scn"
+            ducked = [k for k, t in enumerate(tracks) if t.get("duck")]
+            if ducked:
+                graph.append("[scn]asplit={}[scn0]{}".format(len(ducked) + 1, "".join(
+                    "[side{}]".format(k) for k in ducked)))
+                scene_bus = "scn0"
+                for k in ducked:
+                    graph.append("[{}][side{}]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[tdk{}]".format(
+                        labels[k], k, k))
+                    labels[k] = "tdk{}".format(k)
+        else:
+            graph.append("[{}]anullsink".format(acur))
+        ins = ([scene_bus] if scene_bus else []) + labels
+        if len(ins) == 1:
+            graph.append("[{}]{}[aout]".format(ins[0], _PIN))
+        else:
+            # the tracks can overlap each other and the scenes: the sum is limited, never turned down
+            graph.append("{}amix=inputs={}:duration=longest:normalize=0,alimiter=limit=0.98:level=0:latency=1,"
+                         "atrim=duration={},{}[aout]".format("".join("[{}]".format(x) for x in ins), len(ins),
+                                                             _f(total), _PIN))
+        graph.append("[{}]null[vout]".format(vcur))
+        return _finish(args, graph, n_in, chapters_file, codec, crf, total, out_path), starts, total
     if score and score.get("path"):
         args += ["-stream_loop", "-1", "-i", score["path"]]
         sidx = n_in
@@ -184,7 +228,59 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
     else:
         graph.append("[{}]{}[aout]".format(acur, pin))
     graph.append("[{}]null[vout]".format(vcur))
+    # added 2026-11-03 v0.5.0: the output options moved to _finish so the soundtrack branch shares them
+    return _finish(args, graph, n_in, chapters_file, codec, crf, total, out_path), starts, total
 
+
+_PIN = "aformat=sample_fmts=fltp:sample_rates={}:channel_layouts=stereo".format(AUDIO_RATE)
+
+
+def _vfades(seg, length):
+    """added 2026-11-03 v0.5.0: picture fades to / from black inside a segment."""
+    out = ""
+    fi, fo = min(seg.get("vfade_in", 0.0), length / 2), min(seg.get("vfade_out", 0.0), length / 2)
+    if fi > 0:
+        out += ",fade=t=in:st=0:d={}:color=black".format(_f(fi))
+    if fo > 0:
+        out += ",fade=t=out:st={}:d={}:color=black".format(_f(length - fo), _f(fo))
+    return out
+
+
+def _track_filter(graph, src, j, t, total):
+    """added 2026-11-03 v0.5.0: one soundtrack track as a stereo stream exactly `total` seconds long."""
+    start, src_in, length = float(t.get("start", 0.0)), float(t.get("in", 0.0)), float(t["length"])
+    skip = 0.0
+    if start < 0:  # the part before the film is not heard
+        skip, start = -start, 0.0
+    chain = "[{}:a]atrim=start={}:end={},asetpts=PTS-STARTPTS,aresample={},aformat=sample_fmts=fltp:" \
+            "channel_layouts=stereo".format(src, _f(src_in), _f(src_in + length), AUDIO_RATE)
+    play = max(0.0, total - start)
+    if t.get("loop"):
+        chain += ",aloop=loop=-1:size={},asetpts=N/SR/TB".format(max(1, int(round(length * AUDIO_RATE))))
+        if skip:
+            chain += ",atrim=start={},asetpts=PTS-STARTPTS".format(_f(skip))
+        chain += ",atrim=duration={}".format(_f(play))
+        heard = play
+    else:
+        if skip:
+            chain += ",atrim=start={},asetpts=PTS-STARTPTS".format(_f(skip))
+        heard = min(play, max(0.0, length - skip))
+        chain += ",atrim=duration={}".format(_f(heard))
+    if float(t.get("volume_db", 0.0)):
+        chain += ",volume={}dB".format(float(t["volume_db"]))
+    fi, fo = min(float(t.get("fade_in", 0.0)), heard / 2), min(float(t.get("fade_out", 0.0)), heard / 2)
+    if fi > 0 and not skip:
+        chain += ",afade=t=in:d={}".format(_f(fi))
+    if fo > 0:
+        chain += ",afade=t=out:st={}:d={}".format(_f(heard - fo), _f(fo))
+    if start > 0:
+        chain += ",adelay=delays={}:all=1,asetpts=N/SR/TB".format(int(round(start * 1000)))
+    chain += ",apad,atrim=duration={}".format(_f(total))
+    graph.append(chain + "[trk{}]".format(j))
+    return "trk{}".format(j)
+
+
+def _finish(args, graph, n_in, chapters_file, codec, crf, total, out_path):
     if chapters_file:
         args += ["-f", "ffmetadata", "-i", chapters_file]
     args += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map", "[aout]"]
@@ -202,7 +298,78 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
     args += ["-preset", "medium", "-crf", str(int(crf)), "-pix_fmt", "yuv420p", "-r", str(FPS),
              "-c:a", "aac", "-b:a", "192k", "-ar", str(AUDIO_RATE), "-ac", "2", "-movflags", "+faststart",
              "-t", _f(total), out_path]
-    return args, starts, total
+    # [OLD 2026-11-03 v0.4.3->v0.5.0] return args, starts, total
+    return args
+
+
+# ---- soundtrack segments and waveforms (added 2026-11-03 v0.5.0) -------------------------------------------------
+
+def segment_command(pieces, length, out_path, ffmpeg=None):
+    """A WAV of `length` seconds with each piece {path, src_in, src_out, at} placed `at` seconds in, silence
+    elsewhere. The pieces are not changed in level."""
+    ffmpeg = ffmpeg or ffmpeg_bin()
+    if not ffmpeg:
+        raise MergeError("ffmpeg was not found on PATH")
+    args = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-nostats"]
+    graph, labels = [], []
+    for k, x in enumerate(pieces):
+        args += ["-i", x["path"]]
+        chain = "[{}:a]atrim=start={}:end={},asetpts=PTS-STARTPTS,aresample={},aformat=sample_fmts=fltp:" \
+                "channel_layouts=stereo".format(k, _f(x["src_in"]), _f(x["src_out"]), AUDIO_RATE)
+        if x.get("at", 0) > 0:
+            # adelay leaves timestamps that make apad / atrim cut a second short: count samples instead
+            chain += ",adelay=delays={}:all=1,asetpts=N/SR/TB".format(int(round(x["at"] * 1000)))
+        graph.append(chain + "[p{}]".format(k))
+        labels.append("[p{}]".format(k))
+    if not labels:
+        graph.append("anullsrc=r={}:cl=stereo,atrim=duration={}[out]".format(AUDIO_RATE, _f(length)))
+    else:
+        mix = "amix=inputs={}:duration=longest:normalize=0,".format(len(labels)) if len(labels) > 1 else "anull,"
+        graph.append("{}{}apad,atrim=duration={}[out]".format("".join(labels), mix, _f(length)))
+    return args + ["-filter_complex", ";".join(graph), "-map", "[out]", "-c:a", "pcm_s16le", "-ar", str(AUDIO_RATE),
+                   "-ac", "2", out_path]
+
+
+def render_segment(pieces, length, out_dir, file_digest, ffmpeg=None):
+    """The pass's soundtrack WAV, made once: <out_dir>/<hash>.wav, keyed by the source files' bytes and the cuts."""
+    import hashlib
+    key = json.dumps([round(length, 4), [[file_digest(x["path"]), x["src_in"], x["src_out"], x["at"]] for x in pieces]])
+    path = os.path.join(out_dir, hashlib.sha1(key.encode()).hexdigest()[:20] + ".wav")
+    if os.path.isfile(path):
+        return path
+    os.makedirs(out_dir, exist_ok=True)
+    tmp = path[:-4] + ".partial.wav"
+    r = subprocess.run(segment_command(pieces, length, tmp, ffmpeg), capture_output=True, text=True)
+    if r.returncode != 0:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise MergeError("ffmpeg could not cut the soundtrack: " + (r.stderr or "").strip()[-800:])
+    os.replace(tmp, path)
+    return path
+
+
+def waveform_peaks(path, per_second=50, ffmpeg=None, max_seconds=3600):
+    """Peak levels 0-255, `per_second` values per second of the file (mono mix), for the timeline lanes."""
+    ffmpeg = ffmpeg or ffmpeg_bin()
+    if not ffmpeg:
+        raise MergeError("ffmpeg was not found on PATH")
+    rate = 8000
+    r = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-t", str(max_seconds), "-i", path, "-vn",
+                        "-ac", "1", "-ar", str(rate), "-f", "u8", "-"], capture_output=True)
+    if r.returncode != 0:
+        raise MergeError("ffmpeg could not read {}: {}".format(os.path.basename(path),
+                                                               r.stderr.decode(errors="replace").strip()[-400:]))
+    raw = r.stdout
+    step = max(1, rate // int(per_second))
+    try:
+        import numpy as np
+        a = np.abs(np.frombuffer(raw, dtype=np.uint8).astype(np.int16) - 128)
+        n = -(-len(a) // step)
+        a = np.pad(a, (0, n * step - len(a)))
+        peaks = np.minimum(255, 2 * a.reshape(n, step).max(axis=1)).astype(np.uint8).tobytes()
+    except ImportError:
+        peaks = bytes(min(255, 2 * max(abs(b - 128) for b in raw[i:i + step])) for i in range(0, len(raw), step))
+    return {"per_second": rate / step, "duration": len(raw) / rate, "peaks": peaks}
 
 
 def run_ffmpeg(args, total=None, progress=None):

@@ -7,7 +7,9 @@ const tip = (id, text) => { H[id] = { ...(H[id] || {}), tip: text }; };
 const more = (id, title, text, tipText) => { H[id] = { tip: tipText || (H[id]?.tip ?? title), title, more: text }; };
 
 // ---------- Tabs ----------
-more("tab.timeline", "Timeline", "The whole film at a glance. The Scenes lane shows every scene as a block: drag its right edge to change its length, drag the small white triangles inside it to move shot cuts, and click the round chip between two scenes to change how the second one starts (fresh, from the last frame, or from a tail clip).\n\nThe lanes below show what each scene sends to H3: pictures and keyframes (diamonds), video and audio references, dialogue, camera wording and LoRAs. The asset bin on the left lets you drag assets straight onto a scene.\n\nShortcuts: Space play/pause, J back 1 s, K stop, L play, ←/→ one frame (Shift: 1 s), I/O set a loop, M add a marker, S split at the playhead, D duplicate, N new scene, Delete remove, +/− zoom, Ctrl+Z / Ctrl+Shift+Z undo/redo, ? this help.", "Overview of every scene and lane. Press ? for shortcuts.");
+// [OLD 2026-11-03 v0.4.3->v0.5.0] more("tab.timeline", "Timeline", "The whole film at a glance. The Scenes lane shows every scene as a block: drag its right edge to change its length, drag the small white triangles inside it to move shot cuts, and click the round chip between two scenes to change how the second one starts (fresh, from the last frame, or from a tail clip).\n\nThe lanes below show what each scene sends to H3: pictures and keyframes (diamonds), video and audio references, dialogue, camera wording and LoRAs. The asset bin on the left lets you drag assets straight onto a scene.\n\nShortcuts: Space play/pause, J back 1 s, K stop, L play, ←/→ one frame (Shift: 1 s), I/O set a loop, M add a marker, S split at the playhead, D duplicate, N new scene, Delete remove, +/− zoom, Ctrl+Z / Ctrl+Shift+Z undo/redo, ? this help.", "Overview of every scene and lane. Press ? for shortcuts.");
+// added 2026-11-03 v0.5.0: soundtrack lanes
+more("tab.timeline", "Timeline", "The whole film at a glance. The Scenes lane shows every scene as a block: drag its right edge to change its length, drag the small white triangles inside it to move shot cuts, and click the round chip between two scenes to change how the second one starts (fresh, from the last frame, or from a tail clip).\n\nThe lanes below show what each scene sends to H3: pictures and keyframes (diamonds), video and audio references, dialogue, camera wording and LoRAs. The asset bin on the left lets you drag assets straight onto a scene.\n\nSoundtrack lanes (under the scenes) hold audio files laid on the film, such as the song a music video is cut to: drop an audio asset on the Soundtrack lane, drag it into place and trim it there.\n\nShortcuts: Space play/pause, J back 1 s, K stop, L play, ←/→ one frame (Shift: 1 s), I/O set a loop, M add a marker, S split at the playhead, D duplicate, N new scene, Delete remove, +/− zoom, Ctrl+Z / Ctrl+Shift+Z undo/redo, ? this help.", "Overview of every scene and lane. Press ? for shortcuts.");
 more("tab.scene", "Scene", "Everything that defines one scene: its length, how it starts, references, cast, shots, dialogue, prompt, LoRAs and any Global settings it overrides.\n\nA hollow dot means the setting follows the Global tab; a coral dot means this scene overrides it. Use the arrows or the strip at the top to move between scenes.", "Edit the selected scene.");
 more("tab.assets", "Assets", "Pictures, videos and audio clips the project can use as references. Each asset gets a short code (P1, V1, A1) that you can type in prompts as @P1. Defaults set here (role, retention, features to keep) apply wherever the asset is used, unless a scene overrides them.\n\nH3 accepts per generation pass up to 9 pictures, 3 videos and 3 audio clips (2–15 s each, 15 s in total per type) and 12 files overall. The budget table shows where a scene goes over.", "Upload and manage reference images, videos and audio.");
 more("tab.cast", "Cast", "The story bible: characters, locations and props that appear across scenes. A character's anchor pictures, description, voice and identity LoRA are sent to every scene it is tagged in.\n\nThis is how a subject from scene 1 still looks the same in scene 10: identity always comes from the same anchors, never from a chain of rendered frames, so nothing in between can make it drift.", "Characters, locations and props shared across scenes.");
@@ -29,7 +31,8 @@ tip("footer.issues", "The first issue in the project, or confirmation that every
 tip("footer.output", "Output size and quality from the Global tab. H3 always renders 24 fps video with 32 kHz stereo audio.");
 tip("footer.status", "How many scenes have a matching take on disk, are stale (changed since their take) or have never been rendered.");
 tip("footer.running", "The scene, pass and sampling step being rendered right now.");
-tip("footer.length", "Number of scenes, total timeline length, and the length of the final cut after continuation overlaps are trimmed.");
+// [OLD 2026-11-03 v0.4.3->v0.5.0] tip("footer.length", "Number of scenes, total timeline length, and the length of the final cut after continuation overlaps are trimmed.");
+tip("footer.length", "Number of scenes, timeline length and the length of the final cut. They match: a scene that continues the one before starts inside it, over the frames it repeats, so the timeline already is the cut.");
 tip("footer.save", "Edits are written into the workflow immediately and autosaved to output/reelwright/<project>/ every few seconds.");
 
 // ---------- Common ----------
@@ -82,7 +85,8 @@ tip("timeline.transport.prev", "Jump to the start of this scene, or the previous
 tip("timeline.transport.play", "Play or pause (Space). Rendered scenes play their starred take; others advance over the storyboard.");
 tip("timeline.transport.next", "Jump to the start of the next scene.");
 tip("timeline.transport.loop", "Loop the scene under the playhead. I and O set a custom loop range at the playhead.");
-tip("timeline.transport.cut", "Length of the final cut: the timeline minus the overlaps that tail-clip continuations trim away.");
+// [OLD 2026-11-03 v0.4.3->v0.5.0] tip("timeline.transport.cut", "Length of the final cut: the timeline minus the overlaps that tail-clip continuations trim away.");
+tip("timeline.transport.cut", "Length of the final cut. The timeline is the cut: a scene that continues the one before starts inside it, over the frames it repeats.");
 tip("timeline.inspector.index", "Scene number in timeline order.");
 tip("timeline.inspector.duration", "Target length on the timeline, in seconds and frames at 24 fps.");
 tip("timeline.inspector.passes", "How H3 generates this scene: one pass (124–362 frames), several passes for long scenes, or one minimum pass trimmed down for short scenes.");
@@ -469,7 +473,8 @@ tip("render.merge.hardCut", "Default transition at fresh-start seams: plain cut,
 tip("render.merge.transition", "Default length of crossfades and dips, in frames at 24 fps. Scenes can override it.");
 tip("render.merge.audioFade", "Default audio fade at every seam, in frames, to avoid clicks. Scenes that start fresh can override it.");
 tip("render.merge.overrides", "How many scenes set their own transition, length or audio fade. Those scenes ignore the defaults above.");
-tip("render.merge.normalize", "Normalise loudness of the whole film (EBU R128).");
+// [OLD 2026-11-03 v0.4.3->v0.5.0] tip("render.merge.normalize", "Normalise loudness of the whole film (EBU R128).");
+tip("render.merge.normalize", "Normalise loudness of the whole film (EBU R128). With a soundtrack in the cut only the scenes' own sound is normalised; the soundtrack plays as it is.");
 tip("render.merge.loudness", "Target integrated loudness. −16 LUFS suits online video; −23 broadcast.");
 tip("render.merge.score", "Optional music asset that plays under the whole film. Useful because each H3 pass makes its own music.");
 tip("render.merge.scoreVolume", "Level of the score track.");
@@ -679,5 +684,37 @@ tip("files.flag.newest", "The newest merged cut.");
 tip("files.flag.unfinished", "A partial file left by a merge that didn't finish.");
 tip("files.flag.linked", "A hard link: the same bytes are also elsewhere, so deleting this alone frees nothing.");
 tip("files.flag.intermediate", "Only needed while the take was being assembled.");
+
+// ---- soundtrack (added 2026-11-03 v0.5.0) ----
+more("timeline.lane.track", "Soundtrack track", "An audio file laid on the film, on a lane of its own. Drag the clip to move it (it sticks to scene cuts, the playhead and markers; hold Alt to place it freely), drag its left or right edge to trim the start or end of the file, right-click for more. Click it to edit it in the inspector above.\n\nA track can do two things, each with its own switch:\n• In the cut — it plays unchanged in the merged film, at its level and fades. The scenes' own sound is off under it unless you turn it on (Render tab → Merge → Scene sound).\n• Send to H3 — every pass of every scene it sounds under gets exactly the part of it that pass covers (up to 15 s, silence where the track does not play), as an audio reference with the marker you pick (fully_copy by default). H3 then syncs lips, gestures, movement and cuts to it. Cast voice samples are not sent while a scene gets the song.\n\nWhile a soundtrack sets the timing, scenes keep their exact place: transitions into fresh scenes play as a dip through black inside the scenes, and scenes not rendered yet merge as slates of their length. Moving or trimming a track that is sent to H3 makes the passes it covers stale.", "A soundtrack track. Drag to move, drag an edge to trim, click to edit.");
+tip("timeline.lane.addTrack", "Drop an audio asset from the bin here to lay it on the film where you drop it, or use + to pick one. Add as many tracks as you like.");
+tip("timeline.track.add", "Add an audio asset to the soundtrack, starting at 0:00.");
+tip("timeline.track.clip", "Drag to move (sticks to cuts, the playhead and markers; Alt: free). Drag an edge to trim. Click to edit; right-click for more.");
+tip("timeline.track.trimIn", "Drag to trim the start of the file. The rest of the track stays where it is in the film.");
+tip("timeline.track.trimOut", "Drag to trim the end of the file.");
+tip("timeline.track.loop", "The track repeats here (Loop to the end is on).");
+tip("timeline.track.mute", "Mute this track: it is not mixed, not sent to H3 and does not set the timing.");
+tip("timeline.track.delete", "Remove this track from the soundtrack. The audio asset stays in the bin. Ctrl+Z brings it back.");
+tip("timeline.track.asset", "The audio asset this track plays. Changing it resets the trim.");
+tip("timeline.track.start", "Where the track starts in the film (seconds). Below 0 the start of the file is before the film and is not heard.");
+tip("timeline.track.in", "Where in the file the track starts playing (seconds).");
+tip("timeline.track.out", "Where in the file the track stops (seconds). 0 = the end of the file.");
+tip("timeline.track.volume", "Level in the merged film. 0 dB leaves it untouched. The monitor cannot play above 0 dB; the merge can. The part sent to H3 is never changed in level.");
+tip("timeline.track.fades", "Fade in at the track's start and fade out at its end, in the merged film only.");
+tip("timeline.track.length", "How much of the file plays, and how long the file is.");
+tip("timeline.track.mix", "Play this track, unchanged, in the merged film and in the monitor.");
+tip("timeline.track.sync", "Send every pass the part of this track it covers, as an H3 audio reference, so singing, lips, movement and cuts follow it.");
+tip("timeline.track.marker", "How H3 treats the song: fully_copy reuses it as the clip's audio (best for lip sync), partially_copy keeps parts of it, reference and weak_reference only take its feel.");
+tip("timeline.track.duck", "Lower this track while the scenes' own sound is loud (needs Scene sound on in the Merge card).");
+tip("timeline.track.loopToggle", "Repeat the trimmed part until the film ends (a sound bed or a score).");
+tip("timeline.track.toPlayhead", "Move the track so it starts at the playhead.");
+tip("timeline.track.trimHere", "Trim the track's start or end to the playhead.");
+tip("timeline.track.audition", "Play the film from where this track starts.");
+tip("timeline.chip.song", "This scene gets the part of the soundtrack each pass covers, as an audio reference.");
+tip("render.merge.locked", "A soundtrack is on the timeline, so every scene must land at its timeline position for the song to stay in sync.");
+tip("render.merge.soundtrack", "Soundtrack tracks marked In the cut. They play unchanged; edit them on the Timeline tab.");
+tip("render.merge.sceneAudio", "The sound each scene was rendered with, under the soundtrack. Off by default for a music video: H3 copies the song into the scenes, so mixing both would double it.");
+tip("render.merge.sceneLevel", "Level of the scenes' own sound under the soundtrack (loudness normalised first, then this).");
+tip("scene.budget.song", "A soundtrack track is sent to H3 for this scene: each pass gets the part of the song it covers.");
 
 export const HELP = H;

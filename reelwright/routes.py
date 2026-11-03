@@ -267,6 +267,33 @@ async def anchor_sheet(request):
         return web.json_response({"error": str(e)}, status=400)
 
 
+# ---- soundtrack waveforms (added 2026-11-03 v0.5.0) ------------------------------
+# Peak levels of an input audio file for the timeline's soundtrack lanes: u8 values, X-Per-Second of them per second.
+
+_PEAKS = {}
+
+
+@routes.get("/reelwright/waveform")
+async def waveform(request):
+    try:
+        path = safe_join(roots().input, request.query.get("file", ""))
+        if not os.path.isfile(path):
+            raise FileNotFoundError("missing: " + request.query.get("file", ""))
+        per_second = max(10, min(200, int(request.query.get("per_second", 50))))
+        st = os.stat(path)
+        key = (path, st.st_size, st.st_mtime_ns, per_second)
+        if key not in _PEAKS:
+            if len(_PEAKS) > 64:
+                _PEAKS.clear()
+            _PEAKS[key] = await asyncio.to_thread(merge.waveform_peaks, path, per_second)
+        w = _PEAKS[key]
+        return web.Response(body=w["peaks"], content_type="application/octet-stream",
+                            headers={"X-Per-Second": str(w["per_second"]), "X-Duration": str(w["duration"]),
+                                     "Cache-Control": "no-store"})
+    except (ValueError, FileNotFoundError, merge.MergeError) as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
 # ---- disk use (added 2026-11-03 v0.4.0) --------------------------------------
 # Every Reelwright project's files as a tree, and deleting parts of it (see files.py for what can be deleted).
 

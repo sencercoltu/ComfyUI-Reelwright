@@ -11,8 +11,10 @@ import re
 
 from . import spec
 # [OLD 2026-11-02 v0.3.3->v0.3.4] from .model import project_index
-from .model import cast_description, project_index
+# [OLD 2026-11-03 v0.4.3->v0.5.0] from .model import cast_description, project_index
+from .model import cast_description, project_index, scene_starts  # scene_starts: added 2026-11-03 v0.5.0
 from .planner import continuation_depth
+from . import soundtrack  # added 2026-11-03 v0.5.0
 
 TAG_RE = re.compile(r"@\{([^}]+)\}|@([A-Za-z][\w-]*)")
 
@@ -70,6 +72,7 @@ class PassRefs:
         # added 2026-11-02 v0.2.0: reference assets that define reusable visible content are
         # <Subject N> in H3's Ref2VA guide; @P2 then resolves to that subject.
         self.subject_of_asset = {}
+        self.song_number = None  # added 2026-11-03 v0.5.0: <Audio N> of the soundtrack segment
 
     def number(self):
         for k, img in enumerate(self.images, 1):
@@ -83,7 +86,11 @@ class PassRefs:
             self.video_of_asset.setdefault(v["asset"], k)
         for a in self.audios:
             audio_n += 1
-            self.audio_of_asset.setdefault(a["asset"], audio_n)
+            # [OLD 2026-11-03 v0.4.3->v0.5.0] self.audio_of_asset.setdefault(a["asset"], audio_n)
+            if a.get("song"):  # added 2026-11-03 v0.5.0
+                self.song_number = audio_n
+            else:
+                self.audio_of_asset.setdefault(a["asset"], audio_n)
 
     @property
     def file_count(self):
@@ -124,6 +131,9 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=()):
     #         anchor_ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in anchor_ids]
     #     first_pic = len(refs.images) + 1
     #     if anchor_ids and c["pack_sheet"] and len(anchor_ids) > 1:
+    # added 2026-11-03 v0.5.0: the part of the soundtrack this pass covers. It carries the singing, so the cast
+    # voice references are left out when it is sent.
+    song = soundtrack.pass_soundtrack(p, scene_starts(p)[0][scene["id"]], pass_)
     for n, (entry, c, outfit, anchor_ids) in enumerate(entries):
         first_pic = len(refs.images) + 1
         pack = auto_pack if c.get("pack_sheet", True) == "auto" else bool(c.get("pack_sheet", True))
@@ -138,8 +148,11 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=()):
         # [/OLD]
         refs.subjects.append({"cast": c["id"], "ref": None, "asset": None, "number": n + 1, "outfit": outfit,
                               "pictures": list(range(first_pic, len(refs.images) + 1)), "videos": []})
-        if c.get("voice") in assets and assets[c["voice"]]["kind"] == "audio":
+        # [OLD 2026-11-03 v0.4.3->v0.5.0] if c.get("voice") in assets and assets[c["voice"]]["kind"] == "audio":
+        if c.get("voice") in assets and assets[c["voice"]]["kind"] == "audio" and not song:
             refs.audios.append({"asset": c["voice"], "ref": None, "cast": c["id"]})
+    if song:
+        refs.audios.append({"asset": None, "ref": None, "cast": None, "song": song})
 
     guide_only = {"first_frame", "last_frame", "keyframe"}
     for r in scene["refs"]:
@@ -227,6 +240,9 @@ def task_tags(p, scene, refs):
             ret = _retention(ref_by_id.get(v["ref"], {}), a) if v["ref"] else "reference"
             tags.add("audio reuse" if ret in ("fully_copy", "partially_copy") else "audio reference")
     for au in refs.audios:
+        if au.get("song"):  # added 2026-11-03 v0.5.0
+            tags.add("audio reuse" if au["song"]["marker"] in ("fully_copy", "partially_copy") else "audio reference")
+            continue
         a = assets[au["asset"]]
         ret = _retention(ref_by_id.get(au["ref"], {}), a) if au["ref"] else "reference"
         tags.add("audio reuse" if ret in ("fully_copy", "partially_copy") else "audio reference")
@@ -259,6 +275,8 @@ def substitute(text, p, refs, unknown):
             return m.group(0)
         if name.lower() == "tail":
             return "the end of the previous shot"
+        if name.lower() in ("soundtrack", "song") and refs.song_number:  # added 2026-11-03 v0.5.0
+            return "<Audio {}>".format(refs.song_number)
         c = idx["cast_by_name"].get(name.strip().lower())
         if c and c["id"] in subject_of_cast:
             return "<Subject {}>".format(subject_of_cast[c["id"]])
@@ -578,6 +596,10 @@ def subject_definitions(p, scene, refs, pass_, ids):
         if v["soundtrack"]:
             lines.append("<Audio {}> is the synchronized audio track of <Video {}>.".format(v["audio_number"], v_k))
     for au in refs.audios:
+        if au.get("song"):  # added 2026-11-03 v0.5.0
+            lines.append("<Audio {}> is the song this part of the film is cut to; it plays unchanged as the final "
+                         "soundtrack.".format(refs.song_number))
+            continue
         a = assets[au["asset"]]
         n = refs.audio_of_asset[au["asset"]]
         if au["cast"]:
@@ -630,6 +652,11 @@ def retention_analysis(p, scene, refs, pass_):
             lines.append("<Audio {}>: {} - {}.".format(v["audio_number"], ret, _keep_phrase(["the soundtrack of <Video {}>".format(k)], ret)))
     sub_of_cast = {s["cast"]: s["number"] for s in refs.subjects if s["cast"]}
     for au in refs.audios:
+        if au.get("song"):  # added 2026-11-03 v0.5.0
+            ret = au["song"]["marker"]
+            lines.append("<Audio {}>: {} - {}; singing lip movements, gestures, motion and cuts follow its vocals "
+                         "and beat.".format(refs.song_number, ret, _keep_phrase(["its vocals, rhythm and beat"], ret)))
+            continue
         a = assets[au["asset"]]
         n = refs.audio_of_asset[au["asset"]]
         if au["cast"]:
@@ -746,6 +773,9 @@ def _auto_summary(refs, pass_):
     if voice:
         text += " " + _join_and("<Audio {}>".format(refs.audio_of_asset[a["asset"]]) for a in voice) + \
                 (" provides" if len(voice) == 1 else " provide") + " the voice timbre."
+    if refs.song_number:  # added 2026-11-03 v0.5.0
+        text += " The picture is cut to <Audio {}>: mouths, movement and cuts follow its vocals and beat.".format(
+            refs.song_number)
     return text
 
 
@@ -834,6 +864,8 @@ def build_pass(p, scene, scene_index, plan, pass_):
         tag_map["@" + idx["assets"][aid]["code"]] = "<Video {}>".format(k)
     for aid, k in refs.audio_of_asset.items():
         tag_map["@" + idx["assets"][aid]["code"]] = "<Audio {}>".format(k)
+    if refs.song_number:  # added 2026-11-03 v0.5.0
+        tag_map["@soundtrack"] = "<Audio {}>".format(refs.song_number)
     # [OLD 2026-11-02 v0.1.0->v0.2.0] reference subjects have no cast entry
     # for s in refs.subjects:
     #     tag_map["@" + idx["cast"][s["cast"]]["name"]] = "<Subject {}>".format(s["number"])

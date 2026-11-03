@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.5.0 — 2026-11-03
+
+- **Soundtrack lanes: cut a film to a song.** Audio files can now be laid on the timeline, each on its own lane under the scenes, with its waveform. Add as many as you like:
+  - drop an audio asset from the bin on the **Soundtrack** lane, or use its **+**;
+  - drag a clip to move it (it sticks to scene cuts, the playhead and markers; Alt places it freely);
+  - drag its edges to trim the start or end of the file;
+  - click it to edit the rest in the inspector: start, in, out, level, fades, mute, loop, and the two switches below.
+- **Send to H3** (on by default). Every pass of every scene the track sounds under gets exactly the part of the song that pass covers, cut to the pass's generated frames (up to 15 s, silence where the track does not play). It goes to H3 as an audio reference, marked `fully_copy` unless you pick another marker, so singing lips, gestures, movement and cuts follow the vocals and beat.
+  - The prompt says so: `<Audio N> is the song this part of the film is cut to…`, a retention line for it, and `@soundtrack` in your own text becomes that `<Audio N>`.
+  - Cast voice samples are not sent while a scene gets the song (it carries the singing).
+  - The WAV for each pass is made once, under `output/reelwright/<project>/soundtrack/`.
+  - Moving or trimming the track makes only the passes it covers stale; its level and fades don't.
+- **In the cut** (on by default). The track plays unchanged in the merged film: no loudness normalisation, no ducking unless you ask, at its own level and fades (0 dB and none by default).
+  - The scenes' own sound is **off** under a soundtrack by default (H3 copies the song into the scenes, so mixing both would double it).
+  - Render → Merge → **Scene sound** turns it on, with a level (−12 dB by default). Loudness normalisation then applies to the scenes' sound only. A track can duck under it.
+  - The monitor plays the tracks with the takes, at the same levels.
+- **The timeline is the cut.** A scene that continues the one before (tail clip or last frame) now starts inside it, over the frames it repeats, exactly where the merge puts it. Before, the timeline laid scenes end to end and the finished cut was shorter, so a song laid on the timeline would have drifted. The scene blocks start where each scene becomes visible; the tail clip is drawn under the end of the scene it repeats.
+- **While a soundtrack sets the timing, every scene keeps its place in the merge.**
+  - Crossfades and dips into fresh scenes play as a dip through black inside the two scenes instead of overlapping them.
+  - Scenes not rendered yet merge as slates of their length (unless the merge is set to Block).
+  - A take of another length (rendered before the scene changed) is trimmed or followed by a slate.
+- **The old merge score is now a soundtrack track.** A project with a score track opens with it as a looping track, in the cut and not sent to H3, with the same level and ducking. Scene sound stays on, as it was under a score.
+- New route `GET /reelwright/waveform?file=&per_second=` (peak levels of an input audio file). `merge.build_command` takes `tracks` and `scene_audio`; segments can carry `vfade_in` / `vfade_out`.
+- Deleting an audio asset removes its soundtrack tracks (Ctrl+Z brings both back). The Files tab counts soundtrack use, and the Merge card no longer prints a stray "0" when no scene sets its own cut.
+
 ## v0.4.3 — 2026-11-03
 
 - **Imported scenes no longer have shots after their end.** A scene made from several timed rows of a script could come back with the wrong length: for example a 68 s chorus came back as 30 s, with shots starting up to 61.8 s. Those shots were never rendered.

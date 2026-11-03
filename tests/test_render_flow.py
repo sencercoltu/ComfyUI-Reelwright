@@ -50,7 +50,9 @@ def stubs(comfy, monkeypatch):
     def fake_ref2v(**kw):
         calls["encode"].append({"prompt": kw["prompt"], "length": kw["length"],
                                 "images": sorted(kw["ref_images"] or {}), "videos": sorted(kw["ref_videos"] or {}),
-                                "video_audios": sorted(kw["ref_video_audios"] or {}), "audios": sorted(kw["ref_audios"] or {})})
+                                "video_audios": sorted(kw["ref_video_audios"] or {}), "audios": sorted(kw["ref_audios"] or {}),
+                                # added 2026-11-03 v0.5.0: seconds of each reference audio
+                                "audio_secs": [round(a["waveform"].shape[-1] / a["sample_rate"], 3) for a in (kw["ref_audios"] or {}).values()]})
         return types.SimpleNamespace(result=([["cond", {}]], {"samples": torch.zeros(1), "frames": kw["length"],
                                                              "size": (kw["width"], kw["height"])}))
 
@@ -352,3 +354,40 @@ def test_face_check_failure_keeps_the_take(stubs, harbor, store, roots, monkeypa
     assert [t["id"] for t in idx["takes"]] == ["v1"] and idx["takes"][0]["face"] == {}
     assert any("face check skipped" in r.getMessage() for r in caplog.records)
     assert any(d.get("message", "").startswith("face check skipped") for e, d in events if e == "reelwright.progress")
+
+
+# added 2026-11-03 v0.5.0: a song on the soundtrack is cut per pass, sent as the pass's audio reference, mixed in the cut
+def test_render_with_a_soundtrack(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    from reelwright import assemble, merge, spec
+    from reelwright.analysis import analyze
+    from reelwright.model import normalize_project
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    song = "reelwright/harbor_lights/song.wav"
+    subprocess.run([merge.ffmpeg_bin(), "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=60", "-ac", "2",
+                    os.path.join(roots.input, song)], check=True)
+    harbor["assets"].append({"id": "a_song", "kind": "audio", "name": "song", "file": song, "duration": 60.0})
+    harbor["soundtrack"] = [{"asset": "a_song", "start": 0.0}]
+    p = normalize_project(harbor)
+    done = render.Renderer(p, store, {}, {"action": "pending"}).run()
+    assert done == ["s_one", "s_long", "s_short"]
+    plans = analyze(p, store)["scenes"]
+    lengths = [min(spec.REF_MEDIA_MAX_SECONDS, x["gen_frames"] / spec.FPS) for sid in done for x in plans[sid]["plan"]["passes"]]
+    assert len(calls["encode"]) == len(lengths)
+    for enc, want in zip(calls["encode"], lengths):
+        assert "Audio" in enc["prompt"] and "is the song this part of the film is cut to" in enc["prompt"]
+        assert want in [pytest.approx(x, abs=0.01) for x in enc["audio_secs"]]
+    assert len(calls["encode"][1]["audios"]) == 1  # the long scene sends the song, not Mara's voice
+    wavs = os.listdir(os.path.join(store.dir, "soundtrack"))
+    assert len(wavs) == len(lengths)  # one WAV per pass: each covers another part of the song
+    assert all(w.endswith(".wav") and ".partial" not in w for w in wavs)
+    # every scene is cached: moving the song makes them stale again
+    assert all(s["status"] == "cached" for s in analyze(p, store)["scenes"].values())
+    p["soundtrack"][0]["start"] = 0.5
+    assert all(s["status"] == "stale" for s in analyze(p, store)["scenes"].values())
+    p["soundtrack"][0]["start"] = 0.0
+    out = assemble.merge_project(analyze(p, store), store)
+    assert out["soundtrack"] == 1
+    from reelwright.model import scene_starts
+    assert out["duration"] == pytest.approx(scene_starts(p)[1], abs=0.05)

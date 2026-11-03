@@ -4,7 +4,8 @@
 // [OLD 2026-11-02 v0.3.5->v0.3.6] import { h, icon, button, toggle, segmented, select, number, section, field, dot, confirmInline, slider } from "../ui.js";
 import { h, icon, button, toggle, segmented, select, number, section, field, dot, confirmInline, slider, confirmDialog } from "../ui.js";
 import { rw, viewURL } from "../api.js";
-import { continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, overlapSeconds } from "../model.js";
+// [OLD 2026-11-03 v0.4.3->v0.5.0] import { continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, overlapSeconds } from "../model.js";
+import { continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, overlapSeconds, soundtrackLocked, playingTracks } from "../model.js";
 
 const STATUS = {
   cached: ["ok", "on disk"], locked: ["ok", "locked"], stale: ["warn", "stale"], pending: ["empty", "not rendered"],
@@ -259,7 +260,11 @@ function mergeCard(ctx) {
   const audio = p.assets.filter(a => a.kind === "audio").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
   const ready = p.scenes.map(s => ({ s, ok: !!ctx.starredTake(s.id) }));
   const nReady = ready.filter(r => r.ok).length;
-  const cutLen = ready.reduce((t, r, i) => t + (r.ok || m.missing !== "skip" ? r.s.duration - (i > 0 ? overlapSeconds(r.s) : 0) : 0), 0);
+  // [OLD 2026-11-03 v0.4.3->v0.5.0] const cutLen = ready.reduce((t, r, i) => t + (r.ok || m.missing !== "skip" ? r.s.duration - (i > 0 ? overlapSeconds(r.s) : 0) : 0), 0);
+  // added 2026-11-03 v0.5.0: with a soundtrack the cut keeps the timeline's length (missing scenes become slates)
+  const locked = soundtrackLocked(p);
+  const mixed = playingTracks(p).filter(x => x.t.mix);
+  const cutLen = locked ? sceneStarts(p).total : ready.reduce((t, r, i) => t + (r.ok || m.missing !== "skip" ? r.s.duration - (i > 0 ? overlapSeconds(r.s) : 0) : 0), 0);
   const res = ctx.eph.merge;
   // added 2026-11-02 v0.3.0: scenes whose Start card overrides the cut defaults
   const overrides = p.scenes.filter((s, i) => i > 0 && s.transition && (s.transition.mode || s.transition.frames != null || s.transition.audio_fade_frames != null)).length;
@@ -270,6 +275,8 @@ function mergeCard(ctx) {
     children: [
       field("Use", segmented({ small: true, value: m.use, help: "render.merge.use", options: [{ value: "starred", label: "Starred takes" }, { value: "latest", label: "Latest takes" }], onChange: v => set(x => { x.use = v; }) }), { help: "render.merge.use" }),
       field("Not ready", segmented({ small: true, value: m.missing, help: "render.merge.missing", options: [{ value: "skip", label: "Skip" }, { value: "slate", label: "Slate" }, { value: "block", label: "Block" }], onChange: v => set(x => { x.missing = v; }) }), { help: "render.merge.missing" }),
+      // added 2026-11-03 v0.5.0
+      locked && h("div", { class: "rw-dim small", help: "render.merge.locked" }, "A soundtrack sets the timing: scenes not rendered yet merge as slates of their length, and crossfades and dips play as a dip through black inside the scenes."),
       h("div", { class: "rw-subhead" }, "Seams"),
       /* [OLD 2026-11-02 v0.2.2->v0.3.0] labels did not say that each scene can override these
       field("Hard cuts", segmented({ small: true, value: m.hard_cut, help: "render.merge.hardCut", options: [{ value: "cut", label: "Cut" }, { value: "crossfade", label: "Crossfade" }, { value: "dip", label: "Dip to black" }], onChange: v => set(x => { x.hard_cut = v; }) }), { help: "render.merge.hardCut" }),
@@ -280,13 +287,21 @@ function mergeCard(ctx) {
       field("Hard cuts · default", segmented({ small: true, value: m.hard_cut, help: "render.merge.hardCut", options: [{ value: "cut", label: "Cut" }, { value: "crossfade", label: "Crossfade" }, { value: "dip", label: "Dip to black" }], onChange: v => set(x => { x.hard_cut = v; }) }), { help: "render.merge.hardCut" }),
       field("Transition · default", number({ value: m.transition_frames, min: 0, max: 96, unit: "f", help: "render.merge.transition", onChange: v => set(x => { x.transition_frames = v ?? 12; }) }), { help: "render.merge.transition" }),
       field("Audio fade · default", number({ value: m.audio_fade_frames, min: 0, max: 48, unit: "f", help: "render.merge.audioFade", onChange: v => set(x => { x.audio_fade_frames = v ?? 6; }) }), { help: "render.merge.audioFade" }),
-      overrides && h("div", { class: "rw-dim small", help: "render.merge.overrides" }, `${overrides} scene${overrides > 1 ? "s" : ""} set their own cut`),
+      // [OLD 2026-11-03 v0.4.3->v0.5.0] overrides && h("div", { class: "rw-dim small", help: "render.merge.overrides" }, `${overrides} scene${overrides > 1 ? "s" : ""} set their own cut`),
+      overrides > 0 && h("div", { class: "rw-dim small", help: "render.merge.overrides" }, `${overrides} scene${overrides > 1 ? "s" : ""} set their own cut`), // 0 was printed as "0"
       h("div", { class: "rw-subhead" }, "Audio"),
       field("Normalize", h("span", { class: "rw-row" }, toggle({ value: m.normalize, help: "render.merge.normalize", onChange: v => set(x => { x.normalize = v; }) }),
         number({ value: m.loudness, min: -40, max: -5, step: 0.5, unit: "LUFS", help: "render.merge.loudness", onChange: v => set(x => { x.loudness = v ?? -16; }) })), { help: "render.merge.normalize" }),
+      /* [OLD 2026-11-03 v0.4.3->v0.5.0] the score track is a soundtrack track on the Timeline now (an old project's score moves there on load)
       field("Score track", select({ options: audio, value: m.score.asset, placeholder: "none", help: "render.merge.score", onChange: v => set(x => { x.score.asset = v; }) }), { help: "render.merge.score" }),
       m.score.asset && field("Score level", h("span", { class: "rw-row" }, number({ value: m.score.volume_db, min: -40, max: 6, step: 0.5, unit: "dB", help: "render.merge.scoreVolume", onChange: v => set(x => { x.score.volume_db = v ?? -12; }) }),
         toggle({ value: m.score.duck, label: "duck under dialogue", help: "render.merge.duck", onChange: v => set(x => { x.score.duck = v; }) })), { help: "render.merge.scoreVolume" }),
+      [/OLD] */
+      // added 2026-11-03 v0.5.0: soundtrack tracks play unchanged; the scenes' own sound can be laid under them
+      field("Soundtrack", h("span", { class: "rw-row" }, h("span", { class: mixed.length ? "rw-c-aud" : "rw-dim" }, mixed.length ? `${mixed.length} track${mixed.length > 1 ? "s" : ""} in the cut, unchanged` : "none in the cut"),
+        button({ label: "Timeline", icon: "timeline", small: true, variant: "link", help: "render.merge.soundtrack", onClick: () => ctx.actions.setTab("timeline") })), { help: "render.merge.soundtrack" }),
+      mixed.length > 0 && field("Scene sound", h("span", { class: "rw-row" }, toggle({ value: m.scene_audio.mix, label: m.scene_audio.mix ? "under the soundtrack" : "off", help: "render.merge.sceneAudio", onChange: v => set(x => { x.scene_audio.mix = v; }) }),
+        m.scene_audio.mix && number({ value: m.scene_audio.volume_db, min: -40, max: 6, step: 0.5, unit: "dB", help: "render.merge.sceneLevel", onChange: v => set(x => { x.scene_audio.volume_db = v ?? -12; }) })), { help: "render.merge.sceneAudio" }),
       h("div", { class: "rw-subhead" }, "Picture"),
       field("Colour match", h("span", { class: "rw-row" }, toggle({ value: m.color_match, help: "render.merge.color", onChange: v => set(x => { x.color_match = v; }) }),
         m.color_match && select({ options: p.scenes.map(s => ({ value: s.id, label: s.title })), value: m.color_ref_scene, placeholder: "first scene", help: "render.merge.colorRef", onChange: v => set(x => { x.color_ref_scene = v; }) })), { help: "render.merge.color" }),
@@ -301,10 +316,13 @@ function mergeCard(ctx) {
         toggle({ value: m.bundle, label: "Project bundle .zip", help: "render.merge.bundle", onChange: v => set(x => { x.bundle = v; }) }),
         toggle({ value: m.auto_after_render, label: "Merge after each render", help: "render.merge.auto", onChange: v => set(x => { x.auto_after_render = v; }) })),
       h("div", { class: "rw-ready", help: "render.merge.ready" }, ready.map(r => h("span", { class: ["rw-ready-seg", r.ok ? "ok" : "no"], style: { "flex-grow": String(r.s.duration) }, title: r.s.title }))),
-      button({ label: res?.phase === "start" || res?.phase === "progress" ? `Merging… ${res.percent ? Math.round(res.percent) + "%" : ""}` : `Merge ${m.missing === "skip" ? nReady : p.scenes.length} scenes · ${fmtTime(cutLen)}`,
+      // [OLD 2026-11-03 v0.4.3->v0.5.0] button({ label: res?.phase === "start" || res?.phase === "progress" ? `Merging… ${res.percent ? Math.round(res.percent) + "%" : ""}` : `Merge ${m.missing === "skip" ? nReady : p.scenes.length} scenes · ${fmtTime(cutLen)}`,
+      // added 2026-11-03 v0.5.0: with a soundtrack missing scenes merge as slates
+      button({ label: res?.phase === "start" || res?.phase === "progress" ? `Merging… ${res.percent ? Math.round(res.percent) + "%" : ""}` : `Merge ${m.missing === "skip" && !locked ? nReady : p.scenes.length} scenes · ${fmtTime(cutLen)}`,
         icon: "merge", variant: "primary", help: "render.merge.run", disabled: res?.phase === "start" || res?.phase === "progress" || (m.missing === "block" && nReady < p.scenes.length) || nReady === 0,
         onClick: () => ctx.actions.merge() }),
-      h("div", { class: "rw-dim small", style: { "text-align": "center" } }, nReady < p.scenes.length ? `${p.scenes.length - nReady} scene${p.scenes.length - nReady > 1 ? "s" : ""} not rendered yet · ${m.missing}` : "Every scene has a take."),
+      // [OLD 2026-11-03 v0.4.3->v0.5.0] h("div", { class: "rw-dim small", style: { "text-align": "center" } }, nReady < p.scenes.length ? `${p.scenes.length - nReady} scene${p.scenes.length - nReady > 1 ? "s" : ""} not rendered yet · ${m.missing}` : "Every scene has a take."),
+      h("div", { class: "rw-dim small", style: { "text-align": "center" } }, nReady < p.scenes.length ? `${p.scenes.length - nReady} scene${p.scenes.length - nReady > 1 ? "s" : ""} not rendered yet · ${locked && m.missing !== "block" ? "slate (soundtrack)" : m.missing}` : "Every scene has a take."),
       res?.phase === "error" && h("div", { class: "rw-note err" }, icon("warn", 12), res.error),
       res?.files && h("div", { class: "rw-files" }, fileLink("Video", res.files.video), fileLink("Subtitles", res.files.srt), fileLink("OTIO", res.files.otio),
         fileLink("FCPXML", res.files.fcpxml), fileLink("Chapters", res.files.chapters), fileLink("Bundle", res.files.bundle)),
@@ -380,11 +398,13 @@ function versionsCard(ctx) {
 }
 
 export function render(ctx) {
-  const scoreMissing = ctx.p.global.merge.score.asset && !findAsset(ctx.p, ctx.p.global.merge.score.asset);
+  // [OLD 2026-11-03 v0.4.3->v0.5.0] const scoreMissing = ctx.p.global.merge.score.asset && !findAsset(ctx.p, ctx.p.global.merge.score.asset);
+  const scoreMissing = ctx.p.soundtrack.some(t => !findAsset(ctx.p, t.asset)); // added 2026-11-03 v0.5.0
   return h("div", { class: "rw-render-tab" },
     scopeBar(ctx),
     runBanner(ctx),
-    scoreMissing && h("div", { class: "rw-banner warn" }, icon("warn", 13), "The score track points at a deleted asset."),
+    // [OLD 2026-11-03 v0.4.3->v0.5.0] scoreMissing && h("div", { class: "rw-banner warn" }, icon("warn", 13), "The score track points at a deleted asset."),
+    scoreMissing && h("div", { class: "rw-banner warn" }, icon("warn", 13), "A soundtrack track points at a deleted audio asset (Timeline tab)."),
     h("div", { class: "rw-cols", dataset: { scroll: "render-cols" } },
       h("div", { class: "rw-col wide" }, takesTable(ctx), compareCard(ctx), chainsCard(ctx), memoryCard(ctx), seamCard(ctx)),
       h("div", { class: "rw-col mid" }, mergeCard(ctx), versionsCard(ctx))));

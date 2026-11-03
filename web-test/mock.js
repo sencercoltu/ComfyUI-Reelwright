@@ -413,7 +413,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-03 v0.4.0->v0.4.1] case "/reelwright/info": return json({ version: "0.4.0", ffmpeg: "ffmpeg 8.0", insightface: true, h3_nodes: true });
     // [OLD 2026-11-03 v0.4.1->v0.4.2] case "/reelwright/info": return json({ version: "0.4.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // [OLD 2026-11-03 v0.4.2->v0.4.3] case "/reelwright/info": return json({ version: "0.4.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
-    case "/reelwright/info": return json({ version: "0.4.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
+    // [OLD 2026-11-03 v0.4.3->v0.5.0] case "/reelwright/info": return json({ version: "0.4.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
+    case "/reelwright/info": return json({ version: "0.5.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -456,6 +457,20 @@ async function route(path, opts = {}) {
     case "/reelwright/version": return json({ project: demoProject() });
     // added 2026-11-03 v0.4.0: Files tab
     case "/reelwright/storage": return json(storage.tree());
+    // added 2026-11-03 v0.5.0: a fake song: beats every half second over a slow swell, 120 s
+    case "/reelwright/waveform": {
+      const ps = Number(url.searchParams.get("per_second")) || 50;
+      const seed = [...(url.searchParams.get("file") || "")].reduce((a, c) => a + c.charCodeAt(0), 0);
+      const n = 120 * ps;
+      const peaks = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const t = i / ps;
+        const beat = Math.exp(-((t * 2) % 1) * 6);
+        const swell = 0.75 + 0.2 * Math.sin(t / 7 + seed);
+        peaks[i] = Math.min(255, Math.round(255 * (swell * (0.55 + 0.45 * beat)) * (0.85 + 0.15 * Math.sin(i * 12.9898 + seed))));
+      }
+      return new Response(peaks, { status: 200, headers: { "X-Per-Second": String(ps), "X-Duration": "120" } });
+    }
     case "/reelwright/storage/delete": return json(storage.remove(body.ids || [], body.current));
     // [OLD 2026-11-02 v0.1.0->v0.2.0] case "/reelwright/llm/settings": return json({ base_url: "http://llm.local:30000/v1", model: "qwen3-32b-instruct", has_key: true, ok: true });
     case "/reelwright/llm/settings": return json({ base_url: "http://llm.local:30000/v1", model: "qwen3-32b-instruct", has_key: true, ok: true,

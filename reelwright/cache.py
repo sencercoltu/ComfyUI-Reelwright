@@ -10,6 +10,8 @@ import hashlib
 import json
 import os
 
+from . import soundtrack  # added 2026-11-03 v0.5.0
+
 _memo = {}
 
 
@@ -62,7 +64,11 @@ def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pas
         "prompt": build["prompt"],
         "images": [[asset_digest(a) for a in img["assets"]] for img in build["images"]],
         "videos": [[asset_digest(v["asset"]), v["soundtrack"]] for v in build["videos"]],
-        "audios": [asset_digest(a["asset"]) for a in build["audios"]],
+        # [OLD 2026-11-03 v0.4.3->v0.5.0] "audios": [asset_digest(a["asset"]) for a in build["audios"]],
+        # added 2026-11-03 v0.5.0: the soundtrack segment is keyed by what it plays, so moving or trimming a track
+        # re-renders only the passes it covers
+        "audios": [soundtrack.digest(a["song"], asset_digest) if a.get("song") else asset_digest(a["asset"])
+                   for a in build["audios"]],
         "guides": guides,
     })
 

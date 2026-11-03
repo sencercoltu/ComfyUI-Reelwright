@@ -74,7 +74,8 @@ lives on disk.
     "merge": { "use": "starred", "missing": "skip",                 // skip | slate | block
                "hard_cut": "cut", "transition_frames": 12,           // cut | crossfade | dip
                "audio_fade_frames": 6, "loudness": -16.0, "normalize": true,
-               "score": { "asset": "", "volume_db": -12.0, "duck": true },
+               "score": { "asset": "", "volume_db": -12.0, "duck": true },  // v0.5.0: moved to "soundtrack" on load
+               "scene_audio": { "mix": false, "volume_db": -12.0 },          // v0.5.0: the scenes' sound under the soundtrack
                "color_match": false, "color_ref_scene": "",
                "codec": "h264", "crf": 16,
                "subtitles": true, "chapters": true, "otio": true, "fcpxml": true, "bundle": false,
@@ -123,6 +124,14 @@ lives on disk.
                                                            //            "strengths": { "<global lora id>": 0.35 } }
       "lock": false, "notes": "" }
   ],
+  "soundtrack": [                                         // v0.5.0: audio laid on the cut (soundtrack.py)
+    { "id": "t_1", "asset": "a_9",
+      "start": 0.0,                                        // film (cut) seconds, may be negative
+      "in": 0.0, "out": 0.0,                               // file seconds; out 0 = end of the file
+      "volume_db": 0.0, "fade_in": 0.0, "fade_out": 0.0,  // merge and monitor only
+      "mute": false, "loop": false, "duck": false,
+      "mix": true,                                         // play unchanged in the merge
+      "sync": true, "marker": "fully_copy" } ],            // send each pass the part it covers
   "markers": [ { "id": "m_1", "t": 12.0, "text": "music swell", "color": "amber" } ],
   "ui": { "tab": "timeline", "selected": "s_1", "zoom": 22, "playhead": 0.0, "snap": true, "ripple": true }
 }
@@ -170,6 +179,7 @@ mirrors the defaults).
 | POST | `/reelwright/profiles/default` | `{id}` (`""` clears) | `{profiles, default}` |
 | GET | `/reelwright/storage?current=<slug>` | – | v0.4.0, `files.scan`: `{projects:[node], size, current}`; node = `{id, label, kind: project\|group\|scene\|take\|passes\|cut\|version\|asset\|dir\|file, size, count, mtime, note, flags[], del, why?, view?, type?, children[]}`. Ids: `p:<slug>` (whole project), `o:<output-rel>`, `i:<input-rel>`, `cut:<slug>:<stem>` (one merged cut and its side files) |
 | GET | `/reelwright/sheet?files=<json list of input-relative paths>&cell=` | – | v0.4.1, JPEG of the anchor sheet `media.sheet_image` builds for those files (≤64, each checked with `safe_join` against the input folder) |
+| GET | `/reelwright/waveform?file=<input-relative path>&per_second=` | – | v0.5.0, `merge.waveform_peaks`: binary u8 peak levels (mono, 0–255), headers `X-Per-Second`, `X-Duration`; 10–200 per second, memoised by path, size and mtime |
 | POST | `/reelwright/storage/delete` | `{ids[], current}` | `{removed, freed, errors:[{id, error}], deleted[]}`; ids inside another selected id go with it; takes go through `ProjectStore.delete_take`; refuses the open project as a whole, any `project.json`, the open project's `wired.json`, `scenes/*/index.json` and anything outside `reelwright/<slug>/` |
 
 File previews use ComfyUI's own `/view?filename=&subfolder=&type=output|input`.
@@ -202,6 +212,7 @@ output/reelwright/<slug>/
   scenes/<scene_id>/takes/<take_id>/<slug>_<NN>_<title>_<take_id>.mp4 first.png last.png tail.mp4 meta.json   (video.mp4 before v0.2.0)
   scenes/<scene_id>/takes/<take_id>/passes/p1.mp4 …
   cuts/<slug>_cut_vN.mp4 .srt .otio .fcpxml .chapters.txt .zip
+  soundtrack/<hash>.wav              v0.5.0: the part of the soundtrack a pass is sent (48 kHz stereo), made once per content
   cast/<cast_id>/training/…
 input/reelwright/<slug>/             uploaded assets (from_output/: files picked from ComfyUI's output)
 user/reelwright/llm.json     LLM base URL, model, API key (never in workflows)

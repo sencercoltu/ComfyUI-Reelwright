@@ -9,14 +9,21 @@ import {
   FPS, sceneStarts, fmtTime, framesOf, nearestGridFrames, estimatePasses, findAsset, findCast,
   effectiveLoras, overrideCount, sceneIndex, newId, assembledDuration, MIN_PASS_FRAMES,
   effective, // added 2026-11-02 v0.3.0
+  overlapSeconds, sceneHasSong, trackLength, // added 2026-11-03 v0.5.0
 } from "../model.js";
 import { uploadFiles } from "./assets.js";
+import { trackLanes, trackInspector, syncAudio, stopAudio, sceneVolume } from "./soundtrack.js"; // added 2026-11-03 v0.5.0
 
 const HEAD_W = 150;
 const STATUS_LABEL = {
   cached: "On disk", stale: "Stale", pending: "Not rendered", missing: "Not rendered", queued: "Queued",
   rendering: "Rendering", locked: "Locked", error: "Failed", unknown: "Status unknown",
 };
+
+// added 2026-11-03 v0.5.0
+function trackLengthOf(p, t) {
+  return trackLength(t, findAsset(p, t.asset));
+}
 
 function zoomOf(ctx) {
   return ctx.p.ui.zoom || 22;
@@ -114,6 +121,7 @@ export function stopPlayback(ctx) {
   raf = 0;
   ctx.eph.playing = false;
   if (ctx.monitor) ctx.monitor.video.pause();
+  stopAudio(); // added 2026-11-03 v0.5.0
 }
 
 function startPlayback(ctx) {
@@ -124,7 +132,9 @@ function startPlayback(ctx) {
   const m = monitorOf(ctx);
   let last = performance.now();
   let current = setPlayhead(ctx, ctx.p.ui.playhead);
+  m.video.volume = sceneVolume(ctx.p); // added 2026-11-03 v0.5.0: the scene level under the soundtrack
   if (m.src) { m.video.currentTime = current.local; m.video.play().catch(() => {}); }
+  syncAudio(ctx, ctx.p.ui.playhead, true); // added 2026-11-03 v0.5.0
   const loop = now => {
     if (!ctx.eph.playing) return;
     const dt = (now - last) / 1000;
@@ -142,6 +152,9 @@ function startPlayback(ctx) {
     if (current.scene.id !== before || localEnd) {
       if (m.src) { m.video.currentTime = current.local; m.video.play().catch(() => {}); }
     }
+    // added 2026-11-03 v0.5.0: soundtrack tracks follow the playhead; the take plays at the scene level
+    m.video.volume = sceneVolume(ctx.p);
+    syncAudio(ctx, t, true);
     raf = requestAnimationFrame(loop);
   };
   raf = requestAnimationFrame(loop);
@@ -244,6 +257,9 @@ function renderBin(ctx) {
 
 function renderInspector(ctx) {
   const p = ctx.p;
+  // added 2026-11-03 v0.5.0: a soundtrack track selected on its lane
+  const track = !ctx.eph.selectedMarker && p.soundtrack.find(t => t.id === ctx.eph.selectedTrack);
+  if (track) return trackInspector(ctx, track, { playFrom: t => { stopPlayback(ctx); setPlayhead(ctx, t); startPlayback(ctx); } });
   const marker = p.markers.find(m => m.id === ctx.eph.selectedMarker);
   if (marker) {
     return h("div", { class: "rw-insp rw-panel" },
@@ -325,6 +341,8 @@ function refChips(ctx, s) {
     out.push(chip({ code: a.code, label: (a.name || "").slice(0, 18) + " · " + what, kind, help: "timeline.chip.ref" }));
   }
   if (s.start.mode === "tail") out.push(chip({ code: "TAIL", label: `${s.start.overlap_frames} f of previous`, kind: "vid", help: "scene.start.tail" }));
+  // added 2026-11-03 v0.5.0: the part of the soundtrack each pass covers
+  if (sceneHasSong(p, s)) out.push(chip({ code: "SONG", label: "soundtrack · lips and cuts follow it", kind: "aud", help: "timeline.chip.song" }));
   if (!out.length) out.push(h("span", { class: "rw-dim", help: "timeline.chip.none" }, "No references yet: drag assets from the bin onto the scene."));
   return out;
 }
@@ -369,8 +387,12 @@ function pickStep(z) {
   return 300;
 }
 
-function laneHead(label, ic, cls, help, extra) {
-  return h("div", { class: "rw-lane-head", help }, icon(ic, 13), h("span", { class: "rw-lane-name rw-c-" + cls }, label), h("span", { class: "rw-flex" }), extra);
+// [OLD 2026-11-03 v0.4.3->v0.5.0] function laneHead(label, ic, cls, help, extra) {
+// [OLD 2026-11-03 v0.4.3->v0.5.0]   return h("div", { class: "rw-lane-head", help }, icon(ic, 13), h("span", { class: "rw-lane-name rw-c-" + cls }, label), h("span", { class: "rw-flex" }), extra);
+// [OLD 2026-11-03 v0.4.3->v0.5.0] }
+// onClick: added 2026-11-03 v0.5.0 (a soundtrack lane's head selects its track)
+function laneHead(label, ic, cls, help, extra, onClick) {
+  return h("div", { class: ["rw-lane-head", onClick && "click"], help, onClick }, icon(ic, 13), h("span", { class: "rw-lane-name rw-c-" + cls }, label), h("span", { class: "rw-flex" }), extra);
 }
 
 function bar({ left, width, row = 0, cls, label, code, help, title, hatch, onClick, rows = 1 }) {
@@ -402,7 +424,13 @@ function renderLanes(ctx) {
   const p = ctx.p;
   const z = zoomOf(ctx);
   const { starts, total } = sceneStarts(p);
-  const width = Math.max(total * z + 160, 600);
+  // [OLD 2026-11-03 v0.4.3->v0.5.0] const width = Math.max(total * z + 160, 600);
+  // added 2026-11-03 v0.5.0: a soundtrack can run past the last scene; the lanes show it all
+  const trackEnd = Math.max(0, ...p.soundtrack.map(t => t.loop ? 0 : t.start + trackLengthOf(p, t)));
+  const width = Math.max(Math.max(total, trackEnd) * z + 160, 600);
+  // added 2026-11-03 v0.5.0: a continuing scene begins inside the one before (the repeated tail or last frame);
+  // its block and lane bars start where it becomes visible
+  const ov = (s, i) => (i > 0 ? overlapSeconds(s) : 0);
   const step = pickStep(z);
   const selectScene = id => () => ctx.actions.select(id);
 
@@ -424,7 +452,8 @@ function renderLanes(ctx) {
   [/OLD] */
   // added 2026-11-02 v0.3.3: clicks and drags on the ruler are handled by lanesPointerdown (click = playhead, drag = pan)
   const ruler = h("div", { class: "rw-ruler-lane", style: { width: width + "px", "background-size": `${z}px 6px` }, help: "timeline.ruler" });
-  for (let t = 0; t <= total + step; t += step) {
+  // [OLD 2026-11-03 v0.4.3->v0.5.0] for (let t = 0; t <= total + step; t += step) {
+  for (let t = 0; t <= Math.max(total, trackEnd) + step; t += step) {
     ruler.append(h("span", { class: "rw-tick", style: { left: t * z + "px" } }), h("span", { class: "rw-tick-label mono", style: { left: t * z + 4 + "px" } }, fmtTime(t, false)));
   }
   const loop = ctx.eph.loop;
@@ -438,13 +467,15 @@ function renderLanes(ctx) {
 
   // Scenes
   const scenesLane = h("div", { class: "rw-lane-body scenes", style: { width: width + "px" } });
-  p.scenes.forEach((s, i) => scenesLane.append(sceneBlock(ctx, s, i, starts[s.id], z)));
+  // [OLD 2026-11-03 v0.4.3->v0.5.0] p.scenes.forEach((s, i) => scenesLane.append(sceneBlock(ctx, s, i, starts[s.id], z)));
+  p.scenes.forEach((s, i) => scenesLane.append(sceneBlock(ctx, s, i, starts[s.id], z, ov(s, i))));
   p.scenes.forEach((s, i) => {
     if (i === 0) return;
     const mode = s.start.mode;
     const ic = mode === "fresh" ? "cut" : mode === "tail" ? "tail" : "link";
     scenesLane.append(h("button", {
-      type: "button", class: ["rw-join", "j-" + mode], style: { left: starts[s.id] * z - 11 + "px" }, help: "timeline.join." + mode,
+      // [OLD 2026-11-03 v0.4.3->v0.5.0] type: "button", class: ["rw-join", "j-" + mode], style: { left: starts[s.id] * z - 11 + "px" }, help: "timeline.join." + mode,
+      type: "button", class: ["rw-join", "j-" + mode], style: { left: (starts[s.id] + ov(s, i)) * z - 11 + "px" }, help: "timeline.join." + mode,
       "aria-label": "Change how this scene starts",
       onClick: e => {
         e.stopPropagation();
@@ -478,9 +509,15 @@ function renderLanes(ctx) {
     }, h("b", { class: "mono" }, (it.d.language || "").slice(0, 2).toUpperCase()), ` ${c?.name || "?"} “${it.d.text}”`));
   });
 
-  for (const s of p.scenes) {
-    const x0 = starts[s.id] * z;
-    const w = s.duration * z;
+  // [OLD 2026-11-03 v0.4.3->v0.5.0] for (const s of p.scenes) {
+  // [OLD 2026-11-03 v0.4.3->v0.5.0]   const x0 = starts[s.id] * z;
+  // [OLD 2026-11-03 v0.4.3->v0.5.0]   const w = s.duration * z;
+  p.scenes.forEach((s, si) => {
+    // added 2026-11-03 v0.5.0: x0 is the scene's frame 0 (times inside the scene count from it); bars that span the
+    // scene start at vx0, where it becomes visible in the cut, and are w wide
+    const x00 = starts[s.id] * z;
+    const x0 = x00 + ov(s, si) * z;
+    const w = (s.duration - ov(s, si)) * z;
     const picItems = [], audItems = [];
     const anchored = s.cast.map(sc => findCast(p, sc.id)).filter(c => c?.anchors.length);
     if (anchored.length) picItems.push({ left: x0 + 3, width: w - 6, cls: "pic soft", label: anchored.map(c => c.name).join(" · ") + " · anchors", help: "timeline.lane.castAnchors", onClick: selectScene(s.id) });
@@ -497,8 +534,10 @@ function renderLanes(ctx) {
         if (r.role === "reference") picItems.push({ left: x0 + 3, width: w - 6, cls: "pic", code: a.code, label: `${a.name || ""} · ${ret}`, help: "timeline.lane.picRef", onClick: selectScene(s.id) });
         else {
           const t = r.role === "first_frame" ? 0 : r.role === "last_frame" ? s.duration : Math.min(r.time, s.duration);
-          pics.append(diamond(x0 + t * z, "pic", "timeline.lane.keyframe." + r.role));
-          const left = Math.min(x0 + t * z + 8, x0 + w - 40);
+          // [OLD 2026-11-03 v0.4.3->v0.5.0] pics.append(diamond(x0 + t * z, "pic", "timeline.lane.keyframe." + r.role));
+          // [OLD 2026-11-03 v0.4.3->v0.5.0] const left = Math.min(x0 + t * z + 8, x0 + w - 40);
+          pics.append(diamond(x00 + t * z, "pic", "timeline.lane.keyframe." + r.role));
+          const left = Math.min(x00 + t * z + 8, x0 + w - 40);
           picItems.push({ left, width: Math.max(34, Math.min(110, x0 + w - 3 - left)), cls: "pic", code: a.code, label: r.role === "keyframe" ? "@ " + fmtTime(r.time) : r.role.replace("_", " "), help: "timeline.lane.keyframe." + r.role, onClick: selectScene(s.id) });
         }
       } else if (a.kind === "video") {
@@ -509,13 +548,17 @@ function renderLanes(ctx) {
       }
     }
     if (s.start.mode === "last_frame") pics.append(diamond(x0, "pic", "timeline.lane.lastFrameAuto", true));
-    if (s.start.mode === "tail") vids.append(bar({ left: x0, width: (s.start.overlap_frames / FPS) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
+    // [OLD 2026-11-03 v0.4.3->v0.5.0] if (s.start.mode === "tail") vids.append(bar({ left: x0, width: (s.start.overlap_frames / FPS) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
+    // added 2026-11-03 v0.5.0: the tail clip is the end of the scene before, so it sits under that scene's end
+    if (s.start.mode === "tail" && si > 0) vids.append(bar({ left: x00, width: ov(s, si) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
     placeRows(picItems, 2).forEach(it => pics.append(bar({ ...it, rows: 2 })));
     placeRows(audItems, 2).forEach(it => auds.append(bar({ ...it, rows: 2 })));
     s.shots.forEach((sh, k) => {
       if (!sh.camera) return;
       const end = s.shots[k + 1]?.t ?? s.duration;
-      cam.append(h("span", { class: "rw-cam", style: { left: x0 + sh.t * z + 3 + "px", "max-width": Math.max(24, (end - sh.t) * z - 6) + "px" }, help: "timeline.lane.camera", onClick: selectScene(s.id) }, sh.camera));
+      // [OLD 2026-11-03 v0.4.3->v0.5.0] cam.append(h("span", { class: "rw-cam", style: { left: x0 + sh.t * z + 3 + "px", "max-width": Math.max(24, (end - sh.t) * z - 6) + "px" }, help: "timeline.lane.camera", onClick: selectScene(s.id) }, sh.camera));
+      const from = Math.max(sh.t, ov(s, si)); // added 2026-11-03 v0.5.0
+      cam.append(h("span", { class: "rw-cam", style: { left: x00 + from * z + 3 + "px", "max-width": Math.max(24, (end - from) * z - 6) + "px" }, help: "timeline.lane.camera", onClick: selectScene(s.id) }, sh.camera));
     });
     const own = effectiveLoras(p, s).filter(l => l.source !== "global");
     if (own.length) {
@@ -525,7 +568,8 @@ function renderLanes(ctx) {
         style: { left: x0 + 2 + "px", width: Math.max(6, w - 4) + "px", top: "20px", height: "17px" },
       }, own.map(l => `${l.name.replace(/\.safetensors$/, "")} ${Number(l.strength).toFixed(2)}${l.source === "override" ? "*" : ""}`).join(" · ")));
     }
-  }
+  // [OLD 2026-11-03 v0.4.3->v0.5.0] }
+  });
   const globals = p.global.loras.filter(l => l.enabled);
   if (globals.length) {
     lora.append(h("div", { class: "rw-bar lora global", help: "timeline.lane.lora.global", style: { left: "0px", width: total * z + "px", top: "4px", height: "12px" } },
@@ -534,6 +578,9 @@ function renderLanes(ctx) {
 
   const lanes = [
     ["Scenes", "film", "text", "timeline.lane.scenes", scenesLane, "scenes", h("span", { class: "mono rw-dim" }, `${p.scenes.length} / ∞`)],
+    // added 2026-11-03 v0.5.0: soundtrack tracks under the scenes, then a lane to add one
+    ...trackLanes(ctx, z, width, { trackDrag, scaleOf: () => scaleOf(ctx), zoom: () => zoomOf(ctx) })
+      .map(l => [l.label, l.ic, l.cls, l.help, l.body, l.kind.filter(Boolean).join(" "), l.extra, l.onHead]),
     ["Pictures", "image", "pic", "timeline.lane.pictures", pics, "two"],
     ["Video refs", "video", "vid", "timeline.lane.video", vids, ""],
     ["Audio refs", "audio", "aud", "timeline.lane.audio", auds, "two"],
@@ -587,7 +634,8 @@ function renderLanes(ctx) {
   } },
   h("div", { class: "rw-lanes-inner", style: { width: HEAD_W + width + "px" } },
     h("div", { class: "rw-lane ruler" }, h("div", { class: "rw-lane-head mono rw-dim", help: "timeline.ruler" }, "24 fps"), ruler),
-    lanes.map(([label, ic, cls, help, el, kind, extra]) => h("div", { class: ["rw-lane", kind] }, laneHead(label, ic, cls, help, extra), el)),
+    // [OLD 2026-11-03 v0.4.3->v0.5.0] lanes.map(([label, ic, cls, help, el, kind, extra]) => h("div", { class: ["rw-lane", kind] }, laneHead(label, ic, cls, help, extra), el)),
+    lanes.map(([label, ic, cls, help, el, kind, extra, onHead]) => h("div", { class: ["rw-lane", kind] }, laneHead(label, ic, cls, help, extra, onHead), el)),
     playhead));
 }
 
@@ -621,7 +669,8 @@ function trackDrag(onMove, onEnd) {
 
 // added 2026-11-02 v0.3.3: a press on the lanes. A drag pans the timeline (the playhead stays where it is); a click
 // on the ruler or on an empty part of a lane moves the playhead there. Clicks on scenes and chips keep their own action.
-const LANE_CONTROLS = ".rw-lane-head, button, input, select, textarea, a, .rw-resize, .rw-shot-tick, .rw-marker, .rw-playhead-label";
+// [OLD 2026-11-03 v0.4.3->v0.5.0] const LANE_CONTROLS = ".rw-lane-head, button, input, select, textarea, a, .rw-resize, .rw-shot-tick, .rw-marker, .rw-playhead-label";
+const LANE_CONTROLS = ".rw-lane-head, button, input, select, textarea, a, .rw-resize, .rw-shot-tick, .rw-marker, .rw-playhead-label, .rw-track-clip";
 function lanesPointerdown(ctx, e) {
   if (e.button !== 0 || !(e.target instanceof Element) || e.target.closest(LANE_CONTROLS)) return;
   e.rwOwned = true; // the editor root stops it there, so Nodes 2.0 doesn't start dragging the whole node
@@ -711,7 +760,10 @@ export function sceneMenu(ctx, s) {
   ];
 }
 
-function sceneBlock(ctx, s, i, start, z) {
+// [OLD 2026-11-03 v0.4.3->v0.5.0] function sceneBlock(ctx, s, i, start, z) {
+// ov: added 2026-11-03 v0.5.0, the seconds at the scene's start that repeat the scene before. The block starts after
+// them; everything inside it is placed at (t - ov) * z.
+function sceneBlock(ctx, s, i, start, z, ov = 0) {
   const p = ctx.p;
   const status = ctx.statusOf(s.id);
   const prog = ctx.eph.progress[s.id];
@@ -720,12 +772,15 @@ function sceneBlock(ctx, s, i, start, z) {
   const take = ctx.starredTake(s.id);
   const thumb = take?.files?.first ? viewURL(take.files.first) : storyboardImage(ctx, s);
   const selected = s.id === ctx.scene.id;
-  const w = s.duration * z - 2;
+  // [OLD 2026-11-03 v0.4.3->v0.5.0] const w = s.duration * z - 2;
+  const w = (s.duration - ov) * z - 2;
   const block = h("div", {
     class: ["rw-scene", selected && "on", "st-" + status, s.lock && "locked"],
-    style: { left: start * z + 1 + "px", width: w + "px", "--tint": s.color || null },
+    // [OLD 2026-11-03 v0.4.3->v0.5.0] style: { left: start * z + 1 + "px", width: w + "px", "--tint": s.color || null },
+    style: { left: (start + ov) * z + 1 + "px", width: w + "px", "--tint": s.color || null },
     help: "timeline.scene",
-    onClick: () => ctx.actions.select(s.id),
+    // [OLD 2026-11-03 v0.4.3->v0.5.0] onClick: () => ctx.actions.select(s.id),
+    onClick: () => { if (ctx.eph.selectedTrack) ctx.store.setEph({ selectedTrack: null }, false); ctx.actions.select(s.id); },
     onDblclick: () => ctx.actions.select(s.id, "scene"),
     menu: () => { ctx.actions.select(s.id); return sceneMenu(ctx, s); }, // added 2026-11-02 v0.2.2
     onDragover: e => { if (e.dataTransfer.types.includes("application/x-rw-asset")) { e.preventDefault(); e.currentTarget.classList.add("drop"); } },
@@ -738,7 +793,8 @@ function sceneBlock(ctx, s, i, start, z) {
       if (!a) return;
       const rect = e.currentTarget.getBoundingClientRect();
       // [OLD 2026-11-02 v0.3.2->v0.3.3] ignored ComfyUI's canvas zoom: const t = Math.max(0, Math.min(s.duration, (e.clientX - rect.left) / z));
-      const t = Math.max(0, Math.min(s.duration, (e.clientX - rect.left) / scaleOf(ctx) / z));
+      // [OLD 2026-11-03 v0.4.3->v0.5.0] const t = Math.max(0, Math.min(s.duration, (e.clientX - rect.left) / scaleOf(ctx) / z));
+      const t = Math.max(0, Math.min(s.duration, ov + (e.clientX - rect.left) / scaleOf(ctx) / z));
       ctx.actions.editScene(s.id, sc => {
         sc.refs.push({ id: newId("r"), asset: id, role: a.defaults.role, time: Math.round(t * FPS) / FPS, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack });
       });
@@ -756,6 +812,7 @@ function sceneBlock(ctx, s, i, start, z) {
     dot(status === "cached" || status === "locked" ? "ok" : status === "stale" ? "warn" : status === "rendering" ? "busy" : "empty", "status." + status));
   const strip = h("div", { class: "rw-scene-strip", style: thumb ? { "background-image": `url("${thumb}")` } : null });
   block.append(head, strip);
+  /* [OLD 2026-11-03 v0.4.3->v0.5.0] the tail hatch sat inside the block; the block now starts after the repeated tail
   if (s.start.mode === "tail" && i > 0) strip.append(h("span", { class: "rw-hatch", style: { width: (s.start.overlap_frames / FPS) * z + "px" }, help: "scene.start.tail" }, "tail"));
   const passes = plan?.passes;
   if (passes?.length > 1) {
@@ -771,18 +828,37 @@ function sceneBlock(ctx, s, i, start, z) {
     if (sh.t <= 0) continue;
     strip.append(shotTick(ctx, s, sh, z));
   }
+  [/OLD] */
+  // added 2026-11-03 v0.5.0: positions inside the block count from where it becomes visible (ov)
+  const passes = plan?.passes;
+  if (passes?.length > 1) {
+    for (const ps of passes.slice(1)) {
+      strip.append(h("span", { class: ["rw-pass-tick", ps.seam_before === "cut" ? "cut" : "overlap"], style: { left: (ps.start - ov) * z + "px" }, help: "timeline.scene.seam." + (ps.seam_before === "cut" ? "cut" : "overlap") }));
+      if (ps.seam_before !== "cut" && ps.overlap_frames) strip.append(h("span", { class: "rw-hatch thin", style: { left: (ps.start - ov) * z + "px", width: (ps.overlap_frames / FPS) * z + "px" } }));
+    }
+  } else if (est.count > 1) {
+    const span = s.duration / est.count;
+    for (let k = 1; k < est.count; k++) strip.append(h("span", { class: "rw-pass-tick overlap", style: { left: (k * span - ov) * z + "px" }, help: "timeline.scene.seam.overlap" }));
+  }
+  for (const sh of s.shots) {
+    if (sh.t <= ov) continue;
+    strip.append(shotTick(ctx, s, sh, z, ov));
+  }
   block.append(h("span", { class: "rw-scene-dur mono" }, `${s.duration.toFixed(2)}s · ${framesOf(s.duration)}f`));
   if (prog && !["done", "cached", "error"].includes(prog.phase)) {
     const passPart = prog.passes ? (prog.pass - 1 + (prog.steps ? prog.step / prog.steps : 0)) / prog.passes : 0;
     block.append(h("div", { class: "rw-scene-prog", help: "timeline.scene.progress" }, h("span", { style: { width: Math.round(passPart * 100) + "%" } })),
       h("span", { class: "rw-scene-prog-label mono" }, `${prog.phase} ${prog.pass}/${prog.passes}${prog.steps ? " · " + prog.step + "/" + prog.steps : ""}`));
   }
-  block.append(resizeHandle(ctx, s, z, block));
+  // [OLD 2026-11-03 v0.4.3->v0.5.0] block.append(resizeHandle(ctx, s, z, block));
+  block.append(resizeHandle(ctx, s, z, block, i));
   return block;
 }
 
-function shotTick(ctx, s, sh, z) {
-  const tick = h("span", { class: "rw-shot-tick", style: { left: sh.t * z + "px" }, help: "timeline.scene.shot", title: sh.camera || sh.text });
+// [OLD 2026-11-03 v0.4.3->v0.5.0] function shotTick(ctx, s, sh, z) {
+// [OLD 2026-11-03 v0.4.3->v0.5.0]   const tick = h("span", { class: "rw-shot-tick", style: { left: sh.t * z + "px" }, help: "timeline.scene.shot", title: sh.camera || sh.text });
+function shotTick(ctx, s, sh, z, ov = 0) {
+  const tick = h("span", { class: "rw-shot-tick", style: { left: (sh.t - ov) * z + "px" }, help: "timeline.scene.shot", title: sh.camera || sh.text });
   tick.addEventListener("pointerdown", e => {
     e.stopPropagation();
     e.preventDefault();
@@ -793,7 +869,8 @@ function shotTick(ctx, s, sh, z) {
       // [OLD 2026-11-02 v0.3.2->v0.3.3] ignored ComfyUI's canvas zoom: t = Math.max(1 / FPS, Math.min(s.duration - 1 / FPS, t0 + (ev.clientX - x0) / z));
       t = Math.max(1 / FPS, Math.min(s.duration - 1 / FPS, t0 + (ev.clientX - x0) / scaleOf(ctx) / z));
       t = Math.round(t * FPS) / FPS;
-      tick.style.left = t * z + "px";
+      // [OLD 2026-11-03 v0.4.3->v0.5.0] tick.style.left = t * z + "px";
+      tick.style.left = (t - ov) * z + "px";
       tick.dataset.label = fmtTime(t);
     };
     const up = () => {
@@ -807,7 +884,8 @@ function shotTick(ctx, s, sh, z) {
   return tick;
 }
 
-function resizeHandle(ctx, s, z, block) {
+// [OLD 2026-11-03 v0.4.3->v0.5.0] function resizeHandle(ctx, s, z, block) {
+function resizeHandle(ctx, s, z, block, index = 0) {
   const handle = h("span", { class: "rw-resize", help: "timeline.scene.resize" });
   handle.addEventListener("pointerdown", e => {
     e.stopPropagation();
@@ -827,7 +905,8 @@ function resizeHandle(ctx, s, z, block) {
       if (p.ui.snap) frames = Math.max(5, nearestGridFrames(frames));
       if (!p.ui.ripple && next) frames = Math.min(frames, framesOf(d0 + nextD0) - 1);
       d = frames / FPS;
-      block.style.width = d * z - 2 + "px";
+      // [OLD 2026-11-03 v0.4.3->v0.5.0] block.style.width = d * z - 2 + "px";
+      block.style.width = (d - (index > 0 ? overlapSeconds({ ...s, duration: d }) : 0)) * z - 2 + "px";
       const est = estimatePasses(d, p.global.long);
       tip.textContent = `${d.toFixed(2)} s · ${frames} f · ${est.count > 1 ? est.count + " passes" : est.short ? "trimmed" : "1 pass"}${p.ui.snap ? " · grid" : ""}`;
     };

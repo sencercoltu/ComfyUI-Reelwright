@@ -4,6 +4,7 @@ from . import spec
 # [OLD 2026-11-02 v0.3.3->v0.3.4] from .model import project_index
 from .model import cast_description, project_index
 from .planner import continuation_depth
+from . import soundtrack  # added 2026-11-03 v0.5.0
 
 
 def _issue(level, message, scene_id=None):
@@ -24,9 +25,36 @@ def lint_project(p, plans, builds, asset_exists):
         if not a.get("file") or not asset_exists(a):
             issues.append(_issue("error", "{} ({}) file is missing".format(a["code"], a["name"] or a["file"])))
 
-    score = p["global"]["merge"]["score"].get("asset")
-    if score and score not in assets:
-        issues.append(_issue("warn", "Merge score track asset no longer exists"))
+    # [OLD 2026-11-03 v0.4.3->v0.5.0] score = p["global"]["merge"]["score"].get("asset")
+    # [OLD 2026-11-03 v0.4.3->v0.5.0] if score and score not in assets:
+    # [OLD 2026-11-03 v0.4.3->v0.5.0]     issues.append(_issue("warn", "Merge score track asset no longer exists"))
+    # added 2026-11-03 v0.5.0: soundtrack tracks replace the merge score
+    for n, t in enumerate(p.get("soundtrack") or []):
+        a = assets.get(t.get("asset"))
+        label = "Soundtrack track {}".format(n + 1) + (" ({})".format(a["code"]) if a else "")
+        if not a:
+            issues.append(_issue("error" if not t.get("mute") else "warn",
+                                 "{}: its audio asset no longer exists".format(label)))
+            continue
+        if a["kind"] != "audio":
+            issues.append(_issue("error", "{}: {} is not an audio file".format(label, a["code"])))
+            continue
+        if t["out"] and t["out"] <= t["in"]:
+            issues.append(_issue("warn", "{}: the trim end is before its start, so it plays to the end of the "
+                                         "file".format(label)))
+        dur = float(a.get("duration") or 0)
+        if dur and t["in"] >= dur:
+            issues.append(_issue("error", "{}: it is trimmed past the end of {} ({:.1f} s)".format(label, a["code"], dur)))
+        if t["start"] < 0:
+            issues.append(_issue("info", "{}: it starts {:.2f} s before the film, so that part is not heard".format(
+                label, -t["start"])))
+    if soundtrack.locked(p):
+        hard = [(s.get("transition") or {}).get("mode") or p["global"]["merge"]["hard_cut"]
+                for i, s in enumerate(p["scenes"]) if i > 0 and s["start"]["mode"] == "fresh"]
+        if any(h in ("crossfade", "dip") for h in hard):
+            issues.append(_issue("info", "Crossfades and dips play as a dip through black inside the scenes, so the "
+                                         "soundtrack keeps its timing"))
+        # the Merge card says that scenes not rendered yet become slates; as an issue it showed on every project
 
     for i, s in enumerate(p["scenes"]):
         sid = s["id"]
@@ -99,8 +127,13 @@ def lint_project(p, plans, builds, asset_exists):
                 issues.append(_issue("warn", "{}: {} reference audio clips (up to 3)".format(where, n_aud), sid))
             if n_img + n_vid + n_aud > spec.MAX_REF_FILES:
                 issues.append(_issue("warn", "{}: {} reference files (up to 12)".format(where, n_img + n_vid + n_aud), sid))
+            # [OLD 2026-11-03 v0.4.3->v0.5.0] for kind, items in (("video", [assets[v["asset"]] for v in b["videos"]]),
+            # [OLD 2026-11-03 v0.4.3->v0.5.0]                     ("audio", [assets[x["asset"]] for x in b["audios"]])):
+            # added 2026-11-03 v0.5.0: the soundtrack segment counts as an audio ref of its own length
+            audio_items = [{"code": "soundtrack", "duration": x["song"]["length"]} if x.get("song") else assets[x["asset"]]
+                           for x in b["audios"]]
             for kind, items in (("video", [assets[v["asset"]] for v in b["videos"]]),
-                                ("audio", [assets[x["asset"]] for x in b["audios"]])):
+                                ("audio", audio_items)):
                 total = 0.0
                 for a in items:
                     dur = float(a.get("duration") or 0)

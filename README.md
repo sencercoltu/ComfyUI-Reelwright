@@ -23,8 +23,12 @@ into one video. Only what you changed gets rendered again.
 - **Memory friendly.** Every scene is written to MP4 and its frames are freed
   before the next one starts. Prompts can be encoded up front so the 27 GB text
   encoder is unloaded before sampling.
+- **Cut to a song.** Lay one or more audio files on the timeline, move and trim
+  them there. Each pass of each scene gets exactly the part of the song it
+  covers as an H3 audio reference, so lips and movement follow it, and the
+  merge plays the song unchanged, with the scenes' own sound under it or off.
 - **Merge scenes.** One click, no re-render. Cuts, crossfades or dips to black;
-  loudness normalisation; a score track that ducks under dialogue; colour
+  loudness normalisation; soundtrack tracks (a looping score that ducks too); colour
   match; subtitles (.srt), chapters, and OpenTimelineIO / FCPXML timelines for
   Resolve or Premiere.
 - **Prompt tools.** A structured six-section editor with `@P1` / `@Mara` tags

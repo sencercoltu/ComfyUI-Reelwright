@@ -97,6 +97,9 @@ def _asset_uses(p):
     score = (p.get("global", {}).get("merge", {}).get("score") or {}).get("asset")
     if score:
         uses[score] += 1
+    for t in p.get("soundtrack") or []:  # added 2026-11-03 v0.5.0
+        if t.get("asset"):
+            uses[t["asset"]] += 1
     return uses
 
 
@@ -232,6 +235,8 @@ def scan_project(roots, slug, current=None):
             continue
         path = os.path.join(store.dir, x)
         n = _add(proj, _dir("o", o, path) if os.path.isdir(path) else _file("o", o, path))
+        if x == "soundtrack" and os.path.isdir(path):  # added 2026-11-03 v0.5.0
+            n["note"] = "the part of the soundtrack each pass was sent; made again when needed"
         if x in PROTECTED and n["kind"] == "file":
             n["note"] = PROTECTED[x]
             if is_current or x == "project.json":

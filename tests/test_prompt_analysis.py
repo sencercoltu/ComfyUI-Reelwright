@@ -1,5 +1,7 @@
 import copy
 
+import pytest  # added 2026-11-03 v0.5.0
+
 from reelwright.analysis import analyze, plan_response
 from reelwright.planner import plan_scene
 from reelwright.prompt import build_pass
@@ -123,7 +125,9 @@ def test_plan_response_shape(harbor, store):
     s = out["scenes"]["s_long"]
     assert set(s) >= {"status", "key", "passes", "prompts", "issues", "takes"}
     assert {"index", "start", "end", "gen_frames", "keep_in", "keep_out", "seam_before", "overlap_frames", "seed"} <= set(s["passes"][0])
-    assert out["timeline"]["total"] == 42.5
+    # [OLD 2026-11-03 v0.4.3->v0.5.0] assert out["timeline"]["total"] == 42.5
+    # added 2026-11-03 v0.5.0: the timeline is the cut, so the tail scene's 39 repeated frames overlap the scene before
+    assert out["timeline"]["total"] == pytest.approx(42.5 - 39 / 24)
 
 
 # added 2026-11-02 v0.2.0: output follows MiniMax's official Ref2VA guide (ref-en.txt)

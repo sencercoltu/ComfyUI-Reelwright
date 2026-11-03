@@ -81,6 +81,13 @@ export const rw = {
   // added 2026-11-03 v0.4.0: disk use of every project, and deleting parts of it
   storage: current => req("GET", "/reelwright/storage?current=" + q(current)),
   deleteStorage: (ids, current) => req("POST", "/reelwright/storage/delete", { ids, current }),
+  // added 2026-11-03 v0.5.0: peak levels (0-255) of an input audio file, perSecond values a second, for the soundtrack lanes
+  async waveform(file, per_second = 50) {
+    const res = await host.fetchApi(`/reelwright/waveform?file=${q(file)}&per_second=${per_second}`, { method: "GET" });
+    if (!res.ok) throw new Error(`waveform ${res.status}`);
+    return { peaks: new Uint8Array(await res.arrayBuffer()), perSecond: Number(res.headers.get("X-Per-Second")) || per_second,
+      duration: Number(res.headers.get("X-Duration")) || 0 };
+  },
 };
 
 // `rel` is a path relative to ComfyUI's input or output folder.

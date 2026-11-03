@@ -11,6 +11,7 @@ import re
 import secrets
 
 from . import spec
+from . import soundtrack as _soundtrack  # added 2026-11-03 v0.5.0
 
 SECTION_KEYS = ("subject_definitions", "summary", "retention_analysis",
                 "detailed_description", "overall_soundscape", "non_diegetic_music")
@@ -78,7 +79,9 @@ def default_global():
                 "import_guides": False},
         "merge": {"use": "starred", "missing": "skip", "hard_cut": "cut", "transition_frames": 12,
                   "audio_fade_frames": 6, "loudness": -16.0, "normalize": True,
-                  "score": {"asset": "", "volume_db": -12.0, "duck": True},
+                  "score": {"asset": "", "volume_db": -12.0, "duck": True},  # v0.5.0: moved to p["soundtrack"] on load
+                  # added 2026-11-03 v0.5.0: the scenes' own sound under a soundtrack (off: only the soundtrack plays)
+                  "scene_audio": {"mix": False, "volume_db": -12.0},
                   "color_match": False, "color_ref_scene": "", "codec": "h264", "crf": 16,
                   "subtitles": True, "chapters": True, "otio": True, "fcpxml": True, "bundle": False,
                   "auto_after_render": True},
@@ -107,9 +110,15 @@ def default_scene(project=None, **patch):
 
 
 def default_project(name="Untitled"):
+    # [OLD 2026-11-03 v0.4.3->v0.5.0] no soundtrack
+    # p = {"schema": 1, "id": new_id("p"), "name": name, "slug": slugify(name),
+    #      "global": default_global(), "assets": [], "cast": [], "camera_presets": [],
+    #      "scenes": [], "markers": [],
+    #      "ui": {"tab": "timeline", "selected": "", "zoom": 22, "playhead": 0, "snap": True, "ripple": True}}
+    # [/OLD]
     p = {"schema": 1, "id": new_id("p"), "name": name, "slug": slugify(name),
          "global": default_global(), "assets": [], "cast": [], "camera_presets": [],
-         "scenes": [], "markers": [],
+         "scenes": [], "markers": [], "soundtrack": [],  # soundtrack: added 2026-11-03 v0.5.0 (see soundtrack.py)
          "ui": {"tab": "timeline", "selected": "", "zoom": 22, "playhead": 0, "snap": True, "ripple": True}}
     p["scenes"].append(default_scene(p, title="Scene 1"))
     p["ui"]["selected"] = p["scenes"][0]["id"]
@@ -192,6 +201,12 @@ def normalize_project(raw):
             c["pack_sheet"] = True
     if not p["scenes"]:
         p["scenes"].append(default_scene(p, title="Scene 1"))
+    # added 2026-11-03 v0.5.0: soundtrack tracks; the old merge score becomes one
+    p["soundtrack"] = [t for t in p["soundtrack"] if isinstance(t, dict)]
+    for t in p["soundtrack"]:
+        _soundtrack.normalize_track(t)
+        t["id"] = t["id"] or new_id("t")
+    _soundtrack.migrate_score(p)
     return p
 
 
@@ -308,10 +323,37 @@ def resolve_settings(p, scene, scene_index):
     }
 
 
+# [OLD 2026-11-03 v0.4.3->v0.5.0] scenes end to end: a tail continuation repeats the end of the scene before, and a last-frame start repeats
+# its last frame, so the finished cut was shorter than this and a soundtrack would drift against it
+# def scene_starts(p):
+#     """Timeline start of every scene (the editor lays scenes end to end)."""
+#     starts, t = {}, 0.0
+#     for s in p["scenes"]:
+#         starts[s["id"]] = t
+#         t += float(s["duration"])
+#     return starts, t
+# [/OLD]
+def scene_overlap(scene, index):
+    """Seconds at the start of a scene that repeat the end of the scene before (added 2026-11-03 v0.5.0): the tail
+    clip it continues from (the same 17k+5 frames the planner uses), or the one last frame it starts from."""
+    if index == 0:
+        return 0.0
+    mode = scene["start"]["mode"]
+    if mode == "tail":
+        total = max(1, spec.frames_of(max(1.0 / spec.FPS, float(scene["duration"]))))
+        n = min(spec.align_frames_down(max(5, int(scene["start"]["overlap_frames"]))), spec.align_frames_down(total))
+        return n / spec.FPS
+    if mode == "last_frame":
+        return 1.0 / spec.FPS
+    return 0.0
+
+
 def scene_starts(p):
-    """Timeline start of every scene (the editor lays scenes end to end)."""
+    """Start of every scene in the finished cut, and its length (added 2026-11-03 v0.5.0, same as model.js
+    sceneStarts). A scene's time t plays at starts[id] + t."""
     starts, t = {}, 0.0
-    for s in p["scenes"]:
+    for i, s in enumerate(p["scenes"]):
+        t = max(0.0, t - scene_overlap(s, i))
         starts[s["id"]] = t
         t += float(s["duration"])
     return starts, t

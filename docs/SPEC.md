@@ -50,6 +50,7 @@ output, and `video` points at them.
   - **Fresh start**: hard cut, nothing carried over.
   - **Last frame**: the previous scene's final frame becomes guide frame 0 (fully preserved).
   - **Tail clip**: the previous scene's last N frames (17k+5) become a guide clip at frame 0, plus its audio. The overlap is trimmed in the final cut, so motion, light and sound continue.
+  - The timeline is the cut (v0.5.0): a continuing scene starts inside the one before, over the frames it repeats (the tail clip, or the one last frame), where the merge puts it.
 - ✅ References: any asset, with a role (reference / first frame / last frame / keyframe at time t), a retention label, the features to keep, and whether to use a video's soundtrack.
 - ✅ Retention labels follow the H3 guide. Visual: `fully_preserved`, `partially_preserved`, `attribute_transfer`, `weak_reference`. Audio: `fully_copy`, `partially_copy`, `reference`, `weak_reference`.
 - ✅ Shots: list of shots with start time, camera and action. Shot ticks show inside the scene block on the timeline and can be dragged. They are written as `[Shot 1] A wide shot: …`, `[Shot 2] At 00:05.000, the shot cuts to …`, as in MiniMax's Ref2VA guide.
@@ -65,6 +66,18 @@ output, and `video` points at them.
 - ✅ Prompt preview shows exactly what each pass will send.
 - ✅ Per-scene overrides of any global setting: quality (draft or final), seed, steps, sampler, resolution, video VAE, audio VAE, diffusion model, LoRA stack (add to or replace Global, per-LoRA strength override). A hollow dot means the setting follows Global; a coral dot means it is overridden. "Reset to Global" clears them.
 - ✅ Scene notes, timeline markers, lock (keep the current take even when what it continues from changes).
+
+## 3a. Soundtrack (Timeline, v0.5.0)
+
+- ✅ Any number of audio tracks laid on the film, each on its own lane under the scenes, with its waveform (`GET /reelwright/waveform`).
+- ✅ Add: drop an audio asset from the bin on the Soundtrack lane (it starts where it is dropped) or pick one with **+**.
+- ✅ Edit on the lane: drag to move (snaps to scene cuts, the playhead and markers; Alt: free), drag the left edge to trim the file's start (the audio keeps its place in the film), drag the right edge to trim its end. Right-click: start at playhead, trim start/end to the playhead, mute, delete.
+- ✅ Inspector: audio asset, start (film seconds, may be negative), in / out (file seconds, out 0 = end of file), level (dB), fade in / out, In the cut, Send to H3 with its marker (`fully_copy`, `partially_copy`, `reference`, `weak_reference`), duck under scene sound, loop to the end of the film, mute.
+- ✅ **Send to H3**: each pass gets one audio reference, the sum of the sync tracks over the pass's generated frames: film time scene start + pass start, length min(15 s, generated frames / 24), silence where nothing plays, at unity gain. Left out when less than 2 s of it has sound. Cast voice samples are not sent with it. Prompt: a subject line, a retention line with the track's marker, and `@soundtrack` / `@song` in written text. The pass's cache key covers the pieces of the song it gets, so only the passes a change touches go stale.
+- ✅ **In the cut**: tracks are mixed unchanged (no normalisation, no limiter unless the scenes' sound is mixed too). The scenes' sound under them: off by default, or on at a level (Merge card). Loudness normalisation applies to the scenes' sound only. Per-track ducking under it.
+- ✅ Timing lock: while any track is in the cut or sent to H3, the merge keeps every scene at its timeline place: hard-cut crossfades and dips become a dip through black inside the scenes (half the transition on each side), missing scenes become slates (Block still blocks), and takes of another length are trimmed or padded with a slate.
+- ✅ Monitor: tracks in the cut play with the takes (levels above 0 dB play at 0 dB); the takes play at the scene-sound level.
+- ✅ Projects with a v0.4 merge score open with it as a looping track (in the cut, not sent, same level and ducking) and scene sound on.
 
 ## 4. Prompt rewriter (LLM)
 
@@ -94,7 +107,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 ## 6. Assets (Assets tab)
 
 - ✅ Upload images, video and audio into `input/reelwright/<project>/`. Codes are assigned automatically: P1…, V1…, A1….
-- ✅ Delete an asset (inspector button or right-click menu, with confirmation): it is removed from every scene, cast anchor, voice, outfit and the score track. The file stays on disk.
+- ✅ Delete an asset (inspector button or right-click menu, with confirmation): it is removed from every scene, cast anchor, voice, outfit and soundtrack track. The file stays on disk.
 - ✅ Add files that are already in ComfyUI: a browser lists ComfyUI's input folder (imported files) and output folder (generated files), newest first, filterable by path and kind. Input files are used in place; output files are hard-linked (or copied) into `input/reelwright/<project>/from_output/`.
 - ✅ Each picture or video has a description that becomes its subject line. It is stored once on the asset and every scene reads it when its prompt is built, so an edit reaches all scenes at once; the inspector lists where it is used, and each scene's References card shows it. **Describe with LLM** sends the picture (or three frames of a video) to a vision-capable model with your own question (“describe the person on the left”, “describe the couch”); the answer is offered as a suggestion to use or append.
 - ✅ Each asset has defaults that any scene can override: role, retention, features to keep, soundtrack use, and a category (location, prop, style, keyframe, camera, ambience, music, voice, SFX).
@@ -152,7 +165,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Audio:
   - a short fade at every seam (per-scene override for fresh starts);
   - loudness normalisation (EBU R128, target LUFS);
-  - an optional score track across the whole film that ducks under dialogue.
+  - soundtrack tracks (§3a) mixed unchanged, with the scenes' own sound under them at a level, or off (the default). This replaces the v0.4 score track.
 - ✅ Colour match: per-scene RGB gain matched to a reference scene, to even out jumps between scenes.
 - ✅ Output: H.264 or H.265 MP4 with a CRF setting.
 - ✅ Extras:

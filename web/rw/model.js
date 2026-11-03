@@ -45,6 +45,14 @@ export function alignFramesUp(n) {
   return n;
 }
 
+// added 2026-11-03 v0.5.0: largest 17k+5 frame count <= n (spec.align_frames_down)
+export function alignFramesDown(n) {
+  n = Math.floor(n);
+  if (n < 5) return 5;
+  while (n % 17 !== 5) n--;
+  return n;
+}
+
 export function nearestGridFrames(n) {
   const k = Math.max(0, Math.round((n - 5) / 17));
   return k * 17 + 5;
@@ -130,7 +138,8 @@ function defaultGlobal() {
       timeout_s: 120, max_wait_s: 900, retries: 2, context_tokens: 0,
       import_part_chars: 3000, import_max_tokens: 16384, import_thinking: "same", import_guides: false },
     merge: { use: "starred", missing: "skip", hard_cut: "cut", transition_frames: 12, audio_fade_frames: 6,
-      loudness: -16.0, normalize: true, score: { asset: "", volume_db: -12.0, duck: true },
+      loudness: -16.0, normalize: true, score: { asset: "", volume_db: -12.0, duck: true }, // v0.5.0: score moves to p.soundtrack on load
+      scene_audio: { mix: false, volume_db: -12.0 }, // added 2026-11-03 v0.5.0: the scenes' own sound under a soundtrack
       color_match: false, color_ref_scene: "", codec: "h264", crf: 16,
       subtitles: true, chapters: true, otio: true, fcpxml: true, bundle: false, auto_after_render: true },
   };
@@ -177,6 +186,7 @@ export function defaultProject(name = "Untitled") {
     global: defaultGlobal(), assets: [], cast: [],
     camera_presets: DEFAULT_CAMERA.map(([n, t]) => ({ id: newId("k"), name: n, text: t })),
     scenes: [], markers: [],
+    soundtrack: [], // added 2026-11-03 v0.5.0: audio laid on the film (see reelwright/soundtrack.py)
     ui: { tab: "timeline", selected: "", zoom: 22, playhead: 0, snap: true, ripple: true },
   };
   p.scenes.push(defaultScene(p, { title: "Scene 1", start: { mode: "fresh", overlap_frames: 39 } }));
@@ -255,9 +265,19 @@ export function normalizeProject(raw) {
   }
   if (!p.scenes.length) p.scenes.push(defaultScene(p, { title: "Scene 1" }));
   if (!p.scenes.some(s => s.id === p.ui.selected)) p.ui.selected = p.scenes[0].id;
+  // added 2026-11-03 v0.5.0: soundtrack tracks; the old merge score becomes one (same as soundtrack.py)
+  p.soundtrack = p.soundtrack.filter(isObj);
+  p.soundtrack.forEach(t => normalizeTrack(t));
+  const score = p.global.merge.score;
+  if (score?.asset) {
+    p.soundtrack.push(normalizeTrack({ id: "t_score", asset: score.asset, volume_db: Number(score.volume_db ?? -12), sync: false, mix: true, duck: score.duck !== false, loop: true }));
+    score.asset = "";
+    p.global.merge.scene_audio = { mix: true, volume_db: 0 };
+  }
   return p;
 }
 
+/* [OLD 2026-11-03 v0.4.3->v0.5.0] scenes end to end, and only the raw tail overlap: the finished cut was shorter, so a soundtrack drifted
 export function sceneStarts(project) {
   const starts = {};
   let t = 0;
@@ -267,6 +287,68 @@ export function sceneStarts(project) {
 
 export function overlapSeconds(scene) {
   return scene.start.mode === "tail" ? scene.start.overlap_frames / FPS : 0;
+}
+[/OLD] */
+// added 2026-11-03 v0.5.0: start of every scene in the finished cut (model.scene_starts). A scene's time t plays at
+// starts[id] + t; a scene that continues the one before begins inside it by overlapSeconds.
+export function sceneStarts(project) {
+  const starts = {};
+  let t = 0;
+  project.scenes.forEach((s, i) => {
+    t = Math.max(0, t - (i > 0 ? overlapSeconds(s) : 0));
+    starts[s.id] = t;
+    t += s.duration;
+  });
+  return { starts, total: t };
+}
+
+// Seconds at the start of a scene that repeat the end of the one before (callers check that it is not the first):
+// the tail clip (the planner's 17k+5 frames) or the one last frame.
+export function overlapSeconds(scene) {
+  if (scene.start.mode === "tail") {
+    const total = Math.max(1, framesOf(Math.max(1 / FPS, scene.duration)));
+    return Math.min(alignFramesDown(Math.max(5, scene.start.overlap_frames)), alignFramesDown(total)) / FPS;
+  }
+  return scene.start.mode === "last_frame" ? 1 / FPS : 0;
+}
+
+// ---- soundtrack (added 2026-11-03 v0.5.0, mirrors reelwright/soundtrack.py) ----
+export const TRACK_DEFAULTS = { id: "", asset: "", start: 0, in: 0, out: 0, volume_db: 0, fade_in: 0, fade_out: 0, mute: false,
+  sync: true, marker: "fully_copy", mix: true, duck: false, loop: false };
+
+export function normalizeTrack(t) {
+  fill(t, TRACK_DEFAULTS);
+  if (!t.id) t.id = newId("t");
+  for (const k of ["start", "in", "out", "volume_db", "fade_in", "fade_out"]) t[k] = Number.isFinite(Number(t[k])) ? Number(t[k]) : 0;
+  t.in = Math.max(0, t.in);
+  t.fade_in = Math.max(0, t.fade_in);
+  t.fade_out = Math.max(0, t.fade_out);
+  if (!AUDIO_RETENTION.includes(t.marker)) t.marker = "fully_copy";
+  return t;
+}
+
+// The source seconds a track plays: in..out, or in..end of the file when out is not set.
+export function trackLength(t, asset) {
+  const out = t.out > t.in ? t.out : Number(asset?.duration) || 0;
+  return Math.max(0, out - t.in);
+}
+
+// Tracks that play: not muted, an audio asset, some length.
+export function playingTracks(project) {
+  return project.soundtrack.map(t => ({ t, a: findAsset(project, t.asset) }))
+    .filter(({ t, a }) => !t.mute && a?.kind === "audio" && trackLength(t, a) > 0);
+}
+
+// A soundtrack sets the timing: transitions keep their place and missing scenes keep their length in the cut.
+export function soundtrackLocked(project) {
+  return playingTracks(project).some(({ t }) => t.mix || t.sync);
+}
+
+// Whether the song is sent to H3 for this scene (any sync track sounds during it).
+export function sceneHasSong(project, scene) {
+  const { starts } = sceneStarts(project);
+  const a = starts[scene.id], b = a + scene.duration;
+  return playingTracks(project).some(({ t, a: asset }) => t.sync && (t.loop ? t.start < b : t.start < b && t.start + trackLength(t, asset) > a));
 }
 
 // ---- scene length vs shots (added 2026-11-03 v0.4.3) ----
@@ -430,6 +512,7 @@ export function sceneBudget(project, scene) {
     }
     if (a.kind === "audio") { b.audio++; b.audioSeconds += a.duration || 0; }
   }
+  const song = sceneHasSong(project, scene); // added 2026-11-03 v0.5.0: the song replaces the cast voices
   for (const sc of scene.cast) {
     const c = findCast(project, sc.id);
     if (!c) continue;
@@ -437,7 +520,13 @@ export function sceneBudget(project, scene) {
     if (c.anchors.length) b.pictures += castPacks(project, scene, c) ? 1 : c.anchors.length;
     const voice = findAsset(project, c.voice);
     const speaks = scene.dialogue.some(d => d.speaker === c.id);
-    if (voice && speaks) { b.audio++; b.audioSeconds += voice.duration || 0; }
+    // [OLD 2026-11-03 v0.4.3->v0.5.0] if (voice && speaks) { b.audio++; b.audioSeconds += voice.duration || 0; }
+    if (voice && speaks && !song) { b.audio++; b.audioSeconds += voice.duration || 0; }
+  }
+  if (song) { // one song segment per pass, at most 15 s
+    b.audio++;
+    b.audioSeconds += Math.min(15, estimatePasses(scene.duration, project.global.long).count > 1 ? (project.global.long.max_pass_frames || MAX_PASS_FRAMES) / FPS : Math.max(scene.duration, MIN_PASS_FRAMES / FPS));
+    b.song = true;
   }
   b.files = b.pictures + b.videos + b.audio;
   return b;
@@ -519,5 +608,7 @@ export function tagCandidates(project) {
     out.push({ tag, label: c.kind, kind: "cast" });
   }
   out.push({ tag: "@tail", label: "previous scene's tail clip", kind: "video" });
+  // added 2026-11-03 v0.5.0: the part of the soundtrack a pass is sent
+  if (project.soundtrack?.some(t => t.sync && !t.mute)) out.push({ tag: "@soundtrack", label: "the song this part is cut to", kind: "audio" });
   return out;
 }
