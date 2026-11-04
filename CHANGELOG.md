@@ -1,5 +1,156 @@
 # Changelog
 
+## v0.6.0 — 2026-11-03
+
+Fixes from a full code review, and the features it proposed. Merges that failed, renders stuck on "rendering", lost takes and damaged project files are fixed. Finished passes are kept and reused. New: pass retakes, variants, draft and range merges, audio stems, beat markers and a named undo history.
+
+### What you will notice after updating
+
+- **Some scenes render again once.** What they send to H3 changed:
+  - a cast member's voice sample goes only to the passes where that character speaks;
+  - a first-frame, last-frame or keyframe picture named in the text goes only to the pass it guides, and its subject line reads "is the keyframe of [Shot 1]" (was "is keyframe of");
+  - a video guide is tagged *video continuation* (was *keyframe completion*), and a video guide named in the text is also sent as a reference video;
+  - a pass prompt edited by hand, a Split prompt or a raw prompt gets its task tags once, in the summary;
+  - written `[Shot N]` lines in a long scene go only to the pass that holds that shot;
+  - a tail start past the re-anchor limit is planned as a last-frame start;
+  - dialogue, shots and keyframes at the very start or end of a scene now land in a pass.
+
+  Continuing scenes do **not** all go stale. A take rendered before v0.6.0 keeps counting until the scene it continues from gets a newer take. Seeds don't change: every existing scene keeps the seed it had.
+- **Auto-roll is on while a soundtrack sets the timing.** Changing a scene's length takes the time from the next scene, so later scenes stay on the song. The **Auto-roll** toggle on the timeline toolbar turns it off.
+- **Undo no longer changes the view.** Ctrl+Z, Ctrl+Y and the History menu keep the tab, zoom, snap, playhead and selection.
+- **Each new node saves into its own folder**, `untitled-xxxx` (4 random letters and digits). The first rename moves it to the name's folder, as before.
+- **A pasted or duplicated node becomes a separate project.** It gets a new project id, a folder `<slug>-2` (or `-3`…) and new scene ids, and a toast says so. Its renders start fresh; the original node keeps its takes. This also holds for a node pasted into another workflow (Ctrl+V, Paste, Duplicate, Clone, Alt-drag). A workflow opened twice, or saved under another name, still opens the same project. Two nodes of an older workflow that share a project but already use different folders keep their folders, scene ids and renders; only their project ids are made unique.
+
+### The most important fixes
+
+- **Merges no longer fail after a plain cut.** A crossfade, dip or continuing scene that came after a plain cut, a slate or a pass seam failed in ffmpeg ("Failed to inject frame"). Each scene in the merge is now also exactly its length in frames, so a take that is one frame short no longer shifts later scenes against the soundtrack.
+- **Merges with a soundtrack are frame-exact.** Scenes whose length is not a whole number of frames (7.3 s) are cut on the film's frame grid, so the merge no longer flashes one-frame dark slates or drifts from the song, and a crossfade late in the film keeps its whole picture. A take one frame short holds its last frame instead of a slate.
+- **The editor no longer stays on "rendering".** Stop, a check that fails before the render starts, or a ComfyUI error all end the run in the editor. The end of a run says how many scenes rendered, failed or were skipped.
+- **One failing scene no longer stops the render.** The other scenes go on. Scenes that continue from the failed one are skipped. The failure shows at once, and ComfyUI shows the error when the run ends.
+- **Reopening a workflow shows the project's own takes.** They were read for the "untitled" folder before the project loaded, and a rename then moved the project's folder away from its renders.
+- **Project files are no longer damaged by two saves at once.** Every write goes through its own temporary file, and every change to a take list, `project.json` or the cut numbers holds a lock for the project. A damaged take list is rebuilt from the takes' `meta.json`; a damaged `project.json` falls back to the newest autosaved version.
+- **The tail clip holds the last 124 frames of the scene**, across its passes. A 73- or 90-frame tail overlap, or a scene whose last pass is short, used to get fewer guide frames than the merge trims.
+- **A continuing scene goes stale when the scene before gets a new take.** Its cache key now includes the take it continues from (before, "New take" on scene 1 left scene 2 cached). The Render tab says "Continues from a different take", with one click to render it and the scenes after it again.
+- **Ctrl+Z no longer reaches the ComfyUI workflow** after picking from a dropdown with Enter or Escape, after clicking a video's or audio's controls, or while a dialog is open. On a checkbox or slider, Ctrl+Z undoes the editor.
+- **Dialogs: Enter presses the button that has focus.** Enter on Cancel used to confirm. Delete dialogs open with Cancel focused, and Tab stays in the dialog. Every confirmation (render everything, delete a take, a version or a cast member) is now a dialog; the inline bars vanished when a render redrew the screen.
+- **`@soundtrack` in a pass that gets no part of the song no longer blocks the render.** It is written as "the soundtrack".
+- **Next, Previous and Loop work on continuing scenes.** They go to where each scene first shows new content. The Scene tab's "In" shows that time too.
+- **Split keeps the film's length** (the second half was one frame short). Split, Duplicate and paste give the new scene its own seed.
+- **Broken or hand-edited project files no longer break the editor or the render.** Bad values fall back to defaults, and the browser and the server repair them the same way. A duration typed as text can't hang the browser. Duplicate scene ids and duplicate asset codes ("p1" next to "P1") are repaired.
+- **The last edit is no longer lost** when you switch workflows or remove the node. ComfyUI marks the workflow as changed after editor edits. Ctrl+S waits for the save and says when it fails.
+
+### Rendering
+
+- **Finished passes are kept** in a pass cache per scene (`scenes/<id>/passes/`), for long and short scenes. After Stop or an error, the next render starts where it stopped. Moving a short scene's kept window only re-trims it. Pass files of takes made with v0.5.1 are reused when they match.
+- **A check before the GPU starts.** A render first checks the H3 nodes, the folder name, every reference, anchor, voice, song and guide file, the model files, the take each continuing scene starts from, that video guides fit their pass, and ffmpeg. It lists every problem at once.
+- **Pass retake** (Render tab, one button per pass of a long scene): a new seed for that pass only. Earlier passes come from the pass cache; later passes joined by an overlap are rendered again; passes after a shot cut are kept.
+- **Variants** (Render tab): render 2–8 takes of the selected scene in one run. With the face check on, the best match is starred; otherwise the first new take is. "Compare vN and vM" opens the two newest in the A/B view.
+- **Time estimates** for each scene and for the pending queue ("≈ 20 min + 1 scene without history"), learned from earlier renders with the same quality, size and steps. Passes already in the pass cache are shown ("· 2 kept").
+- **"why?"** next to a stale scene shows how its prompt changed since the starred take, pass by pass.
+- **A continuing scene whose tail clip would be too short is refused before rendering.** When the take it continues from (a hand-picked, locked or older take) is shorter than the planned overlap, the guide used to be shorter and the seam about 13 frames off. The plan warns, and the render asks you to render the scene before again or to shorten the overlap.
+- **A failed drift retake or extra variant is a warning.** The scene keeps its new take, the scenes that continue from it still render, and the toast and the Render tab's last-run note list the warning.
+- **Variants show their real progress:** take k of n in the node title and the Render tab.
+- **A take you star by hand stays starred.** A render no longer moves the star back to the take that matches. The Render tab marks a hand-picked star.
+- **After a render, failed and skipped scenes are listed** with the reason and a **Render them again** button. A render that never started says why. A pass taken from the pass cache shows "from cache".
+- **Video guides are placed to fit.** A video used as a last frame, or as a keyframe near the end of a pass, no longer stops the render: a last-frame clip ends on the guided frame, other clips are shortened to the room left. The Issues list says how much of the clip is used and how to keep all of it.
+- **Continuation follows one rule everywhere** (planning, trimming, timeline, merge). A tail start past the re-anchor limit is a last-frame start. The tail overlap is at most 124 frames and never longer than the scene before; next to a scene shorter than 5 frames, a tail start becomes a last-frame start.
+- **"+1 per scene" seeds stay with their scene.** Adding, removing or moving scenes no longer changes other scenes' seeds.
+- Reference videos are read only up to 15 s instead of decoded whole; voice files are cut to 15 s.
+- Face check: a drift retake is starred only when it matches better; frames without the character no longer count as drift; a face-model setup that failed is tried again on the next render.
+- Changing the long-scene crossfade now re-renders the long scenes that use overlap seams (takes made with v0.6.0 and later).
+- Memory is freed after every scene, also after a failure.
+- Reelwright loads in a ComfyUI without the MiniMax H3 nodes. Global → About says why they are missing, and a render is refused with that reason.
+- A render into a folder that holds another project is refused with a clear message.
+- The node's `video` output is the newest full cut, never a draft or range merge.
+- A double click on a render button queues one render. A sampler's preview inside a subgraph is no longer shown as Reelwright's.
+
+### Merge and export
+
+- **One merge per project at a time.** A second one is refused with a clear message. A running merge can be stopped (**Stop merging**), including the automatic merge after a render; a stopped merge removes the files it wrote.
+- **Draft merges, ranges and stems** (Render → Merge card → *This merge*; not saved with the project):
+  - *Draft*: half size, fast x264 preset, CRF 28, file `<slug>_cut_vN_draft.mp4`;
+  - *From … to*: only those scenes, file `…_cut_vN_sAA-BB.mp4` (scene numbers);
+  - *Stems*: `…_stems/` with `scenes.wav`, `mix.wav` and `track_<id>.wav`, plus an EBU R128 loudness report (`…_loudness.json`, shown in the card: integrated loudness, loudness range and true peak; above −1 dBTP is highlighted).
+- **ffmpeg can't hang the merge.** Its output is read as it comes, and the filter graph goes in a file, so long films also merge on Windows.
+- **Cut numbers are never reused**, so "older cuts" always means older.
+- **OTIO and Final Cut Pro XML** get the soundtrack tracks and the timeline markers. Titles with quotes no longer break the FCPXML; slates and missing scenes are gaps; OTIO clips no longer drift by a frame.
+- Subtitles: a line at the very start of a last-frame scene is no longer dropped; a blank line inside a line no longer breaks the cue; an empty line no longer cuts the previous cue short.
+
+### Soundtrack and timeline
+
+- **Beat markers.** Soundtrack lanes show the song's beats and bar starts, and the clip shows its tempo (BPM). **Snap to beats** makes scene edges, shot cuts and moved tracks stick to them (Alt: free).
+- **Shots on the beat** (Scene tab → Shots → *On the beat*) proposes shot start times on the beat; **Apply** moves them in one undo step.
+- **What goes stale.** While you drag a soundtrack track that is sent to H3, the scenes and passes that would render again are outlined, and the drag tip counts them.
+- **Listen** (Scene tab → What H3 receives) plays the part of the song a pass is sent.
+- Looping over a rendered take loops the picture and the soundtrack (the video used to play on).
+- Deleting or undoing the scene that is playing no longer stops playback with a broken playhead.
+- **Delete removes what is selected:** a marker or a soundtrack track (Ctrl+Z brings it back), otherwise the scene (it asks). Clicking a scene closes the marker panel.
+- **The timeline stays fast on long films.** A render step updates only its progress bar, and only the part of the timeline near the view is built. At 300 scenes a progress update took about 0.25 s; now a few milliseconds.
+- Loop repeats of a track are drawn as one pattern that ends with the film. A waveform that failed to load can be retried.
+- Shot cuts can't be dragged into the trimmed start of a continuing scene; "+ Line" never makes a negative time; shot and resize drags end cleanly when the button is released outside the editor, and survive a redraw in the middle.
+- Each editor on the page has its own playback and audio.
+
+### Prompt and LLM
+
+- **Tags:** e-mail addresses are text; `@@` writes a literal `@`; names may have accents, apostrophes, hyphens and dots (`@Ömer`, `@O'Brien`); `@Mara's` works. An unknown `@name` is a warning (written as plain text); a mistyped asset code like `@P9` is an error.
+- **Task tags once.** A pass edited by hand, a Split prompt or a raw prompt gets the task tags exactly once, at the start of the summary. A raw prompt that starts with `[Shot 1]` gets them too.
+- **Written `[Shot N]` lines go only to the pass that holds that shot**, renumbered and with the pass's times. Rewrite keeps them.
+- **Guides per pass.** A first-frame, last-frame or keyframe picture named in the text is sent only to the pass it guides; other passes name it in words. A video guide named in the text is sent as a reference video and described by its place ("the opening clip of [Shot 1]").
+- **Voices per pass.** A character's voice sample is sent only to the passes where they speak.
+- **Issues:**
+  - a missing file is an error on every scene that uses it;
+  - a video guide longer than the room in its pass says how much of it is used;
+  - dialogue or a shot inside a trimmed tail overlap, before 0 s or in no pass is a warning;
+  - a prompt written for a pass the scene no longer has is flagged;
+  - the reference budget counts a video's own sound as audio, a voice only where its character speaks and the song only where it is sent. The editor and the render check now agree.
+- **LLM:**
+  - a reply that has `</think>` without `<think>` is read correctly;
+  - a raw Rewrite cut off at the token limit is retried with a bigger budget (up to 32,768 tokens);
+  - "busy" (HTTP 429) answers are retried after the wait the server asks for (up to 60 s);
+  - context-window errors are explained and not retried;
+  - a base URL without `http://`, or with a pasted `/chat/completions`, works;
+  - a web page instead of JSON says to check the base URL.
+- **Script import** fixes sloppy JSON and wrong types, or leaves the item out with a warning; the warnings are listed under the draft. An opening scene before the first heading is no longer lost. Every imported scene gets its own seed. Split accepts "pass 2" or "02" keys and object values.
+- Stop during Rewrite or Split is no longer lost.
+- Building the prompts for the plan is about 4× faster on long projects (one shared context); the whole plan request gains less.
+
+### Editor
+
+- **History menu** (clock button next to Undo/Redo): every edit by name. Click a step to go back or forward to it.
+- **Folder conflicts.** When a project's folder holds another project, the footer shows "Folder in use" and a toast says so; the project is not written to disk until you choose. Click the footer, press Ctrl+S, Render or Merge to choose: **Use a separate project** (a new folder `<slug>-2`…), **Take over this folder**, or **Decide later** (selected first, so a key press while typing can't pick for you).
+- **Typing is no longer disturbed by updates.** While you type in a field, the tab is not redrawn under you, so a minus sign, a selection or a half-typed value is no longer lost when a render, plan or autosave update arrives (Tab into the height and typing 512 used to give 768512). Typing a value another field also holds no longer moves the cursor there, and after Enter a field shows the value that was stored (1000 → 992 on the 32-pixel grid).
+- Typing with an input method (Japanese, Chinese, Korean) no longer garbles text. Typing "-" or "1e" in a number field no longer resets it.
+- Typing a shot or line time that re-sorts the list keeps the cursor in the same shot's field.
+- **Restoring an autosaved version first shows what it changes** (scenes, lengths, prompt text, Global settings).
+- The A/B compare and the asset preview keep playing while a render reports progress.
+- Deleting an outfit moves the scenes that wore it to the default outfit. Deleting an asset file in the Files tab also removes its soundtrack tracks.
+- Renaming a project no longer moves its folder away from its renders when they haven't been listed yet.
+- Project folder names drop accents ("Ömer" becomes "omer") and are at most 64 characters; a name with no Latin letters gets "untitled".
+- The Scene tab shows the reference budget per pass for long scenes, and notes a re-anchored or shortened tail start.
+- A Global profile saved before v0.5.0 no longer brings its old score back silently: it becomes a soundtrack track, with a note. The Global tab no longer asks for profiles again while the first request is on its way.
+- "From ComfyUI" closed while files are being added no longer comes back as an empty card.
+- Removing a node releases everything its editor used (listeners, timers, players).
+
+### Files tab
+
+- **Repair** rebuilds the take lists from the takes on disk (their `meta.json`).
+- Each scene's **pass cache** is listed with its own label and quick selection.
+- Another project's scene folders are labelled and never picked as leftovers.
+- The server refuses to delete what a running render or merge uses, a take's own files and the cut counter, and the tab shows the reason. A linked project folder is unlinked, never followed.
+- Draft and range cuts and their stems are grouped with their cut.
+- Uploads are checked (unreadable files are refused) and streamed to disk. Importing a file with the same name and size as another no longer attaches the wrong one.
+
+### For developers
+
+- **New routes:** `POST /reelwright/merge/cancel`, `POST /reelwright/storage/repair`, `GET /reelwright/beats`, `POST /reelwright/soundtrack/excerpt`. **Changed:** `/merge` (draft, range, stems, job; 409 busy), `/autosave` (409 `slug_conflict` unless `force`), `/plan` (upstream, estimate, prompt fields), `/info` (`h3_error`), `/upload` (streamed, checked). Wrong input types answer 400. See `docs/ARCHITECTURE.md`.
+- **Events:** `reelwright.run` has `run_id` and phases `start`, `end` (always sent; `rendered`, `failed`, `skipped`, `warnings`, `interrupted`) and `rejected`. `reelwright.progress` adds the phases `reuse`, `error` and `skipped`, and `warning: true` on a `done` whose extra take failed. New plan issue code `short_upstream_tail`. `reelwright.merge` events carry `job`.
+- **Run actions:** `pass_retake` `{scene_id, pass}` and `variants` `{scene_ids, n}`.
+- **Takes** record `prompts`, `upstream`, `pass_keys`, `offsets`, `render_seconds`, `face_score` and more; `index.json` gains `auto_star` and `project_id`.
+- **Disk:** `scenes/<id>/passes/<key>.mp4|.json` (pass cache; takes no longer have `passes/`), `cuts/.next`, `_draft` / `_sAA-BB` cut names, `_stems/`, `_loudness.json`, `input/reelwright/.uploads/`, `user/reelwright/cache/beats/`.
+- **Project:** `project_id`, per-scene `seed_n`, view settings `ui.beats`, `ui.beatSnap`, `ui.autoRoll`.
+- New `reelwright/jobs.py` (per-project locks, one merge at a time) and `reelwright/beats.py`. `model.effective_start`, `scene_overlap_at`, `visible_start` and `scene_media_counts` have exact JS twins, checked by `tests/test_model_parity.py` (runs `web/rw/model.js` under node). `prompt.prepare(p)` builds a shared context for `build_pass` and `lint_project`.
+- Store: `update(fn, {label})`, `history()`, `jumpTo(k)`, `flush()`, `dispose()`; tabs can export `onProgress(ctx, d)`.
+
 ## v0.5.1 — 2026-11-03
 
 - **Ctrl+Z no longer blanks the node.** ComfyUI watches every key press on the page and runs its own workflow undo on Ctrl+Z unless a text field has focus. Its undo rebuilds the whole graph, so pressing Ctrl+Z in the editor undid the workflow as well as the edit. With Nodes 2.0 on, the rebuilt node then showed nothing, because Vue kept showing the old node's emptied element.

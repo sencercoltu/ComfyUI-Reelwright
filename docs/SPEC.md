@@ -15,7 +15,8 @@ validation · 🗺️ roadmap.
 |---|---|
 | ✅ Node id | `Reelwright` (category `video/Reelwright`) |
 | ✅ Optional inputs | `model`, `clip`, `vae`, `audio_vae`. A wired input replaces the matching Global-tab loader for the whole run. |
-| ✅ Outputs | `video` (the merged cut, or the last rendered scene), `last_frame`, `audio`, `scene_plan` (JSON) |
+| ✅ Outputs | `video` (the merged cut, or the last rendered scene; v0.6.0: the newest full cut, never a draft or range merge), `last_frame`, `audio`, `scene_plan` (JSON) |
+| ✅ Without H3 (v0.6.0) | Reelwright also loads in a ComfyUI without the native MiniMax H3 nodes. Global → About says why they are missing, and a render is refused with that reason. |
 | ✅ Editor | Timeline · Scene · Assets · Cast · Render · Global tabs inside the node |
 | ✅ Pickers | Every drop-down is a type-to-filter combobox (every typed word must match); language and LLM model also accept values that are not in the list |
 | ✅ Help | Every control has a hover tooltip; every section has a **?** button with a longer explanation that opens beside the icon, stays inside the node and can be dragged by its header |
@@ -27,33 +28,39 @@ output, and `video` points at them.
 
 ## 2. Global settings (Global tab)
 
-- ✅ Project name, output folder name.
+- ✅ Project name, output folder name. Folder names drop accents ("Ömer" → `omer`), are at most 64 characters, and are `untitled` when no Latin letter is left (v0.6.0).
+- ✅ One folder per project (v0.6.0). Each new node saves into its own folder, `untitled-xxxx`; the first rename moves it to the name's folder while it has no renders. A node pasted or duplicated from another becomes a separate project (new folder `<name>-2`…, new scene ids, renders start fresh). When a project's folder holds another project, a dialog offers **Use a separate project** or **Take over this folder**; until then nothing is written to disk and the footer shows "Folder in use".
 - ✅ Models: diffusion model (ref2va), text encoder (Qwen3-VL, `minimax` CLIP type), video VAE, audio VAE, optional latent upscaler. Weight dtype and CLIP device are selectable.
 - ✅ Global LoRA stack: enable, strength, order. Applied to every scene first.
 - ✅ Output: aspect presets (21:9, 16:9, 4:3, 1:1, 3:4, 9:16) using the native H3 canvas rule (768 short edge, 768×1344 area cap, multiples of 32), or a custom width × height. Reference image size can be set to `match` or `max`.
-- ✅ Sampling: steps, sampler (default `res_multistep`), scheduler (`simple`), seed and seed mode (fixed / +1 per scene / random), optional H3 sigma shifts (video 12, audio 3). CFG is fixed at 1.0 because H3 is CFG-distilled.
+- ✅ Sampling: steps, sampler (default `res_multistep`), scheduler (`simple`), seed and seed mode (fixed / +1 per scene / random), optional H3 sigma shifts (video 12, audio 3). CFG is fixed at 1.0 because H3 is CFG-distilled. With +1 per scene, each scene keeps its own seed number from when it was made, so adding, removing or moving scenes changes no other scene's seed (v0.6.0; existing scenes keep the seeds they had).
 - ✅ Draft mode: lower resolution, fewer steps and an optional turbo LoRA, with the same seeds. Use it for fast previews, then render Final.
 - ✅ New-scene defaults: duration, how a scene starts, overlap frames, dialogue language.
 - ✅ Long-scene settings: longest pass, overlap, crossfade, seam mode, how far a seam may move to land on a cut.
 - ✅ Memory policy and the "encode all prompts first" switch (see §8).
 - ✅ LLM settings: OpenAI-compatible base URL, model, temperature, max tokens and presets. The API key is stored in the ComfyUI user folder, never in the workflow.
-- ✅ Profiles: save the whole Global tab under a name and apply it to any project; update, delete and mark one as the default for new nodes. Stored in `user/reelwright/profiles.json` (never the API key) and shared by every Reelwright node on the server. A new node starts with the default profile and shows a banner to pick another.
+- ✅ Profiles: save the whole Global tab under a name and apply it to any project; update, delete and mark one as the default for new nodes. Stored in `user/reelwright/profiles.json` (never the API key) and shared by every Reelwright node on the server. A new node starts with the default profile and shows a banner to pick another. A profile saved before v0.5.0 brings its score in as a soundtrack track, with a note (v0.6.0).
 - ✅ Override matrix: shows which scenes override which global setting.
-- ✅ Autosaved versions: list them (date, time, size), restore one, delete one or delete all. The project's latest autosave (`project.json`) is never deleted.
+- ✅ Autosaved versions: list them (date, time, size), restore one, delete one or delete all. The project's latest autosave (`project.json`) is never deleted. Restore first shows what the version changes: scenes brought back or removed, titles, lengths, starts, prompt text, shots, dialogue, references, cast, Global settings (v0.6.0). A damaged `project.json` falls back to the newest readable version.
 
 ## 3. Scenes (Timeline + Scene tabs)
 
-- ✅ Unlimited scenes. Add, duplicate, delete, reorder, split at the playhead. Deleting asks for confirmation; deleting the only scene resets it to an empty scene.
+- ✅ Unlimited scenes. Add, duplicate, delete, reorder, split at the playhead. Deleting asks for confirmation; deleting the only scene resets it to an empty scene. Split keeps the film's length (v0.6.0; the second half was one frame short), and split, duplicate and paste give the new scene its own seed.
 - ✅ Right-click a scene (timeline or Scene tab strip) or an asset for its own menu; ComfyUI's node menu does not open inside the editor.
-- ✅ Duration: drag the right edge of a scene on the timeline, or type it. Any length is allowed (see §5).
+- ✅ Duration: drag the right edge of a scene on the timeline, or type it. Any length from 1 frame to 600 s (see §5).
+- ✅ **Auto-roll** (v0.6.0): while a soundtrack sets the timing (§3a), changing a scene's length on the timeline or in the Scene tab takes the time from the next scene, so later scenes and their passes stay on the song. On by default; the **Auto-roll** toolbar toggle turns it off (then Ripple / Roll apply as before).
 - ✅ How a scene starts:
   - **Fresh start**: hard cut, nothing carried over.
   - **Last frame**: the previous scene's final frame becomes guide frame 0 (fully preserved).
   - **Tail clip**: the previous scene's last N frames (17k+5) become a guide clip at frame 0, plus its audio. The overlap is trimmed in the final cut, so motion, light and sound continue.
   - The timeline is the cut (v0.5.0): a continuing scene starts inside the one before, over the frames it repeats (the tail clip, or the one last frame), where the merge puts it.
+  - One rule everywhere (v0.6.0: planning, prompts, trimming, the timeline and the merge). A tail start past the re-anchor limit (§7) is a last-frame start. The tail overlap is at most 124 frames and never longer than the scene before or the scene itself; when fewer than 5 frames would be left, the scene continues from the last frame. The Scene tab's start card says when this happens.
+  - Each scene's **visible start** (v0.6.0) is where it first shows new content: its start plus the frames it repeats. Next, Previous and Loop jump to it, and the Scene tab's "In" shows it.
 - ✅ References: any asset, with a role (reference / first frame / last frame / keyframe at time t), a retention label, the features to keep, and whether to use a video's soundtrack.
+- ✅ Guides per pass (v0.6.0): a first-frame, last-frame or keyframe picture named in the text is sent only to the pass it guides; other passes name it in words. A guide video named in the text is also sent as a reference video, described by its place ("the opening clip of [Shot 1]"). A video guide always fits its pass: a last-frame clip ends on the guided frame, others are shortened to the room left; the Issues list says how much of it is used and how to keep all of it.
 - ✅ Retention labels follow the H3 guide. Visual: `fully_preserved`, `partially_preserved`, `attribute_transfer`, `weak_reference`. Audio: `fully_copy`, `partially_copy`, `reference`, `weak_reference`.
-- ✅ Shots: list of shots with start time, camera and action. Shot ticks show inside the scene block on the timeline and can be dragged. They are written as `[Shot 1] A wide shot: …`, `[Shot 2] At 00:05.000, the shot cuts to …`, as in MiniMax's Ref2VA guide.
+- ✅ Shots: list of shots with start time, camera and action. Shot ticks show inside the scene block on the timeline and can be dragged. They are written as `[Shot 1] A wide shot: …`, `[Shot 2] At 00:05.000, the shot cuts to …`, as in MiniMax's Ref2VA guide. A shot cut can't be dragged into the trimmed start of a continuing scene (v0.6.0).
+- ✅ **On the beat** (v0.6.0, Shots card, when a soundtrack track is not muted): proposes shot start times on the soundtrack's beats (a bar start when it is about as near), at least half a beat apart and never in the repeated start; **Apply** moves them in one undo step.
 - ✅ Dialogue lines: speaker (from the Cast), time, language, delivery and text. Written as `<Subject n> (S1) whispers, <d>[English] …</d>`. Speaker IDs follow speaking order inside each clip (first voice S1, next new voice S2), as the guide asks. The language is picked from H3's 11 stable languages or typed freely.
 - ✅ Camera: per-shot camera wording from presets, or a reference clip (uses a video slot).
 - ✅ Prompt editor with two views:
@@ -62,10 +69,13 @@ output, and `video` points at them.
   - Info lints point at the guide's advice: a short detailed description, an empty soundscape (N/A means silence), a reference asset without a description.
   - **Raw**.
   - In both views, refer to assets as `@P1`, `@V2`, `@A1`, to cast members as `@Mara` or `@{Old Keeper}`, and to the continuation clip as `@tail`. Each pass renumbers these into `<Picture k>`, `<Video k>`, `<Audio k>`, `<Subject n>`, in the order the native node presents references.
-- ✅ Task tags are derived automatically: `reference generation`, `keyframe completion`, `video continuation`, `audio reference`, `audio reuse`, `video editing`.
+  - Tag syntax (v0.6.0): a name may have accents, digits, `_`, and single `'`, `’`, `-` or `.` inside it (`@Ömer`, `@O'Brien`; "@Anna." is `@Anna`). `@Mara's` is Mara's subject plus "'s". An `@` right after a letter or digit starts no tag, so e-mail addresses are text; `@@` writes a literal `@`. The same rule highlights, autocompletes and builds.
+  - Unknown tags (v0.6.0): a name that looks like an asset code (`@P9`) or a code not attached to the scene is an error; any other unknown name is a warning and is written as plain text; a cast member who is not in the scene is written as the name, with a warning. `@soundtrack` / `@song` in a pass that gets no song is written as "the soundtrack" (info), never an error.
+- ✅ Task tags are derived automatically: `reference generation`, `keyframe completion`, `video continuation`, `audio reference`, `audio reuse`, `video editing`. A video guide is *video continuation* (v0.6.0; *keyframe completion* is kept for pictures). A pass edited by hand, a Split prompt and a raw prompt get the task tags exactly once, at the start of the summary (or of the text); tags written by hand are replaced by the pass's own.
 - ✅ Prompt preview shows exactly what each pass will send.
 - ✅ Per-scene overrides of any global setting: quality (draft or final), seed, steps, sampler, resolution, video VAE, audio VAE, diffusion model, LoRA stack (add to or replace Global, per-LoRA strength override). A hollow dot means the setting follows Global; a coral dot means it is overridden. "Reset to Global" clears them.
 - ✅ Scene notes, timeline markers, lock (keep the current take even when what it continues from changes).
+- ✅ Delete (v0.6.0): on the Timeline tab, Delete or Backspace removes the selected marker or soundtrack track without asking (Ctrl+Z brings it back); otherwise it deletes the selected scene, which asks first. Clicking a scene closes the marker panel.
 
 ## 3a. Soundtrack (Timeline, v0.5.0)
 
@@ -78,35 +88,42 @@ output, and `video` points at them.
 - ✅ Timing lock: while any track is in the cut or sent to H3, the merge keeps every scene at its timeline place: hard-cut crossfades and dips become a dip through black inside the scenes (half the transition on each side), missing scenes become slates (Block still blocks), and takes of another length are trimmed or padded with a slate.
 - ✅ Monitor: tracks in the cut play with the takes (levels above 0 dB play at 0 dB); the takes play at the scene-sound level.
 - ✅ Projects with a v0.4 merge score open with it as a looping track (in the cut, not sent, same level and ducking) and scene sound on.
+- ✅ **Beat markers** (v0.6.0): each audio file's tempo, beats and bar starts (`GET /reelwright/beats`, numpy only, 4/4 assumed, cached by file content). The lanes paint beats and, full height, bar starts; the clip shows "N BPM" and the inspector tempo, beats and bars. **Beats** toggles them on the toolbar (on by default). **Snap to beats** (off by default) makes scene edges, shot cuts and moved tracks stick to beats; a trimmed edge sticks to the file's own beats; Alt places freely.
+- ✅ **What goes stale** (v0.6.0): while you drag a track that is sent to H3, the scenes and passes whose part of the song would change are outlined and hatched, and the drag tip says "N scenes (M passes) render again".
+- ✅ **Listen** (v0.6.0, Scene tab → What H3 receives): plays the exact WAV a pass is sent (`POST /reelwright/soundtrack/excerpt`); a pending edit is saved first. No row when the pass gets no song.
+- ✅ Loop repeats are drawn as one pattern that ends with the film (v0.6.0). A waveform that failed to load is retried after 20 s or with **Retry waveform**. Waveform tiles are painted only when they come into view.
+- ✅ Looping over a rendered take loops the picture and the soundtrack (v0.6.0). Each editor on the page has its own playback and audio players.
 
 ## 4. Prompt rewriter (LLM)
 
 - ✅ Runs only when you press a button. Never during a queue run.
 - ✅ **Rewrite**: optional instruction plus a preset. Shows a diff, and you Accept, Edit or Discard. Tags and `<d>…</d>` dialogue lines are kept exactly as written; this is checked after the rewrite.
 - ✅ Written subject and shot lines replace the automatic line with the same label (no duplicates); a subject line keeps a reference to its pictures; a shot keeps its dialogue. Sections the editor writes automatically are not taken from the rewriter.
-- ✅ **Split prompt**: for long scenes, gives each pass its own prompt with re-based timestamps. A rule-based split is the default; the LLM split is optional.
-- ✅ **Script import**: paste a screenplay (Fountain or plain text). The LLM proposes scenes, shots, dialogue and cast. You review them before they are added, and choose where the scenes go: at the end, right after the selected scene, or in place of all current scenes (asks first; cast, assets and Global stay). Ctrl+Z undoes the import.
+- ✅ **Split prompt**: for long scenes, gives each pass its own prompt with re-based timestamps. A rule-based split is the default; the LLM split is optional. The LLM's answer may use keys like "2", "02", "pass 2" or "P2", a list, or objects per pass (v0.6.0).
+- ✅ **Script import**: paste a screenplay (Fountain or plain text). The LLM proposes scenes, shots, dialogue and cast. You review them before they are added, and choose where the scenes go: at the end, right after the selected scene, or in place of all current scenes (asks first; cast, assets and Global stay). Ctrl+Z undoes the import. v0.6.0: sloppy JSON (code fences, trailing commas, curly quotes, prose around it) and wrong types are fixed, or the item is left out with a warning listed under the draft; text before the first heading becomes the first scene when it reads like one (FADE IN, spoken lines); every imported scene gets its own seed.
 - ✅ **Script import in parts** (v0.4.2): a long script is cut at scene headings, table rows, Markdown headings or "Scene N" lines (paragraphs otherwise) into parts of about *Part size* characters; the premise before the first scene and table column headings go with every part, and each part sees the cast found so far. Live progress per part, Stop / Continue, retry a failed part on its own; a part cut off at the token budget is split in two automatically.
 - ✅ **Scene length from shots** (v0.4.3): Import asks for each shot's duration; a scene lasts the sum of its shots (`scriptparts.fit_scene`), or is lengthened so no shot or line starts after its end. The Shots card shows each shot's length and offers Lengthen / Fit into for shots after the end; the Issues list lengthens every such scene at once.
 - ✅ **Limits** (v0.4.2): stall timeout, give-up time, retries, context window (asked from the server when 0), and Import's own part size, token budget, thinking switch and guides switch. Every request streams; Rewrite and Split show progress and can be stopped. Both groups fold away (closed by default, v0.5.1) and show their values on one line when closed.
 - ✅ **Test connection**, and the model list from `/models`. The test says when the model thinks before answering.
-- ✅ **Thinking models** (Qwen3 and similar): reasoning is read from `reasoning_content` / `reasoning` / `<think>` and never mistaken for the answer. Calls get at least 6000 tokens; if a reply is cut off mid-thought the error says so. *Thinking: Off* sends `chat_template_kwargs: {enable_thinking: false}` (SGLang, vLLM). Describe retries once with thinking off when the budget runs out.
+- ✅ **Thinking models** (Qwen3 and similar): reasoning is read from `reasoning_content` / `reasoning` / `<think>` and never mistaken for the answer (v0.6.0: also a reply with `</think>` but no `<think>`). Calls get at least 6000 tokens; if a reply is cut off mid-thought the error says so. *Thinking: Off* sends `chat_template_kwargs: {enable_thinking: false}` (SGLang, vLLM). Describe retries once with thinking off when the budget runs out.
+- ✅ **Errors and retries** (v0.6.0): an answer cut off at the token limit is asked again with twice the budget, up to 32,768 tokens (a raw Rewrite cut off is never accepted). "Busy" (HTTP 429) answers are retried after the wait the server asks for, up to 60 s. Context-window errors are explained and not retried. A base URL without `http://`, or with a pasted `/chat/completions`, works; a web page instead of JSON says to check the base URL. Stop during Rewrite or Split is never lost.
 
 ## 5. Any scene length
 
 H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 frame grid).
 
 - ✅ **Longer scenes** are split into several passes, each no longer than the longest-pass setting. Seams are placed on shot cuts whenever a cut falls within the snap window, so those seams are plain cuts. Otherwise the seam is mid-shot: the next pass is guided by the previous pass's tail (default 39 frames) and the merge crossfades inside the overlap.
-  - Shots, dialogue and keyframes are assigned to the pass that contains them, with timestamps re-based to that pass.
-  - Cast anchors are re-sent to every pass.
+  - Shots, dialogue and keyframes are assigned to the pass that contains them, with timestamps re-based to that pass. Ones before 0 s or in the last half frame of the scene are moved inside it, so they land in exactly one pass (v0.6.0).
+  - Written `[Shot N]` lines (v0.6.0) go only to the pass that holds that shot, renumbered for the pass, with their MM:SS times moved to pass time. A pass's first shot says it continues when the shot carries on across an overlap seam. Without shots on the timeline the lines go to every pass (with a warning).
+  - Cast anchors are re-sent to every pass. A cast member's voice sample goes only to the passes where they speak (v0.6.0).
   - Each pass seed is the scene seed plus the pass index.
-  - Each pass is saved on its own, so a failed pass re-renders alone.
-- ✅ **Shorter scenes** render the shortest valid pass (124 frames) and keep a window: start, middle, end, or a custom in-point. The rest stays on disk as handles, so you can slip the window later without re-rendering.
+  - Each pass is saved on its own in the scene's **pass cache** (v0.6.0), so a failed or stopped render starts again where it stopped. **Pass retake** (§8) gives one pass a new seed and keeps the others.
+- ✅ **Shorter scenes** render the shortest valid pass (124 frames) and keep a window: start, middle, end, or a custom in-point. The rest stays on disk as handles, so you can slip the window later without re-rendering (v0.6.0: the kept pass is re-trimmed from the pass cache, no sampling).
 - ✅ Durations that fall between grid points are rendered on the next grid point up and trimmed exactly.
 
 ## 6. Assets (Assets tab)
 
-- ✅ Upload images, video and audio into `input/reelwright/<project>/`. Codes are assigned automatically: P1…, V1…, A1….
+- ✅ Upload images, video and audio into `input/reelwright/<project>/`. Codes are assigned automatically: P1…, V1…, A1…. Codes are unique across kinds and without case: a duplicate ("p1" next to "P1") gets the next free one (v0.6.0). Uploads are streamed to disk and checked: a file that can't be read as a picture, a video or audio is refused (v0.6.0).
 - ✅ Delete an asset (inspector button or right-click menu, with confirmation): it is removed from every scene, cast anchor, voice, outfit and soundtrack track. The file stays on disk.
 - ✅ Add files that are already in ComfyUI: a browser lists ComfyUI's input folder (imported files) and output folder (generated files), newest first, filterable by path and kind. Input files are used in place; output files are hard-linked (or copied) into `input/reelwright/<project>/from_output/`.
 - ✅ Each picture or video has a description that becomes its subject line. It is stored once on the asset and every scene reads it when its prompt is built, so an edit reaches all scenes at once; the inspector lists where it is used, and each scene's References card shows it. **Describe with LLM** sends the picture (or three frames of a video) to a vision-capable model with your own question (“describe the person on the left”, “describe the couch”); the answer is offered as a suggestion to use or append.
@@ -118,7 +135,7 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
   - ≤3 audio clips, each 2–15 s, ≤15 s in total;
   - ≤12 files in all.
   
-  Over-budget passes get a warning, not a block. "Auto-trim" shortens an audio ref so it fits.
+  Over-budget passes get a warning, not a block. "Auto-trim" shortens an audio ref so it fits. v0.6.0: the editor and the render check count the same way: a video's own sound uses an audio slot, a voice counts only in passes where its character speaks, and the song only in passes that get it. Long scenes show the budget per pass in the Scene tab, with a pass over a limit marked.
 - ✅ Camera presets: name plus the wording that is inserted into shot lines.
 
 ## 7. Cast and continuity (Cast tab)
@@ -127,13 +144,13 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Character:
   - anchor set (any number of angles). Packing: *Auto* (one sheet only when the pass would not fit 9 pictures otherwise), *One sheet* (always) or *Separate* (never). A sheet uses 1 picture slot and has no size limit (ceil(√n) columns; cells take the median shape of the anchors); the Cast tab shows the sheet and the pixels each anchor gets, and the Scene tab avatar shows it when packed;
   - description, written into subject definitions, optionally drafted from the anchors with a vision LLM; when it is empty, the description of the first anchor picture that has one is used;
-  - outfits, each with its own retention and features to keep;
+  - outfits, each with its own retention and features to keep; deleting one moves the scenes that wore it to the default outfit (v0.6.0);
   - voice reference (speaker IDs are numbered per clip by the prompt builder);
   - language;
   - optional identity LoRA, added automatically to every scene the character is in.
 - ✅ Identity always comes from the anchors, never through a chain of rendered frames. Scene 10 gets the same identity inputs as scene 1.
-- ✅ "Re-anchor after N chained scenes": continuation stops passing identity after N scenes in a chain.
-- 🧪 Drift check (optional, needs the `insightface` package): after a render, face similarity against the anchors is compared with a threshold. On drift it flags the scene, or re-renders it with a new seed if you choose that. Without the package the check is shown as unavailable. A check that fails to load or run never fails the render: the take is kept and the reason is shown (Global → About, render progress).
+- ✅ "Re-anchor after N chained scenes": continuation stops passing identity after N scenes in a chain. A re-anchored tail start is a last-frame start everywhere, including the trim and the timeline (v0.6.0).
+- 🧪 Drift check (optional, needs the `insightface` package): after a render, face similarity against the anchors is compared with a threshold. On drift it flags the scene, or re-renders it with a new seed if you choose that. Without the package the check is shown as unavailable. A check that fails to load or run never fails the render: the take is kept and the reason is shown (Global → About, render progress). v0.6.0: each face counts for the character it resembles most, and a character not in a frame gets no value there, so frames without the character are not drift; a drift retake is starred only when it matches better; a model setup that failed is tried again at the next render.
 - ✅ "Promote a rendered frame" turns a frame from a finished take into a new anchor.
 - ✅ Export training set: copies the anchors and the best frames into a folder for ai-toolkit LoRA training.
 
@@ -145,22 +162,33 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
   - quality (draft or final, per scene when a scene overrides it);
   - the final prompt text;
   - the content of every reference file;
-  - for a continuing scene, the key and take of the scene it continues from.
+  - for a continuing scene, the key and take of the scene it continues from (v0.6.0: the take id itself, so a new take of the scene before makes this one stale);
+  - the long-scene crossfade, for scenes with overlap seams (v0.6.0).
   
-  Only scenes with a changed key, plus the scenes chained after them, are pending.
-- ✅ Resume: after a crash or restart, a run reuses everything on disk whose key still matches.
-- ✅ Render scope: pending only, selected scenes, from the playhead on, everything, or a new take of one scene.
-- ✅ Takes: every render is kept as a take. Star one; it is used for continuation and merge. Compare two takes side by side in the A/B view.
-- ✅ Disk layout per take: `<project>_<NN>_<scene title>_<take>.mp4` (e.g. `harbor_lights_02_mara_on_the_pier_v2.mp4`), `first.png`, `last.png`, `tail.mp4`, `meta.json`, plus `passes/` for long scenes. The Render tab shows each scene's file and opens it.
-- ✅ Memory policy between scenes: keep models / free cache but keep models (default) / unload everything. "Encode all prompts first" encodes every pass with the text encoder, then unloads it (about 27 GB) before sampling starts.
+  Only scenes with a changed key, plus the scenes chained after them, are pending. Takes rendered before v0.6.0 keep matching until the scene they continue from gets a newer take, so the upgrade does not make every continuing scene stale.
+- ✅ Resume: after a crash or restart, a run reuses everything on disk whose key still matches. v0.6.0: finished passes of long and short scenes are kept in the scene's pass cache, so after Stop or an error the next render starts where it stopped.
+- ✅ **Check before rendering** (v0.6.0): before any GPU work, a render checks the H3 nodes, the folder name, lint errors, the model files, every reference, anchor, voice, song and guide file, that each continuing scene has a starred take to start from (or that it renders earlier in the run), that video guides fit their pass, and ffmpeg. It lists every problem at once and starts nothing.
+- ✅ **One failing scene doesn't stop the run** (v0.6.0): the other scenes go on; scenes that continue from it are skipped; the failure shows at once, and ComfyUI shows the error when the run ends. Stop, a check that fails, or a ComfyUI error never leave the editor on "rendering". After the run the Render tab lists failed and skipped scenes with the reason and **Render them again**; a render that never started says why.
+- ✅ Render scope: pending only, selected scenes, from the playhead on, everything, or a new take of one scene. A double click queues one render (v0.6.0).
+- ✅ **Pass retake** (v0.6.0): a button per pass of a long scene (needs a starred take). That pass gets a new seed; earlier passes come from the pass cache; later passes joined by an overlap are rendered again, later passes after a shot cut are kept. The new take is starred.
+- ✅ **Variants** (v0.6.0): render 2–8 takes of the selected scene in one run. With the face check on, the best match is starred, otherwise the first new take. **Compare vN and vM** opens the two newest in the A/B view.
+- ✅ Takes: every render is kept as a take. Star one; it is used for continuation and merge. Compare two takes side by side in the A/B view. A take you star by hand stays starred: a render no longer moves the star back to the matching take (v0.6.0), and the Render tab marks it.
+- ✅ **Continues from a different take** (v0.6.0): when a scene's starred take started from another take than the one the scene before gives now, the Render tab says so, with one click to render it and the scenes that continue from it again (up to a fresh start or a locked scene).
+- ✅ **why?** (v0.6.0): next to a stale scene, shows how each pass's prompt changed since the starred take (a line diff).
+- ✅ **Time estimates** (v0.6.0): per scene ("≈ 4 min") and for the pending queue ("≈ 20 min + 1 scene without history"), from earlier takes' render time per generated frame with the same quality, size and steps (else scaled by pixels × steps). Passes a pending render finds in the pass cache are shown ("· 2 kept") and not counted.
+- ✅ Disk layout per take: `<project>_<NN>_<scene title>_<take>.mp4` (e.g. `harbor_lights_02_mara_on_the_pier_v2.mp4`), `first.png`, `last.png`, `tail.mp4`, `meta.json`. The Render tab shows each scene's file and opens it. v0.6.0: passes live in the scene's pass cache (`scenes/<id>/passes/`), shared by its takes, not in each take. `tail.mp4` is the last 124 frames of the whole scene, across passes, so any tail overlap gets all its frames. `meta.json` records the prompts, seeds, the take it continued from, the pass cache files, the render time and the face score. A take number is never reused, and folders left by a stopped render are removed.
+- ✅ Memory policy between scenes: keep models / free cache but keep models (default) / unload everything. "Encode all prompts first" encodes every pass with the text encoder, then unloads it (about 27 GB) before sampling starts. v0.6.0: memory is freed after every scene, also after a failure; passes the pass cache will provide are not encoded; reference videos are decoded only up to 15 s and voice files cut to 15 s.
 - ✅ Groups scenes with the same LoRA stack together when they don't depend on each other, so fewer LoRA re-patches are needed.
-- ✅ Live progress on the timeline blocks (pass, step) through websocket events. The Render tab shows "Scene k of n" with a bar for the scene and one for the run; the node title shows `rendering k/n · NN%`. A small latent preview (every sampler step, at most four a second, using ComfyUI's preview method; decoded off-screen and swapped in place, so it never shows a broken image) shows next to the bars; ComfyUI no longer paints it over the node. Interrupting from ComfyUI stops the run cleanly.
+- ✅ Live progress on the timeline blocks (pass, step) through websocket events. The Render tab shows "Scene k of n" with a bar for the scene and one for the run; the node title shows `rendering k/n · NN%`. A small latent preview (every sampler step, at most four a second, using ComfyUI's preview method; decoded off-screen and swapped in place, so it never shows a broken image) shows next to the bars; ComfyUI no longer paints it over the node. Interrupting from ComfyUI stops the run cleanly. v0.6.0: a pass taken from the pass cache shows "from cache"; a render step updates only its progress bar instead of redrawing the tab; a sampler's preview inside a subgraph is not taken for Reelwright's.
 - ✅ Seam inspector: last frame of scene N against first frame of scene N+1, side by side or as an onion skin.
 - 🗺️ Render farm: send independent scenes to several ComfyUI instances.
 
 ## 9. Merge (Render tab)
 
 - ✅ **Merge** button next to the scenes-and-takes table (and in the Merge card). It doesn't re-render anything; it uses the starred takes. Scenes that aren't ready can be skipped, shown as a slate, or block the merge.
+- ✅ One merge per project at a time (v0.6.0): a second one, or the automatic merge while one runs, is refused with a clear message. **Stop merging** stops a running merge, also the automatic one after a render (ComfyUI's Stop does too); a stopped merge removes the files it wrote.
+- ✅ **This merge** options (v0.6.0, Merge card; kept for the session, not saved): *Full* or *Draft* (half size, fast x264 preset, CRF 28, `…_cut_vN_draft.mp4`), *All* or *From … to* (only those scenes, `…_cut_vN_sAA-BB.mp4`), and *Stems*: `…_stems/` with `scenes.wav` (the scenes' sound), `mix.wav` and `track_<id>.wav` per soundtrack track, plus an EBU R128 report (`…_loudness.json`): integrated loudness, loudness range and true peak of the mix, the scenes and each track, shown in the card (above −1 dBTP highlighted). The Merge button's label and length follow the range.
+- ✅ Exact timing (v0.6.0): every scene in the merge is exactly its length in frames, so a take a frame short can't shift later scenes against the soundtrack. A crossfade, dip or continuing scene after a plain cut, a slate or a pass seam merges correctly. Cut numbers are never reused, so "older cuts" always means older.
 - ✅ Seams: plain cut, crossfade or dip to black for hard cuts. Continuation seams trim the overlap and crossfade inside it. The Merge card sets the defaults; a scene that starts fresh can set its own transition, length and audio fade (Scene tab → Starts from → Cut into this scene).
 - ✅ Audio:
   - a short fade at every seam (per-scene override for fresh starts);
@@ -169,11 +197,12 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Colour match: per-scene RGB gain matched to a reference scene, to even out jumps between scenes.
 - ✅ Output: H.264 or H.265 MP4 with a CRF setting.
 - ✅ Extras:
-  - `.srt` subtitles from dialogue lines;
+  - `.srt` subtitles from dialogue lines (v0.6.0: a line at the very start of a last-frame scene is kept; blank lines inside a line are dropped);
   - a chapter per scene;
-  - OpenTimelineIO `.otio` and `.fcpxml` timelines for Resolve or Premiere;
-  - optional project bundle `.zip`.
-- ✅ Can merge automatically after a queue run (Global → Merge).
+  - OpenTimelineIO `.otio` and `.fcpxml` timelines for Resolve or Premiere (v0.6.0: with the soundtrack tracks as audio and the timeline markers; slates and missing scenes are gaps; positions in whole frames from the cut start);
+  - optional project bundle `.zip` (with the stems when there are any).
+- ✅ Can merge automatically after a queue run (Global → Merge). The node's `video` output is the newest full cut, never a draft or range merge (v0.6.0).
+- ✅ ffmpeg runs (v0.6.0): output is read as it comes, so a chatty ffmpeg can't hang; the filter graph goes in a file, so long films also merge on Windows.
 
 ## 9a. Files on disk (Files tab, v0.4.0)
 
@@ -183,17 +212,31 @@ H3 generates 124–362 frames per pass at 24 fps (5.17–15.08 s, on the 17k+5 f
 - ✅ Deleting a take also removes it from the scene's take list (the newest remaining take becomes starred). Deleting asset files the open project uses also removes those assets from the project (undoable; the files are not).
 - ✅ Preview (v0.4.1): a file's name or a row's eye shows it beside the tree: picture, video (a take or cut shows its video), audio, or text (first 200 KB).
 - ✅ Safety: only `output/reelwright/<slug>` and `input/reelwright/<slug>` are reachable; every id is checked again on the server; the open project can't be deleted as a whole and its `project.json` is kept; links are removed, not their targets; the open project's rows are locked while it renders.
+- ✅ v0.6.0:
+  - **Repair** re-lists every scene's takes from their `meta.json`: a missing or damaged take list is rebuilt, unlisted finished takes are added, takes whose folder is gone are dropped. A note says what was found and fixed.
+  - Each scene's **pass cache** is its own row ("Pass cache"), with a quick selection. "Pass videos" means the pass folders of older takes.
+  - Scene folders of another project that used the same folder are labelled "another project" and never picked as "not in the project".
+  - The server refuses to delete anything of a project while it renders or merges, a take's own files (delete the take), and the next cut number; a refused delete shows the reason per item. A linked project folder is unlinked, never followed.
+  - Draft and range cuts are grouped by cut, with their stems folder and loudness report.
+  - Deleting an asset file the open project uses also removes its soundtrack tracks (one undo step).
 
 ## 10. Editor
 
 - ✅ Keyboard (when the node has focus):
   - Space play/pause; J/K/L back/stop/forward; I/O in/out; ←/→ step one frame;
   - S split; D duplicate; Delete remove;
-  - Ctrl+Z / Ctrl+Shift+Z undo/redo; Ctrl+S save; ? opens the help. Keyboard focus sits on a hidden read-only field (v0.5.1), so ComfyUI's own workflow undo never also runs on the editor's Ctrl+Z.
+  - Ctrl+Z / Ctrl+Shift+Z undo/redo; Ctrl+S save; ? opens the help. Keyboard focus sits on a hidden read-only field (v0.5.1), so ComfyUI's own workflow undo never also runs on the editor's Ctrl+Z. v0.6.0: focus also stays in the editor after picking from a dropdown with Enter or Escape, after a click on a video's or audio's controls, and while a dialog is open; Ctrl+Z on a checkbox or slider undoes the editor. Ctrl+S waits for the save and says when it fails.
 - ✅ Undo/redo history, autosave.
-- ✅ Lint panel: missing or unused tags, dialogue without a language, timestamps past the end of a scene, over-budget references, missing files, a continuation without a previous scene, cast without anchors.
+- ✅ **History menu** (v0.6.0, clock button next to Undo/Redo): every edit by name ("Shot time", "Delete marker", "Import script"…). Click a step to go back or forward to it.
+- ✅ Undo, redo and the History menu change the project, not the view: tab, zoom, snap, ripple, playhead, selection, beats and auto-roll stay as they are (v0.6.0).
+- ✅ Dialogs (v0.6.0): every confirmation is a dialog that survives a redraw. Enter presses the button that has focus; delete dialogs open with Cancel focused; Tab stays in the dialog.
+- ✅ Typing (v0.6.0): an input method (Japanese, Chinese, Korean) works in prompt fields; "-" or "1e" in a number field no longer resets it; a field keeps the cursor when an edit re-sorts its list (shot and line times).
+- ✅ The workflow (v0.6.0): ComfyUI marks it as changed after editor edits, a save or workflow switch carries the last edit, and removing a node releases everything its editor used.
+- ✅ Lint panel: missing or unused tags, dialogue without a language, timestamps past the end of a scene, over-budget references, missing files, a continuation without a previous scene, cast without anchors. v0.6.0: a missing file is an error on every scene that sends it; dialogue or a shot inside a trimmed tail overlap, before 0 s, or in no pass is a warning; a prompt written for a pass the scene no longer has is flagged; a video guide longer than the room in its pass says how much of it is used; tag issues follow the rules in §3.
 - ✅ Zoom, snap to the frame grid, ripple edit. Alt + wheel zooms the timeline; Ctrl + wheel anywhere on the node zooms the ComfyUI canvas, except over a text field or list.
 - ✅ Timeline navigation: the mouse wheel scrolls sideways when the film is wider than the lanes (Shift + wheel scrolls up and down). Dragging anywhere on the lanes pans and leaves the playhead alone. A click on the ruler or an empty part of a lane moves the playhead; dragging the playhead's time label scrubs. Mouse distances account for ComfyUI's canvas zoom.
+- ✅ Long films (v0.6.0): only the part of the timeline near the view is built, and waveforms are painted as they come into view. Shot and resize drags end cleanly when the button is released outside the editor, and survive a redraw in the middle.
+- ✅ Broken or hand-edited project files (v0.6.0) never break the editor or the render: bad values fall back to defaults, and the browser and the server repair them the same way (duplicate ids, duplicate asset codes, text where a number belongs).
 
 ## 11. MiniMax H3 facts used
 

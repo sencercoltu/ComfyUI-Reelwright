@@ -22,6 +22,10 @@ const FLAG = {
   current: ["open", "accent"], starred: ["★ starred", "ok"], orphan: ["not in the project", "warn"], unused: ["unused", "warn"],
   unlisted: ["not in the take list", "warn"], newest: ["newest", "ok"], unfinished: ["unfinished", "warn"],
   linked: ["hard link", "dim"], intermediate: ["intermediate", "dim"], used: ["used", "ok"],
+  // added 2026-11-03 v0.6.0: a scene folder of another project that used this folder, or of an unknown one; a scene's
+  // pass cache; draft and range cuts
+  other_project: ["another project", "dim"], unknown_owner: ["owner unknown", "warn"], cache: ["pass cache", "dim"],
+  draft: ["draft", "dim"], range: ["range", "dim"],
 };
 
 // Index of the scanned tree: id → node and id → parent id. Rebuilt whenever a new scan arrives.
@@ -109,6 +113,21 @@ function deletedAssets(ix, ids, slug) {
   return [...out];
 }
 
+// added 2026-11-03 v0.6.0: remove the assets in `gone` (a Set of ids) from project q and every reference to them, as
+// editor.js deleteAsset does: scene references, cast anchors, voices and outfit pictures, soundtrack tracks, an old
+// score setting
+export function dropAssets(q, gone) {
+  q.assets = q.assets.filter(x => !gone.has(x.id));
+  for (const s of q.scenes) s.refs = s.refs.filter(x => !gone.has(x.asset));
+  for (const c of q.cast) {
+    c.anchors = c.anchors.filter(x => !gone.has(x));
+    if (gone.has(c.voice)) c.voice = "";
+    for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => !gone.has(x));
+  }
+  if (q.global?.merge?.score && gone.has(q.global.merge.score.asset)) q.global.merge.score.asset = "";
+  if (Array.isArray(q.soundtrack)) q.soundtrack = q.soundtrack.filter(t => !gone.has(t.asset));
+}
+
 async function remove(ctx, ids) {
   const data = ctx.eph.files;
   const ix = indexOf(data);
@@ -121,7 +140,15 @@ async function remove(ctx, ids) {
     .filter(n => n.flags.includes("starred"));
   if (starred.length) notes.push(`${starred.length} starred take${starred.length > 1 ? "s" : ""} of this project: the scene uses its next newest take, or needs rendering again.`);
   const assets = deletedAssets(ix, ids, slug).filter(id => ctx.p.assets.some(a => a.id === id));
-  if (assets.length) notes.push(`${assets.length} asset${assets.length > 1 ? "s are" : " is"} in this project; ${assets.length > 1 ? "they are" : "it is"} removed from it too (Ctrl+Z brings the project entries back, not the files).`);
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] if (assets.length) notes.push(`${assets.length} asset${assets.length > 1 ? "s are" : " is"} in this project; ${assets.length > 1 ? "they are" : "it is"} removed from it too (Ctrl+Z brings the project entries back, not the files).`);  (did not mention soundtrack tracks)
+  // added 2026-11-03 v0.6.0: say which project entries go with the files
+  if (assets.length) {
+    const set = new Set(assets);
+    const refs = ctx.p.scenes.reduce((n, s) => n + s.refs.filter(r => set.has(r.asset)).length, 0);
+    const tracks = (ctx.p.soundtrack || []).filter(t => set.has(t.asset)).length;
+    const with_ = [refs && `${refs} scene reference${refs === 1 ? "" : "s"}`, tracks && `${tracks} soundtrack track${tracks === 1 ? "" : "s"}`].filter(Boolean).join(" and ");
+    notes.push(`${assets.length} asset${assets.length > 1 ? "s are" : " is"} in this project; ${assets.length > 1 ? "they are" : "it is"} removed from it too${with_ ? `, with ${with_}` : ""} (Ctrl+Z brings the project entries back, not the files).`);
+  }
   const projects = nodes.filter(n => n.kind === "project");
   if (projects.length) notes.push(`Whole project${projects.length > 1 ? "s" : ""}: ${projects.map(p => p.label).join(", ")} (output and input folders).`);
   if (nodes.some(function linked(n) { return n.flags.includes("linked") || (n.children || []).some(linked); })) notes.push("Hard-linked files free no space while their other link exists.");
@@ -131,6 +158,7 @@ async function remove(ctx, ids) {
     confirmLabel: "Delete from disk",
     message: [...notes, "The files are removed for good; there is no undo for them."].join("\n"),
   }))) return;
+  /* [OLD 2026-11-03 v0.5.1->v0.6.0] soundtrack tracks kept pointing at a deleted asset; a refused delete showed only its first reason, in a toast
   try {
     const r = await rw.deleteStorage(ids, slug);
     const sel = selection(ctx);
@@ -149,6 +177,32 @@ async function remove(ctx, ids) {
   } catch (err) {
     ctx.actions.toast("Delete failed: " + err.message, "error");
   }
+  [/OLD] */
+  // added 2026-11-03 v0.6.0: the project entries of deleted asset files go the way editor.deleteAsset removes them
+  // (scene references, cast anchors / voice / outfit pictures, soundtrack tracks), as one named undo step; what the
+  // server refused (a render or merge of the project is running, part of a take …) stays listed with its reason
+  try {
+    const r = await rw.deleteStorage(ids, slug);
+    const sel = selection(ctx);
+    for (const id of r.deleted || []) delete sel[id];
+    if (assets.length) {
+      const gone = new Set(deletedAssets(ix, r.deleted || [], slug));
+      if (gone.size) {
+        ctx.actions.edit(q => dropAssets(q, gone), { label: `Delete ${gone.size} asset file${gone.size === 1 ? "" : "s"}` });
+        if (gone.has(ctx.eph.selectedAsset)) ctx.store.setEph({ selectedAsset: "" });
+      }
+    }
+    if (r.removed || !r.errors?.length) ctx.actions.toast(`Deleted ${r.removed} item${r.removed === 1 ? "" : "s"} · ${fmtBytes(r.freed)} freed.`, "ok");
+    const errs = r.errors || [];
+    if (errs.length) {
+      const reasons = [...new Set(errs.map(e => e.error || "refused"))];
+      ctx.actions.toast(`${errs.length} not deleted: ${reasons.slice(0, 2).join("; ")}${reasons.length > 2 ? " …" : ""}`, "error");
+      const label = id => ix.node.get(id)?.label || id;
+      ctx.store.setEph({ filesRefused: { at: Date.now(), items: errs.map(e => ({ id: e.id, label: label(e.id), error: e.error || "refused" })) } });
+    } else ctx.store.setEph({ filesRefused: null });
+  } catch (err) {
+    ctx.actions.toast("Delete failed: " + err.message, "error");
+  }
   await load(ctx);
   ctx.actions.refreshTakes();
   ctx.store.refreshPlan();
@@ -157,6 +211,7 @@ async function remove(ctx, ids) {
 }
 
 // quick selections: everything of a kind that is usually safe to let go
+/* [OLD 2026-11-03 v0.5.1->v0.6.0] "Pass videos" also picked the scenes' pass cache (kept for re-use, not leftovers)
 const PICKS = [
   { id: "takes", label: "Unstarred takes", test: n => n.kind === "take" && !n.flags.includes("starred") },
   { id: "passes", label: "Pass videos", test: n => n.kind === "passes" },
@@ -164,6 +219,64 @@ const PICKS = [
   { id: "versions", label: "Autosaves", test: n => n.kind === "version" },
   { id: "orphans", label: "Not in the project", test: n => n.flags.includes("orphan") || n.flags.includes("unlisted") },
 ];
+[/OLD] */
+// added 2026-11-03 v0.6.0: the pass cache is its own pick; "Not in the project" stays this project's leftovers only
+// (orphan, unlisted), never the scenes of another project that used the folder (other_project / unknown_owner)
+const PICKS = [
+  { id: "takes", label: "Unstarred takes", test: n => n.kind === "take" && !n.flags.includes("starred") },
+  { id: "passes", label: "Pass videos", test: n => n.kind === "passes" && !n.flags.includes("cache") },
+  { id: "cache", label: "Pass cache", test: n => n.kind === "passes" && n.flags.includes("cache") },
+  { id: "cuts", label: "Older cuts", test: n => (n.kind === "cut" && !n.flags.includes("newest")) || n.flags.includes("unfinished") },
+  { id: "versions", label: "Autosaves", test: n => n.kind === "version" },
+  { id: "orphans", label: "Not in the project", test: n => n.flags.includes("orphan") || n.flags.includes("unlisted") },
+];
+
+// added 2026-11-03 v0.6.0: Repair re-lists each scene's takes from their meta.json files (a lost or damaged take list
+// is rebuilt, takes missing from it come back, a star that pointed at a deleted take moves to the newest)
+async function repair(ctx) {
+  if (ctx.eph.filesRepairing) return;
+  ctx.store.setEph({ filesRepairing: true });
+  try {
+    const r = await rw.storageRepair(ctx.p.slug);
+    ctx.store.setEph({ filesRepair: { ...r, at: Date.now(), slug: ctx.p.slug }, filesRepairing: false });
+    ctx.actions.toast(r.repaired?.length ? `Repaired the take list of ${r.repaired.length} scene${r.repaired.length === 1 ? "" : "s"}.` : "Nothing to repair: every take list matches the disk.", "ok");
+  } catch (err) {
+    ctx.store.setEph({ filesRepairing: false });
+    ctx.actions.toast("Repair failed: " + err.message, "error");
+    return;
+  }
+  await load(ctx);
+  ctx.actions.refreshTakes();
+  ctx.store.refreshPlan();
+}
+
+function repairNote(ctx) {
+  const r = ctx.eph.filesRepair;
+  if (!r || r.slug !== ctx.p.slug) return null;
+  const title = id => { const i = ctx.p.scenes.findIndex(s => s.id === id); return i >= 0 ? `${String(i + 1).padStart(2, "0")} · ${ctx.p.scenes[i].title}` : id; };
+  const rep = r.repaired || [];
+  const bits = [`${r.takes_found ?? 0} take${r.takes_found === 1 ? "" : "s"} found on disk`];
+  if (rep.length) bits.push(`take list rebuilt for ${rep.map(title).join(", ")}`);
+  if (r.added) bits.push(`${r.added} take${r.added === 1 ? "" : "s"} listed again`);
+  if (r.dropped) bits.push(`${r.dropped} missing take${r.dropped === 1 ? "" : "s"} dropped`);
+  bits.push(r.project === "ok" ? "project file ok" : r.project === "missing" ? "no project file on disk yet (it is written on the next autosave)" : r.project === "damaged" ? "the project file is damaged: the newest readable version is used" : "");
+  return h("div", { class: ["rw-note small", r.project === "damaged" ? "warn" : "ok"], help: "files.repair.result" }, icon(r.project === "damaged" ? "warn" : "check", 12),
+    h("span", { class: "grow" }, "Repair: " + bits.filter(Boolean).join(" · ") + "."),
+    button({ icon: "close", small: true, variant: "ghost", help: "common.close", onClick: () => ctx.store.setEph({ filesRepair: null }) }));
+}
+
+// added 2026-11-03 v0.6.0: deletes the server refused, with its reasons (a render or merge of this project is running …)
+function refusedNote(ctx) {
+  const f = ctx.eph.filesRefused;
+  if (!f?.items?.length) return null;
+  const byReason = new Map();
+  for (const x of f.items) byReason.set(x.error, [...(byReason.get(x.error) || []), x.label]);
+  return h("div", { class: "rw-note warn small", help: "files.refused" }, icon("warn", 12),
+    h("div", { class: "grow" },
+      h("b", null, `${f.items.length} not deleted`),
+      [...byReason].map(([why, labels]) => h("div", null, `${why}: ${labels.slice(0, 4).join(", ")}${labels.length > 4 ? ` and ${labels.length - 4} more` : ""}`))),
+    button({ icon: "close", small: true, variant: "ghost", help: "common.close", onClick: () => ctx.store.setEph({ filesRefused: null }) }));
+}
 
 function pick(ctx, ix, roots, test) {
   const sel = selection(ctx);
@@ -245,7 +358,8 @@ function row(ctx, ix, n, depth, parentSize) {
   const cover = coveredBy(ix, sel, n.id);
   const lock = blocked(ctx, ix, n);
   const canCheck = !lock && !cover && (n.del || kids.some(hasDeletable));
-  const box = h("input", { type: "checkbox", class: "rw-ftree-check", help: "files.check", checked: st === "on", disabled: !canCheck,
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const box = h("input", { type: "checkbox", class: "rw-ftree-check", help: "files.check", checked: st === "on", disabled: !canCheck,  (no key)
+  const box = h("input", { type: "checkbox", class: "rw-ftree-check", key: "fsel:" + n.id, help: "files.check", checked: st === "on", disabled: !canCheck, // key: added 2026-11-03 v0.6.0
     title: lock ? "Rendering: wait until the run ends" : cover ? "Selected with the folder above" : !n.del && !kids.some(hasDeletable) ? n.why || "Kept" : "",
     onClick: e => { e.stopPropagation(); toggle(ctx, ix, n); } });
   box.indeterminate = st === "mixed";
@@ -318,6 +432,8 @@ export function render(ctx) {
       ctx.store.setEph({ filesOpen: open });
     } }),
     button({ label: "Collapse", small: true, variant: "ghost", help: "files.collapseAll", onClick: () => ctx.store.setEph({ filesOpen: {} }) }),
+    // added 2026-11-03 v0.6.0: rebuild this project's take lists from the takes on disk
+    button({ label: ctx.eph.filesRepairing ? "Repairing…" : "Repair", icon: "check", small: true, help: "files.repair", disabled: !!ctx.eph.filesRepairing, onClick: () => repair(ctx) }),
     button({ label: ctx.eph.filesLoading ? "Scanning…" : "Rescan", icon: "refresh", small: true, help: "files.refresh", disabled: ctx.eph.filesLoading, onClick: () => load(ctx) }));
 
   const body = ctx.eph.filesError ? h("div", { class: "rw-banner warn" }, icon("warn", 14), h("span", null, "Couldn't read the folders: " + ctx.eph.filesError))
@@ -334,6 +450,9 @@ export function render(ctx) {
       actions: h("span", { class: "rw-dim small" }, "output/reelwright · input/reelwright"),
       children: [
         ctx.eph.running ? h("div", { class: "rw-banner info" }, icon("render", 14), h("span", null, "A render is running: this project's files can be deleted when it ends.")) : null,
+        // added 2026-11-03 v0.6.0: a merge holds the takes, cuts and assets it reads; repair result; refused deletes
+        !ctx.eph.running && ["start", "progress"].includes(ctx.eph.merge?.phase) ? h("div", { class: "rw-banner info", help: "files.merging" }, icon("merge", 14), h("span", null, "A merge of this project is running: its takes, cuts and assets can be deleted when it ends.")) : null,
+        repairNote(ctx), refusedNote(ctx),
         head, tools, body],
     }));
 }

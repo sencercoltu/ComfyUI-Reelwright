@@ -14,6 +14,11 @@ export function createMockStorage({ slug, takes, titles, versions, setVersions, 
     strayAssets: new Set(["old_test.png", "from_output/render_0007.png"]),
     goneAssets: new Set(),
     other: true,
+    // added 2026-11-03 v0.6.0 (S): a scene's pass cache, a scene folder of another project that shared the folder,
+    // a draft cut with stems, the cut counter
+    passCache: new Set(["s_05"]),
+    foreignScene: { id: "s_lk1", takes: ["v1"], name: "Lighthouse Keeper" },
+    draftCut: 6,
   };
   const ts = 1793560000;
   const node = (id, label, kind, extra = {}) => ({ id, label, kind, size: 0, count: 0, mtime: 0, note: "", flags: [], children: [], del: true, ...extra });
@@ -59,6 +64,11 @@ export function createMockStorage({ slug, takes, titles, versions, setVersions, 
       const sn = node(`${base(slug)}/scenes/${sid}`, `${String(i + 1).padStart(2, "0")} · ${titles[sid] || sid}`, "scene", { sid });
       for (const id of extra) add(sn, takeNode(slug, sid, { id, created: ts + 9500 }, false, true));
       for (const t of [...entry.takes].sort((a, b) => b.created - a.created)) add(sn, takeNode(slug, sid, t, entry.starred === t.id, false));
+      if (state.passCache.has(sid)) { // added 2026-11-03 v0.6.0 (S): <scene>/passes, the pass cache
+        const pc = node(`${base(slug)}/scenes/${sid}/passes`, "Pass cache", "passes", { flags: ["cache"], note: "finished passes kept for re-use (after Stop, a retake of one pass, a moved keep window); made again when needed" });
+        for (const k of ["3f9a1c0d2b", "77e01a9c4f"]) { add(pc, file(`${base(slug)}/scenes/${sid}/passes/${k}.mp4`, `${k}.mp4`, 14 * MB, ts + 9000)); add(pc, file(`${base(slug)}/scenes/${sid}/passes/${k}.json`, `${k}.json`, 900, ts + 9000)); }
+        add(sn, pc);
+      }
       add(sn, file(`${base(slug)}/scenes/${sid}/index.json`, "index.json", 900, ts, { del: false, why: "the scene's take list; delete the scene instead" }));
       add(scenes, sn);
     });
@@ -66,6 +76,12 @@ export function createMockStorage({ slug, takes, titles, versions, setVersions, 
       const o = state.orphanScene;
       const sn = node(`${base(slug)}/scenes/${o.id}`, o.id, "scene", { sid: o.id, flags: ["orphan"], note: "not in the project any more" });
       for (const id of o.takes) add(sn, takeNode(slug, o.id, { id, created: ts - 86400 }, id === o.takes[o.takes.length - 1], false));
+      add(scenes, sn);
+    }
+    if (state.foreignScene) { // added 2026-11-03 v0.6.0 (S): not an orphan: it belongs to another project
+      const o = state.foreignScene;
+      const sn = node(`${base(slug)}/scenes/${o.id}`, o.id, "scene", { sid: o.id, flags: ["other_project"], note: `belongs to another project that used this folder (${o.name})` });
+      for (const id of o.takes) add(sn, takeNode(slug, o.id, { id, created: ts - 172800 }, true, false));
       add(scenes, sn);
     }
     add(p, scenes);
@@ -85,6 +101,17 @@ export function createMockStorage({ slug, takes, titles, versions, setVersions, 
         add(g, file(stem + ".otio", `${slug}_cut_v${n}.otio`, 14200, ts + n * 1000));
         add(cuts, g);
       }
+      if (state.draftCut) { // added 2026-11-03 v0.6.0 (S): a draft cut with stems and its loudness report
+        const n = state.draftCut, stem = `${slug}_cut_v${n}_draft`;
+        const g = node(`cut:${slug}:${stem}`, `cut v${n} draft`, "cut", { stem, flags: ["draft"], note: "" });
+        add(g, file(`${base(slug)}/cuts/${stem}.mp4`, `${stem}.mp4`, 31 * MB, ts + 9950));
+        const st = node(`${base(slug)}/cuts/${stem}_stems`, "stems", "dir");
+        for (const w of ["mix.wav", "scenes.wav", "track_t_song.wav"]) add(st, file(`${base(slug)}/cuts/${stem}_stems/${w}`, w, 11 * MB, ts + 9950));
+        add(g, st);
+        add(g, file(`${base(slug)}/cuts/${stem}_loudness.json`, `${stem}_loudness.json`, 600, ts + 9950));
+        add(cuts, g); // after the other cuts, so the harness's cut rows keep their order
+      }
+      add(cuts, file(`${base(slug)}/cuts/.next`, "next cut number", 2, ts + 9950, { del: false, why: "the next cut number; numbers are never reused" }));
       add(p, cuts);
     }
     const vs = versions();
@@ -165,16 +192,22 @@ export function createMockStorage({ slug, takes, titles, versions, setVersions, 
         state.passes.delete(`${sid}/${tid}`);
       } else if ((m = /\/takes\/([^/]+)\/passes$/.exec(id))) {
         state.passes.delete(`${id.split("/")[3]}/${m[1]}`);
+      } else if ((m = /^o:reelwright\/[^/]+\/scenes\/([^/]+)\/passes(\/.*)?$/.exec(id))) { // added 2026-11-03 v0.6.0 (S)
+        if (!m[2]) state.passCache.delete(m[1]);
+      } else if ((m = /^cut:[^:]+:.+_cut_v(\d+)_draft$/.exec(id))) { // added 2026-11-03 v0.6.0 (S)
+        state.draftCut = 0;
       } else if ((m = /^o:reelwright\/[^/]+\/scenes\/([^/]+)$/.exec(id))) {
+        if (m[1] === state.foreignScene?.id) state.foreignScene = null; // added 2026-11-03 v0.6.0 (S)
         if (m[1] === state.orphanScene?.id) state.orphanScene = null;
         else if (takes[m[1]]) { takes[m[1]] = { starred: null, takes: [] }; for (const k of [...state.unlisted]) if (k.startsWith(m[1] + "/")) state.unlisted.delete(k); }
       } else if (id.endsWith("/scenes")) {
         for (const k of Object.keys(takes)) takes[k] = { starred: null, takes: [] };
         state.orphanScene = null; state.unlisted.clear();
+        state.foreignScene = null; state.passCache.clear(); // added 2026-11-03 v0.6.0 (S)
       } else if ((m = /^cut:[^:]+:.+_cut_v(\d+)$/.exec(id))) {
         if (+m[1] === state.partialCut) state.partialCut = 0;
         state.cuts = state.cuts.filter(x => x !== +m[1]);
-      } else if (id.endsWith("/cuts")) { state.cuts = []; state.partialCut = 0; }
+      } else if (id.endsWith("/cuts")) { state.cuts = []; state.partialCut = 0; state.draftCut = 0; }
       else if (id.endsWith("/versions")) setVersions([]);
       else if (id.includes("/versions/")) setVersions(versions().filter(v => !id.endsWith("/" + v.name)));
       else if (id.includes("/cast")) state.cast = false;

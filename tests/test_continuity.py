@@ -58,3 +58,45 @@ def test_other_import_errors_still_raise(tmp_path, monkeypatch):
     with pytest.raises(ImportError, match="missing_thing_xyz"):
         continuity._face_analysis_class()
     sys.modules.pop("insightface", None)
+
+
+# ---- v0.6.0 (added 2026-11-03) ------------------------------------------------------------------------------------
+
+def test_a_character_missing_from_a_frame_is_not_drift():
+    import numpy as np
+    a = np.array([[1.0, 0.0, 0.0]])
+    b = np.array([[0.0, 1.0, 0.0]])
+    anchors = {"c_a": a, "c_b": b}
+    only_b = np.array([[0.1, 0.95, 0.0]])
+    assert continuity.assign_faces(only_b, anchors) == {"c_b": 0.95}  # A is not in this frame: no value for A
+    both = np.array([[0.9, 0.1, 0.0], [0.05, 0.8, 0.0], [0.3, 0.3, 0.0]])
+    assert continuity.assign_faces(both, anchors) == {"c_a": 0.9, "c_b": 0.8}
+    one = {"c_a": a}
+    assert continuity.assign_faces(np.array([[0.2, 0.0, 0.0], [0.7, 0.0, 0.0]]), one) == {"c_a": 0.7}
+
+
+def test_face_score_is_the_lowest():
+    assert continuity.score({"c_a": 0.9, "c_b": 0.62}) == 0.62
+    assert continuity.score({}) is None and continuity.score(None) is None
+
+
+def test_failed_model_setup_is_retried(monkeypatch):
+    attempts = []
+
+    class Broken:
+        def __init__(self, **kw):
+            attempts.append(1)
+
+        def prepare(self, **kw):
+            raise RuntimeError("buffalo_l download failed")
+    monkeypatch.setattr(continuity, "_app", None)
+    monkeypatch.setattr(continuity, "_error", None)
+    monkeypatch.setattr(continuity, "_face_analysis_class", lambda: Broken)
+    with pytest.raises(RuntimeError):
+        continuity._analyzer()
+    assert continuity._app is None and "download failed" in continuity.error()
+    continuity.retry()
+    assert continuity.error() is None
+    with pytest.raises(RuntimeError):
+        continuity._analyzer()
+    assert len(attempts) == 2

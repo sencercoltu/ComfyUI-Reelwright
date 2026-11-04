@@ -34,6 +34,20 @@ def error():
     return _error
 
 
+def retry():
+    """added 2026-11-03 v0.6.0: forget the last setup failure, so the next check tries again (a render calls this at
+    its start). A failed model download or a fixed install used to stay "unavailable" until ComfyUI restarted."""
+    global _error
+    _error = None
+
+
+def score(face):
+    """added 2026-11-03 v0.6.0: one number for a take's {cast_id: similarity}: the lowest (the character that drifted
+    most), or None when nobody was checked."""
+    vals = [float(v) for v in (face or {}).values() if isinstance(v, (int, float))]
+    return min(vals) if vals else None
+
+
 # added 2026-11-03 v0.4.1: insightface 0.7.x imports insightface.app.mask_renderer unconditionally, which imports
 # albumentations for its face-mask augmentation. A mismatched albumentations/albucore pair ("cannot import name
 # 'median_blur' from 'albucore'") then breaks every `import insightface`, although face analysis never uses it
@@ -87,13 +101,26 @@ def _analyzer():
     global _app, _error
     if _app is None:
         # [OLD 2026-11-03 v0.4.0->v0.4.1] from insightface.app import FaceAnalysis
+        # [OLD 2026-11-03 v0.5.1->v0.6.0] a failed model setup (download, onnxruntime) left a half-made analyzer in
+        # _app and was not recorded
+        # try:
+        #     FaceAnalysis = _face_analysis_class()
+        # except Exception as e:
+        #     _error = "{}: {}".format(type(e).__name__, e)
+        #     raise
+        # _app = FaceAnalysis(name="buffalo_l", allowed_modules=["detection", "recognition"])
+        # _app.prepare(ctx_id=0, det_size=(640, 640))
+        # [/OLD]
+        # added 2026-11-03 v0.6.0: _app is set only once the model is ready; any failure is recorded for Global ->
+        # About and tried again on the next render (retry())
         try:
             FaceAnalysis = _face_analysis_class()
+            app = FaceAnalysis(name="buffalo_l", allowed_modules=["detection", "recognition"])
+            app.prepare(ctx_id=0, det_size=(640, 640))
         except Exception as e:
             _error = "{}: {}".format(type(e).__name__, e)
             raise
-        _app = FaceAnalysis(name="buffalo_l", allowed_modules=["detection", "recognition"])
-        _app.prepare(ctx_id=0, det_size=(640, 640))
+        _app = app
     return _app
 
 
@@ -147,12 +174,37 @@ def check_scene(p, scene, store, video_path, samples=8):
     if not anchors:
         return {}
     frames = _sample_frames(video_path, samples)
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] every character got a score from every frame with any face in it, so a frame
+    # showing only one character counted as drift for the others
+    # scores = {cid: [] for cid in anchors}
+    # for bgr in frames:
+    #     faces = _embeddings(bgr)
+    #     if not faces:
+    #         continue
+    #     faces = np.stack(faces)
+    #     for cid, ref in anchors.items():
+    #         scores[cid].append(float((faces @ ref.T).max()))
+    # [/OLD]
     scores = {cid: [] for cid in anchors}
     for bgr in frames:
         faces = _embeddings(bgr)
-        if not faces:
+        if not faces:  # nobody on screen: says nothing about drift
             continue
-        faces = np.stack(faces)
-        for cid, ref in anchors.items():
-            scores[cid].append(float((faces @ ref.T).max()))
+        for cid, value in assign_faces(np.stack(faces), anchors).items():
+            scores[cid].append(value)
     return {cid: round(sum(v) / len(v), 3) for cid, v in scores.items() if v}
+
+
+def assign_faces(faces, anchors):
+    """added 2026-11-03 v0.6.0: {cast_id: similarity} for one frame. Each face found in the frame goes to the
+    character it resembles most, each character takes at most one face (its best), so a character who is not in the
+    frame gets no value instead of a low one."""
+    sims = {cid: (faces @ ref.T).max(axis=1) for cid, ref in anchors.items()}  # best anchor per face
+    pairs = sorted(((float(v), cid, k) for cid, row in sims.items() for k, v in enumerate(row)), reverse=True)
+    out, used = {}, set()
+    for value, cid, k in pairs:
+        if cid in out or k in used:
+            continue
+        out[cid] = value
+        used.add(k)
+    return out

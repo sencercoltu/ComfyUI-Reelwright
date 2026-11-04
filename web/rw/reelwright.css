@@ -749,3 +749,74 @@
 .rw-fold-sum { margin-left: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text3); font-family: var(--mono); font-size: 10.5px; }
 /* added 2026-11-03 v0.5.1: hidden read-only field that holds keyboard focus in the editor (see editor.js) */
 .rw-keys { position: absolute; left: 0; top: 0; width: 1px; height: 1px; padding: 0; border: 0; margin: 0; opacity: 0; pointer-events: none; caret-color: transparent; }
+/* added 2026-11-03 v0.6.0 (F1): History menu, dialog with three buttons, footer folder-conflict button, @@ escape */
+.rw-ctx.rw-history { max-height: 360px; overflow-y: auto; min-width: 260px; }
+.rw-ctx-head { padding: 5px 8px 6px; font-size: 10.5px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.rw-ctx-item.current { color: var(--text); background: var(--raise2); }
+.rw-ctx-item.future { opacity: 0.55; font-style: italic; }
+.rw-modal-box.wide { width: 560px; }
+.rw-modal-actions { flex-wrap: wrap; }
+.rw-modal-box .rw-keys { position: absolute; }
+.rw-foot-btn { border: 0; background: transparent; font: inherit; padding: 0; cursor: pointer; }
+.save-conflict { color: var(--warn); }
+.save-conflict:hover { text-decoration: underline; }
+.hl-esc { color: var(--text3); }
+
+/* added 2026-11-03 v0.6.0 (F2b): Render tab (status cell with run result / estimate / "why?", upstream note, prompt
+   diff, pass retake, last-run banner, merge options and loudness report, version diff), Files notes, script warnings */
+.rw-trow { grid-template-columns: 30px minmax(0, 1.2fr) minmax(0, 1.5fr) 86px minmax(0, 1.4fr) 62px 82px 62px; }
+.rw-tstatus { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.rw-tstatus > .rw-status { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.rw-status-text { overflow: hidden; text-overflow: ellipsis; }
+.rw-runres { flex: none; font-size: 10px; line-height: 15px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--line3); }
+.rw-runres.failed { color: var(--err); border-color: rgba(248, 113, 113, 0.45); }
+.rw-runres.skipped { color: var(--warn); border-color: rgba(251, 191, 36, 0.4); }
+.rw-root .rw-why { flex: none; font-size: 10.5px; color: var(--warn); text-decoration: underline dotted; }
+.rw-root .rw-why.on { color: var(--accent-text); }
+.rw-manual-mark { display: inline-flex; color: var(--cam); margin-left: 2px; }
+.rw-trow-note { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 34px; font-size: 11.5px; border-bottom: 1px solid var(--line2); }
+.rw-trow-note.warn { color: #fde68a; background: rgba(251, 191, 36, 0.06); }
+.rw-trow-note svg { flex: none; }
+.rw-diff-box { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px 8px 34px; border-bottom: 1px solid var(--line2); }
+.rw-diff-pass { display: flex; flex-direction: column; gap: 3px; }
+.rw-diff-pass > b { font-size: 11px; color: var(--text2); }
+.rw-diff { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: #0e0f13; padding: 4px 0; font-size: 11px; line-height: 1.5; }
+.rw-diff-line { padding: 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text3); }
+.rw-diff-line.del { background: rgba(248, 113, 113, 0.1); color: #fecaca; }
+.rw-diff-line.add { background: rgba(52, 211, 153, 0.1); color: #a7f3d0; }
+.rw-diff-line.gap { color: var(--dim); text-align: center; }
+.rw-diff-op { display: inline-block; width: 14px; color: var(--dim); user-select: none; }
+.rw-pass-retake { gap: 6px; padding: 2px 6px; }
+.rw-banner.err { background: rgba(248, 113, 113, 0.08); border: 1px solid rgba(248, 113, 113, 0.4); color: #fecaca; }
+.rw-banner.err > svg, .rw-banner.warn > svg { flex: none; align-self: flex-start; margin-top: 2px; }
+.rw-lastrun { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.rw-lastrun-msg { white-space: pre-line; color: var(--text2); }
+.rw-lastrun-line { display: grid; grid-template-columns: 26px auto auto minmax(0, 1fr); gap: 8px; align-items: baseline; font-size: 11.5px; }
+.rw-lastrun-line > b { font-weight: 500; color: var(--text); white-space: nowrap; }
+.rw-estimate { white-space: nowrap; }
+.rw-variants { gap: 4px; }
+.rw-ready-seg.out { opacity: 0.25; }
+.rw-loudness { display: flex; flex-direction: column; gap: 4px; }
+.rw-loud-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr)); gap: 3px 10px; align-items: baseline; }
+.rw-loud-grid .th { font-size: 10px; }
+.rw-vdiff { display: flex; flex-direction: column; gap: 3px; white-space: normal; }
+.rw-vdiff-line { color: var(--text); }
+.rw-vdiff-sub { padding-left: 12px; color: var(--text2); font-size: 12px; overflow-wrap: anywhere; }
+.rw-vdiff > .rw-dim:last-child { margin-top: 6px; }
+.rw-import-warn > .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+
+/* added 2026-11-03 v0.6.0 (F2a): loop repeats as one pattern, waveform retry, "what goes stale" preview, shot times on
+   the beat, the pass's song excerpt, per-pass budget */
+.rw-track-clip.ghost.pattern { background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(var(--rep) - 1px), rgba(52, 211, 153, 0.6) calc(var(--rep) - 1px), rgba(52, 211, 153, 0.6) var(--rep)); }
+.rw-wave-retry { position: absolute; left: 6px; bottom: 2px; z-index: 2; display: inline-flex; align-items: center; gap: 3px; height: 15px; padding: 0 5px; border-radius: 3px; border: 1px solid var(--line3); background: rgba(11, 12, 15, 0.85); color: var(--text2); font-size: 9.5px; cursor: pointer; }
+.rw-wave-retry:hover { color: var(--aud-t); border-color: var(--aud); }
+.rw-scene.rw-stale-preview { outline: 2px solid var(--warn); outline-offset: -2px; }
+.rw-stale-pass { position: absolute; top: 24px; bottom: 0; z-index: 3; pointer-events: none; background: repeating-linear-gradient(135deg, rgba(251, 191, 36, 0.32) 0 5px, rgba(251, 191, 36, 0.1) 5px 10px); }
+.rw-beat-to { color: var(--warn); white-space: nowrap; }
+.rw-beat-plan .grow { overflow-wrap: anywhere; }
+.rw-excerpt { gap: 6px; align-items: center; flex-wrap: wrap; }
+.rw-excerpt-audio { height: 28px; flex: 1 1 240px; min-width: 0; max-width: 100%; }
+.rw-budget-passes { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.rw-budget-pass { display: flex; align-items: center; gap: 8px; color: var(--text2); }
+.rw-budget-pass > b { min-width: 48px; font-weight: 500; color: var(--text); }
+.rw-budget-pass.over { color: var(--warn); }

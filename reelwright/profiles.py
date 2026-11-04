@@ -8,6 +8,7 @@ import json
 import os
 import time
 
+from . import soundtrack  # added 2026-11-03 v0.6.0
 from .model import new_id
 from .storage import read_json, write_json
 
@@ -19,9 +20,26 @@ def profiles_path(user_root):
     return os.path.join(user_root, "reelwright", "profiles.json")
 
 
+def migrate_global(glob):
+    """added 2026-11-03 v0.6.0: a profile saved before v0.5 still has the old merge score (one looping music bed).
+    The score belongs to a project's soundtrack now, so applying such a profile brought it back silently: it is
+    dropped here the way soundtrack.migrate_score moves it out of a project (the scenes' sound stays on top).
+    Returns True when the profile changed."""
+    if not isinstance(glob, dict):
+        return False
+    merge = glob.get("merge")
+    if not isinstance(merge, dict) or not isinstance(merge.get("score"), dict) or not merge["score"].get("asset"):
+        return False
+    return soundtrack.migrate_score({"global": glob, "soundtrack": []})
+
+
 def load(user_root):
     data = read_json(profiles_path(user_root), None) or {}
+    if not isinstance(data, dict):  # added 2026-11-03 v0.6.0: a file that is not an object reads as empty
+        data = {}
     profiles = [x for x in data.get("profiles") or [] if isinstance(x, dict) and x.get("id") and isinstance(x.get("global"), dict)]
+    for x in profiles:  # added 2026-11-03 v0.6.0
+        migrate_global(x["global"])
     default = data.get("default") or ""
     if default not in {x["id"] for x in profiles}:
         default = ""
@@ -42,6 +60,7 @@ def save(user_root, name, glob, pid=None, make_default=None):
         raise ValueError("A profile needs the Global settings")
     if len(json.dumps(glob)) > MAX_BYTES:
         raise ValueError("These settings are too large for a profile")
+    migrate_global(glob)  # added 2026-11-03 v0.6.0
     data = load(user_root)
     now = int(time.time())
     hit = next((x for x in data["profiles"] if x["id"] == pid), None) if pid else None

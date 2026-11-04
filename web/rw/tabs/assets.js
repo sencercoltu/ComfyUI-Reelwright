@@ -1,7 +1,8 @@
 // Assets tab: upload, browse, per-asset defaults, usage, reference budget and
 // camera presets.
 
-import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips, confirmInline } from "../ui.js";
+// [OLD 2026-11-03 v0.5.1->v0.6.0] import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips, confirmInline } from "../ui.js";  (confirmInline is no longer used; deletes go through editor.deleteAsset and its dialog)
+import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips } from "../ui.js";
 import { rw, viewURL } from "../api.js";
 import { assetMenu } from "./timeline.js"; // added 2026-11-02 v0.3.0
 import {
@@ -134,6 +135,7 @@ function openBrowser(ctx, patch = {}) {
   });
 }
 
+/* [OLD 2026-11-03 v0.5.1->v0.6.0] closing the card while files were being added brought it back as a broken card ({picked, importing} only)
 async function importPicked(ctx) {
   const b = ctx.eph.browse;
   let n = 0;
@@ -148,6 +150,29 @@ async function importPicked(ctx) {
     } catch (err) { ctx.actions.toast(`Could not add ${rel}: ${err.message}`, "error"); }
   }
   ctx.store.setEph({ browse: { ...ctx.eph.browse, picked: [], importing: false } });
+  ctx.actions.toast(n ? `Added ${n} asset${n > 1 ? "s" : ""} from ComfyUI ${b.root}.` : "Nothing new to add.", n ? "ok" : "info");
+}
+[/OLD] */
+// added 2026-11-03 v0.6.0: the picked files are added even when the card is closed meanwhile; the card is only updated
+// while it is still open (the same one), never brought back
+async function importPicked(ctx) {
+  const b = ctx.eph.browse;
+  if (!b || b.importing) return;
+  let n = 0;
+  const card = { ...b, importing: true };
+  ctx.store.setEph({ browse: card });
+  for (const rel of b.picked) {
+    try {
+      const r = await rw.importFile(ctx.p.slug, b.root, rel);
+      const a = r.asset || r;
+      if (b.root === "input" && ctx.p.assets.some(x => x.file === a.file)) continue;
+      addAsset(ctx, a, rel.split("/").pop().replace(/\.[^.]+$/, ""), a.kind);
+      n++;
+    } catch (err) { ctx.actions.toast(`Could not add ${rel}: ${err.message}`, "error"); }
+  }
+  const now = ctx.eph.browse;
+  if (now && now.root === b.root) ctx.store.setEph({ browse: { ...now, picked: [], importing: false } });
+  else if (now) ctx.store.setEph({ browse: { ...now, importing: false } });
   ctx.actions.toast(n ? `Added ${n} asset${n > 1 ? "s" : ""} from ComfyUI ${b.root}.` : "Nothing new to add.", n ? "ok" : "info");
 }
 
@@ -299,7 +324,8 @@ function budgetMatrix(ctx) {
 
 function cameraPresets(ctx) {
   const p = ctx.p;
-  const edit = (id, fn) => ctx.actions.edit(q => { const c = q.camera_presets.find(x => x.id === id); if (c) fn(c); });
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = (id, fn) => ctx.actions.edit(q => { const c = q.camera_presets.find(x => x.id === id); if (c) fn(c); });  (no History menu name)
+  const edit = (id, fn) => ctx.actions.edit(q => { const c = q.camera_presets.find(x => x.id === id); if (c) fn(c); }, { label: "Camera preset" }); // added 2026-11-03 v0.6.0: History menu name
   return section({
     title: "Camera presets", help: "assets.camera",
     actions: button({ label: "Preset", icon: "plus", small: true, help: "assets.camera.add", onClick: () => ctx.actions.edit(q => { q.camera_presets.push({ id: newId("k"), name: "New move", text: "" }); }) }),
@@ -312,17 +338,35 @@ function cameraPresets(ctx) {
   });
 }
 
+// added 2026-11-03 v0.6.0: the inspector's preview survives re-renders (as the Files tab's does), so a video or sound
+// keeps playing while progress events, autosaves or plan refreshes redraw the tab
+const previews = new WeakMap(); // ctx -> {key, el}
+function assetPreview(ctx, a) {
+  const key = `${a.id}|${a.kind}|${a.file}`;
+  const cached = previews.get(ctx);
+  if (cached?.key === key) return cached.el;
+  const el = a.kind === "image" ? h("img", { class: "rw-asset-preview", src: viewURL(a.file, "input"), alt: a.name })
+    : a.kind === "video" ? h("video", { class: "rw-asset-preview", src: viewURL(a.file, "input"), controls: true, preload: "metadata" })
+      : h("div", { class: "rw-asset-preview aud" }, thumb(a, "rw-asset-wave"), h("audio", { src: viewURL(a.file, "input"), controls: true, preload: "metadata" }));
+  previews.set(ctx, { key, el });
+  return el;
+}
+
 function inspector(ctx) {
   const p = ctx.p;
   const a = findAsset(p, ctx.eph.selectedAsset) || p.assets[0];
   if (!a) return h("div", { class: "rw-col mid" }, section({ title: "Asset", help: "assets.inspector", children: h("div", { class: "rw-empty" }, "Upload an asset to see its settings.") }));
-  const edit = fn => ctx.actions.edit(q => { const x = q.assets.find(y => y.id === a.id); if (x) fn(x); });
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => { const x = q.assets.find(y => y.id === a.id); if (x) fn(x); });  (no History menu name)
+  const edit = fn => ctx.actions.edit(q => { const x = q.assets.find(y => y.id === a.id); if (x) fn(x); }, { label: `Edit ${a.code}` }); // added 2026-11-03 v0.6.0: History menu name
   const usage = assetUsage(p, a.id);
   const castUse = assetCastUse(p, a.id);
   const kc = KIND_CLASS[a.kind];
+  /* [OLD 2026-11-03 v0.5.1->v0.6.0] a new element on every re-render: a playing video or sound restarted on each progress event
   const preview = a.kind === "image" ? h("img", { class: "rw-asset-preview", src: viewURL(a.file, "input"), alt: a.name })
     : a.kind === "video" ? h("video", { class: "rw-asset-preview", src: viewURL(a.file, "input"), controls: true, preload: "metadata" })
       : h("div", { class: "rw-asset-preview aud" }, thumb(a, "rw-asset-wave"), h("audio", { src: viewURL(a.file, "input"), controls: true, preload: "metadata" }));
+  [/OLD] */
+  const preview = assetPreview(ctx, a); // added 2026-11-03 v0.6.0: the same element while the same file is shown
   const card = h("div", { class: "rw-col mid" },
     section({
       title: "Asset", help: "assets.inspector",
@@ -363,7 +407,8 @@ function inspector(ctx) {
           type: "button", class: ["rw-ret", a.defaults.retention === r && "on", "rw-ret-" + kc], help: "retention." + r,
           onClick: () => edit(x => { x.defaults.retention = r; }),
         }, r))), { help: "assets.defaults.retention", wide: true }),
-        field("Keep", keepChips({ values: a.defaults.keep, help: "assets.defaults.keep", onChange: v => edit(x => { x.defaults.keep = v; }) }), { help: "assets.defaults.keep", wide: true }),
+        // [OLD 2026-11-03 v0.6.0 review] field("Keep", keepChips({ values: a.defaults.keep, help: "assets.defaults.keep", onChange: v => edit(x => { x.defaults.keep = v; }) }), { help: "assets.defaults.keep", wide: true }),
+        field("Keep", keepChips({ values: a.defaults.keep, help: "assets.defaults.keep", key: "asset-keep-" + a.id, onChange: v => edit(x => { x.defaults.keep = v; }) }), { help: "assets.defaults.keep", wide: true }), // added 2026-11-03 v0.6.0 review: key
         a.kind === "video" && field("Soundtrack", toggle({ value: a.defaults.soundtrack, help: "assets.defaults.soundtrack", onChange: v => edit(x => { x.defaults.soundtrack = v; }) }), { help: "assets.defaults.soundtrack" }),
         textarea({ value: a.notes, rows: 2, key: "asset-notes-" + a.id, placeholder: "Notes", help: "assets.notes", onChange: v => edit(x => { x.notes = v; }) }),
       ],

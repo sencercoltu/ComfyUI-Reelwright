@@ -1,6 +1,10 @@
 // Syntax highlighting for prompt text: H3 tags, editor @tags, shots, timestamps
 // and dialogue. Returns HTML-safe markup for the editor overlay and previews.
 
+// added 2026-11-03 v0.6.0: a tag is @Name or @{Two Words}; see tagMatches() below
+const NAME = "[\\p{L}\\p{N}\\p{M}_]+(?:['’.\\-][\\p{L}\\p{N}\\p{M}_]+)*";
+export const TAG_SOURCE = `(?<![\\p{L}\\p{N}\\p{M}_@])@(?!@)(?:\\{([^}\\n]+)\\}|(${NAME}))`;
+
 const RULES = [
   // added 2026-11-02 v0.2.0: the six Ref2VA section labels, each on its own line
   [/^(?:subject_definitions|summary|retention_analysis|detailed_description|overall_soundscape|non_diegetic_music):$/gm, "hl-sec"],
@@ -8,7 +12,11 @@ const RULES = [
   [/&lt;(?:Picture|Subject) \d+&gt;/g, "hl-pic"],
   [/&lt;Video \d+&gt;/g, "hl-vid"],
   [/&lt;Audio \d+&gt;/g, "hl-aud"],
-  [/@\{[^}\n]+\}|@[A-Za-z][\w-]*/g, "hl-at"],
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] [/@\{[^}\n]+\}|@[A-Za-z][\w-]*/g, "hl-at"],  (e-mail addresses were tags; no @@ escape; ASCII names only)
+  // added 2026-11-03 v0.6.0: the tag rule (PLAN "Tag syntax", same as prompt.py and model.js): @@ is a literal @,
+  // an @ right after a letter, digit, _ or @ is plain text (e-mail), names are Unicode words joined by ' ’ - .
+  [/@@/g, "hl-esc"],
+  [new RegExp(TAG_SOURCE, "gu"), "hl-at"],
   [/\[Shot ?\d+\]/g, "hl-shot"],
   [/\bAt \d{2}:\d{2}(?:\.\d{1,3})?/g, "hl-time"],
   [/\[(?:reference generation|keyframe completion|video continuation|audio reference|audio reuse|video editing)(?: \+ [a-z ]+)*\]/g, "hl-task"],
@@ -20,8 +28,36 @@ function escape(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// [OLD 2026-11-03 v0.5.1->v0.6.0] a NUL character in the text could hang the loop or print "undefined"; tags followed the old rule
+// export function highlightHTML(text) {
+//   let html = escape(text || "");
+//   const marks = [];
+//   for (const [re, cls] of RULES) {
+//     html = html.replace(re, m => {
+//       marks.push(`<span class="${cls}">${m}</span>`);
+//       return `\u0000${marks.length - 1}\u0000`;
+//     });
+//   }
+//   // Placeholders can nest (a tag inside dialogue); resolve until none are left.
+//   let prev;
+//   do {
+//     prev = html;
+//     html = html.replace(/\u0000(\d+)\u0000/g, (_, i) => marks[Number(i)]);
+//   } while (html !== prev);
+//   return html + "\n";
+// }
+// 
+// export function unknownTags(text, candidates) {
+//   const known = new Set(candidates.map(c => c.tag.toLowerCase()));
+//   const found = (text || "").match(/@\{[^}\n]+\}|@[A-Za-z][\w-]*/g) || [];
+//   return [...new Set(found.filter(t => !known.has(t.toLowerCase())))];
+// }
+// [/OLD]
+
+// added 2026-11-03 v0.6.0: NUL characters in the text are shown as ␀ (one character, so the overlay stays aligned
+// with the textarea) and can never be read as a placeholder; resolving stops after a few rounds and drops unknown ids
 export function highlightHTML(text) {
-  let html = escape(text || "");
+  let html = escape(String(text ?? "").replace(/\u0000/g, "\u2400"));
   const marks = [];
   for (const [re, cls] of RULES) {
     html = html.replace(re, m => {
@@ -30,18 +66,28 @@ export function highlightHTML(text) {
     });
   }
   // Placeholders can nest (a tag inside dialogue); resolve until none are left.
-  let prev;
-  do {
-    prev = html;
-    html = html.replace(/\u0000(\d+)\u0000/g, (_, i) => marks[Number(i)]);
-  } while (html !== prev);
-  return html + "\n";
+  for (let round = 0; round < 8 && html.includes("\u0000"); round++) {
+    html = html.replace(/\u0000(\d+)\u0000/g, (_, i) => marks[Number(i)] ?? "");
+  }
+  return html.replace(/\u0000/g, "") + "\n";
 }
 
+// added 2026-11-03 v0.6.0: every tag in `text`: [{tag: "@Anna" | "@{Old Keeper}", name: "Anna" | "Old Keeper", index}]
+// ("@Anna." -> "Anna"; "mail@host.com" and "@@x" are not tags)
+export function tagMatches(text) {
+  const out = [];
+  for (const m of String(text ?? "").matchAll(new RegExp(TAG_SOURCE, "gu"))) out.push({ tag: m[0], name: m[1] ?? m[2], index: m.index });
+  return out;
+}
+
+// added 2026-11-03 v0.6.0: an unknown name that looks like an asset code (P3, V1, A2) is an error, any other unknown
+// name (an @handle) a warning: it is written as plain text
+export const looksLikeAssetCode = tag => /^@[PVA]\d+$/i.test(String(tag || ""));
+
+// [OLD 2026-11-03 v0.5.1->v0.6.0] (see the block above) unknownTags matched /@\{[^}\n]+\}|@[A-Za-z][\w-]*/g
 export function unknownTags(text, candidates) {
   const known = new Set(candidates.map(c => c.tag.toLowerCase()));
-  const found = (text || "").match(/@\{[^}\n]+\}|@[A-Za-z][\w-]*/g) || [];
-  return [...new Set(found.filter(t => !known.has(t.toLowerCase())))];
+  return [...new Set(tagMatches(text).map(m => m.tag).filter(t => !known.has(t.toLowerCase())))];
 }
 
 // Line-level diff (LCS) used by the rewrite preview.

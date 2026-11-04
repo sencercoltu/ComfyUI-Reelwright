@@ -1,13 +1,31 @@
-"""Folders, path containment, take indexes and autosave versions."""
+"""Folders, path containment, take indexes and autosave versions.
+
+added 2026-11-03 v0.6.0: every read-modify-write of a project's files (index.json, project.json, the cut counter)
+holds the project's lock (jobs.lock); JSON is written through a unique temp file; damaged JSON reads as missing
+(project.json falls back to the newest readable autosave); repair() rebuilds take lists from the takes' meta.json.
+"""
 
 import json
+import logging  # added 2026-11-03 v0.6.0
 import os
 import re
+import shutil  # added 2026-11-03 v0.6.0
+import sys  # added 2026-11-03 v0.6.0
 import time
+import uuid  # added 2026-11-03 v0.6.0
 
-SLUG_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,63}$")
-ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-VERSION_RE = re.compile(r"^project_\d{8}_\d{6}\.json$")
+from . import jobs  # added 2026-11-03 v0.6.0
+
+log = logging.getLogger("reelwright")  # added 2026-11-03 v0.6.0
+
+# [OLD 2026-11-03 v0.5.1->v0.6.0] "$" also matches before a final newline, so "name\n" passed the checks
+# SLUG_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,63}$")
+# ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# VERSION_RE = re.compile(r"^project_\d{8}_\d{6}\.json$")
+# [/OLD]
+SLUG_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,63}\Z")  # added 2026-11-03 v0.6.0: \Z, no trailing newline
+ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
+VERSION_RE = re.compile(r"^project_\d{8}_\d{6}\.json\Z")
 MAX_VERSIONS = 50
 VERSION_INTERVAL = 120  # seconds between automatic version snapshots
 
@@ -39,20 +57,69 @@ def check_id(value):
     return value
 
 
+# [OLD 2026-11-03 v0.5.1->v0.6.0] fixed <file>.tmp (two writers collided) and no fsync; a damaged file raised
+# def write_json(path, data):
+#     os.makedirs(os.path.dirname(path), exist_ok=True)
+#     tmp = path + ".tmp"
+#     with open(tmp, "w", encoding="utf-8") as f:
+#         json.dump(data, f, ensure_ascii=False, indent=1)
+#     os.replace(tmp, path)
+#
+#
+# def read_json(path, default=None):
+#     try:
+#         with open(path, "r", encoding="utf-8") as f:
+#             return json.load(f)
+#     except FileNotFoundError:
+#         return default
+# [/OLD]
 def write_json(path, data):
+    """added 2026-11-03 v0.6.0: written to a temp file of its own (two writers never share one), flushed to disk,
+    then moved over the old file in one step."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, path)
+    tmp = "{}.{}.{}.tmp".format(path, os.getpid(), uuid.uuid4().hex[:12])
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+            f.flush()
+            os.fsync(f.fileno())
+        _replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _replace(src, dst):
+    """added 2026-11-03 v0.6.0: os.replace; on Windows a reader holding the file open makes it fail for a moment."""
+    for attempt in range(10):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if sys.platform != "win32" or attempt == 9:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+
+
+def load_json(path):
+    """added 2026-11-03 v0.6.0: (data, status) with status "ok", "missing" or "damaged"."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f), "ok"
+    except FileNotFoundError:
+        return None, "missing"
+    except (json.JSONDecodeError, UnicodeDecodeError, IsADirectoryError, NotADirectoryError) as e:
+        log.warning("Reelwright: %s is damaged and is read as missing: %s", path, e)
+        return None, "damaged"
 
 
 def read_json(path, default=None):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return default
+    """added 2026-11-03 v0.6.0: a damaged file (half written, not JSON) reads as `default` and is logged."""
+    data, status = load_json(path)
+    return data if status == "ok" else default
 
 
 class ProjectStore:
@@ -85,108 +152,408 @@ class ProjectStore:
         return safe_join(self.roots.input, rel)
 
     # takes
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] a damaged index.json read as an empty take list (the next render then overwrote it)
+    # def read_index(self, scene_id):
+    #     idx = read_json(os.path.join(self.scene_dir(scene_id), "index.json"), None)
+    #     if not isinstance(idx, dict):
+    #         idx = {"starred": None, "takes": []}
+    #     idx.setdefault("starred", None)
+    #     idx.setdefault("takes", [])
+    #     return idx
+    # [/OLD]
     def read_index(self, scene_id):
-        idx = read_json(os.path.join(self.scene_dir(scene_id), "index.json"), None)
+        idx, status = load_json(os.path.join(self.scene_dir(scene_id), "index.json"))
+        if status == "damaged" or (status == "ok" and not isinstance(idx, dict)):
+            # added 2026-11-03 v0.6.0: a damaged take list is rebuilt from the takes' meta.json; the next write (or
+            # repair()) saves it
+            idx = self.index_from_takes(scene_id)
         if not isinstance(idx, dict):
             idx = {"starred": None, "takes": []}
         idx.setdefault("starred", None)
         idx.setdefault("takes", [])
+        if not isinstance(idx["takes"], list):  # added 2026-11-03 v0.6.0: entries without an id are dropped
+            idx["takes"] = []
+        idx["takes"] = [t for t in idx["takes"] if isinstance(t, dict) and isinstance(t.get("id"), str)]
         return idx
 
+    # ---- added 2026-11-03 v0.6.0: rebuilding take lists from the takes' meta.json -----------------------------
+    META_ONLY = ("passes", "settings", "loras")  # in meta.json but not in a take list entry
+
+    def take_from_meta(self, scene_id, take_id):
+        """The take list entry a take folder's meta.json describes, or None when the take is unfinished (no
+        meta.json, or its video is missing)."""
+        meta = read_json(os.path.join(self.scene_dir(scene_id), "takes", take_id, "meta.json"), None)
+        if not isinstance(meta, dict):
+            return None
+        entry = {k: v for k, v in meta.items() if k not in self.META_ONLY}
+        entry["id"] = take_id
+        video = (entry.get("files") or {}).get("video") if isinstance(entry.get("files"), dict) else None
+        try:
+            if not video or not os.path.isfile(self.output_path(video)):
+                return None
+        except (ValueError, TypeError):
+            return None
+        return entry
+
+    def takes_on_disk(self, scene_id):
+        """{take_id: entry} for every finished take folder of a scene (the pass cache in passes/ is not a take)."""
+        tdir = os.path.join(self.scene_dir(scene_id), "takes")
+        out = {}
+        for tid in _listdir(tdir):
+            if ID_RE.match(tid) and os.path.isdir(os.path.join(tdir, tid)):
+                e = self.take_from_meta(scene_id, tid)
+                if e:
+                    out[tid] = e
+        return out
+
+    def index_from_takes(self, scene_id):
+        takes = sorted(self.takes_on_disk(scene_id).values(), key=_take_order)
+        return {"starred": takes[-1]["id"] if takes else None, "takes": takes}
+
+    def repair(self):
+        """Re-list every scene's takes from the takes' meta.json: a missing or damaged index.json is rebuilt,
+        finished takes that are not listed are added, listed takes whose folder is gone are dropped and a lost star
+        moves to the newest take. Returns {repaired: [scene_id], takes_found, added, dropped, project}."""
+        with jobs.lock(self.slug):
+            sdir = os.path.join(self.dir, "scenes")
+            repaired, found, added, dropped = [], 0, 0, 0
+            for sid in _listdir(sdir):
+                if not ID_RE.match(sid) or not os.path.isdir(os.path.join(sdir, sid)):
+                    continue
+                disk = self.takes_on_disk(sid)
+                found += len(disk)
+                raw, status = load_json(os.path.join(self.scene_dir(sid), "index.json"))
+                ok = status == "ok" and isinstance(raw, dict) and isinstance(raw.get("takes"), list)
+                if not ok and status == "missing" and not disk:
+                    continue  # nothing rendered here yet
+                idx = dict(raw) if ok else {"starred": None, "takes": []}
+                before = list(idx["takes"])
+                tdir = os.path.join(self.scene_dir(sid), "takes")
+                kept = [t for t in before if isinstance(t, dict) and isinstance(t.get("id"), str)
+                        and ID_RE.match(t["id"]) and os.path.isdir(os.path.join(tdir, t["id"]))]
+                listed = {t["id"] for t in kept}
+                new = sorted((e for tid, e in disk.items() if tid not in listed), key=_take_order)
+                idx["takes"] = kept + new
+                ids = [t["id"] for t in idx["takes"]]
+                star = idx.get("starred") if idx.get("starred") in ids else (
+                    max(idx["takes"], key=_take_order)["id"] if idx["takes"] else None)
+                if not ok or new or len(kept) != len(before) or star != idx.get("starred"):
+                    idx["starred"] = star
+                    self.write_index(sid, idx)
+                    repaired.append(sid)
+                    added += len(new)
+                    dropped += len(before) - len(kept)
+            _, pstatus = load_json(os.path.join(self.dir, "project.json"))
+            return {"repaired": repaired, "takes_found": found, "added": added, "dropped": dropped,
+                    "project": pstatus}
+
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] no lock (lost updates); take ids reused folders; delete followed a linked take folder
+    # def write_index(self, scene_id, idx):
+    #     write_json(os.path.join(self.scene_dir(scene_id), "index.json"), idx)
+    #
+    # def new_take_id(self, scene_id):
+    #     idx = self.read_index(scene_id)
+    #     n = 1 + max([int(t["id"][1:]) for t in idx["takes"] if re.match(r"^v\d+$", t["id"])] or [0])
+    #     return "v{}".format(n)
+    #
+    # def add_take(self, scene_id, take, star=True):
+    #     idx = self.read_index(scene_id)
+    #     idx["takes"] = [t for t in idx["takes"] if t["id"] != take["id"]] + [take]
+    #     if star:
+    #         idx["starred"] = take["id"]
+    #     self.write_index(scene_id, idx)
+    #     return idx
+    #
+    # def star(self, scene_id, take_id):
+    #     idx = self.read_index(scene_id)
+    #     if not any(t["id"] == take_id for t in idx["takes"]):
+    #         raise ValueError("unknown take {}".format(take_id))
+    #     idx["starred"] = take_id
+    #     self.write_index(scene_id, idx)
+    #
+    # def delete_take(self, scene_id, take_id):
+    #     idx = self.read_index(scene_id)
+    #     idx["takes"] = [t for t in idx["takes"] if t["id"] != take_id]
+    #     if idx["starred"] == take_id:
+    #         idx["starred"] = idx["takes"][-1]["id"] if idx["takes"] else None
+    #     self.write_index(scene_id, idx)
+    #     d = self.take_dir(scene_id, take_id)
+    #     if os.path.isdir(d):
+    #         for root, dirs, files in os.walk(d, topdown=False):
+    #             for f in files:
+    #                 os.remove(os.path.join(root, f))
+    #             for x in dirs:
+    #                 os.rmdir(os.path.join(root, x))
+    #         os.rmdir(d)
+    # [/OLD]
     def write_index(self, scene_id, idx):
-        write_json(os.path.join(self.scene_dir(scene_id), "index.json"), idx)
+        with jobs.lock(self.slug):  # added 2026-11-03 v0.6.0
+            write_json(os.path.join(self.scene_dir(scene_id), "index.json"), idx)
 
     def new_take_id(self, scene_id):
-        idx = self.read_index(scene_id)
-        n = 1 + max([int(t["id"][1:]) for t in idx["takes"] if re.match(r"^v\d+$", t["id"])] or [0])
-        return "v{}".format(n)
+        """added 2026-11-03 v0.6.0: the next take number after every listed take AND every take folder on disk; the
+        folder is created at once, so the id is never handed out twice and never reuses an old folder."""
+        with jobs.lock(self.slug):
+            idx = self.read_index(scene_id)
+            tdir = os.path.join(self.scene_dir(scene_id), "takes")
+            used = [int(t["id"][1:]) for t in idx["takes"] if re.match(r"^v\d+$", str(t.get("id")))]
+            used += [int(x[1:]) for x in _listdir(tdir) if re.match(r"^v\d+$", x)]
+            n = 1 + max(used or [0])
+            os.makedirs(tdir, exist_ok=True)
+            while True:
+                try:
+                    os.mkdir(os.path.join(tdir, "v{}".format(n)))
+                    return "v{}".format(n)
+                except FileExistsError:
+                    n += 1
+
+    def _stamp(self, idx):
+        """added 2026-11-03 v0.6.0: the take list remembers which project rendered into it (project.json's
+        project_id), so the Files tab can tell this project's deleted scenes from another project's."""
+        p = read_json(os.path.join(self.dir, "project.json"), None)
+        pid = p.get("project_id") if isinstance(p, dict) else None
+        if isinstance(pid, str) and pid:
+            idx["project_id"] = pid
 
     def add_take(self, scene_id, take, star=True):
-        idx = self.read_index(scene_id)
-        idx["takes"] = [t for t in idx["takes"] if t["id"] != take["id"]] + [take]
-        if star:
-            idx["starred"] = take["id"]
-        self.write_index(scene_id, idx)
-        return idx
+        with jobs.lock(self.slug):  # added 2026-11-03 v0.6.0
+            idx = self.read_index(scene_id)
+            idx["takes"] = [t for t in idx["takes"] if t["id"] != take["id"]] + [take]
+            if star:
+                idx["starred"] = take["id"]
+            self._stamp(idx)  # added 2026-11-03 v0.6.0
+            self.write_index(scene_id, idx)
+            return idx
 
     def star(self, scene_id, take_id):
-        idx = self.read_index(scene_id)
-        if not any(t["id"] == take_id for t in idx["takes"]):
-            raise ValueError("unknown take {}".format(take_id))
-        idx["starred"] = take_id
-        self.write_index(scene_id, idx)
+        with jobs.lock(self.slug):  # added 2026-11-03 v0.6.0
+            idx = self.read_index(scene_id)
+            if not any(t["id"] == take_id for t in idx["takes"]):
+                raise ValueError("unknown take {}".format(take_id))
+            idx["starred"] = take_id
+            self.write_index(scene_id, idx)
 
     def delete_take(self, scene_id, take_id):
-        idx = self.read_index(scene_id)
-        idx["takes"] = [t for t in idx["takes"] if t["id"] != take_id]
-        if idx["starred"] == take_id:
-            idx["starred"] = idx["takes"][-1]["id"] if idx["takes"] else None
-        self.write_index(scene_id, idx)
-        d = self.take_dir(scene_id, take_id)
-        if os.path.isdir(d):
-            for root, dirs, files in os.walk(d, topdown=False):
-                for f in files:
-                    os.remove(os.path.join(root, f))
-                for x in dirs:
-                    os.rmdir(os.path.join(root, x))
-            os.rmdir(d)
+        with jobs.lock(self.slug):  # added 2026-11-03 v0.6.0
+            idx = self.read_index(scene_id)
+            idx["takes"] = [t for t in idx["takes"] if t["id"] != take_id]
+            if idx["starred"] == take_id:
+                idx["starred"] = idx["takes"][-1]["id"] if idx["takes"] else None
+                # added 2026-11-03 v0.6.0: the fallback star is automatic, so the next render may re-star a matching take
+                idx["auto_star"] = idx["starred"]
+            self.write_index(scene_id, idx)
+            # [OLD 2026-11-03 v0.6.0 review] the folder was removed while holding the lock (a big take kept every other
+            # change to the project waiting)
+            #     # added 2026-11-03 v0.6.0: the take folder by its own name (a link is removed, never followed)
+            #     d = os.path.join(self.scene_dir(scene_id), "takes", check_id(take_id))
+            #     if os.path.islink(d) or os.path.isfile(d):
+            #         os.remove(d)
+            #     elif os.path.isdir(d):
+            #         shutil.rmtree(d)
+            # [/OLD]
+        # added 2026-11-03 v0.6.0 review: the take is off the list, so its folder is removed after the lock is let go
+        # (new_take_id never hands out the id of a folder that is still on disk)
+        # added 2026-11-03 v0.6.0: the take folder by its own name (a link is removed, never followed)
+        d = os.path.join(self.scene_dir(scene_id), "takes", check_id(take_id))
+        if os.path.islink(d) or os.path.isfile(d):
+            os.remove(d)
+        elif os.path.isdir(d):
+            shutil.rmtree(d)
 
     def starred_take(self, scene_id):
         idx = self.read_index(scene_id)
         return next((t for t in idx["takes"] if t["id"] == idx["starred"]), None)
 
     # project file and versions
-    def autosave(self, project, force_version=False):
-        os.makedirs(self.dir, exist_ok=True)
-        path = os.path.join(self.dir, "project.json")
-        previous = read_json(path)
-        write_json(path, project)
-        vdir = os.path.join(self.dir, "versions")
-        versions = self.list_versions()
-        newest = versions[0]["created"] if versions else 0
-        changed = previous != project
-        name = None
-        if force_version or (changed and time.time() - newest >= VERSION_INTERVAL):
-            name = time.strftime("project_%Y%m%d_%H%M%S.json")
-            write_json(os.path.join(vdir, name), project)
-            for v in self.list_versions()[MAX_VERSIONS:]:
-                os.remove(os.path.join(vdir, v["name"]))
-        return name
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] no lock: two autosaves at once could lose one
+    # def autosave(self, project, force_version=False):
+    #     os.makedirs(self.dir, exist_ok=True)
+    #     path = os.path.join(self.dir, "project.json")
+    #     previous = read_json(path)
+    #     write_json(path, project)
+    #     vdir = os.path.join(self.dir, "versions")
+    #     versions = self.list_versions()
+    #     newest = versions[0]["created"] if versions else 0
+    #     changed = previous != project
+    #     name = None
+    #     if force_version or (changed and time.time() - newest >= VERSION_INTERVAL):
+    #         name = time.strftime("project_%Y%m%d_%H%M%S.json")
+    #         write_json(os.path.join(vdir, name), project)
+    #         for v in self.list_versions()[MAX_VERSIONS:]:
+    #             os.remove(os.path.join(vdir, v["name"]))
+    #     return name
+    # [/OLD]
+    def load_project(self):
+        """added 2026-11-03 v0.6.0: project.json, or the newest readable autosaved version when project.json is
+        missing or damaged; None when there is neither."""
+        p = read_json(os.path.join(self.dir, "project.json"), None)
+        if isinstance(p, dict):
+            return p
+        for v in self.list_versions():
+            p = read_json(os.path.join(self.dir, "versions", v["name"]), None)
+            if isinstance(p, dict):
+                return p
+        return None
+
+    def slug_conflict(self, project):
+        """added 2026-11-03 v0.6.0: {id, name} of a different project that already lives in this folder, else
+        None. Only projects that both have a project_id can conflict (a folder from an older version adopts the
+        incoming id)."""
+        pid = project.get("project_id") if isinstance(project, dict) else None
+        if not isinstance(pid, str) or not pid:
+            return None
+        cur = self.load_project()
+        other = cur.get("project_id") if isinstance(cur, dict) else None
+        if isinstance(other, str) and other and other != pid:
+            return {"id": other, "name": str(cur.get("name") or "")}
+        return None
+
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] def autosave(self, project, force_version=False):
+    def autosave(self, project, force_version=False, owner_check=False):
+        """added 2026-11-03 v0.6.0: holds the project lock; with owner_check a folder that holds another project
+        (see slug_conflict) raises SlugConflict instead of being overwritten."""
+        with jobs.lock(self.slug):
+            if owner_check:
+                other = self.slug_conflict(project)
+                if other:
+                    raise SlugConflict(other)
+            os.makedirs(self.dir, exist_ok=True)
+            path = os.path.join(self.dir, "project.json")
+            previous = read_json(path)
+            write_json(path, project)
+            vdir = os.path.join(self.dir, "versions")
+            versions = self.list_versions()
+            newest = versions[0]["created"] if versions else 0
+            changed = previous != project
+            name = None
+            if force_version or (changed and time.time() - newest >= VERSION_INTERVAL):
+                name = time.strftime("project_%Y%m%d_%H%M%S.json")
+                write_json(os.path.join(vdir, name), project)
+                for v in self.list_versions()[MAX_VERSIONS:]:
+                    try:
+                        os.remove(os.path.join(vdir, v["name"]))
+                    except FileNotFoundError:
+                        pass
+            return name
 
     def list_versions(self):
         vdir = os.path.join(self.dir, "versions")
         if not os.path.isdir(vdir):
             return []
+        # [OLD 2026-11-03 v0.5.1->v0.6.0] a version deleted while listing raised
+        # out = []
+        # for name in os.listdir(vdir):
+        #     if VERSION_RE.match(name):
+        #         st = os.stat(os.path.join(vdir, name))
+        #         out.append({"name": name, "created": int(st.st_mtime), "size": st.st_size})
+        # return sorted(out, key=lambda v: v["name"], reverse=True)
+        # [/OLD]
         out = []
-        for name in os.listdir(vdir):
+        for name in _listdir(vdir):
             if VERSION_RE.match(name):
-                st = os.stat(os.path.join(vdir, name))
+                try:  # added 2026-11-03 v0.6.0: a version deleted meanwhile is skipped
+                    st = os.stat(os.path.join(vdir, name))
+                except OSError:
+                    continue
                 out.append({"name": name, "created": int(st.st_mtime), "size": st.st_size})
         return sorted(out, key=lambda v: v["name"], reverse=True)
 
     # added 2026-11-02 v0.3.6: delete autosaved versions (project.json, the latest autosave, is never touched)
     def delete_versions(self, names):
+        # [OLD 2026-11-03 v0.5.1->v0.6.0] a name that is not a string raised TypeError (500)
+        # names = list(names or [])
+        # bad = [n for n in names if not VERSION_RE.match(n or "")]
+        # if bad:
+        #     raise ValueError("invalid version name: " + bad[0])
+        # removed = 0
+        # for name in names:
+        #     path = safe_join(self.dir, "versions", name)
+        #     if os.path.isfile(path):
+        #         os.remove(path)
+        #         removed += 1
+        # return removed
+        # [/OLD]
+        if not isinstance(names, (list, tuple)):  # added 2026-11-03 v0.6.0: non-strings are refused, not a 500
+            raise ValueError("names must be a list of version names")
         names = list(names or [])
-        bad = [n for n in names if not VERSION_RE.match(n or "")]
+        bad = [n for n in names if not isinstance(n, str) or not VERSION_RE.match(n)]
         if bad:
-            raise ValueError("invalid version name: " + bad[0])
+            raise ValueError("invalid version name: {!r}".format(bad[0]))
         removed = 0
-        for name in names:
-            path = safe_join(self.dir, "versions", name)
-            if os.path.isfile(path):
-                os.remove(path)
-                removed += 1
+        with jobs.lock(self.slug):
+            for name in names:
+                path = safe_join(self.dir, "versions", name)
+                if os.path.isfile(path):
+                    os.remove(path)
+                    removed += 1
         return removed
 
     def read_version(self, name):
-        if not VERSION_RE.match(name or ""):
+        # [OLD 2026-11-03 v0.5.1->v0.6.0] if not VERSION_RE.match(name or ""):
+        if not isinstance(name, str) or not VERSION_RE.match(name):
             raise ValueError("invalid version name")
-        return read_json(safe_join(self.dir, "versions", name))
+        # [OLD 2026-11-03 v0.5.1->v0.6.0] return read_json(safe_join(self.dir, "versions", name))
+        data = read_json(safe_join(self.dir, "versions", name))
+        if not isinstance(data, dict):
+            raise ValueError("this version can't be read (missing or damaged)")
+        return data
 
-    def next_cut_path(self, ext=".mp4"):
-        d = self.cuts_dir()
-        os.makedirs(d, exist_ok=True)
-        n = 1
-        while os.path.exists(os.path.join(d, "{}_cut_v{}{}".format(self.slug, n, ext))):
-            n += 1
-        return os.path.join(d, "{}_cut_v{}".format(self.slug, n))
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] the first free number: after deleting cut v3 the next merge was v3 again, and two
+    # merges at once got the same number
+    # def next_cut_path(self, ext=".mp4"):
+    #     d = self.cuts_dir()
+    #     os.makedirs(d, exist_ok=True)
+    #     n = 1
+    #     while os.path.exists(os.path.join(d, "{}_cut_v{}{}".format(self.slug, n, ext))):
+    #         n += 1
+    #     return os.path.join(d, "{}_cut_v{}".format(self.slug, n))
+    # [/OLD]
+    def next_cut_path(self, ext=".mp4", suffix=""):
+        """added 2026-11-03 v0.6.0: cut numbers come from the counter cuts/.next (never reused, also after deletes),
+        taken under the project lock. Returns the path without extension: <cuts>/<slug>_cut_vN<suffix>."""
+        with jobs.lock(self.slug):
+            d = self.cuts_dir()
+            os.makedirs(d, exist_ok=True)
+            counter = os.path.join(d, CUT_COUNTER)
+            try:
+                with open(counter, "r", encoding="utf-8") as f:
+                    n = int(f.read().strip() or 1)
+            except (OSError, ValueError):
+                n = 1
+            rx = re.compile(r"^{}_cut_v(\d+)".format(re.escape(self.slug)))
+            on_disk = [int(m.group(1)) for m in (rx.match(x) for x in _listdir(d)) if m]
+            n = max(n, 1 + max(on_disk or [0]))
+            tmp = "{}.{}.tmp".format(counter, uuid.uuid4().hex[:8])
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(str(n + 1))
+            _replace(tmp, counter)
+            return os.path.join(d, "{}_cut_v{}{}".format(self.slug, n, suffix))
+
+
+CUT_COUNTER = ".next"  # added 2026-11-03 v0.6.0
+
+
+class SlugConflict(ValueError):
+    """added 2026-11-03 v0.6.0: the project folder holds a different project (see ProjectStore.slug_conflict)."""
+
+    def __init__(self, other):
+        super().__init__("the folder {!r} holds another project".format(other.get("name") or other.get("id")))
+        self.other = other
+
+
+def _listdir(path):
+    """added 2026-11-03 v0.6.0"""
+    try:
+        return sorted(os.listdir(path))
+    except OSError:
+        return []
+
+
+def _take_order(t):
+    """added 2026-11-03 v0.6.0: takes in the order they were made (created time, then take number)."""
+    m = re.match(r"^v(\d+)$", str(t.get("id")))
+    try:
+        created = float(t.get("created") or 0)
+    except (TypeError, ValueError):
+        created = 0.0
+    return (created, int(m.group(1)) if m else 0, str(t.get("id")))

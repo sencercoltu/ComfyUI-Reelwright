@@ -30,7 +30,9 @@ export function codeEditor({ value, onInput, onChange, key, help, candidates, pl
 
   function openList() {
     const before = ta.value.slice(0, ta.selectionStart);
-    const m = before.match(/@(\{[^}\n]*|[\w-]*)$/);
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] const m = before.match(/@(\{[^}\n]*|[\w-]*)$/);
+    // added 2026-11-03 v0.6.0: the tag rule: no list after a letter or digit (an e-mail address) or after @@
+    const m = before.match(/(?<![\p{L}\p{N}\p{M}_@])@(?!@)(\{[^}\n]*|[\p{L}\p{N}\p{M}_'’.\-]*)$/u);
     if (!m) { closeList(); return; }
     const q = m[0].toLowerCase();
     matches = candidates.filter(c => c.tag.toLowerCase().startsWith(q) || c.label.toLowerCase().includes(q.slice(1))).slice(0, 8);
@@ -59,11 +61,22 @@ export function codeEditor({ value, onInput, onChange, key, help, candidates, pl
     onInput?.(ta.value);
   }
 
-  ta.addEventListener("input", () => { sync(); openList(); });
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] ta.addEventListener("input", () => { sync(); openList(); });
+  // added 2026-11-03 v0.6.0: IME. While a composition runs only the highlight follows; the value is reported (and
+  // the list opened) when it ends, so no re-render replaces the textarea mid-composition.
+  let composing = false;
+  ta.addEventListener("compositionstart", () => { composing = true; closeList(); });
+  ta.addEventListener("compositionend", () => { composing = false; sync(); openList(); });
+  ta.addEventListener("input", e => {
+    if (composing || e.isComposing) { pre.innerHTML = highlightHTML(ta.value); fit(); return; }
+    sync();
+    openList();
+  });
   ta.addEventListener("scroll", () => { pre.scrollTop = ta.scrollTop; });
   ta.addEventListener("change", () => onChange?.(ta.value));
   ta.addEventListener("blur", () => setTimeout(closeList, 120));
   ta.addEventListener("keydown", e => {
+    if (composing || e.isComposing) return; // added 2026-11-03 v0.6.0: Enter/arrows that belong to the IME
     if (!list.classList.contains("on")) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();

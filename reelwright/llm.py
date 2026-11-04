@@ -13,12 +13,17 @@ import aiohttp
 
 from .model import cast_description  # added 2026-11-02 v0.3.4
 from .prompt import tidy_rewrite  # added 2026-11-03 v0.4.1
+from . import prompt as _prompt  # added 2026-11-03 v0.6.0: the editor's tag rule (prompt.tag_re), as_text, tag_token
 from .scriptparts import fit_scene  # added 2026-11-03 v0.4.3
 from .storage import read_json, write_json
 
 TIMEOUT = aiohttp.ClientTimeout(total=180)
-TAG_RE = re.compile(r"@\{[^}]+\}|@[A-Za-z][\w-]*")
+# [OLD 2026-11-03 v0.5.1->v0.6.0] TAG_RE = re.compile(r"@\{[^}]+\}|@[A-Za-z][\w-]*")  (preserved_warnings uses prompt.tag_re now)
 DIALOGUE_RE = re.compile(r"<d>.*?</d>", re.S)
+# added 2026-11-03 v0.6.0
+HTML_PAGE = "the server sent a web page, not JSON — check the base URL (usually ends in /v1)"
+CUT_RETRY_CAP = 32768  # a cut-off answer is asked again with twice the budget, up to this many tokens
+RETRY_AFTER_MAX = 60   # a 429 asking to wait longer than this is not retried
 
 # [OLD 2026-11-02 v0.1.0->v0.2.0] rules used "[Shot1]"; MiniMax's guide writes "[Shot 1]" and the guides
 # themselves are now sent along (see GUIDES below)
@@ -141,9 +146,28 @@ def system_prompt(cfg, extra=""):
     return "\n\n".join(parts)
 
 
+# added 2026-11-03 v0.6.0: "localhost:8000/v1" used to fail inside aiohttp with an unreadable error
+def normalize_base_url(url):
+    """'localhost:8000/v1' -> 'http://localhost:8000/v1'; a pasted '.../v1/chat/completions' loses the endpoint; no
+    trailing slash. Raises ValueError for another scheme."""
+    base = str(url or "").strip().rstrip("/")
+    if not base:
+        return ""
+    for tail in ("/chat/completions", "/completions", "/models"):
+        if base.lower().endswith(tail):
+            base = base[:-len(tail)].rstrip("/")
+    scheme = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*)://", base)
+    if not scheme:
+        base = "http://" + base.lstrip("/")
+    elif scheme.group(1).lower() not in ("http", "https"):
+        raise ValueError("The LLM base URL must start with http:// or https:// (it is {})".format(base))
+    return base
+
+
 def resolve(project_llm, stored):
     """Project values win for URL/model; the key always comes from the user folder."""
-    base = (project_llm.get("base_url") or stored["base_url"] or "").rstrip("/")
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] base = (project_llm.get("base_url") or stored["base_url"] or "").rstrip("/")  (no scheme check)
+    base = normalize_base_url(project_llm.get("base_url") or stored["base_url"] or "")
     if not base:
         raise ValueError("Set the LLM base URL in Global -> Prompt rewriter")
     # [OLD 2026-11-02 v0.1.0->v0.2.0] guides were not part of the config
@@ -203,13 +227,51 @@ def _headers(key):
     return h
 
 
+# [OLD 2026-11-03 v0.5.1->v0.6.0] a URL without http:// or a web page answer gave an unreadable error
+# async def list_models(base_url, api_key):
+#     async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
+#         async with s.get(base_url.rstrip("/") + "/models", headers=_headers(api_key)) as r:
+#             data = await r.json(content_type=None)
+#             if r.status >= 400:
+#                 raise RuntimeError(_err(data, r.status))
+#     return sorted(m.get("id", "") for m in data.get("data", []) if m.get("id"))
+# [/OLD]
 async def list_models(base_url, api_key):
-    async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
-        async with s.get(base_url.rstrip("/") + "/models", headers=_headers(api_key)) as r:
-            data = await r.json(content_type=None)
-            if r.status >= 400:
-                raise RuntimeError(_err(data, r.status))
-    return sorted(m.get("id", "") for m in data.get("data", []) if m.get("id"))
+    base = normalize_base_url(base_url)
+    if not base:
+        raise ValueError("Set the LLM base URL in Global -> Prompt rewriter")
+    try:
+        async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
+            async with s.get(base + "/models", headers=_headers(api_key)) as r:
+                raw = await r.text()
+                kind = r.headers.get("Content-Type") or ""
+                status = r.status
+    except aiohttp.ClientConnectorError as e:
+        raise LLMError("Cannot connect to {}: {}".format(base, e.os_error or e), "connect")
+    data = _json_or_page(raw, kind, status)
+    if status >= 400:
+        raise LLMError(_err(data, status), "http", retry=False)
+    models = data.get("data", []) if isinstance(data, dict) else []
+    return sorted(m.get("id", "") for m in models if isinstance(m, dict) and m.get("id"))
+
+
+# added 2026-11-03 v0.6.0
+def _looks_like_page(raw, content_type=""):
+    head = (raw or "").lstrip()[:200].lower()
+    return "text/html" in (content_type or "").lower() or head.startswith(("<!doctype", "<html", "<head", "<body"))
+
+
+def _json_or_page(raw, content_type, status):
+    """The JSON of an answer; a web page (wrong base URL) or other non-JSON text raises a readable LLMError."""
+    if _looks_like_page(raw, content_type):
+        raise LLMError("HTTP {}: {}.".format(status, HTML_PAGE) if status >= 400 else HTML_PAGE[0].upper() +
+                       HTML_PAGE[1:] + ".", "html", retry=False)
+    try:
+        return json.loads(raw)
+    except ValueError:
+        text = " ".join((raw or "").split())[:200]
+        raise LLMError("The server's answer is not JSON (HTTP {}){}".format(status, ": " + text if text else ""),
+                       "http" if status >= 400 else "bad_json", retry=status >= 500)
 
 
 def _err(data, status):
@@ -239,14 +301,19 @@ def read_reply(data, max_tokens):
     if isinstance(text, list):  # some servers return content parts
         text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
     reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
-    inline = re.findall(r"<think>(.*?)</think>", text, flags=re.S)
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
-    # an unclosed <think> means the reply was cut off while still thinking
-    if "<think>" in text:
-        head, _, tail = text.partition("<think>")
-        text, inline = head, inline + [tail]
-    reasoning = (reasoning + "".join(inline)).strip()
-    return text.strip(), reasoning, choice.get("finish_reason") or ""
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] a reply that starts inside the think block (the chat template opened <think>) kept its
+    # reasoning as the answer; _split_reasoning handles that now
+    # inline = re.findall(r"<think>(.*?)</think>", text, flags=re.S)
+    # text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+    # # an unclosed <think> means the reply was cut off while still thinking
+    # if "<think>" in text:
+    #     head, _, tail = text.partition("<think>")
+    #     text, inline = head, inline + [tail]
+    # reasoning = (reasoning + "".join(inline)).strip()
+    # return text.strip(), reasoning, choice.get("finish_reason") or ""
+    # [/OLD]
+    text, reasoning = _split_reasoning(text if isinstance(text, str) else str(text), reasoning or "")
+    return text, reasoning, choice.get("finish_reason") or ""
 
 
 def no_answer(reasoning, finish, max_tokens):
@@ -308,12 +375,57 @@ def no_answer(reasoning, finish, max_tokens):
 # ---- transport (added 2026-11-03 v0.4.2) ------------------------------------------------------
 
 class LLMError(RuntimeError):
-    """A request that failed on the way: reason is stall | gave_up | connect | server | http | context | cut | bad_json."""
+    """A request that failed on the way: reason is stall | gave_up | connect | server | http | context | cut | bad_json
+    (v0.6.0: also busy (HTTP 429), html (a web page instead of JSON)). wait: seconds the server asked to wait."""
 
-    def __init__(self, message, reason, retry=True):
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] def __init__(self, message, reason, retry=True):
+    def __init__(self, message, reason, retry=True, wait=None):
         super().__init__(message)
         self.reason = reason
         self.retry = retry
+        self.wait = wait  # added 2026-11-03 v0.6.0
+
+
+# added 2026-11-03 v0.6.0
+CONTEXT_WORDS = ("context length", "context_length", "maximum context", "context window", "too many tokens",
+                 "exceeds the model", "prompt is too long", "input is too long", "max_model_len", "too long for the model")
+
+
+def is_context_error(message):
+    low = (message or "").lower()
+    return any(x in low for x in CONTEXT_WORDS)
+
+
+def retry_after(value):
+    """Seconds from a Retry-After header (a number or an HTTP date), or None."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def http_error(status, raw, content_type="", headers=None):
+    """LLMError for an HTTP error answer: 429 is retried (after Retry-After), other 4xx are not, 5xx are; a context
+    window error is never retried; a web page says the base URL is wrong."""
+    if _looks_like_page(raw, content_type):
+        return LLMError("HTTP {}: {}.".format(status, HTML_PAGE), "html", retry=False)
+    try:
+        msg = _err(json.loads(raw), status)
+    except ValueError:
+        msg = (raw or "").strip()[:300] or "HTTP {}".format(status)
+    if is_context_error(msg):
+        return LLMError(_context_hint(msg), "context", retry=False)
+    if status == 429:
+        wait = retry_after((headers or {}).get("Retry-After"))
+        return LLMError("The server is busy (HTTP 429: {}).".format(msg), "busy", retry=True, wait=wait)
+    return LLMError(msg, "server" if status >= 500 else "http", retry=status >= 500)
 
 
 def estimate_tokens(content):
@@ -369,15 +481,28 @@ async def budget(cfg, system, user, want):
 
 
 def _context_hint(message):
-    low = message.lower()
-    if any(x in low for x in ("context length", "context_length", "maximum context", "context window", "too many tokens",
-                              "exceeds the model", "prompt is too long")):
-        return message + " — lower Max tokens or Script part size, or set Context window (Global → Prompt rewriter → Limits)."
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] the hint was appended to the server's words only
+    # low = message.lower()
+    # if any(x in low for x in ("context length", "context_length", "maximum context", "context window", "too many tokens",
+    #                           "exceeds the model", "prompt is too long")):
+    #     return message + " — lower Max tokens or Script part size, or set Context window (Global → Prompt rewriter → Limits)."
+    # return message
+    # [/OLD]
+    if is_context_error(message):
+        return ("The request does not fit in the model's context window ({}). Lower Max tokens or Script part size, "
+                "turn off the H3 guides, or set Context window (Global → Prompt rewriter → Limits).".format(
+                    message.strip().rstrip(".")))
     return message
 
 
 def _split_reasoning(content, reasoning):
     """Answer text without inline <think> blocks, and all the reasoning (same rules as read_reply)."""
+    # added 2026-11-03 v0.6.0: Qwen3-style templates open <think> in the prompt, so the reply has only "</think>":
+    # everything before the first </think> that no <think> opened is reasoning
+    close = content.find("</think>")
+    if close >= 0 and "<think>" not in content[:close]:
+        reasoning = (reasoning or "") + content[:close]
+        content = content[close + len("</think>"):]
     inline = re.findall(r"<think>(.*?)</think>", content, flags=re.S)
     content = re.sub(r"<think>.*?</think>", "", content, flags=re.S)
     if "<think>" in content:
@@ -421,13 +546,17 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
             async with s.post(cfg["base_url"] + "/chat/completions", headers=_headers(cfg["api_key"]), json=body) as r:
                 if r.status >= 400:
                     raw = await r.text()
-                    try:
-                        msg = _err(json.loads(raw), r.status)
-                    except ValueError:
-                        msg = raw.strip()[:300] or "HTTP {}".format(r.status)
-                    raise LLMError(_context_hint(msg), "server" if r.status >= 500 else "http", retry=r.status >= 500)
+                    # [OLD 2026-11-03 v0.5.1->v0.6.0] 429 was not retried, a context error from a 5xx was, a web page showed as raw HTML
+                    # try:
+                    #     msg = _err(json.loads(raw), r.status)
+                    # except ValueError:
+                    #     msg = raw.strip()[:300] or "HTTP {}".format(r.status)
+                    # raise LLMError(_context_hint(msg), "server" if r.status >= 500 else "http", retry=r.status >= 500)
+                    # [/OLD]
+                    raise http_error(r.status, raw, r.headers.get("Content-Type") or "", r.headers)
                 if "text/event-stream" not in (r.headers.get("Content-Type") or ""):
-                    data = await r.json(content_type=None)
+                    # [OLD 2026-11-03 v0.5.1->v0.6.0] data = await r.json(content_type=None)  (a web page gave "Expecting value")
+                    data = _json_or_page(await r.text(), r.headers.get("Content-Type") or "", r.status)
                     data = data if isinstance(data, dict) else {}
                     text, why, finish = read_reply(data, limit)
                     content, reasoning = [text], [why]
@@ -447,7 +576,11 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
                         if not isinstance(chunk, dict):
                             continue
                         if chunk.get("error"):
-                            raise LLMError(_context_hint(_err(chunk, 500)), "server")
+                            # [OLD 2026-11-03 v0.5.1->v0.6.0] raise LLMError(_context_hint(_err(chunk, 500)), "server")  (a context error was retried)
+                            msg = _err(chunk, 500)
+                            if is_context_error(msg):
+                                raise LLMError(_context_hint(msg), "context", retry=False)
+                            raise LLMError(msg, "server")
                         model = chunk.get("model") or model
                         for choice in chunk.get("choices") or []:
                             delta = choice.get("delta") or choice.get("message") or {}
@@ -498,27 +631,79 @@ async def ask(cfg, system, user, parse=None, max_tokens=None, progress=None, inf
     tried again. parse(text, info) turns the answer into the result and raises LLMError(reason "bad_json" or "cut")."""
     info = {} if info is None else info
     tries = cfg.get("retries", 2) + 1
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] a cut-off answer was asked again with the same budget; 429 was not retried
+    # for attempt in range(1, tries + 1):
+    #     info["attempt"] = attempt
+    #     step = (lambda d, a=attempt: progress(dict(d, attempt=a, attempts=tries))) if progress else None
+    #     try:
+    #         text, ms, model = await chat(cfg, system, user, max_tokens=max_tokens, info=info, progress=step)
+    #         return parse(text, info) if parse else text
+    #     except (LLMError, NoAnswer) as e:
+    #         again = getattr(e, "retry", True) and (retry_cut or e.reason not in ("cut", "thinking_cut"))
+    #         if not again or attempt == tries:
+    #             if attempt > 1:
+    #                 e.args = (str(e) + " (tried {} times)".format(attempt),)
+    #             raise
+    #         if progress:
+    #             progress({"phase": "retry", "attempt": attempt + 1, "attempts": tries, "note": str(e)})
+    #         await asyncio.sleep(min(cfg.get("retry_wait", 2) * attempt, 6))  # retry_wait: tests use 0
+    # [/OLD]
+    want = max_tokens or cfg["max_tokens"]
     for attempt in range(1, tries + 1):
         info["attempt"] = attempt
         step = (lambda d, a=attempt: progress(dict(d, attempt=a, attempts=tries))) if progress else None
         try:
-            text, ms, model = await chat(cfg, system, user, max_tokens=max_tokens, info=info, progress=step)
+            text, ms, model = await chat(cfg, system, user, max_tokens=want, info=info, progress=step)
             return parse(text, info) if parse else text
         except (LLMError, NoAnswer) as e:
             again = getattr(e, "retry", True) and (retry_cut or e.reason not in ("cut", "thinking_cut"))
+            note = ""
+            # added 2026-11-03 v0.6.0: a cut-off answer is asked again with twice the budget, up to CUT_RETRY_CAP
+            if again and e.reason in ("cut", "thinking_cut"):
+                used = int(info.get("budget") or want)
+                bigger = min(CUT_RETRY_CAP, used * 2)
+                if used < want:  # the context window already capped the budget
+                    again = False
+                    note = " The model's context window leaves no room for a bigger answer."
+                elif bigger <= used:
+                    again = False
+                    note = " It already had {:,} tokens.".format(used)
+                else:
+                    want = bigger
+            # added 2026-11-03 v0.6.0: HTTP 429: wait as long as the server asks (Retry-After), else back off
+            wait = min(cfg.get("retry_wait", 2) * attempt, 6)  # retry_wait: tests use 0
+            if again and e.reason == "busy":
+                wait = e.wait if getattr(e, "wait", None) is not None else min(cfg.get("retry_wait", 2) * 2 ** attempt, 30)
+                if wait > RETRY_AFTER_MAX:
+                    again = False
+                    note = " It asks to wait {:.0f} s; try again later.".format(wait)
             if not again or attempt == tries:
-                if attempt > 1:
-                    e.args = (str(e) + " (tried {} times)".format(attempt),)
+                if attempt > 1 or note:
+                    e.args = (str(e) + note + (" (tried {} times)".format(attempt) if attempt > 1 else ""),)
                 raise
             if progress:
                 progress({"phase": "retry", "attempt": attempt + 1, "attempts": tries, "note": str(e)})
-            await asyncio.sleep(min(cfg.get("retry_wait", 2) * attempt, 6))  # retry_wait: tests use 0
+            await asyncio.sleep(wait)
 
 
-def json_answer(text, info, what="answer"):
-    """parse() for ask(): the JSON in an answer, with a clear reason when it was cut off or is not JSON."""
+# added 2026-11-03 v0.6.0: a plain-text answer that stopped at the token limit is not used as it is
+def _whole(what):
+    """parse() for ask() with a text answer: refuses one cut off at the token budget (ask retries it bigger)."""
+    def parse(text, info):
+        if info.get("finish") == "length":
+            raise LLMError("The {} was cut off at {:,} tokens before it was complete. Raise Max tokens (Global → Prompt "
+                           "rewriter), or set Thinking to Off.".format(what, info.get("budget") or 0), "cut")
+        return text
+    return parse
+
+
+# [OLD 2026-11-03 v0.6.0 review] def json_answer(text, info, what="answer"):
+def json_answer(text, info, what="answer", expect=None):
+    """parse() for ask(): the JSON in an answer, with a clear reason when it was cut off or is not JSON.
+    added 2026-11-03 v0.6.0 review: expect (dict or list) is the type the task asks for, see parse_json."""
     try:
-        return parse_json(text)
+        # [OLD 2026-11-03 v0.6.0 review] return parse_json(text)
+        return parse_json(text, expect)  # added 2026-11-03 v0.6.0 review
     except ValueError:
         if info.get("finish") == "length":
             raise LLMError("The {} was cut off at {:,} tokens before its JSON was complete. Raise the token budget "
@@ -526,20 +711,136 @@ def json_answer(text, info, what="answer"):
         raise LLMError("The {} was not valid JSON.".format(what), "bad_json")
 
 
-def parse_json(text):
-    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
-    if m:
-        text = m.group(1)
-    start = min([i for i in (text.find("{"), text.find("[")) if i >= 0] or [0])
-    end = max(text.rfind("}"), text.rfind("]"))
-    return json.loads(text[start:end + 1])
+# [OLD 2026-11-03 v0.5.1->v0.6.0] text after the JSON that held a "}" or a trailing comma made the whole answer unreadable
+# def parse_json(text):
+#     m = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
+#     if m:
+#         text = m.group(1)
+#     start = min([i for i in (text.find("{"), text.find("[")) if i >= 0] or [0])
+#     end = max(text.rfind("}"), text.rfind("]"))
+#     return json.loads(text[start:end + 1])
+# [/OLD]
+_TRAILING_COMMA = re.compile(r",(\s*[}\]])")
+_SMART_QUOTES = str.maketrans({"“": '"', "”": '"'})
+
+
+# [OLD 2026-11-03 v0.6.0 review] the first value from the first { or [ won: "Here are the prompts for passes [1, 2]:"
+# before the answer made the answer [1, 2]
+# def parse_json(text):
+#     """The JSON value in an LLM answer (added 2026-11-03 v0.6.0: tolerant). Tries, in order: a ```json fence, the first
+#     complete value from the first { or [ (text after it is ignored), the same with trailing commas removed and curly
+#     quotes made straight, and a Python-style literal (single quotes, True/None). Raises ValueError."""
+#     text = text or ""
+#     m = re.search(r"```(?:json|JSON)?\s*(.*?)```", text, re.S)
+#     candidates = [m.group(1)] if m else []
+#     candidates.append(text)
+#     decoder = json.JSONDecoder()
+#     for body in candidates:
+#         starts = sorted(i for i in (body.find("{"), body.find("[")) if i >= 0)
+#         for start in starts:
+#             for fix in (lambda t: t, lambda t: _TRAILING_COMMA.sub(r"\1", t),
+#                         lambda t: _TRAILING_COMMA.sub(r"\1", t.translate(_SMART_QUOTES))):
+#                 try:
+#                     return decoder.raw_decode(fix(body[start:]))[0]
+#                 except ValueError:
+#                     pass
+#             end = max(body.rfind("}"), body.rfind("]"))
+#             if end > start:
+#                 try:
+#                     import ast
+#                     value = ast.literal_eval(body[start:end + 1])
+#                     if isinstance(value, (dict, list)):
+#                         return json.loads(json.dumps(value))
+#                 except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+#                     pass
+#     return json.loads(text)  # raises with the parser's own message
+# [/OLD]
+_JSON_START = re.compile(r"[{\[]")
+_MAX_JSON_STARTS = 2000  # added 2026-11-03 v0.6.0 review: positions tried per text (an answer full of brackets)
+
+
+def _json_values(body):
+    """added 2026-11-03 v0.6.0 review: every JSON value in `body`, left to right, each one found after the end of the
+    one before (so the objects inside a value are not values of their own). A value may need its trailing commas
+    removed or its curly quotes made straight, or be a Python-style literal."""
+    import bisect
+    decoder = json.JSONDecoder()
+    smart = body.translate(_SMART_QUOTES)  # same length, same places
+    removed = [c.start() for c in _TRAILING_COMMA.finditer(body)]  # commas the fix takes out (same in `smart`)
+    at_fixed = [r - k for k, r in enumerate(removed)]  # where the text after each one lands in the fixed text
+    variants = [(body, False), (_TRAILING_COMMA.sub(r"\1", body), True), (smart, False),
+                (_TRAILING_COMMA.sub(r"\1", smart), True)]
+    values, pos, tries, py_tried = [], 0, 0, set()
+    while tries < _MAX_JSON_STARTS:
+        m = _JSON_START.search(body, pos)
+        if not m:
+            break
+        start, tries = m.start(), tries + 1
+        found = None
+        for src, fixed in variants:
+            i = start - bisect.bisect_left(removed, start) if fixed else start
+            try:
+                value, end = decoder.raw_decode(src, i)
+            except ValueError:
+                continue
+            if fixed:  # back to a place in `body`
+                end += bisect.bisect_right(at_fixed, end)
+            found = (value, end)
+            break
+        if not found and m.group(0) not in py_tried:
+            # a Python-style literal (single quotes, True/None), tried from the first { and the first [ that are not
+            # JSON, up to the last } or ] of the text (as before v0.6.0 review)
+            py_tried.add(m.group(0))
+            last = max(body.rfind("}"), body.rfind("]"))
+            if last > start:
+                try:
+                    import ast
+                    value = ast.literal_eval(body[start:last + 1])
+                    if isinstance(value, (dict, list)):
+                        found = (json.loads(json.dumps(value)), last + 1)
+                except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+                    pass
+        if found:
+            values.append(found[0])
+            pos = max(start + 1, found[1])
+        else:
+            pos = start + 1
+    return values
+
+
+def parse_json(text, expect=None):
+    """The JSON value in an LLM answer (added 2026-11-03 v0.6.0: tolerant). Looks in a ```json fence first, then in
+    the whole text; a value may need trailing commas removed or curly quotes made straight, or be a Python-style
+    literal (single quotes, True/None). Raises ValueError.
+    added 2026-11-03 v0.6.0 review: every JSON value in the text is read, not only the first. A value of the type
+    the task expects (`expect`: dict or list) wins over the others, and a value with more JSON (of that type) after
+    it is skipped, so "Here are the prompts for passes [1, 2]:" before the answer is not the answer. Without a value
+    of the expected type, the last value is used."""
+    text = text or ""
+    m = re.search(r"```(?:json|JSON)?\s*(.*?)```", text, re.S)
+    candidates = [m.group(1)] if m else []
+    candidates.append(text)
+    fallback = []
+    for body in candidates:
+        values = _json_values(body)
+        typed = [v for v in values if expect is None or isinstance(v, expect)]
+        if typed:
+            return typed[-1]
+        if values and not fallback:
+            fallback = [values[-1]]
+    if fallback:
+        return fallback[0]
+    return json.loads(text)  # raises with the parser's own message
 
 
 def preserved_warnings(before, after):
     """Tokens and dialogue lines that the model changed or dropped."""
     warnings = []
-    missing = sorted(set(TAG_RE.findall(before)) - set(TAG_RE.findall(after)))
-    added = sorted(set(TAG_RE.findall(after)) - set(TAG_RE.findall(before)))
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] missing = sorted(set(TAG_RE.findall(before)) - set(TAG_RE.findall(after)))
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] added = sorted(set(TAG_RE.findall(after)) - set(TAG_RE.findall(before)))
+    tags = lambda t: {m.group(0) for m in _prompt.tag_re().finditer(t or "")}  # same rule as the editor (v0.6.0)
+    missing = sorted(tags(before) - tags(after))
+    added = sorted(tags(after) - tags(before))
     if missing:
         warnings.append("Dropped references: " + ", ".join(missing))
     if added:
@@ -570,8 +871,10 @@ def scene_context(p, scene):
         if c:
             # [OLD 2026-11-02 v0.3.3->v0.3.4] people.append("@{} - {} ({}){}".format(c["name"] if " " not in c["name"] else "{" + c["name"] + "}",
             #                                       c["description"], c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
-            people.append("@{} - {} ({}){}".format(c["name"] if " " not in c["name"] else "{" + c["name"] + "}",
-                                                  cast_description(c, idx_assets)[0], c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
+            # [OLD 2026-11-03 v0.5.1->v0.6.0] people.append("@{} - {} ({}){}".format(c["name"] if " " not in c["name"] else "{" + c["name"] + "}",
+            #                                       cast_description(c, idx_assets)[0], c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
+            people.append("{} - {} ({}){}".format(_prompt.tag_token(c["name"]), cast_description(c, idx_assets)[0],
+                                                c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
     shots = ["{:.2f}s {} | {}".format(float(s["t"]), s["camera"], s["text"]) for s in scene["shots"]]
     lines = ["{:.2f}s {}: <d>[{}] {}</d>".format(float(d["t"]), cast.get(d["speaker"], {}).get("name", "?"),
                                                d["language"], d["text"]) for d in scene["dialogue"]]
@@ -592,7 +895,8 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
             ctx, before, instruction or "Improve clarity and visual precision.")
         # [OLD 2026-11-02 v0.1.0->v0.2.0] text, _, _ = await chat(cfg, H3_RULES + "\n" + preset, user)
         # [OLD 2026-11-03 v0.4.1->v0.4.2] text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
-        text = await ask(cfg, system_prompt(cfg, preset), user, progress=progress)  # retries and limits
+        # [OLD 2026-11-03 v0.5.1->v0.6.0] text = await ask(cfg, system_prompt(cfg, preset), user, progress=progress)  (a cut-off answer was accepted)
+        text = await ask(cfg, system_prompt(cfg, preset), user, parse=_whole("rewrite"), progress=progress)
         text = re.sub(r"^```\w*\n|```$", "", text.strip()).strip()
         return {"raw": text, "warnings": preserved_warnings(before, text)}
     sections = pr["sections"]
@@ -622,7 +926,10 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
     # text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
     # data = parse_json(text)
     # [/OLD]
-    data = await ask(cfg, system_prompt(cfg, preset), user, parse=lambda t, i: json_answer(t, i, "rewrite"),
+    # [OLD 2026-11-03 v0.6.0 review] data = await ask(cfg, system_prompt(cfg, preset), user, parse=lambda t, i: json_answer(t, i, "rewrite"),
+    # [OLD 2026-11-03 v0.6.0 review]                  progress=progress)
+    # added 2026-11-03 v0.6.0 review: the rewrite is an object
+    data = await ask(cfg, system_prompt(cfg, preset), user, parse=lambda t, i: json_answer(t, i, "rewrite", dict),
                      progress=progress)
     # [OLD 2026-11-03 v0.4.0->v0.4.1] the reply was used as it came: repeated automatic parts, "<Subject 1>" instead of @Name, labels inside values
     # out = {k: str(data.get(k, sections.get(k, "")) or "") for k in sections}
@@ -645,11 +952,57 @@ async def split(cfg, p, scene, passes, built_prompts, progress=None):
     # [OLD 2026-11-03 v0.4.1->v0.4.2] text, _, _ = await chat(cfg, system_prompt(cfg, PRESETS.get(cfg["preset"], "")), user)
     # data = parse_json(text)
     # [/OLD]
+    # [OLD 2026-11-03 v0.6.0 review] data = await ask(cfg, system_prompt(cfg, PRESETS.get(cfg["preset"], "")), user,
+    # [OLD 2026-11-03 v0.6.0 review]                  parse=lambda t, i: json_answer(t, i, "split"), progress=progress)
+    # added 2026-11-03 v0.6.0 review: Split asks for an object ("passes [1, 2]" in a preface is not the answer)
     data = await ask(cfg, system_prompt(cfg, PRESETS.get(cfg["preset"], "")), user,
-                     parse=lambda t, i: json_answer(t, i, "split"), progress=progress)
+                     parse=lambda t, i: json_answer(t, i, "split", dict), progress=progress)
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] values went through str() (an object became a Python repr); "pass 2" or "02" keys were dropped
+    # if not isinstance(data, dict):
+    #     raise LLMError("The split answer was not a JSON object.", "bad_json")
+    # return {str(k): str(v) for k, v in data.items() if str(k).isdigit()}
+    # [/OLD]
+    out = split_prompts(data, len(passes))
+    if not out:
+        raise LLMError("The split answer had no prompt for any of the {} passes.".format(len(passes)), "bad_json")
+    return out
+
+
+# added 2026-11-03 v0.6.0
+_PASS_KEY = re.compile(r"^\s*(?:pass(?:es)?|part|p)?[\s_#:.-]*0*(\d+)\s*$", re.I)
+
+
+def split_prompts(data, n_passes=0):
+    """{"1": text, ...} from a Split answer: keys "2", "02", "pass 2", "Pass_2", "P2" all mean pass 2; a list counts
+    from pass 1; {"passes": …} is unwrapped; values that are objects or lists become text (six sections in their
+    labelled layout); passes past n_passes (when known) and empty prompts are left out."""
+    if isinstance(data, dict) and len(data) == 1:
+        (key, inner), = data.items()
+        if isinstance(inner, (dict, list)) and str(key).strip().lower() in ("passes", "pass_prompts", "prompts", "split"):
+            data = inner
+    if isinstance(data, list):
+        numbered = {}
+        for i, v in enumerate(data):
+            k = next((v[x] for x in ("pass", "index", "n") if isinstance(v, dict) and x in v), i + 1)
+            numbered.setdefault(str(k), v)
+        data = numbered
     if not isinstance(data, dict):
         raise LLMError("The split answer was not a JSON object.", "bad_json")
-    return {str(k): str(v) for k, v in data.items() if str(k).isdigit()}
+    out = {}
+    for key, value in data.items():
+        m = _PASS_KEY.match(str(key))
+        if not m:
+            continue
+        n = int(m.group(1))
+        if n < 1 or (n_passes and n > n_passes):
+            continue
+        if isinstance(value, dict) and not any(k in value for k in _prompt.REF2VA_SECTIONS):
+            # {"index": 2, "prompt": "..."}-style objects
+            value = next((value[k] for k in ("prompt", "text", "content") if k in value), value)
+        text = _prompt.as_text(value).strip()
+        if text:
+            out.setdefault(str(n), text)
+    return out
 
 
 # [OLD 2026-11-03 v0.4.1->v0.4.2] the whole script in one request with max(Max tokens, 6000) tokens and the H3 guides: a long script's answer
@@ -693,7 +1046,10 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
     known = [_cast_line(c) for c in p["cast"]]
     seen = {c["name"].lower() for c in p["cast"]}
     for c in known_cast or ():
-        if isinstance(c, dict) and c.get("name") and c["name"].lower() not in seen:
+        # [OLD 2026-11-03 v0.6.0 review] if isinstance(c, dict) and c.get("name") and c["name"].lower() not in seen:
+        # added 2026-11-03 v0.6.0 review: a name that is not text ({"name": 5}) is skipped, not an AttributeError
+        if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip() \
+                and c["name"].lower() not in seen:
             seen.add(c["name"].lower())
             known.append(_cast_line(c))
     lines = ["Break this script into scenes for a video timeline. Existing cast (reuse these exact names): {}.".format(
@@ -731,7 +1087,11 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
     icfg = import_cfg(cfg)
 
     def parse(answer, info):
-        data = json_answer(answer, info, "answer" if parts == 1 else "answer for part {}".format(part))
+        # [OLD 2026-11-03 v0.6.0 review] data = json_answer(answer, info, "answer" if parts == 1 else "answer for part {}".format(part))
+        # added 2026-11-03 v0.6.0 review: the script answer is an object (a bare list of scenes still works)
+        data = json_answer(answer, info, "answer" if parts == 1 else "answer for part {}".format(part), dict)
+        if isinstance(data, list):  # added 2026-11-03 v0.6.0: a bare list of scenes
+            data = {"scenes": data}
         if not isinstance(data, dict):
             raise LLMError("The answer was not a JSON object.", "bad_json")
         return data
@@ -740,15 +1100,165 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
     data = await ask(icfg, system_prompt(icfg), user, parse=parse, max_tokens=cfg.get("import_max_tokens", 16384),
                      progress=progress, info=info, retry_cut=retry_cut)
     # [OLD 2026-11-03 v0.4.2->v0.4.3] return {"scenes": [s for s in (data.get("scenes") or []) if isinstance(s, dict)],
-    scenes = [s for s in (data.get("scenes") or []) if isinstance(s, dict)]
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] wrong types reached the project (a list as a title, text as a time) and /plan failed later
+    # scenes = [s for s in (data.get("scenes") or []) if isinstance(s, dict)]
+    # [/OLD]
+    scenes, cast, warnings = coerce_script(data)
     for s in scenes:  # added 2026-11-03 v0.4.3: no shot or line after the scene's end
         note = fit_scene(s)
         if note:
             s["fit_note"] = note
-    return {"scenes": scenes,
-            "cast": [c for c in (data.get("cast") or []) if isinstance(c, dict)],
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] return {"scenes": scenes,
+    #         "cast": [c for c in (data.get("cast") or []) if isinstance(c, dict)],
+    return {"scenes": scenes, "cast": cast, "warnings": warnings,  # warnings: added 2026-11-03 v0.6.0
             "tokens": info.get("tokens", 0), "ms": info.get("ms", 0), "attempts": info.get("attempt", 1),
             "budget": info.get("budget"), "input": info.get("input"), "context": info.get("context")}
+
+
+# ---- script import answer, checked (added 2026-11-03 v0.6.0) ------------------------------------------------------
+CAST_KINDS = ("character", "location", "prop")
+
+
+def _seconds(v):
+    """Seconds from 12, 12.5, "12", "12 s", "0:12", "00:01:05.5"; None when it is not a time."""
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v) if v == v and abs(v) != float("inf") else None
+    if isinstance(v, str):
+        t = v.strip().lower()
+        m = re.fullmatch(r"(?:(\d+):)?(\d{1,2}):(\d{1,2}(?:\.\d+)?)", t)
+        if m:
+            return int(m.group(1) or 0) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+        m = re.fullmatch(r"(-?\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)?", t)
+        if m:
+            return float(m.group(1))
+    return None
+
+
+def _items(v):
+    """A list from a list, a dict of numbered items, or one item; [] for nothing."""
+    if v is None or v == "":
+        return []
+    if isinstance(v, list):
+        return v
+    if isinstance(v, dict) and v and all(isinstance(x, dict) for x in v.values()) and \
+            all(str(k).strip().isdigit() for k in v):
+        return [v[k] for k in sorted(v, key=lambda k: int(str(k).strip()))]
+    return [v]
+
+
+def coerce_script(data):
+    """(scenes, cast, warnings) from a script-import answer, in exactly the shapes the editor reads: text fields are
+    text (lists become lines, objects "key: value" lines), times and durations are numbers or left out, shots and
+    dialogue are lists of objects; anything that cannot be used is left out with a warning, so a bad answer can
+    never break /plan later."""
+    warnings = []
+
+    def warn(msg):
+        if len(warnings) < 30:
+            warnings.append(msg)
+
+    def text(v, where, key):
+        if v is not None and not isinstance(v, str):
+            warn("{}: {} was {}, used as text".format(where, key, type(v).__name__))
+        return _prompt.as_text(v).strip()
+
+    scenes = []
+    for n, s in enumerate(_items(data.get("scenes")), 1):
+        if not isinstance(s, dict):
+            warn("Scene {}: not an object, left out".format(n))
+            continue
+        where = "Scene {}".format(n)
+        out = {}
+        for key in ("title", "summary", "soundscape", "music"):
+            if s.get(key) is not None:
+                out[key] = text(s[key], where, key)
+        if s.get("duration") not in (None, ""):
+            d = _seconds(s["duration"])
+            if d is not None and d > 0:
+                out["duration"] = d
+            else:
+                warn("{}: duration {!r} is not a length in seconds, left out".format(where, s["duration"]))
+        names = []
+        for c in _items(s.get("cast")):
+            name = _prompt.as_text(c.get("name") if isinstance(c, dict) else c).strip()
+            if name:
+                names.append(name)
+        out["cast"] = names
+        shots = []
+        for k, sh in enumerate(_items(s.get("shots")), 1):
+            if isinstance(sh, str):
+                sh = {"text": sh}
+            if not isinstance(sh, dict):
+                warn("{}, shot {}: not an object, left out".format(where, k))
+                continue
+            o = {"camera": text(sh.get("camera"), where, "a shot's camera"),
+                 "text": text(next((sh[x] for x in ("text", "action", "description") if sh.get(x) is not None), ""),
+                              where, "a shot's text")}
+            raw_t = next((sh[x] for x in ("t", "time", "start") if sh.get(x) not in (None, "")), None)
+            if raw_t is not None:
+                t = _seconds(raw_t)
+                if t is None:
+                    warn("{}, shot {}: start {!r} is not a time, left out".format(where, k, raw_t))
+                else:
+                    o["t"] = t
+            if sh.get("duration") not in (None, ""):
+                d = _seconds(sh["duration"])
+                if d is not None and d > 0:
+                    o["duration"] = d
+                else:
+                    warn("{}, shot {}: duration {!r} is not a length, left out".format(where, k, sh["duration"]))
+            shots.append(o)
+        out["shots"] = shots
+        lines = []
+        for k, d in enumerate(_items(s.get("dialogue")), 1):
+            if isinstance(d, str):
+                m = re.match(r"^\s*([^:\n]{1,40}):\s*(.+)$", d, re.S)
+                d = {"speaker": m.group(1), "text": m.group(2)} if m else {"text": d}
+            if not isinstance(d, dict):
+                warn("{}, line {}: not an object, left out".format(where, k))
+                continue
+            spk = d.get("speaker")
+            o = {"speaker": _prompt.as_text(spk.get("name") if isinstance(spk, dict) else spk).strip(),
+                 "text": text(next((d[x] for x in ("text", "line") if d.get(x) is not None), ""), where, "a line's text"),
+                 "language": text(d.get("language"), where, "a line's language"),
+                 "delivery": text(d.get("delivery"), where, "a line's delivery")}
+            if not o["text"]:
+                warn("{}, line {}: no words, left out".format(where, k))
+                continue
+            raw_t = next((d[x] for x in ("t", "time", "start") if d.get(x) not in (None, "")), None)
+            if raw_t is not None:
+                t = _seconds(raw_t)
+                if t is None:
+                    warn("{}, line {}: time {!r} is not a time, left out".format(where, k, raw_t))
+                else:
+                    o["t"] = t
+            lines.append(o)
+        out["dialogue"] = lines
+        scenes.append(out)
+    if data.get("scenes") is not None and not isinstance(data.get("scenes"), (list, dict)):
+        warn("\"scenes\" was not a list")
+    cast = []
+    for n, c in enumerate(_items(data.get("cast")), 1):
+        if isinstance(c, str):
+            c = {"name": c}
+        if not isinstance(c, dict):
+            warn("Cast {}: not an object, left out".format(n))
+            continue
+        name = _prompt.as_text(c.get("name")).strip()
+        if not name:
+            warn("Cast {}: no name, left out".format(n))
+            continue
+        kind = _prompt.as_text(c.get("kind")).strip().lower() or "character"
+        if kind not in CAST_KINDS:
+            warn("Cast {} ({}): kind {!r} is not character, location or prop, so it is a character".format(n, name, kind))
+            kind = "character"
+        cast.append({"name": name, "kind": kind,
+                     "description": text(c.get("description"), "Cast " + name, "description"),
+                     "speaker": _prompt.as_text(c.get("speaker")).strip(),
+                     "language": _prompt.as_text(c.get("language")).strip()})
+    return scenes, cast, warnings
 
 
 async def test(cfg):

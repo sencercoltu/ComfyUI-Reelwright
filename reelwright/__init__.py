@@ -23,4 +23,5 @@ pure Python so they can be tested without ComfyUI or torch.
 # [OLD 2026-11-03 v0.4.2->v0.4.3] VERSION = "0.4.2"
 # [OLD 2026-11-03 v0.4.3->v0.5.0] VERSION = "0.4.3"
 # [OLD 2026-11-03 v0.5.0->v0.5.1] VERSION = "0.5.0"
-VERSION = "0.5.1"
+# [OLD 2026-11-03 v0.5.1->v0.6.0] VERSION = "0.5.1"
+VERSION = "0.6.0"

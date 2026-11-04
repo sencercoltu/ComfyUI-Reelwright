@@ -1,7 +1,8 @@
 // Cast tab: the story bible (characters, locations, props) and the rules that
 // keep a subject consistent across distant scenes.
 
-import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, confirmInline, chip } from "../ui.js";
+// [OLD 2026-11-03 v0.5.1->v0.6.0] import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, confirmInline, chip } from "../ui.js";  (the inline bar vanished on re-render)
+import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, chip, confirmDialog } from "../ui.js";
 import { rw, viewURL } from "../api.js";
 // [OLD 2026-11-02 v0.3.3->v0.3.4] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes } from "../model.js";
 // [OLD 2026-11-03 v0.4.0->v0.4.1] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription } from "../model.js";
@@ -55,7 +56,8 @@ function list(ctx, sel) {
 
 function anchorsCard(ctx, c) {
   const p = ctx.p;
-  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); });
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); });  (no History menu name)
+  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label: `Edit ${c.name}` }); // added 2026-11-03 v0.6.0: History menu name
   const images = p.assets.filter(a => a.kind === "image" && !c.anchors.includes(a.id)).map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
   const scenesWithTakes = p.scenes.filter(s => ctx.starredTake(s.id)).map(s => ({ value: s.id, label: s.title }));
   const promote = async which => {
@@ -133,16 +135,29 @@ function anchorsCard(ctx, c) {
 
 function profileCard(ctx, c) {
   const p = ctx.p;
-  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); });
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); });  (no History menu name)
+  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label: `Edit ${c.name}` }); // added 2026-11-03 v0.6.0: History menu name
   const audio = p.assets.filter(a => a.kind === "audio").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
   const loras = ctx.eph.models?.loras || [];
   return section({
     title: c.kind === "character" ? "Character" : c.kind === "location" ? "Location" : "Prop", help: "cast.profile",
+    /* [OLD 2026-11-03 v0.5.1->v0.6.0] an inline bar that vanished on any re-render; the step had no name in the History menu
     actions: button({ icon: "trash", small: true, variant: "danger-ghost", label: "Delete", help: "cast.delete", onClick: e => {
       confirmInline(e.currentTarget.closest(".rw-card"), `Delete ${c.name}? Scenes keep their other references.`, () => {
         ctx.actions.edit(q => { q.cast = q.cast.filter(x => x.id !== c.id); for (const s of q.scenes) { s.cast = s.cast.filter(x => x.id !== c.id); for (const d of s.dialogue) if (d.speaker === c.id) d.speaker = ""; } });
         ctx.store.setEph({ selectedCast: "" });
       });
+    } }),
+    [/OLD] */
+    // added 2026-11-03 v0.6.0: a dialog that says what goes with it
+    actions: button({ icon: "trash", small: true, variant: "danger-ghost", label: "Delete", help: "cast.delete", onClick: async () => {
+      const scenes = p.scenes.filter(s => s.cast.some(x => x.id === c.id)).length;
+      const lines = p.scenes.reduce((n, s) => n + s.dialogue.filter(d => d.speaker === c.id).length, 0);
+      const what = [scenes && `${scenes} scene${scenes === 1 ? "" : "s"}`, lines && `${lines} dialogue line${lines === 1 ? "" : "s"} lose${lines === 1 ? "s" : ""} their speaker`].filter(Boolean);
+      if (!(await confirmDialog(ctx.root, { title: `Delete “${c.name}”?`, confirmLabel: "Delete",
+        message: `${scenes ? `It is removed from ${what[0]}` : "It is in no scene"}${lines ? `, and ${what[what.length - 1]}` : ""}. Its anchor pictures stay in Assets. Ctrl+Z undoes this.` }))) return;
+      ctx.actions.edit(q => { q.cast = q.cast.filter(x => x.id !== c.id); for (const s of q.scenes) { s.cast = s.cast.filter(x => x.id !== c.id); for (const d of s.dialogue) if (d.speaker === c.id) d.speaker = ""; } }, { label: `Delete ${c.name}` });
+      ctx.store.setEph({ selectedCast: "" });
     } }),
     children: [
       field("Name", text({ value: c.name, key: "cast-name-" + c.id, help: "cast.name", onChange: v => edit(x => { x.name = v; }) }), { help: "cast.name" }),
@@ -189,8 +204,23 @@ function profileCard(ctx, c) {
   });
 }
 
+// added 2026-11-03 v0.6.0: delete an outfit; scenes that wore it fall back to the default outfit (their entry's outfit
+// becomes "", which follows the default), so no scene keeps pointing at an outfit that is gone
+export function removeOutfit(ctx, c, o) {
+  const users = ctx.p.scenes.filter(s => s.cast.some(x => x.id === c.id && x.outfit === o.id)).length;
+  ctx.actions.edit(q => {
+    const x = findCast(q, c.id);
+    if (!x) return;
+    x.outfits = x.outfits.filter(y => y.id !== o.id);
+    if (x.default_outfit === o.id) x.default_outfit = x.outfits[0]?.id || "";
+    for (const s of q.scenes) for (const e of s.cast) if (e.id === c.id && e.outfit === o.id) e.outfit = "";
+  }, { label: `Delete outfit “${o.name}”` });
+  if (users) ctx.actions.toast(`${users} scene${users === 1 ? "" : "s"} wore “${o.name}”; ${users === 1 ? "it now uses" : "they now use"} the default outfit. Ctrl+Z undoes this.`, "info");
+}
+
 function outfitsCard(ctx, c) {
-  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x); });
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x); });  (no History menu name)
+  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x); }, { label: `Outfits of ${c.name}` }); // added 2026-11-03 v0.6.0: History menu name
   const editO = (id, fn) => edit(x => { const o = x.outfits.find(y => y.id === id); if (o) fn(o); });
   return section({
     title: c.kind === "character" ? "Outfits" : "Variants", help: "cast.outfits",
@@ -199,6 +229,7 @@ function outfitsCard(ctx, c) {
       x.outfits.push(o);
       if (!x.default_outfit) x.default_outfit = o.id;
     }) }),
+    /* [OLD 2026-11-03 v0.5.1->v0.6.0] deleting an outfit left scenes pointing at it (the Scene tab showed a missing outfit); no key on the retention list
     children: c.outfits.length ? c.outfits.map(o => h("div", { class: "rw-outfit" },
       h("div", { class: "rw-row" },
         h("button", { type: "button", class: ["rw-radio-btn", c.default_outfit === o.id && "on"], help: "cast.outfits.default", "aria-label": "Default outfit", onClick: () => edit(x => { x.default_outfit = o.id; }) }),
@@ -206,6 +237,16 @@ function outfitsCard(ctx, c) {
         select({ options: VISUAL_RETENTION, value: o.retention, mono: true, help: "cast.outfits.retention", onChange: v => editO(o.id, y => { y.retention = v; }) }),
         button({ icon: "trash", small: true, variant: "ghost", help: "cast.outfits.remove", onClick: () => edit(x => { x.outfits = x.outfits.filter(y => y.id !== o.id); if (x.default_outfit === o.id) x.default_outfit = x.outfits[0]?.id || ""; }) })),
       keepChips({ values: o.keep, help: "cast.outfits.keep", onChange: v => editO(o.id, y => { y.keep = v; }) })))
+    [/OLD] */
+    // added 2026-11-03 v0.6.0: scenes that wore a deleted outfit fall back to the default one ("" = default)
+    children: c.outfits.length ? c.outfits.map(o => h("div", { class: "rw-outfit" },
+      h("div", { class: "rw-row" },
+        h("button", { type: "button", class: ["rw-radio-btn", c.default_outfit === o.id && "on"], help: "cast.outfits.default", "aria-label": "Default outfit", onClick: () => edit(x => { x.default_outfit = o.id; }) }),
+        text({ value: o.name, key: "outfit-" + o.id, help: "cast.outfits.name", onChange: v => editO(o.id, y => { y.name = v; }) }),
+        select({ options: VISUAL_RETENTION, value: o.retention, key: "outfit-ret-" + o.id, mono: true, help: "cast.outfits.retention", onChange: v => editO(o.id, y => { y.retention = v; }) }),
+        button({ icon: "trash", small: true, variant: "ghost", help: "cast.outfits.remove", onClick: () => removeOutfit(ctx, c, o) })),
+      // [OLD 2026-11-03 v0.6.0 review] keepChips({ values: o.keep, help: "cast.outfits.keep", onChange: v => editO(o.id, y => { y.keep = v; }) })))
+      keepChips({ values: o.keep, help: "cast.outfits.keep", key: "outfit-keep-" + o.id, onChange: v => editO(o.id, y => { y.keep = v; }) }))) // added 2026-11-03 v0.6.0 review: key
       : h("div", { class: "rw-empty sm", help: "cast.outfits" }, "One look everywhere. Add outfits when the character changes clothes."),
   });
 }
@@ -245,7 +286,8 @@ function appearances(ctx, c) {
 
 function rulesCard(ctx) {
   const g = ctx.p.global.continuity;
-  const set = fn => ctx.actions.edit(q => fn(q.global.continuity));
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const set = fn => ctx.actions.edit(q => fn(q.global.continuity));  (no History menu name)
+  const set = fn => ctx.actions.edit(q => fn(q.global.continuity), { label: "Continuity setting" }); // added 2026-11-03 v0.6.0: History menu name
   return section({
     title: "Continuity rules", help: "cast.rules",
     children: [

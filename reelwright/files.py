@@ -15,11 +15,18 @@ import shutil
 import time
 from collections import Counter
 
+from . import jobs  # added 2026-11-03 v0.6.0: nothing a render or merge is using is deleted
 from .model import normalize_project
-from .storage import SLUG_RE, VERSION_RE, ProjectStore, check_slug, read_json, safe_join
+# [OLD 2026-11-03 v0.5.1->v0.6.0] from .storage import SLUG_RE, VERSION_RE, ProjectStore, check_slug, read_json, safe_join
+from .storage import CUT_COUNTER, SLUG_RE, VERSION_RE, ProjectStore, check_slug, read_json, safe_join
 
 TAKE_RE = re.compile(r"^scenes/([A-Za-z0-9_-]{1,64})/takes/([A-Za-z0-9_-]{1,64})$")
-CUT_RE = re.compile(r"^(?P<stem>.+_cut_v(?P<n>\d+))(?P<rest>(\.partial)?\..+)$")
+# [OLD 2026-11-03 v0.5.1->v0.6.0] CUT_RE = re.compile(r"^(?P<stem>.+_cut_v(?P<n>\d+))(?P<rest>(\.partial)?\..+)$")
+# added 2026-11-03 v0.6.0: draft and range cuts (<slug>_cut_v4_draft_s02-05.mp4), the stems folder and loudness report
+CUT_RE = re.compile(r"^(?P<stem>.+_cut_v(?P<n>\d+)(?:_draft)?(?:_s\d+-\d+)?)"
+                    r"(?P<rest>_stems(?:\.partial)?|_loudness\.json|(?:\.partial)?\..+)$")
+STEM_ID_RE = re.compile(r"[A-Za-z0-9_.-]+_cut_v\d+(?:_draft)?(?:_s\d+-\d+)?")  # added 2026-11-03 v0.6.0
+TAKE_PART_RE = re.compile(r"^scenes/[^/]+/takes/[^/]+/(?P<part>.+)$")  # added 2026-11-03 v0.6.0
 PROTECTED = {"project.json": "the project file (delete the whole project instead)",
              "wired.json": "which node inputs are wired; tiny"}
 
@@ -103,13 +110,57 @@ def _asset_uses(p):
     return uses
 
 
+def _scene_owner(store, p):
+    """added 2026-11-03 v0.6.0: owner(scene_id) -> ("this" | "other" | "unknown", other project's name) for a scene
+    folder that is not in the project. The take list says which project rendered into it (index.json project_id,
+    written since v0.6.0); older folders are looked up in the autosaved versions (each has its project's id)."""
+    pid = (p or {}).get("project_id") if isinstance((p or {}).get("project_id"), str) else ""
+    versions = []
+
+    def load_versions():
+        if versions:
+            return versions
+        vdir = os.path.join(store.dir, "versions")
+        for x in _listdir(vdir):
+            if VERSION_RE.match(x):
+                v = read_json(os.path.join(vdir, x), None)
+                if isinstance(v, dict) and isinstance(v.get("scenes"), list):
+                    ids = {sc.get("id") for sc in v["scenes"] if isinstance(sc, dict)}
+                    versions.append((v.get("project_id") if isinstance(v.get("project_id"), str) else "",
+                                     str(v.get("name") or ""), ids))
+        versions.append(None)  # loaded
+        return versions
+
+    def owner(sid):
+        if not pid:
+            return "this", ""  # a project from before v0.6.0: every folder here is its own
+        try:
+            stamp = store.read_index(sid).get("project_id")
+        except ValueError:
+            return "unknown", ""
+        if isinstance(stamp, str) and stamp:
+            if stamp == pid:
+                return "this", ""
+            return "other", next((x[1] for x in load_versions() if x and x[0] == stamp), "")
+        hits = [x for x in load_versions() if x and sid in x[2]]
+        if any(x[0] == pid for x in hits):
+            return "this", ""
+        other = next((x for x in hits if x[0] and x[0] != pid), None)
+        if other:
+            return "other", other[1]
+        return "unknown", ""
+
+    return owner
+
+
 def _when(ts):
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else ""
 
 
 def scan_project(roots, slug, current=None):
     store = ProjectStore(roots, slug)
-    raw = read_json(os.path.join(store.dir, "project.json"), None)
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] raw = read_json(os.path.join(store.dir, "project.json"), None)
+    raw = store.load_project()  # added 2026-11-03 v0.6.0: a damaged project.json falls back to the newest version
     try:
         p = normalize_project(raw) if isinstance(raw, dict) else None
     except Exception:  # a damaged project.json must not hide the files
@@ -128,12 +179,27 @@ def scan_project(roots, slug, current=None):
         order = {s["id"]: (k, s["title"]) for k, s in enumerate((p or {}).get("scenes", []))}
         scenes = _node("o:" + os.path.relpath(sdir, o).replace(os.sep, "/"), "Scenes and takes", "group")
         ids = [x for x in _listdir(sdir) if os.path.isdir(os.path.join(sdir, x))]
+        owner = _scene_owner(store, p)  # added 2026-11-03 v0.6.0
         for sid in sorted(ids, key=lambda x: (x not in order, order.get(x, (0,))[0], x)):
             scene_dir = os.path.join(sdir, sid)
             known = sid in order
             label = "{:02d} · {}".format(order[sid][0] + 1, order[sid][1]) if known else sid
+            # [OLD 2026-11-03 v0.5.1->v0.6.0] sn = _node("o:" + os.path.relpath(scene_dir, o).replace(os.sep, "/"), label, "scene", sid=sid,
+            # [OLD 2026-11-03 v0.5.1->v0.6.0]            flags=[] if known else ["orphan"], note="" if known else "not in the project any more")
+            # added 2026-11-03 v0.6.0: a scene folder that is not in the project is an orphan only when it belongs to
+            # this project (its take list or an autosaved version says so); two projects can share a folder
+            flags, note = [], ""
+            if not known:
+                who, other_name = owner(sid)
+                if who == "this":
+                    flags, note = ["orphan"], "not in the project any more"
+                elif who == "other":
+                    flags, note = ["other_project"], "belongs to another project that used this folder{}".format(
+                        " ({})".format(other_name) if other_name else "")
+                else:
+                    flags, note = ["unknown_owner"], "not in this project; it may belong to another project that used this folder"
             sn = _node("o:" + os.path.relpath(scene_dir, o).replace(os.sep, "/"), label, "scene", sid=sid,
-                       flags=[] if known else ["orphan"], note="" if known else "not in the project any more")
+                       flags=flags, note=note)
             try:
                 idx = store.read_index(sid)
             except ValueError:
@@ -167,7 +233,13 @@ def scan_project(roots, slug, current=None):
                 if x == "takes":
                     continue
                 path = os.path.join(scene_dir, x)
-                if os.path.isdir(path):
+                # [OLD 2026-11-03 v0.5.1->v0.6.0] if os.path.isdir(path):
+                if x == "passes" and os.path.isdir(path) and not os.path.islink(path):
+                    # added 2026-11-03 v0.6.0: the scene's pass cache (finished passes kept for re-use)
+                    c = _add(sn, _dir("o", o, path, label="Pass cache", kind="passes"))
+                    c["note"] = "finished passes kept for re-use (after Stop, a retake of one pass, a moved keep window); made again when needed"
+                    c["flags"].append("cache")
+                elif os.path.isdir(path):
                     _add(sn, _dir("o", o, path))
                 else:
                     f = _add(sn, _file("o", o, path))
@@ -184,18 +256,28 @@ def scan_project(roots, slug, current=None):
         for x in _listdir(cdir):
             path = os.path.join(cdir, x)
             m = CUT_RE.match(x)
-            if m and os.path.isfile(path):
+            # [OLD 2026-11-03 v0.5.1->v0.6.0] if m and os.path.isfile(path):
+            if m and (os.path.isfile(path) or (os.path.isdir(path) and not os.path.islink(path))):
                 groups.setdefault((int(m.group("n")), m.group("stem")), []).append(path)
             elif os.path.isdir(path):
                 loose.append(_dir("o", o, path))
+            elif x == CUT_COUNTER:  # added 2026-11-03 v0.6.0
+                f = _file("o", o, path, label="next cut number")
+                f["del"], f["why"] = False, "the next cut number; numbers are never reused"
+                loose.append(f)
             else:
                 loose.append(_file("o", o, path))
         newest = max(groups) if groups else None
         for key in sorted(groups, reverse=True):
-            g = _node("cut:{}:{}".format(slug, key[1]), "cut v{}".format(key[0]), "cut", stem=key[1])
+            # [OLD 2026-11-03 v0.5.1->v0.6.0] g = _node("cut:{}:{}".format(slug, key[1]), "cut v{}".format(key[0]), "cut", stem=key[1])
+            kind_ = [w for w, on in (("draft", "_draft" in key[1]), ("range", re.search(r"_s\d+-\d+$", key[1]))) if on]
+            g = _node("cut:{}:{}".format(slug, key[1]), "cut v{}{}".format(key[0], "".join(" " + w for w in kind_)),
+                      "cut", stem=key[1])
+            g["flags"] += kind_  # added 2026-11-03 v0.6.0: draft / range cuts
             for path in sorted(groups[key]):
-                f = _add(g, _file("o", o, path))
-                if ".partial." in os.path.basename(path):
+                # [OLD 2026-11-03 v0.5.1->v0.6.0] f = _add(g, _file("o", o, path))
+                f = _add(g, _dir("o", o, path, label="stems") if os.path.isdir(path) else _file("o", o, path))
+                if ".partial" in os.path.basename(path):
                     f["flags"].append("unfinished")
                     f["note"] = "left over from a merge that didn't finish"
             g["note"] = " · ".join(b for b in ["newest" if key == newest else "", _when(g["mtime"])] if b)
@@ -293,7 +375,8 @@ def _resolve(roots, item):
         return "project", check_slug(item[2:]), None
     if item.startswith("cut:"):
         parts = item.split(":", 2)
-        if len(parts) != 3 or not re.fullmatch(r"[A-Za-z0-9_.-]+_cut_v\d+", parts[2]):
+        # [OLD 2026-11-03 v0.5.1->v0.6.0] if len(parts) != 3 or not re.fullmatch(r"[A-Za-z0-9_.-]+_cut_v\d+", parts[2]):
+        if len(parts) != 3 or not STEM_ID_RE.fullmatch(parts[2]):
             raise ValueError("invalid cut id: " + item)
         return "cut", check_slug(parts[1]), parts[2]
     key, _, rel = item.partition(":")
@@ -302,12 +385,35 @@ def _resolve(roots, item):
     parts = rel.replace("\\", "/").split("/")
     if len(parts) < 3 or parts[0] != "reelwright" or any(x in ("", ".", "..") for x in parts):
         raise ValueError("not a Reelwright file: " + item)
+    # added 2026-11-03 v0.6.0: a drive ("D:", "C:x") or stream name in a part would leave the folder on Windows
+    if any(":" in x or "\x00" in x for x in parts):
+        raise ValueError("not a Reelwright file: " + item)
     slug = check_slug(parts[1])
     root = roots.output if key == "o" else roots.input
     base = safe_join(root, "reelwright", slug)
     parent = safe_join(base, *parts[2:-1]) if len(parts) > 3 else base
     path = os.path.join(parent, parts[-1])  # the link itself, never what a link points to
+    if os.path.dirname(path) != parent:  # added 2026-11-03 v0.6.0
+        raise ValueError("not a Reelwright file: " + item)
     return ("output" if key == "o" else "input"), slug, (path, "/".join(parts[2:]))
+
+
+def _busy_reason(slug, kind, rel=""):
+    """added 2026-11-03 v0.6.0: why this can't be deleted now (a render or merge of the project uses it), or None.
+    A render uses the scenes, the soundtrack excerpts and the assets; a merge the takes, cuts and assets."""
+    render, merging = jobs.is_busy(slug, "render"), jobs.is_busy(slug, "merge")
+    if not (render or merging):
+        return None
+    what = "a render" if render else "a merge"
+    msg = "{} of this project is running; delete this when it ends".format(what)
+    if kind == "project" or kind == "input":
+        return msg
+    if kind == "cut":
+        return msg if merging else None
+    top = rel.split("/", 1)[0]
+    if top == "scenes" or (top == "soundtrack" and render) or (top == "cuts" and merging) or (top == "cast" and render):
+        return msg
+    return None
 
 
 def _size(path):
@@ -353,6 +459,9 @@ def _covers(a, b):
 
 def delete(roots, ids, current=None):
     """Delete the named nodes. Returns {removed, freed, errors:[{id, error}], deleted:[ids]}."""
+    # added 2026-11-03 v0.6.0 review: ids that are not a list (5, "x", {...}) are refused, not a TypeError
+    if ids is not None and not isinstance(ids, (list, tuple)):
+        raise ValueError("ids must be a list of ids")
     ids = [x for x in dict.fromkeys(ids or []) if isinstance(x, str)]
     ids = [b for b in ids if not any(_covers(a, b) for a in ids)]  # a path inside another selected one goes with it
     removed, freed, errors, deleted = 0, 0, [], []
@@ -360,11 +469,23 @@ def delete(roots, ids, current=None):
         try:
             kind, slug, arg = _resolve(roots, item)
             store = ProjectStore(roots, slug)
+            busy = _busy_reason(slug, kind, arg[1] if isinstance(arg, tuple) else "")  # added 2026-11-03 v0.6.0
+            if busy:
+                raise ValueError(busy)
             if kind == "project":
                 if current and slug == current:
                     raise ValueError("the project open in this node can't be deleted as a whole")
-                for d in (store.dir, store.input_dir):
-                    if os.path.isdir(d):
+                # [OLD 2026-11-03 v0.5.1->v0.6.0] store.dir is the resolved path: a project folder that is a link was
+                # deleted at its target
+                # for d in (store.dir, store.input_dir):
+                #     if os.path.isdir(d):
+                #         freed += _size(d)
+                #         shutil.rmtree(d)
+                # [/OLD]
+                for d in (os.path.join(roots.output, "reelwright", slug), os.path.join(roots.input, "reelwright", slug)):
+                    if os.path.islink(d):  # added 2026-11-03 v0.6.0: the link goes, its target stays
+                        os.remove(d)
+                    elif os.path.isdir(d):
                         freed += _size(d)
                         shutil.rmtree(d)
             elif kind == "cut":
@@ -375,7 +496,8 @@ def delete(roots, ids, current=None):
                     if m and m.group("stem") == arg:
                         path = os.path.join(cdir, x)
                         freed += _size(path)
-                        os.remove(path)
+                        # [OLD 2026-11-03 v0.5.1->v0.6.0] os.remove(path)
+                        _remove(path)  # added 2026-11-03 v0.6.0: the stems folder too
                         gone += 1
                 if not gone:
                     raise FileNotFoundError("already gone")
@@ -385,6 +507,12 @@ def delete(roots, ids, current=None):
                     raise ValueError("{} is kept: {}".format(rel, PROTECTED[rel]))
                 if kind == "output" and re.match(r"^scenes/[^/]+/index\.json$", rel):
                     raise ValueError("a scene's take list is kept; delete the scene instead")
+                # added 2026-11-03 v0.6.0: a take's own files go only with the take (its passes/ may go alone)
+                part = TAKE_PART_RE.match(rel) if kind == "output" else None
+                if part and part.group("part").split("/")[0] != "passes":
+                    raise ValueError("part of a take; delete the take")
+                if kind == "output" and rel == "cuts/" + CUT_COUNTER:
+                    raise ValueError("the next cut number is kept")
                 m = TAKE_RE.match(rel) if kind == "output" else None
                 if m:
                     listed = any(t["id"] == m.group(2) for t in store.read_index(m.group(1))["takes"]) \

@@ -94,3 +94,39 @@ def test_dialogue_and_missing_values():
     assert fit_scene(s) == "length taken from its shots" and s["duration"] == 12.0 and s["shots"][0]["t"] == 0.0
     s = {"duration": 10, "shots": [{"t": 0, "duration": 4}, {"t": 4}]}   # not every shot has a duration
     assert fit_scene(s) == "" and s["duration"] == 10
+
+
+# ---- added 2026-11-03 v0.6.0: an opening scene before the first heading is not lost ----
+def test_opening_scene_without_a_heading_is_the_first_block():
+    scenes = ["INT. ROOM {} - NIGHT\n\nMara walks in.\n\nMARA\nHello there, number {}.".format(i, i) for i in range(12)]
+    opening = "FADE IN:\n\nA dark harbor. Gulls cry over the water."
+    out = split_script(opening + "\n\n" + "\n\n".join(scenes), 600)
+    assert out["notes"] == "" and out["parts"][0][0] == opening and out["blocks"] == 13
+    cue = "A dark harbor. Mara waits on the pier.\n\nMARA\nWhere is he?"
+    out = split_script(cue + "\n\n" + "\n\n".join(scenes), 600)
+    assert out["parts"][0][0] == cue and out["notes"] == ""
+
+
+def test_premise_and_title_page_stay_notes():
+    scenes = ["INT. ROOM {} - NIGHT\n\nMara walks in.\n\nMARA\nHello there, number {}.".format(i, i) for i in range(12)]
+    title = "Title: Harbor Lights\nAuthor: Sencer\nDraft date: 2026-11-03"
+    out = split_script(title + "\n\n" + "\n\n".join(scenes), 600)
+    assert out["notes"] == title and out["parts"][0][0].startswith("INT. ROOM 0")
+    premise = "A music video. Mara is a sailor singing the song. No dialogue."
+    out = split_script(premise + "\n\n" + rows(46), 3000)
+    assert out["notes"] == premise
+
+
+# ---- added 2026-11-03 v0.6.0 review ----
+def test_a_title_in_capitals_over_the_premise_stays_notes():
+    """Bug 9: "HARBOR LIGHTS" over a line of premise counted as a character cue, so the premise became an opening
+    scene the LLM was asked to make scenes from, and no part got it as notes."""
+    scenes = ["INT. LIGHTHOUSE - NIGHT {}\nMara climbs the stairs. ".format(k) + "x" * 900 for k in range(6)]
+    premise = "HARBOR LIGHTS\nA short film about a lighthouse keeper's last night. Moody, rain, neon."
+    out = split_script(premise + "\n\n" + "\n\n".join(scenes), 3000)
+    assert out["notes"] == premise and out["parts"][0][0].startswith("INT. LIGHTHOUSE - NIGHT 0")
+    # a first line that is a speaker of the script, or has an extension, is still a cue
+    talk = ["INT. ROOM {} - NIGHT\n\nMara walks in.\n\nMARA\nHello there, number {}.".format(i, i) for i in range(12)]
+    for opening in ("MARA\nWhere is he?", "FINN (V.O.)\nShe never came back."):
+        out = split_script(opening + "\n\n" + "\n\n".join(talk), 600)
+        assert out["parts"][0][0] == opening and out["notes"] == ""

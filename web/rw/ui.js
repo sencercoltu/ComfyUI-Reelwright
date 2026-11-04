@@ -22,7 +22,10 @@ export function h(tag, props, ...children) {
       else if (k === "wheel") el.__rwWheel = v;
       else if (k === "key") el.dataset.key = v;
       else if (k === "dataset") Object.assign(el.dataset, v);
-      else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
+      // [OLD 2026-11-03 v0.6.0 review] else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
+      // added 2026-11-03 v0.6.0 review: a field with an onInput handler stores (or shows) what is typed as it is typed;
+      // editor.js render() treats only the other text fields as holding unsaved typing (__rwLive marks the live ones)
+      else if (k.startsWith("on") && typeof v === "function") { el.addEventListener(k.slice(2).toLowerCase(), v); if (k === "onInput") el.__rwLive = true; }
       else if (k === "html") el.innerHTML = v;
       else if (!svg && k in el && typeof v !== "string") el[k] = v;
       else el.setAttribute(k, v === true ? "" : String(v));
@@ -107,6 +110,7 @@ const ICONS = {
   disk: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 9.5h12"/><path d="M11 11.3h.8"/>',
   folder: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/>',
   file: '<path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/>',
+  history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.3 2.6v2.6h2.6M8 5v3.2l2.2 1.4"/>', // added 2026-11-03 v0.6.0
 };
 
 export function icon(name, size = 14) {
@@ -122,6 +126,61 @@ export function icon(name, size = 14) {
   el.setAttribute("aria-hidden", "true");
   el.innerHTML = ICONS[name] || "";
   return el;
+}
+
+// added 2026-11-03 v0.6.0: the one focus helper. ComfyUI runs its workflow undo (a graph reload) on Ctrl+Z unless
+// the focused element is an INPUT, TEXTAREA or contenteditable, so keyboard focus must never rest on the page body,
+// a button pressed with the mouse, a <video controls> or a dialog button while the editor is in use.
+// - isTextField(el): fields where Ctrl+Z belongs to the browser (text, number, textarea, contenteditable).
+// - keepFocus(el): focus the hidden key field of the editor that contains `el` (or is `el`); false when outside.
+// - focusGuard(root, keys): installed once per editor by editor.js; returns a function that removes it.
+const TEXT_INPUT = /^(?:text|search|email|url|tel|password|number|)$/;
+export function isTextField(el) {
+  if (!el || !(el instanceof Element)) return false;
+  if (el.isContentEditable || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+  return el.tagName === "INPUT" && !el.classList.contains("rw-keys") && TEXT_INPUT.test((el.getAttribute("type") || "").toLowerCase());
+}
+export function keepFocus(el) {
+  const root = el?.closest?.(".rw-root");
+  if (!root || !root.isConnected) return false;
+  root.focus({ preventScroll: true }); // editor.js points root.focus at its key field
+  return true;
+}
+export function focusGuard(root, keys) {
+  let outsideAt = -1e9;
+  const now = () => performance.now();
+  const toKeys = () => { if (root.isConnected) keys.focus({ preventScroll: true }); };
+  // a press outside the editor may take focus away (canvas, another node, ComfyUI's menus): that is allowed
+  const outside = e => { if (!root.contains(e.target)) outsideAt = now(); };
+  // focus leaving to nowhere (an element removed by a re-render, a list closed with Escape) comes back
+  const focusout = e => {
+    if (e.relatedTarget) return;
+    setTimeout(() => {
+      const a = document.activeElement;
+      if (!root.isConnected || (a && a !== document.body && a !== document.documentElement)) return;
+      if (now() - outsideAt < 600 || !document.hasFocus()) return;
+      toKeys();
+    }, 0);
+  };
+  // <video controls> and <audio controls> take focus when clicked; it moves on to the key field
+  const focusin = e => {
+    if (e.target instanceof HTMLMediaElement) setTimeout(() => { if (document.activeElement === e.target) toKeys(); }, 0);
+  };
+  // Ctrl/Cmd is pressed before Z: while a button, a media element or the root has focus, the key field takes it,
+  // so ComfyUI's capture listener sees an INPUT when Z follows
+  const keydown = e => {
+    if ((e.key === "Control" || e.key === "Meta") && document.activeElement !== keys && !isTextField(document.activeElement)) toKeys();
+  };
+  window.addEventListener("pointerdown", outside, true);
+  root.addEventListener("focusout", focusout);
+  root.addEventListener("focusin", focusin);
+  root.addEventListener("keydown", keydown, true);
+  return () => {
+    window.removeEventListener("pointerdown", outside, true);
+    root.removeEventListener("focusout", focusout);
+    root.removeEventListener("focusin", focusin);
+    root.removeEventListener("keydown", keydown, true);
+  };
 }
 
 export function button({ label, icon: ic, help, onClick, variant = "default", small = false, disabled = false, ariaLabel, key, extra }) {
@@ -192,6 +251,7 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
   input.value = missing ? value + " (missing)" : shown;
   const wrap = h("span", { class: ["rw-select", "rw-combo", mono && "mono"], style: width ? { width } : null });
   let list = null, items = [], active = -1, done = false;
+  let listRoot = null; // added 2026-11-03 v0.6.0
 
   const matches = q => {
     const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -249,6 +309,8 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
         onMousedown: e => { if (e.target !== e.currentTarget || e.offsetX < e.currentTarget.clientWidth) e.preventDefault(); } });
       root.appendChild(list);
       comboState.open++;
+      listRoot = root; // added 2026-11-03 v0.6.0: open lists are counted per editor (root.__rwCombo)
+      root.__rwCombo = (root.__rwCombo || 0) + 1;
       input.setAttribute("aria-expanded", "true");
     }
     if (q === "" && active < 0) active = Math.max(0, opts.findIndex(o => o.value === value));
@@ -263,6 +325,13 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
     input.setAttribute("aria-expanded", "false");
     comboState.open = Math.max(0, comboState.open - 1);
     if (!comboState.open && comboState.onClose) { const f = comboState.onClose; comboState.onClose = null; f(); }
+    // added 2026-11-03 v0.6.0: the editor that owns the list re-renders once its last list closes
+    if (listRoot) {
+      const r = listRoot;
+      listRoot = null;
+      r.__rwCombo = Math.max(0, (r.__rwCombo || 0) - 1);
+      if (!r.__rwCombo && r.__rwComboClosed) { const f = r.__rwComboClosed; r.__rwComboClosed = null; f(); }
+    }
   }
   function choose(o) {
     done = true;
@@ -281,12 +350,16 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
     if (e.key === "ArrowDown") { e.preventDefault(); if (!list) open(""); else { active = Math.min(n - 1, active + 1); paint(input.value === shown ? "" : input.value); } }
     else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(0, active - 1); if (list) paint(input.value === shown ? "" : input.value); }
     else if (e.key === "Enter") {
+      if (e.isComposing) return; // added 2026-11-03 v0.6.0: Enter that confirms an IME candidate
       e.preventDefault();
       const q = input.value === shown ? "" : input.value;
       if (active >= 0 && active < items.length) choose(items[active]);
       else if (free && q.trim()) choose({ value: q.trim(), label: q.trim() });
-      input.blur();
-    } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); revert(); close(); input.blur(); }
+      // [OLD 2026-11-03 v0.5.1->v0.6.0] input.blur();  (focus fell to the page, so the next Ctrl+Z undid the workflow)
+      done = true;
+      if (!keepFocus(input)) input.blur();
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); revert(); close(); input.blur(); }
+    } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done = true; revert(); close(); if (!keepFocus(input)) input.blur(); }
   });
   // added 2026-11-02 v0.2.2: a press inside the list (scrollbar included) never closes it
   let pressed = false;
@@ -316,10 +389,25 @@ export function number({ value, onChange, help, key, min, max, step = 1, width =
   const input = h("input", {
     type: "number", class: ["rw-input", mono && "mono"], help, key, value: value ?? "", min, max, step,
     style: { width },
+    /* [OLD 2026-11-03 v0.5.1->v0.6.0] a typo ("1e", "-", ".") reads as "" in a number field and was stored as null (the default; a seed became 0)
     onChange: e => {
       if (e.target.value === "") { onChange(null); return; }
       let v = Number(e.target.value);
       if (Number.isNaN(v)) return;
+      if (min !== undefined) v = Math.max(min, v);
+      if (max !== undefined) v = Math.min(max, v);
+      onChange(v);
+    },
+    [/OLD] */
+    // added 2026-11-03 v0.6.0: only an emptied field means "no value"; text the browser cannot read as a number puts
+    // the stored value back
+    onChange: e => {
+      const el = e.target;
+      const back = () => { el.value = value ?? ""; };
+      if (el.validity?.badInput) { back(); return; }
+      if (el.value === "") { onChange(null); return; }
+      let v = Number(el.value);
+      if (!Number.isFinite(v)) { back(); return; }
       if (min !== undefined) v = Math.max(min, v);
       if (max !== undefined) v = Math.min(max, v);
       onChange(v);
@@ -405,9 +493,12 @@ export function empty(textContent, help) {
   return h("div", { class: "rw-empty", help }, textContent);
 }
 
-export function keepChips({ values, onChange, help, placeholder = "+ feature" }) {
+// [OLD 2026-11-03 v0.6.0 review] export function keepChips({ values, onChange, help, placeholder = "+ feature" }) {
+// added 2026-11-03 v0.6.0 review: `key` (lists of chip fields share a help id; render() puts focus back by key)
+export function keepChips({ values, onChange, help, placeholder = "+ feature", key }) {
   const input = h("input", {
-    class: "rw-chip-input", placeholder, help,
+    // [OLD 2026-11-03 v0.6.0 review] class: "rw-chip-input", placeholder, help,
+    class: "rw-chip-input", placeholder, help, key, // added 2026-11-03 v0.6.0 review: key
     onKeydown: e => {
       if (e.key === "Enter" && e.target.value.trim()) {
         e.preventDefault();
@@ -420,6 +511,7 @@ export function keepChips({ values, onChange, help, placeholder = "+ feature" })
     input);
 }
 
+// deprecated 2026-11-03 v0.6.0: use confirmDialog (the bar vanished on any re-render); kept until the tabs move over
 export function confirmInline(host, message, onYes) {
   const bar = h("div", { class: "rw-confirm" },
     h("span", null, message),
@@ -430,6 +522,7 @@ export function confirmInline(host, message, onYes) {
 
 // added 2026-11-02 v0.2.2: the editor's own right-click menu. Items: {label, icon, help, onClick, danger, disabled}
 // or {sep: true}. Positioned in the root's unscaled pixels and kept inside the node.
+/* [OLD 2026-11-03 v0.5.1->v0.6.0] no menu class, item class or heading rows
 export function contextMenu(root, clientX, clientY, items) {
   root.querySelectorAll(".rw-ctx").forEach(m => m.remove());
   const close = () => { menu.remove(); document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", esc, true); };
@@ -441,6 +534,26 @@ export function contextMenu(root, clientX, clientY, items) {
       type: "button", role: "menuitem", class: ["rw-ctx-item", it.danger && "danger"], help: it.help, disabled: !!it.disabled,
       onClick: e => { e.stopPropagation(); close(); it.onClick?.(); },
     }, it.icon ? icon(it.icon, 13) : h("span", { class: "rw-ctx-ic" }), h("span", null, it.label), it.hint ? h("span", { class: "rw-ctx-hint mono" }, it.hint) : null)));
+[/OLD] */
+// added 2026-11-03 v0.6.0: opts.cls (class of the menu), items may carry `cls` (extra class) and {head: "text"}
+// (a heading row); a menu that is still open is closed first (its listeners too)
+export function contextMenu(root, clientX, clientY, items, opts = {}) {
+  root.__rwMenuClose?.();
+  root.querySelectorAll(".rw-ctx").forEach(m => m.remove());
+  const close = () => {
+    menu.remove(); document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", esc, true);
+    if (root.__rwMenuClose === close) root.__rwMenuClose = null;
+  };
+  const outside = e => { if (!menu.contains(e.target)) close(); };
+  const esc = e => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  const menu = h("div", { class: ["rw-ctx", opts.cls], role: "menu" }, items.filter(Boolean).map(it => it.sep
+    ? h("div", { class: "rw-ctx-sep" })
+    : it.head ? h("div", { class: "rw-ctx-head" }, it.head)
+    : h("button", {
+      type: "button", role: "menuitem", class: ["rw-ctx-item", it.danger && "danger", it.cls], help: it.help, disabled: !!it.disabled,
+      onClick: e => { e.stopPropagation(); close(); it.onClick?.(); },
+    }, it.icon ? icon(it.icon, 13) : h("span", { class: "rw-ctx-ic" }), h("span", null, it.label), it.hint ? h("span", { class: "rw-ctx-hint mono" }, it.hint) : null)));
+  root.__rwMenuClose = close;
   root.appendChild(menu);
   const rr = root.getBoundingClientRect();
   const sc = (rr.width / (root.offsetWidth || rr.width)) || 1;
@@ -451,6 +564,7 @@ export function contextMenu(root, clientX, clientY, items) {
   return close;
 }
 
+/* [OLD 2026-11-03 v0.5.1->v0.6.0] Enter confirmed even with Cancel focused; Tab left the dialog; OK had focus, so Ctrl+Z went to ComfyUI
 // added 2026-11-02 v0.3.0: a modal confirmation inside the editor. Resolves true/false.
 // Enter confirms, Escape or a click outside cancels.
 export function confirmDialog(root, { title, message, confirmLabel = "Delete", danger = true, cancelLabel = "Cancel" }) {
@@ -477,5 +591,90 @@ export function confirmDialog(root, { title, message, confirmLabel = "Delete", d
     root.appendChild(overlay);
     document.addEventListener("keydown", key, true);
     ok.focus({ preventScroll: true });
+  });
+}
+[/OLD] */
+
+// added 2026-11-03 v0.6.0: a modal dialog inside the editor with any number of buttons. Resolves with the `value`
+// of the button pressed, or `cancelValue` (Escape, a click outside the box, the editor closing, or another dialog
+// opening). Keyboard: Tab / Shift+Tab stay on the dialog's buttons; Enter presses the focused button only (Enter
+// with Cancel focused cancels); Space presses it as usual; Ctrl+Z / Ctrl+Y do nothing while it is open, and never
+// reach ComfyUI (Ctrl moves focus to a hidden field first). Other keys don't reach the editor's shortcuts.
+//   choices: [{value, label, variant?: "primary"|"danger"|"default", help?}] in display order
+//   focus: the value whose button has focus at first (default: the cancel button when danger, else the last button)
+export function choiceDialog(root, { title, message, choices, cancelValue = null, focus, danger = false, help } = {}) {
+  return new Promise(resolve => {
+    root.__rwModalClose?.(); // a dialog still open is cancelled, so its promise and listeners never leak
+    root.querySelectorAll(".rw-modal").forEach(m => m.remove());
+    const prev = document.activeElement;
+    const sink = h("input", { class: "rw-keys", readonly: true, tabindex: "-1", "aria-hidden": "true", autocomplete: "off" });
+    let closed = false;
+    const inEditor = () => { const a = document.activeElement; return !a || a === document.body || root.contains(a); };
+    const key = e => {
+      if (!overlay.isConnected) { finish(cancelValue); return; }
+      if (!inEditor()) return; // typing somewhere else in ComfyUI
+      const mod = e.ctrlKey || e.metaKey;
+      e.stopPropagation(); // the editor's shortcuts wait until the dialog is closed
+      if (e.key === "Control" || e.key === "Meta") { if (!isTextField(document.activeElement)) sink.focus({ preventScroll: true }); return; }
+      if (mod && /^[zy]$/i.test(e.key)) { e.preventDefault(); return; }
+      if (e.key === "Escape") { e.preventDefault(); finish(cancelValue); return; }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const live = btns.filter(b => !b.disabled);
+        if (!live.length) return;
+        const i = live.indexOf(document.activeElement);
+        const j = i < 0 ? (e.shiftKey ? live.length - 1 : 0) : (i + (e.shiftKey ? -1 : 1) + live.length) % live.length;
+        live[j].focus({ preventScroll: true });
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const i = btns.indexOf(document.activeElement);
+        if (i >= 0 && !btns[i].disabled) finish(choices[i].value);
+      }
+    };
+    const outside = e => { if (!root.contains(e.target)) finish(cancelValue); };
+    const finish = v => {
+      if (closed) return;
+      closed = true;
+      overlay.remove();
+      document.removeEventListener("keydown", key, true);
+      window.removeEventListener("pointerdown", outside, true);
+      if (root.__rwModalClose === cancel) root.__rwModalClose = null;
+      // focus goes back into the editor so its shortcuts (Ctrl+Z) work right after the dialog closes
+      const back = prev && prev.isConnected && prev !== sink && root.contains(prev) ? prev : root;
+      if (root.isConnected) back.focus?.({ preventScroll: true });
+      resolve(v);
+    };
+    const cancel = () => finish(cancelValue);
+    const btns = choices.map(c => button({ label: c.label, variant: c.variant || "default", help: c.help || (c.value === cancelValue ? "common.cancel" : "common.confirm"),
+      onClick: () => finish(c.value) }));
+    const overlay = h("div", { class: "rw-modal", onPointerdown: e => { if (e.target === overlay) finish(cancelValue); } },
+      h("div", { class: ["rw-modal-box", choices.length > 2 && "wide"], role: "alertdialog", "aria-modal": "true", help },
+        h("div", { class: "rw-modal-title" }, danger ? icon("warn", 15) : null, h("span", null, title)),
+        message ? h("div", { class: "rw-modal-msg" }, message) : null,
+        h("div", { class: "rw-modal-actions" }, btns),
+        sink));
+    root.appendChild(overlay);
+    root.__rwModalClose = cancel;
+    document.addEventListener("keydown", key, true);
+    setTimeout(() => { if (!closed) window.addEventListener("pointerdown", outside, true); }, 0);
+    let first = choices.findIndex(c => focus !== undefined && c.value === focus);
+    if (first < 0) first = danger ? choices.findIndex(c => c.value === cancelValue) : -1;
+    if (first < 0) first = choices.length - 1;
+    btns[first]?.focus({ preventScroll: true });
+  });
+}
+
+// A confirmation: Cancel and OK. Resolves true/false. Options: {title, message, confirmLabel | okLabel,
+// cancelLabel, danger = true, help}. A dangerous one opens with Cancel focused, so Enter alone never deletes.
+// added 2026-11-03 v0.6.0: built on choiceDialog
+export function confirmDialog(root, { title, message, confirmLabel, okLabel, danger = true, cancelLabel = "Cancel", help } = {}) {
+  return choiceDialog(root, {
+    title, message, danger, help, cancelValue: false,
+    choices: [
+      { value: false, label: cancelLabel, help: "common.cancel" },
+      { value: true, label: okLabel || confirmLabel || "Delete", variant: danger ? "danger" : "primary", help: "common.confirm" },
+    ],
   });
 }

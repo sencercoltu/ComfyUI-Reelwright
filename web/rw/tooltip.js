@@ -151,5 +151,7 @@ export function installTooltips(root) {
     if (e.key === "Escape") { hide(); closePopover(); }
   });
 
-  return { openPopover, closePopover, hide, isOpen: () => pop.classList.contains("on") };
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] return { openPopover, closePopover, hide, isOpen: () => pop.classList.contains("on") };
+  // added 2026-11-03 v0.6.0: destroy() stops a pending tooltip timer (the editor is being removed)
+  return { openPopover, closePopover, hide, isOpen: () => pop.classList.contains("on"), destroy() { hide(); closePopover(); } };
 }

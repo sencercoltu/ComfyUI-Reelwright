@@ -9,6 +9,16 @@ const art = {};
 let projectJSON = "";
 let storage = null; // added 2026-11-03 v0.4.0: mock of the Files tab's routes
 const queued = [];
+// added 2026-11-03 v0.6.0: switches for tests (window.__mockFlags): slugConflict (/autosave answers 409 slug_conflict
+// for that slug unless force), mergeBusy (/merge answers 409 busy), mergeMs (a merge that takes this long and can be
+// cancelled), autosaveFail (/autosave answers 500); autosaves records each autosave body
+// added 2026-11-03 v0.6.0 (F2b): plan ({scene_id: plan fields}), estimate (top-level plan estimate), filesBusy (a
+// reason: /storage/delete refuses everything with it, as the server does while a render or merge runs), merges (the
+// body of each /merge request), versionEdits (a function (project, name) that changes what /version returns)
+export const mockFlags = { slugConflict: "", mergeBusy: false, mergeMs: 0, autosaveFail: false, autosaves: [], queueMs: 0,
+  plan: {}, estimate: null, filesBusy: "", merges: [], versionEdits: null };
+if (typeof window !== "undefined") window.__mockFlags = mockFlags;
+const mergeJobs = {};
 
 // ---------- Generated pictures ----------
 
@@ -320,13 +330,70 @@ function plan(p) {
       passes, status: status[s.id] || "pending", key: "9f3ac2" + s.id.replace("_", "") + "e1d07b44c1", starred: takes[s.id]?.starred || null,
       takes: takes[s.id]?.takes || [], issues, prompts: passes.map(ps => promptFor(p, s, ps)),
     };
+    Object.assign(out.scenes[s.id], planExtras(s, out.scenes[s.id])); // added 2026-11-03 v0.6.0 (F2b)
   }
   out.timeline.total = t;
   out.issues.push({ level: "info", scene_id: "s_08", message: "Insert: hand on the door is shorter than one pass; it renders 124 frames and keeps 2.50 s." });
+  // added 2026-11-03 v0.6.0 (F2b): top-level estimate of the pending queue, as analysis.plan_response
+  const pend = Object.values(out.scenes).filter(x => ["stale", "missing", "pending"].includes(x.status));
+  const known = pend.filter(x => typeof x.estimate_seconds === "number");
+  out.estimate = mockFlags.estimate || { seconds: known.length ? known.reduce((a, x) => a + x.estimate_seconds, 0) : null, scenes: pend.length, unknown: pend.length - known.length };
   return out;
 }
 
+// added 2026-11-03 v0.6.0 (F2b): the v0.6.0 per-scene plan fields (R: upstream_take, upstream_changed, manual_star,
+// estimate_seconds, starred_prompts, cached_passes) with demo values; window.__mockFlags.plan = {scene_id: {...}}
+// overrides them per scene. s_03's starred take had another summary line, so its "why?" diff shows a change.
+const DEMO_EXTRAS = {
+  s_02: { manual_star: true },
+  s_03: { upstream_changed: true, upstream_take: "v2", estimate_seconds: 255 },
+  s_07: { estimate_seconds: 940, cached_passes: 1 },
+};
+function planExtras(s, entry) {
+  const starred = entry.starred ? entry.prompts.slice() : null;
+  if (starred && s.id === "s_03") for (let k = 0; k < starred.length; k++) starred[k] = starred[k].replace(/(summary:\n)[^\n]*/, "$1[video continuation] Continuing the previous shot, Mara reads the letter by the window.");
+  const base = { upstream_take: null, upstream_changed: false, manual_star: false, estimate_seconds: null, starred_prompts: starred, cached_passes: 0 };
+  return { ...base, ...(DEMO_EXTRAS[s.id] || {}), ...(mockFlags.plan?.[s.id] || {}) };
+}
+
 // ---------- Routes ----------
+
+// added 2026-11-03 v0.6.0 (S): merge results, beats, the pass excerpt and storage repair, shaped like the real routes
+let mockCutN = 4;
+function mergeEvent(body, d) {
+  for (const cb of listeners["reelwright.merge"] || []) cb({ slug: body.project?.slug || SLUG, job: body.job || "", ...d });
+}
+function mockMergeResult(body) {
+  const slug = body.project?.slug || SLUG, n = mockCutN++;
+  const scenes = body.project?.scenes || [];
+  const ix = id => scenes.findIndex(s => s.id === id);
+  let range = null, suffix = body.draft ? "_draft" : "";
+  if (Array.isArray(body.range) && body.range.length === 2) {
+    const [a, b] = [ix(body.range[0]), ix(body.range[1])].sort((x, y) => x - y);
+    range = [scenes[a]?.id, scenes[b]?.id];
+    suffix += `_s${String(a + 1).padStart(2, "0")}-${String(b + 1).padStart(2, "0")}`;
+  }
+  const base = `reelwright/${slug}/cuts/${slug}_cut_v${n}${suffix}`;
+  const files = { video: base + ".mp4", chapters: base + ".chapters.txt", srt: base + ".srt", otio: base + ".otio", fcpxml: base + ".fcpxml" };
+  const out = { ok: true, duration: range ? 21.5 : 58.75, files, skipped: [], created: Math.floor(Date.now() / 1000), soundtrack: 1,
+    job: body.job || "merge-mock", draft: !!body.draft, range };
+  if (body.stems) {
+    files.stems = base + "_stems";
+    files.loudness = base + "_loudness.json";
+    const m = { integrated: -16.2, lra: 6.4, true_peak: -1.7 };
+    out.loudness = { target: -16, ...m, mix: m, scenes: { integrated: -17.9, lra: 5.1, true_peak: -3.2 }, track_t_song: { integrated: -14.8, lra: 4.0, true_peak: -1.1 } };
+  }
+  mergeEvent(body, { phase: "start", draft: !!body.draft, range, stems: !!body.stems });
+  for (const pc of [25, 60, 100]) mergeEvent(body, { phase: "progress", percent: pc });
+  mergeEvent(body, { phase: "end", files, duration: out.duration, loudness: out.loudness || null, draft: out.draft, range });
+  return out;
+}
+function mockBeats(file) {
+  const seed = [...(file || "")].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const bpm = 120 + (seed % 3) * 4, step = 60 / bpm, beats = [];
+  for (let t = 0.48; t < 120; t += step) beats.push(Math.round(t * 1e4) / 1e4);
+  return { bpm, beats, downbeats: beats.filter((_, i) => i % 4 === 0), duration: 120, file };
+}
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -415,7 +482,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-03 v0.4.2->v0.4.3] case "/reelwright/info": return json({ version: "0.4.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // [OLD 2026-11-03 v0.4.3->v0.5.0] case "/reelwright/info": return json({ version: "0.4.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // [OLD 2026-11-03 v0.5.0->v0.5.1] case "/reelwright/info": return json({ version: "0.5.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
-    case "/reelwright/info": return json({ version: "0.5.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] case "/reelwright/info": return json({ version: "0.5.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
+    case "/reelwright/info": return json({ version: "0.6.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -444,8 +512,27 @@ async function route(path, opts = {}) {
     case "/reelwright/takes": return json({ scenes: takes });
     case "/reelwright/takes/star": takes[body.scene_id].starred = body.take_id; return json({ ok: true });
     case "/reelwright/takes/delete": takes[body.scene_id].takes = takes[body.scene_id].takes.filter(t => t.id !== body.take_id); return json({ ok: true });
-    case "/reelwright/merge": return json({ ok: true, duration: 58.75, files: { video: `reelwright/${SLUG}/cuts/${SLUG}_cut_v4.mp4`, srt: `reelwright/${SLUG}/cuts/${SLUG}_cut_v4.srt`, otio: `reelwright/${SLUG}/cuts/${SLUG}_cut_v4.otio`, fcpxml: `reelwright/${SLUG}/cuts/${SLUG}_cut_v4.fcpxml`, chapters: `reelwright/${SLUG}/cuts/${SLUG}_cut_v4.chapters.txt` } });
-    case "/reelwright/autosave": return json({ ok: true, version: "project_20261102_101500.json" });
+    // added 2026-11-03 v0.6.0: one merge at a time (mergeBusy), cancel by job
+    case "/reelwright/merge/cancel": { const live = !!mergeJobs[body.job]; if (live) mergeJobs[body.job] = "cancel"; return json({ ok: true, cancelled: live }); }
+    case "/reelwright/merge":
+      mockFlags.merges.push({ draft: body.draft, range: body.range ?? null, stems: body.stems, job: body.job }); // added 2026-11-03 v0.6.0 (F2b)
+      if (mockFlags.mergeBusy) return json({ error: "busy" }, 409);
+      if (mockFlags.mergeMs) {
+        mergeJobs[body.job] = "run";
+        for (let t = 0; t < mockFlags.mergeMs; t += 50) { await new Promise(r => setTimeout(r, 50)); if (mergeJobs[body.job] === "cancel") break; }
+        const stopped = mergeJobs[body.job] === "cancel";
+        delete mergeJobs[body.job];
+        // S: the real route answers 200 {ok: false, cancelled: true, job} and sends reelwright.merge {phase: "end", cancelled: true}
+        if (stopped) { mergeEvent(body, { phase: "end", cancelled: true }); return json({ ok: false, cancelled: true, job: body.job }); }
+      }
+      // S (v0.6.0): the real response shape: draft / range file names, job, loudness with stems; reelwright.merge events
+      return json(mockMergeResult(body));
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] case "/reelwright/autosave": return json({ ok: true, version: "project_20261102_101500.json" });
+    case "/reelwright/autosave":
+      mockFlags.autosaves.push({ slug: body.project?.slug, force: !!body.force, project_id: body.project?.project_id });
+      if (mockFlags.autosaveFail) return json({ error: "Disk full" }, 500);
+      if (mockFlags.slugConflict && body.project?.slug === mockFlags.slugConflict && !body.force) return json({ reason: "slug_conflict", error: "slug_conflict", other: { id: "p_other", name: "Lighthouse Keeper" } }, 409);
+      return json({ ok: true, version: "project_20261102_101500.json" });
     // [OLD 2026-11-02 v0.3.5->v0.3.6] case "/reelwright/versions": return json({ versions: [{ name: "project_20261102_101500.json", created: 1793614500, size: 18400 }, { name: "project_20261102_094012.json", created: 1793612412, size: 17200 }] });
     case "/reelwright/versions": return json({ versions: mockVersions });
     // added 2026-11-02 v0.3.6
@@ -455,7 +542,12 @@ async function route(path, opts = {}) {
       mockVersions = mockVersions.filter(v => !kill.includes(v.name));
       return json({ removed: before - mockVersions.length, versions: mockVersions });
     }
-    case "/reelwright/version": return json({ project: demoProject() });
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] case "/reelwright/version": return json({ project: demoProject() });
+    case "/reelwright/version": { // added 2026-11-03 v0.6.0 (F2b): tests can make a version differ (mockFlags.versionEdits)
+      const vp = demoProject();
+      if (typeof mockFlags.versionEdits === "function") mockFlags.versionEdits(vp, url.searchParams.get("name") || "");
+      return json({ project: vp });
+    }
     // added 2026-11-03 v0.4.0: Files tab
     case "/reelwright/storage": return json(storage.tree());
     // added 2026-11-03 v0.5.0: a fake song: beats every half second over a slow swell, 120 s
@@ -472,7 +564,26 @@ async function route(path, opts = {}) {
       }
       return new Response(peaks, { status: 200, headers: { "X-Per-Second": String(ps), "X-Duration": "120" } });
     }
-    case "/reelwright/storage/delete": return json(storage.remove(body.ids || [], body.current));
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] case "/reelwright/storage/delete": return json(storage.remove(body.ids || [], body.current));
+    case "/reelwright/storage/delete": // added 2026-11-03 v0.6.0 (F2b): mockFlags.filesBusy refuses every id with that reason
+      if (mockFlags.filesBusy) return json({ removed: 0, freed: 0, deleted: [], errors: (body.ids || []).map(id => ({ id, error: mockFlags.filesBusy })) });
+      return json(storage.remove(body.ids || [], body.current));
+    // added 2026-11-03 v0.6.0 (S): Files repair, beat markers, the soundtrack excerpt of one pass
+    case "/reelwright/storage/repair": return json({ ok: true, repaired: ["s_03"], takes_found: 14, added: 1, dropped: 0, project: "ok" });
+    case "/reelwright/beats": {
+      const file = url.searchParams.get("file") || "";
+      if (!file) return json({ error: "missing: " }, 400);
+      return json(mockBeats(file));
+    }
+    case "/reelwright/soundtrack/excerpt": {
+      const p = body.project, slug = p?.slug || body.slug || SLUG;
+      const has = (p?.soundtrack || []).some(t => !t.mute && t.sync !== false);
+      if (p && !has) return json({ url: null, file: null, reason: "This pass gets no soundtrack (less than 2 s of it plays here)." });
+      const file = `reelwright/${slug}/soundtrack/${(body.scene_id || "s").replace(/\W/g, "")}_p${body.pass || 1}_3f9a1c.wav`;
+      return json({ url: `/view?filename=${encodeURIComponent(file.split("/").pop())}&subfolder=${encodeURIComponent(file.slice(0, file.lastIndexOf("/")))}&type=output`,
+        file, start: 12.5, length: 15.0, codes: ["A3"], marker: "fully_copy",
+        pieces: [{ asset: "a_song", src_in: 42.5, src_out: 57.5, at: 0 }] });
+    }
     // [OLD 2026-11-02 v0.1.0->v0.2.0] case "/reelwright/llm/settings": return json({ base_url: "http://llm.local:30000/v1", model: "qwen3-32b-instruct", has_key: true, ok: true });
     case "/reelwright/llm/settings": return json({ base_url: "http://llm.local:30000/v1", model: "qwen3-32b-instruct", has_key: true, ok: true,
       guides: guidesHave, guide_urls: { "ref-en.txt": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/main/skills/h3-prompt-writing/references/ref-en.txt", "base-en.txt": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/main/skills/h3-prompt-writing/references/base-en.txt" } });
@@ -548,10 +659,21 @@ export function createMockHost() {
       const key = sceneId ? SCENE_ART[sceneId] : FILE_ART[file] || (file.includes("mara") ? "mara" : "pier");
       return art[key] || "";
     },
-    on(type, cb) { (listeners[type] ||= []).push(cb); },
-    emit(type, detail) { for (const cb of listeners[type] || []) cb(detail); },
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] on(type, cb) { (listeners[type] ||= []).push(cb); },
+    // added 2026-11-03 v0.6.0: returns an unsubscribe function, like the real host
+    on(type, cb) {
+      (listeners[type] ||= []).push(cb);
+      return () => { const l = listeners[type] || []; const i = l.indexOf(cb); if (i >= 0) l.splice(i, 1); };
+    },
+    listenerCount: () => Object.values(listeners).reduce((n, l) => n + l.length, 0), // added 2026-11-03 v0.6.0
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] emit(type, detail) { for (const cb of listeners[type] || []) cb(detail); },
+    emit(type, detail) { for (const cb of [...(listeners[type] || [])]) cb(detail); },
+    isOwnNode: id => String(id) === "7", // added 2026-11-03 v0.6.0: the harness node is node 7
+    changes: 0, // added 2026-11-03 v0.6.0: ChangeTracker notices
+    changed() { this.changes++; },
     scriptCalls, // added 2026-11-03 v0.4.2: what each script-import request carried
-    async queue(request) { queued.push(request); },
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] async queue(request) { queued.push(request); },
+    async queue(request) { queued.push(request); if (mockFlags.queueMs) await new Promise(r => setTimeout(r, mockFlags.queueMs)); },
     interrupt() { queued.push({ action: "interrupt" }); },
     // added 2026-11-02 v0.3.0: title and canvas-zoom hooks the real host provides
     titles: [],

@@ -165,3 +165,97 @@ def test_symlink_is_removed_not_its_target(roots, disk, tmp_path):
     assert find(t["projects"][0], "i:reelwright/harbor_lights/link.mp4")["size"] < 123 or True
     r = files.delete(roots, ["i:reelwright/harbor_lights/link.mp4"], current="harbor_lights")
     assert r["errors"] == [] and os.path.isfile(outside) and not os.path.lexists(os.path.join(store.input_dir, "link.mp4"))
+
+
+# ---- added 2026-11-03 v0.6.0 ---------------------------------------------------------------------------------------
+
+from reelwright import jobs  # noqa: E402
+
+
+def test_linked_project_folder_is_unlinked_not_emptied(roots, tmp_path):
+    target = tmp_path / "output" / "precious"  # inside ComfyUI's output folder, so path checks alone don't stop it
+    put(str(target / "scenes" / "s_a" / "takes" / "v1" / "a.mp4"), 50)
+    os.makedirs(os.path.join(roots.output, "reelwright"), exist_ok=True)
+    os.symlink(str(target), os.path.join(roots.output, "reelwright", "linked"))
+    r = files.delete(roots, ["p:linked"], current="harbor_lights")
+    assert r["errors"] == [] and r["removed"] == 1
+    assert os.path.isfile(str(target / "scenes" / "s_a" / "takes" / "v1" / "a.mp4"))
+    assert not os.path.lexists(os.path.join(roots.output, "reelwright", "linked"))
+
+
+def test_drive_letters_and_take_parts_are_refused(roots, disk):
+    store, _ = disk
+    for item in ("o:reelwright/harbor_lights/D:", "o:reelwright/harbor_lights/scenes/C:x",
+                 "i:reelwright/harbor_lights/front.png:stream",
+                 "o:reelwright/harbor_lights/scenes/s_one/takes/v1/first.png",           # part of a take
+                 "o:reelwright/harbor_lights/scenes/s_one/takes/v1/harbor_lights_01_harbor_at_dusk_v1.mp4"):
+        r = files.delete(roots, [item], current="harbor_lights")
+        assert r["removed"] == 0 and r["errors"], item
+    assert os.path.isfile(os.path.join(store.take_dir("s_one", "v1"), "first.png"))
+    r = files.delete(roots, ["o:reelwright/harbor_lights/scenes/s_one/takes/v2/passes/p1.mp4"], current="harbor_lights")
+    assert r["errors"] == []  # a take's intermediate passes may go on their own
+
+
+def test_nothing_a_render_or_merge_uses_is_deleted(roots, disk):
+    store, other = disk
+    with jobs.running("harbor_lights", "render"):
+        for item in ("o:reelwright/harbor_lights/scenes/s_one/takes/v1", "o:reelwright/harbor_lights/scenes/s_gone",
+                     "i:reelwright/harbor_lights/stray.png"):
+            r = files.delete(roots, [item], current="harbor_lights")
+            assert r["removed"] == 0 and "render" in r["errors"][0]["error"], item
+        r = files.delete(roots, ["cut:harbor_lights:harbor_lights_cut_v1", "p:other_film"], current="harbor_lights")
+        assert r["errors"] == [] and r["removed"] == 2  # cuts and other projects are not in use
+    with jobs.running("harbor_lights", "merge"):
+        r = files.delete(roots, ["cut:harbor_lights:harbor_lights_cut_v2"], current="")
+        assert r["removed"] == 0 and "merge" in r["errors"][0]["error"]
+        r = files.delete(roots, ["p:harbor_lights"], current="")
+        assert r["removed"] == 0
+    assert files.delete(roots, ["cut:harbor_lights:harbor_lights_cut_v2"], current="harbor_lights")["removed"] == 1
+
+
+def test_scene_folders_of_another_project_are_not_orphans(roots, harbor):
+    store = ProjectStore(roots, "harbor_lights")
+    other = dict(harbor, project_id="p_other", name="Other film", scenes=[{"id": "s_theirs", "title": "T"}])
+    store.autosave(other, force_version=True)                        # a version of the other project
+    store.add_take("s_theirs", {"id": "v1"})                          # stamped p_other
+    old = dict(harbor, project_id="p_me", scenes=harbor["scenes"] + [{"id": "s_old", "title": "Old"}])
+    write_json(os.path.join(store.dir, "versions", "project_20200101_000000.json"), old)
+    store.autosave(dict(harbor, project_id="p_me"), owner_check=False)  # taken over
+    store.add_take("s_gone", {"id": "v1"})                            # stamped p_me, not in the project
+    store.add_take("s_one", {"id": "v1"})                             # in the project
+    write_json(os.path.join(store.scene_dir("s_old"), "index.json"), {"starred": None, "takes": []})  # no stamp
+    write_json(os.path.join(store.scene_dir("s_who"), "index.json"), {"starred": None, "takes": []})  # nowhere
+    write_json(os.path.join(store.scene_dir("s_vers"), "index.json"), {"starred": None, "takes": []})
+    vers = dict(other, scenes=[{"id": "s_vers", "title": "V"}])
+    write_json(os.path.join(store.dir, "versions", "project_20200202_000000.json"), vers)
+    t = files.scan(roots, "harbor_lights")
+    sc = {n["sid"]: n for n in find(t["projects"][0], "o:reelwright/harbor_lights/scenes")["children"]}
+    assert sc["s_gone"]["flags"] == ["orphan"] and sc["s_old"]["flags"] == ["orphan"]
+    assert sc["s_theirs"]["flags"] == ["other_project"] and "Other film" in sc["s_theirs"]["note"]
+    assert sc["s_vers"]["flags"] == ["other_project"]
+    assert sc["s_who"]["flags"] == ["unknown_owner"]
+    assert sc["s_one"]["flags"] == []
+
+
+def test_pass_cache_and_cut_counter(roots, disk):
+    store, _ = disk
+    put(os.path.join(store.scene_dir("s_one"), "passes", "abcdef.mp4"), 900)
+    put(os.path.join(store.scene_dir("s_one"), "passes", "abcdef.json"), 10)
+    store.next_cut_path()
+    t = files.scan(roots, "harbor_lights")
+    cache = find(t["projects"][0], "o:reelwright/harbor_lights/scenes/s_one/passes")
+    assert cache["kind"] == "passes" and cache["label"] == "Pass cache" and cache["del"] and cache["size"] == 910
+    assert "cache" in cache["flags"]
+    nxt = find(t["projects"][0], "o:reelwright/harbor_lights/cuts/.next")
+    assert nxt and not nxt["del"]
+    r = files.delete(roots, ["o:reelwright/harbor_lights/cuts/.next", cache["id"]], current="harbor_lights")
+    assert r["removed"] == 1 and len(r["errors"]) == 1
+    assert not os.path.exists(os.path.join(store.scene_dir("s_one"), "passes"))
+
+
+def test_delete_refuses_ids_that_are_not_a_list(roots):
+    """Bug 7 (v0.6.0 review): ids=5 raised TypeError (the route answered 500)."""
+    for bad in (5, "p:film", {"a": 1}):
+        with pytest.raises(ValueError):
+            files.delete(roots, bad)
+    assert files.delete(roots, None)["removed"] == 0

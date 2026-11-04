@@ -59,6 +59,8 @@ def stubs(comfy, monkeypatch):
     def fake_guide(**kw):
         calls["guides"].append({"frame_idx": kw["frame_idx"], "frames": int(kw["image"].shape[0]),
                                 "audio": kw["audio"] is not None})
+        # added 2026-11-03 v0.6.0: the pass length, to check that every guide fits inside its pass
+        calls.setdefault("guide_fit", []).append((kw["frame_idx"], int(kw["image"].shape[0]), kw["latent"]["frames"]))
         return types.SimpleNamespace(result=(kw["positive"],))
 
     def fake_sample(model, positive, latent, seed, settings, on_step):
@@ -125,9 +127,11 @@ def test_render_pending_then_cache_then_partial(stubs, harbor, store, roots):
     long_passes = len(analyze(harbor, store)["scenes"]["s_long"]["plan"]["passes"])
     assert len(calls["encode"]) == 1 + long_passes + 1
     long_enc = calls["encode"][1]
-    assert long_enc["images"] == ["ref_image_0", "ref_image_1"]   # Mara's sheet + the named keyframe
+    # Mara's sheet (v0.6.0: the keyframe picture named in the prompt goes only with the pass that holds the keyframe)
+    assert long_enc["images"][0] == "ref_image_0"
     assert long_enc["videos"] == ["ref_video_0"] and long_enc["video_audios"] == ["ref_video_audio_0"]
-    assert long_enc["audios"] == ["ref_audio_0"]                  # Mara's voice
+    # Mara's voice (v0.6.0: sent with the passes where she speaks)
+    assert any(e["audios"] == ["ref_audio_0"] for e in calls["encode"][1:1 + long_passes])
 
     # pass 1 continues the previous scene's 39-frame tail with audio; later passes get overlap or keyframe guides
     assert calls["guides"][0] == {"frame_idx": 0, "frames": 39, "audio": True}
@@ -391,3 +395,675 @@ def test_render_with_a_soundtrack(stubs, harbor, store, roots):
     assert out["soundtrack"] == 1
     from reelwright.model import scene_starts
     assert out["duration"] == pytest.approx(scene_starts(p)[1], abs=0.05)
+
+
+# ---- v0.6.0 (added 2026-11-03) ------------------------------------------------------------------------------------
+
+def _run_events(events, phase=None):
+    return [d for e, d in events if e == "reelwright.run" and (phase is None or d.get("phase") == phase)]
+
+
+def _stop_on(render, monkeypatch, calls, nth):
+    """The stub sampler raises ComfyUI's Stop on its nth call."""
+    import comfy.model_management as mm
+    real = render._sample
+
+    def sample(model, positive, latent, seed, settings, on_step):
+        if len(calls["sample"]) + 1 == nth:
+            raise mm.InterruptProcessingException()
+        return real(model, positive, latent, seed, settings, on_step)
+    monkeypatch.setattr(render, "_sample", sample)
+
+
+def test_run_end_event_is_sent_after_stop(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    import comfy.model_management as mm
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    _stop_on(render, monkeypatch, calls, 2)
+    with pytest.raises(mm.InterruptProcessingException):
+        render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    start, end = _run_events(events, "start"), _run_events(events, "end")
+    assert len(start) == 1 and len(end) == 1
+    assert end[0]["interrupted"] is True and end[0]["error"] and end[0]["run_id"] == start[0]["run_id"]
+    assert end[0]["rendered"] == ["s_one"] and end[0]["failed"] == [] and end[0]["skipped"] == []
+    assert end[0]["targets"] == ["s_one", "s_long", "s_short"]
+    from reelwright import jobs
+    assert not jobs.is_busy(harbor["slug"], "render")  # the render job is released
+
+
+def test_precheck_failure_is_rejected_before_start(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    os.remove(os.path.join(roots.input, "reelwright/harbor_lights/dolly.mp4"))
+    with pytest.raises(RuntimeError, match="fix these first") as e:
+        render.Renderer(harbor, store, {}, {"action": "all"}).run()
+    assert "dolly" in str(e.value)
+    assert [d["phase"] for d in _run_events(events)] == ["rejected"]
+    assert "dolly" in _run_events(events)[0]["error"] and calls["sample"] == [] and calls["encode"] == []
+    # a continuing scene whose upstream has no take and is not rendered in this run
+    events.clear()
+    _real_assets(harbor, roots)
+    with pytest.raises(RuntimeError, match="no take yet"):
+        render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_long"]}).run()
+    assert [d["phase"] for d in _run_events(events)] == ["rejected"]
+    # an unknown action is rejected too
+    events.clear()
+    with pytest.raises(ValueError):
+        render.Renderer(harbor, store, {}, {"action": "bogus"}).run()
+    assert [d["phase"] for d in _run_events(events)] == ["rejected"]
+
+
+def test_failing_scene_skips_the_scenes_that_continue_from_it(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    real = render._sample
+    s_one_seed = harbor["global"]["sampling"]["seed"]  # scene 1's first take samples with the base seed
+
+    def sample(model, positive, latent, seed, settings, on_step):
+        if seed == s_one_seed:
+            raise RuntimeError("CUDA out of memory (test)")
+        return real(model, positive, latent, seed, settings, on_step)
+    monkeypatch.setattr(render, "_sample", sample)
+    with pytest.raises(RuntimeError, match="1 scene failed") as e:
+        render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    assert "out of memory" in str(e.value) and "skipped" in str(e.value)
+    end = _run_events(events, "end")[0]
+    assert end["rendered"] == ["s_short"] and end["interrupted"] is False and "error" not in end
+    assert end["failed"] == [{"scene_id": "s_one", "error": "CUDA out of memory (test)"}]
+    assert [x["scene_id"] for x in end["skipped"]] == ["s_long"] and "01 Harbor at dusk" in end["skipped"][0]["reason"]
+    phases = {(d["scene_id"], d["phase"]) for e, d in events if e == "reelwright.progress"}
+    assert ("s_one", "error") in phases and ("s_long", "skipped") in phases and ("s_short", "done") in phases
+    assert store.starred_take("s_short") and not store.starred_take("s_one") and not store.starred_take("s_long")
+
+
+def test_pass_cache_is_reused_after_stop(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    from reelwright.analysis import analyze
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    import comfy.model_management as mm
+    _stop_on(render, monkeypatch, calls, 4)  # s_one, s_long pass 1 and 2 finish; Stop during s_long pass 3
+    with pytest.raises(mm.InterruptProcessingException):
+        render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    assert len(calls["sample"]) == 3
+    pdir = os.path.join(store.scene_dir("s_long"), "passes")
+    assert len([f for f in os.listdir(pdir) if f.endswith(".mp4")]) == 2
+    assert not any(".partial." in f for f in os.listdir(pdir))
+    first_seeds = list(calls["sample"])
+    calls["sample"].clear()
+    events.clear()
+    monkeypatch.setattr(render, "_sample", _plain_sampler(calls))
+    done = render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    assert done == ["s_long", "s_short"]
+    assert len(calls["sample"]) == 2 and calls["sample"][0] not in first_seeds  # only pass 3 of s_long and s_short
+    reuse = [d["pass"] for e, d in events if e == "reelwright.progress" and d["phase"] == "reuse"]
+    assert reuse == [1, 2]
+    take = store.starred_take("s_long")
+    plan = analyze(harbor, store)["scenes"]["s_long"]["plan"]
+    assert take["cached_passes"] == 2 and take["sampled_frames"] == plan["passes"][2]["gen_frames"]
+    assert len(take["pass_keys"]) == 3 and all(os.path.isfile(os.path.join(pdir, k + ".mp4")) for k in take["pass_keys"])
+    from reelwright import merge
+    assert merge.probe(store.output_path(take["files"]["video"]))["duration"] == pytest.approx(32.0, abs=0.1)
+
+
+def _plain_sampler(calls):
+    def fake_sample(model, positive, latent, seed, settings, on_step):
+        calls["sample"].append(seed)
+        on_step(settings["steps"], settings["steps"])
+        return latent
+    return fake_sample
+
+
+def test_tail_is_the_last_124_frames_across_passes(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    from reelwright import media, merge
+    from reelwright.analysis import analyze
+    harbor["global"]["output"].update(width=64, height=32)
+    harbor["global"]["long"].update(max_pass_frames=158, seam_mode="cuts")
+    _real_assets(harbor, roots)
+    harbor["scenes"] = [harbor["scenes"][0]]
+    harbor["scenes"][0].update(duration=10.0, shots=[{"id": "h_a", "t": 0, "camera": "Wide", "text": "a"},
+                                                     {"id": "h_b", "t": 6.5, "camera": "Close", "text": "b"}])
+    plan = analyze(harbor, store)["scenes"]["s_one"]["plan"]
+    assert [x["keep_out_frames"] - x["keep_in_frames"] for x in plan["passes"]] == [156, 84]  # last pass < 124
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    take = store.starred_take("s_one")
+    frames, audio = media.load_video(store.output_path(take["files"]["tail"]))
+    assert frames.shape[0] == render.TAIL_FRAMES == 124
+    assert audio is not None and audio["waveform"].shape[-1] / audio["sample_rate"] == pytest.approx(124 / 24, abs=0.05)
+    # the stub decoder ramps 0 -> 1 through each pass: the tail starts late in pass 1 and ends late in pass 2
+    lum = frames.mean(dim=(1, 2, 3))
+    assert lum[0] > 0.6 and lum[39] > 0.9 and lum[40] < 0.1 and lum[-1] > 0.6
+    last = media.load_image(store.output_path(take["files"]["last"]))
+    assert float(last.mean()) == pytest.approx(float(lum[-1]), abs=0.05)
+    assert merge.probe(store.output_path(take["files"]["video"]))["duration"] == pytest.approx(10.0, abs=0.1)
+
+
+def test_new_take_upstream_marks_the_continuing_scene_stale(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    from reelwright.analysis import analyze
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    assert store.starred_take("s_long")["upstream"] == {"scene_id": "s_one", "take_id": "v1"}
+    assert analyze(harbor, store)["scenes"]["s_long"]["status"] == "cached"
+    render.Renderer(harbor, store, {}, {"action": "take", "scenes": ["s_one"]}).run()
+    r = analyze(harbor, store)["scenes"]
+    assert r["s_long"]["status"] == "stale" and r["s_long"]["upstream_take"] == "v2" and r["s_long"]["upstream_changed"]
+    calls["sample"].clear()
+    assert render.Renderer(harbor, store, {}, {"action": "pending"}).run() == ["s_long"]
+    assert store.starred_take("s_long")["upstream"]["take_id"] == "v2"
+    assert analyze(harbor, store)["scenes"]["s_long"]["status"] == "cached"
+
+
+def test_pass_retake(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    harbor["global"]["long"]["seam_mode"] = "overlap"
+    _real_assets(harbor, roots)
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    v1 = store.starred_take("s_long")
+    n = len(v1["seeds"])
+    assert n >= 3
+    calls["sample"].clear()
+    calls["guides"].clear()
+    events.clear()
+    render.Renderer(harbor, store, {}, {"action": "pass_retake", "scene_id": "s_long", "pass": 2}).run()
+    v2 = store.starred_take("s_long")
+    assert v2["id"] != v1["id"] and v2["seeds"][0] == v1["seeds"][0] and v2["seeds"][1] != v1["seeds"][1]
+    assert v2["seeds"][2:] == v1["seeds"][2:]
+    assert calls["sample"] == v2["seeds"][1:]            # pass 1 from the pass cache; later passes re-guided
+    assert v2["pass_keys"][0] == v1["pass_keys"][0] and v2["pass_keys"][2] != v1["pass_keys"][2]
+    assert [d["pass"] for e, d in events if e == "reelwright.progress" and d["phase"] == "reuse"] == [1]
+    # a pass that does not exist is refused before anything runs
+    with pytest.raises(ValueError, match="no pass 9"):
+        render.Renderer(harbor, store, {}, {"action": "pass_retake", "scene_id": "s_long", "pass": 9}).run()
+
+
+def test_variants_star_the_best_face_match(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    render.Renderer(harbor, store, {}, {"action": "variants", "scene_ids": ["s_short", "s_one"], "n": 3}).run()
+    for sid in ("s_one", "s_short"):
+        idx = store.read_index(sid)
+        assert [t["id"] for t in idx["takes"]] == ["v1", "v2", "v3"] and idx["starred"] == "v1"
+        assert len({t["seeds"][0] for t in idx["takes"]}) == 3
+    # with face check on, the best match is starred
+    harbor["global"]["continuity"]["face_check"] = True
+    monkeypatch.setattr(render.continuity, "available", lambda: True)
+    scores = iter([0.41, 0.77, 0.52])
+    monkeypatch.setattr(render.continuity, "check_scene", lambda *a, **k: {"c_mara": next(scores)})
+    render.Renderer(harbor, store, {}, {"action": "variants", "scene_ids": ["s_short"], "n": 3}).run()
+    idx = store.read_index("s_short")
+    assert [t["id"] for t in idx["takes"]][-3:] == ["v4", "v5", "v6"] and idx["starred"] == "v5"
+    assert idx["takes"][-2]["face_score"] == 0.77
+
+
+def test_drift_retake_is_starred_only_when_better(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    harbor["global"]["continuity"].update(face_check=True, on_drift="retake", face_threshold=0.8)
+    _real_assets(harbor, roots)
+    monkeypatch.setattr(render.continuity, "available", lambda: True)
+    scores = iter([0.6, 0.4, 0.5, 0.7])
+    monkeypatch.setattr(render.continuity, "check_scene", lambda *a, **k: {"c_mara": next(scores)})
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()
+    idx = store.read_index("s_short")
+    assert [t["id"] for t in idx["takes"]] == ["v1", "v2"] and idx["starred"] == "v1"  # the retake scored worse
+    render.Renderer(harbor, store, {}, {"action": "take", "scenes": ["s_short"]}).run()
+    idx = store.read_index("s_short")
+    assert [t["id"] for t in idx["takes"]] == ["v1", "v2", "v3", "v4"] and idx["starred"] == "v4"
+
+
+def test_manual_star_survives_the_next_run(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()
+    harbor["scenes"][2]["shots"] = [{"id": "h_x", "t": 0, "camera": "Close", "text": "a hand on the door"}]
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()
+    assert store.read_index("s_short")["starred"] == "v2"
+    store.star("s_short", "v1")  # the user prefers the first one
+    events.clear()
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_one"]}).run()
+    assert store.read_index("s_short")["starred"] == "v1"
+    assert _run_events(events, "start")[0]["reused"] == []
+    # undoing the edit: the run stars the take that matches (the star was set by a render)
+    harbor["scenes"][2]["shots"] = []
+    store.star("s_short", "v2")
+    idx = store.read_index("s_short")
+    idx["auto_star"] = "v2"
+    store.write_index("s_short", idx)
+    events.clear()
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    assert store.read_index("s_short")["starred"] == "v1" and "s_short" in _run_events(events, "start")[0]["reused"]
+
+
+def test_short_scene_keep_window_move_retrims_without_sampling(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    from reelwright import merge
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()
+    calls["sample"].clear()
+    harbor["scenes"][2]["trim"]["in"] = 0.5
+    assert render.Renderer(harbor, store, {}, {"action": "pending"}).run() == ["s_one", "s_long", "s_short"]
+    assert len([s for s in calls["sample"]]) == 1 + 3      # s_one and the three passes of s_long; s_short re-trimmed
+    take = store.starred_take("s_short")
+    assert take["id"] == "v2" and take["sampled_frames"] == 0 and take["cached_passes"] == 1
+    assert merge.probe(store.output_path(take["files"]["video"]))["duration"] == pytest.approx(2.5, abs=0.1)
+
+
+def test_video_guides_fit_their_pass(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    from reelwright import analysis
+    real_lint = analysis.lint_project
+
+    def lint_as_warnings(*a, **k):  # whatever level the lint gives a long clip, the render must place it inside
+        return [dict(x, level="warning") if "clip" in x["message"] else x for x in real_lint(*a, **k)]
+    monkeypatch.setattr(analysis, "lint_project", lint_as_warnings)
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    harbor["scenes"][2]["refs"] = [{"id": "r_end", "asset": "a_dolly", "role": "last_frame"}]
+    harbor["scenes"][0]["refs"] = [{"id": "r_k", "asset": "a_dolly", "role": "keyframe", "time": 7.9}]
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_one", "s_short"]}).run()
+    fits = calls["guide_fit"]
+    assert len(fits) == 2 and all(0 <= idx and idx + n <= length for idx, n, length in fits)
+    short = next(f for f in fits if f[2] == 124)
+    plan_last = 29 + 60 - 1  # keep window 29..89 of the 124-frame pass
+    assert short[0] + short[1] - 1 == plan_last and (short[1] - 5) % 17 == 0   # ends on the scene's last frame
+    keyf = next(f for f in fits if f[2] == 192)
+    assert keyf[0] == 190 and keyf[1] == 1                    # 2 frames left: one frame
+
+
+def test_fit_clip(comfy):
+    render, _ = comfy
+    assert render.fit_clip(0, 100, 124) == (0, 0, 90)
+    assert render.fit_clip(120, 100, 124) == (120, 0, 1)
+    assert render.fit_clip(100, 100, 124) == (100, 0, 22)
+    assert render.fit_clip(88, 100, 124, "last_frame") == (16, 27, 73)
+    assert render.fit_clip(2, 100, 124, "last_frame") == (2, 99, 1)
+    assert render.fit_clip(-1, 3, 124) == (123, 0, 1)
+    with pytest.raises(ValueError):
+        render.fit_clip(124, 100, 124)
+
+
+def test_reference_media_are_cut_before_decoding(comfy, tmp_path):
+    from reelwright import media, merge
+    ff = merge.ffmpeg_bin()
+    path = str(tmp_path / "long.mp4")
+    subprocess.run([ff, "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=64x32:r=30:d=40", "-f", "lavfi",
+                    "-i", "sine=d=40", "-shortest", "-pix_fmt", "yuv420p", path], check=True)
+    frames, audio = media.load_video(path, max_seconds=15, max_frames=360)
+    assert frames.shape[0] == 360 and audio["waveform"].shape[-1] / audio["sample_rate"] == pytest.approx(15, abs=0.05)
+    tail, taudio = media.load_video(path, last_frames=124)
+    assert tail.shape[0] == 124 and taudio["waveform"].shape[-1] / taudio["sample_rate"] == pytest.approx(124 / 24, abs=0.05)
+    assert media.frame_positions(10, 24, 4) == [0, 1, 2, 3]
+    assert media.frame_positions(100, 30, 5) == [0, 1, 2, 3, 5]       # floor(i * 30 / 24)
+    assert media.frame_positions(3, 24, 5) == [0, 1, 2, 2, 2]
+    wav = str(tmp_path / "voice.wav")
+    subprocess.run([ff, "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=d=20", wav], check=True)
+    a = media.load_audio(wav, max_seconds=15)
+    assert a["waveform"].shape[-1] / a["sample_rate"] == pytest.approx(15, abs=0.01)
+
+
+def test_audio_references_are_trimmed_to_15_seconds(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    from reelwright import merge
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    subprocess.run([merge.ffmpeg_bin(), "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=d=20", "-f", "wav",
+                    os.path.join(roots.input, "reelwright/harbor_lights/voice.wav")], check=True)
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    secs = [x for e in calls["encode"] for x in e["audio_secs"]]
+    assert secs and max(secs) <= 15.0 + 1e-6
+
+
+def test_unfinished_take_folders_are_removed(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    stale = store.take_dir("s_short", "v7")
+    os.makedirs(os.path.join(stale, "passes"))
+    open(os.path.join(stale, "passes", "p1.mp4"), "wb").close()
+    kept = store.take_dir("s_short", "v8")
+    os.makedirs(kept)
+    with open(os.path.join(kept, "meta.json"), "w") as f:
+        f.write("{}")
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()
+    assert not os.path.exists(stale) and os.path.isdir(kept)
+    take = store.starred_take("s_short")
+    assert not os.path.exists(os.path.join(store.take_dir("s_short", take["id"]), "passes"))
+
+
+def test_take_meta_records_upstream_prompts_and_keys(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    take = store.starred_take("s_long")
+    with open(os.path.join(store.take_dir("s_long", take["id"]), "meta.json")) as f:
+        meta = json.load(f)
+    for t in (take, meta):
+        assert t["upstream"] == {"scene_id": "s_one", "take_id": "v1"}
+        assert len(t["prompts"]) == len(t["pass_keys"]) == 3 and t["render_seconds"] >= 0
+        assert "face_score" in t and t["sampled_frames"] > 0
+    assert store.starred_take("s_one")["upstream"] is None
+    idx = store.read_index("s_one")
+    assert idx["auto_star"] == "v1"
+
+
+def test_node_output_is_a_full_cut_never_a_draft(stubs, harbor, roots, monkeypatch):
+    render, calls, events = stubs
+    import shutil
+    from reelwright import assemble as asm
+    from reelwright.node import Reelwright, full_cuts
+    from reelwright.storage import ProjectStore
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    out = Reelwright.execute(json.dumps(harbor), json.dumps({"action": "pending"}))
+    full = out.result[0].get_duration()
+    store = ProjectStore(roots, harbor["slug"])
+    cut = full_cuts(store)[0]
+    shot = store.output_path(store.starred_take("s_short")["files"]["video"])
+    for name in ("harbor_lights_cut_v90_draft.mp4", "harbor_lights_cut_v91_range.mp4", "harbor_lights_cut_v92.partial.mp4"):
+        shutil.copy(shot, os.path.join(store.cuts_dir(), name))
+    assert full_cuts(store) == [cut]
+    out = Reelwright.execute(json.dumps(harbor), json.dumps({"action": "pending", "token": 2}))  # nothing to render
+    assert out.result[0].get_duration() == pytest.approx(full, abs=0.05)
+
+    def boom(*a, **k):
+        raise ValueError("not a MergeError")
+    monkeypatch.setattr(asm, "merge_project", boom)
+    out = Reelwright.execute(json.dumps(harbor), json.dumps({"action": "take", "scenes": ["s_short"]}))
+    assert out.result[0].get_duration() == pytest.approx(2.5, abs=0.1)  # the new take: the merge failed
+
+
+def test_extension_loads_without_h3_nodes(roots):
+    """render.py must import without comfy_extras.nodes_minimax_h3; a render is then refused up front."""
+    code = r'''
+import importlib.abc, json, sys
+class Block(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path, target=None):
+        if name == "comfy_extras.nodes_minimax_h3":
+            raise ImportError("no H3 here")
+sys.meta_path.insert(0, Block())
+from comfy.cli_args import args
+args.cpu = True
+import folder_paths
+folder_paths.set_output_directory(sys.argv[1]); folder_paths.set_input_directory(sys.argv[2])
+import server
+class S:
+    def send_sync(self, e, d, sid=None):
+        print("EVENT", json.dumps([e, d]))
+server.PromptServer.instance = S()
+from reelwright import render
+from reelwright.model import default_project
+from reelwright.storage import ProjectStore, Roots
+print("H3", render.h3_available())
+p = default_project("No H3")
+store = ProjectStore(Roots(sys.argv[1], sys.argv[2], sys.argv[1]), p["slug"])
+try:
+    render.Renderer(p, store, {}, {"action": "pending"}).run()
+except RuntimeError as e:
+    print("REFUSED", "MiniMax H3" in str(e))
+'''
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = subprocess.run([sys.executable, "-c", code, roots.output, roots.input], capture_output=True, text=True,
+                       cwd=root, env=dict(os.environ, PYTHONPATH=os.pathsep.join([COMFY, root])), timeout=300)
+    assert "H3 False" in r.stdout, r.stderr[-2000:]
+    assert "REFUSED True" in r.stdout, r.stdout[-2000:] + r.stderr[-2000:]
+    assert '"phase": "rejected"' in r.stdout
+
+
+def test_pass_files_of_older_takes_are_reused(stubs, harbor, store, roots):
+    """A take from before v0.6.0 kept its passes in takes/<id>/passes/pN.mp4; a keep-window move uses them."""
+    render, calls, events = stubs
+    import shutil
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()
+    # turn the take into one made by v0.5.1
+    idx = store.read_index("s_short")
+    t = idx["takes"][0]
+    tdir = store.take_dir("s_short", t["id"])
+    os.makedirs(os.path.join(tdir, "passes"))
+    shutil.move(store.output_path(t["files"]["passes"][0]), os.path.join(tdir, "passes", "p1.mp4"))
+    shutil.rmtree(os.path.join(store.scene_dir("s_short"), "passes"))
+    t["files"]["passes"] = [store.rel_output(os.path.join(tdir, "passes", "p1.mp4"))]
+    for k in ("pass_keys", "upstream", "offsets"):
+        t.pop(k)
+    store.write_index("s_short", idx)
+    calls["sample"].clear()
+    harbor["scenes"][2]["trim"]["in"] = 0.25
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()
+    assert calls["sample"] == []
+    take = store.starred_take("s_short")
+    assert take["cached_passes"] == 1 and os.path.isfile(store.output_path(take["files"]["passes"][0]))
+
+
+def test_node_refuses_a_folder_of_another_project(stubs, harbor, roots):
+    render, calls, events = stubs
+    from reelwright.node import Reelwright
+    from reelwright.storage import ProjectStore, write_json
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    store = ProjectStore(roots, harbor["slug"])
+    os.makedirs(store.dir, exist_ok=True)
+    write_json(os.path.join(store.dir, "project.json"), dict(harbor, project_id="p_other", name="Other film"))
+    harbor["project_id"] = "p_mine"
+    with pytest.raises(RuntimeError, match="holds another project"):
+        Reelwright.execute(json.dumps(harbor), json.dumps({"action": "pending"}))
+    assert [d["phase"] for d in _run_events(events)] == ["rejected"] and calls["sample"] == []
+
+
+def test_auto_merge_events_carry_a_job(stubs, harbor, roots):
+    render, calls, events = stubs
+    from reelwright.node import Reelwright
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    Reelwright.execute(json.dumps(harbor), json.dumps({"action": "pending"}))
+    merges = [d for e, d in events if e == "reelwright.merge"]
+    assert merges[0]["phase"] == "start" and merges[-1]["phase"] == "end" and merges[-1]["files"]["video"]
+    assert len({d["job"] for d in merges}) == 1 and merges[0]["job"].startswith("merge-")
+
+
+# ---- v0.6.0 review (added 2026-11-03) -----------------------------------------------------------------------------
+
+def test_error_upstream_does_not_keep_the_next_scene_stale(stubs, harbor, store, roots):
+    """An upstream scene with a lint error and an undone edit (an older take matches, a newer one is starred): the
+    continuing scene is keyed against the starred take, the one the render uses, so one run makes it cached."""
+    render, calls, events = stubs
+    from reelwright.analysis import analyze
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    one = harbor["scenes"][0]
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()            # s_one v1, s_long v1
+    one["shots"][0]["text"] = "edited"
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()            # s_one v2 (starred), s_long v2
+    one["shots"][0]["text"] = "boats rock in the harbor"                       # undo: s_one v1 matches again
+    one["dialogue"] = [{"id": "d_x", "speaker": "", "t": 30.0, "text": "too late"}]  # lint error
+    harbor["scenes"][1]["shots"][0]["text"] = "Mara leaves the pier, slowly"    # s_long needs a new take
+    r = analyze(harbor, store)["scenes"]
+    assert r["s_one"]["status"] == "error" and r["s_one"]["match"] == "v1" and r["s_one"]["starred"] == "v2"
+    assert r["s_long"]["status"] == "stale" and r["s_long"]["upstream_take"] == "v2"
+    runs = [render.Renderer(harbor, store, {}, {"action": "pending"}).run() for _ in range(3)]
+    assert runs == [["s_long"], [], []]
+    assert store.starred_take("s_long")["upstream"]["take_id"] == "v2"
+    assert analyze(harbor, store)["scenes"]["s_long"]["status"] == "cached"
+
+
+def test_shortened_error_upstream_does_not_rerender_the_next_scene(stubs, harbor, store, roots):
+    """The scene before is shortened so one of its lines falls past its end (a lint error and a new key). It is not
+    rendered, and the scene that continues from its starred take stays cached."""
+    render, calls, events = stubs
+    from reelwright.analysis import analyze
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    harbor["scenes"][0]["dialogue"] = [{"id": "d_a", "speaker": "", "t": 6.0, "text": "the gulls"}]
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    harbor["scenes"][0]["duration"] = 5.0
+    r = analyze(harbor, store)["scenes"]
+    assert r["s_one"]["status"] == "error" and r["s_long"]["status"] == "cached"
+    calls["sample"].clear()
+    runs = [render.Renderer(harbor, store, {}, {"action": "pending"}).run() for _ in range(2)]
+    assert runs == [[], []] and calls["sample"] == []
+
+
+def test_error_upstream_reuse_keeps_the_next_scenes_star(stubs, harbor, store, roots):
+    """reuse() must not star a take of the continuing scene that was rendered from another upstream take than the
+    starred one of an error scene (which no run re-stars)."""
+    render, calls, events = stubs
+    from reelwright.analysis import analyze
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    one = harbor["scenes"][0]
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()            # s_long v1 from s_one v1
+    one["shots"][0]["text"] = "edited"
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()            # s_long v2 from s_one v2
+    one["shots"][0]["text"] = "boats rock in the harbor"                       # undo: s_one v1 matches again
+    one["dialogue"] = [{"id": "d_x", "speaker": "", "t": 30.0, "text": "too late"}]  # lint error
+    r = analyze(harbor, store)["scenes"]
+    assert r["s_one"]["status"] == "error" and r["s_one"]["starred"] == "v2"
+    assert r["s_long"]["status"] == "cached" and r["s_long"]["match"] == "v2" and r["s_long"]["upstream_take"] == "v2"
+    events.clear()
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()
+    assert _run_events(events, "start")[0]["reused"] == []
+    assert store.read_index("s_one")["starred"] == "v2" and store.read_index("s_long")["starred"] == "v2"
+    assert store.starred_take("s_long")["upstream"]["take_id"] == "v2"
+
+
+def _short_upstream(render, harbor, store, roots):
+    """s_e continues s_short with a 73-frame tail; s_short's hand-picked take v1 is 2.5 s (60 frames) long."""
+    from reelwright.model import normalize_project
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    harbor["scenes"].append({"id": "s_e", "title": "E", "duration": 6.0, "start": {"mode": "tail", "overlap_frames": 73}})
+    p = normalize_project(harbor)
+    render.Renderer(p, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()   # v1: 60 frames
+    p["scenes"][2]["duration"] = 6.0
+    render.Renderer(p, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()   # v2: 144 frames
+    store.star("s_short", "v1")                                                          # the user prefers v1
+    return p
+
+
+def test_tail_longer_than_the_upstream_take_is_refused(stubs, harbor, store, roots):
+    """The tail overlap is planned from the current length of the scene before, but cut from the take it continues
+    from: a shorter take is a warning in the plan and refused in pre-flight (it used to send fewer guide frames than
+    the cut trims, about 13 frames off at the seam)."""
+    render, calls, events = stubs
+    from reelwright.analysis import analyze
+    p = _short_upstream(render, harbor, store, roots)
+    r = analyze(p, store)
+    s_e = r["scenes"]["s_e"]
+    assert s_e["plan"]["passes"][0]["overlap_frames"] == 73 and s_e["upstream_take"] == "v1"
+    assert s_e["status"] == "missing"  # a warning, not a lint error
+    warn = [x for x in s_e["issues"] if x.get("code") == "short_upstream_tail"]
+    assert len(warn) == 1 and warn[0]["level"] == "warn" and "only 60 frames" in warn[0]["message"]
+    assert "at most 56 frames" in warn[0]["message"] and warn[0] in r["issues"]
+    events.clear()
+    calls["guides"].clear()
+    with pytest.raises(RuntimeError, match="only 60 frames") as e:
+        render.Renderer(p, store, {}, {"action": "selected", "scenes": ["s_e"]}).run()
+    assert "Render 03 Hand on the door again" in str(e.value)
+    assert [d["phase"] for d in _run_events(events)] == ["rejected"] and calls["guides"] == []
+    with pytest.raises(RuntimeError, match="only 60 frames"):  # "Render pending" picks s_e (missing) and refuses
+        render.Renderer(p, store, {}, {"action": "pending"}).run()
+    # the render itself never sends a shorter guide
+    rr = render.Renderer(p, store, {}, {"action": "selected", "scenes": ["s_e"]})
+    with pytest.raises(RuntimeError, match="has only 60 frames"):
+        rr._upstream_tail(store.starred_take("s_short"), 73)
+    # rendering the scene before in the same run gives a take of the current length: no refusal, a full guide
+    render.Renderer(p, store, {}, {"action": "selected", "scenes": ["s_short", "s_e"]}).run()
+    assert calls["guides"][0]["frames"] == 73 and store.starred_take("s_e")["upstream"]["take_id"] == "v3"
+    assert not [x for x in analyze(p, store)["scenes"]["s_e"]["issues"] if x.get("code") == "short_upstream_tail"]
+
+
+def test_preflight_checks_the_take_reuse_will_star(stubs, harbor, store, roots):
+    """Pre-flight runs before reuse(): it checks the take the scene before provides (the one reuse() stars), not the
+    starred take reuse() is about to replace."""
+    render, calls, events = stubs
+    from reelwright.analysis import analyze
+    p = _short_upstream(render, harbor, store, roots)
+    idx = store.read_index("s_short")
+    idx["auto_star"] = "v1"  # v1 starred by a render (an undone edit), so reuse() goes back to v2 (current length)
+    store.write_index("s_short", idx)
+    r = analyze(p, store)["scenes"]
+    assert r["s_short"]["match"] == "v2" and r["s_e"]["upstream_take"] == "v2"
+    assert not [x for x in r["s_e"]["issues"] if x.get("code") == "short_upstream_tail"]
+    calls["guides"].clear()
+    assert render.Renderer(p, store, {}, {"action": "selected", "scenes": ["s_e"]}).run() == ["s_e"]
+    assert store.read_index("s_short")["starred"] == "v2" and calls["guides"][0]["frames"] == 73
+
+
+def _face_drift(render, harbor, monkeypatch):
+    harbor["global"]["continuity"].update(face_check=True, on_drift="retake", face_threshold=0.8)
+    monkeypatch.setattr(render.continuity, "available", lambda: True)
+    monkeypatch.setattr(render.continuity, "check_scene", lambda *a, **k: {"c_mara": 0.5})  # drifted -> retake
+
+
+def test_failed_drift_retake_keeps_the_scene(stubs, harbor, store, roots, monkeypatch):
+    """A drift retake that fails after the first take was made and starred is a warning: the scene counts as
+    rendered and the scenes that continue from it render."""
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    _face_drift(render, harbor, monkeypatch)
+    real = render._sample
+    n = {"s_one": 0}
+
+    def sample(model, positive, latent, seed, settings, on_step):
+        if latent["frames"] == 192:          # s_one's single pass
+            n["s_one"] += 1
+            if n["s_one"] == 2:              # the drift retake
+                raise RuntimeError("CUDA out of memory (retake)")
+        return real(model, positive, latent, seed, settings, on_step)
+    monkeypatch.setattr(render, "_sample", sample)
+    done = render.Renderer(harbor, store, {}, {"action": "pending"}).run()   # does not raise
+    assert done[:2] == ["s_one", "s_long"]
+    end = _run_events(events, "end")[0]
+    assert end["failed"] == [] and end["skipped"] == [] and end["rendered"] == done
+    assert len(end["warnings"]) == 1 and end["warnings"][0]["scene_id"] == "s_one"
+    assert "drift retake failed" in end["warnings"][0]["message"] and "out of memory" in end["warnings"][0]["message"]
+    assert store.read_index("s_one")["starred"] == "v1" and [t["id"] for t in store.read_index("s_one")["takes"]] == ["v1"]
+    assert store.starred_take("s_long")["upstream"]["take_id"] == "v1"
+    warned = [d for e, d in events if e == "reelwright.progress" and d.get("warning")]
+    assert len(warned) == 1 and warned[0]["scene_id"] == "s_one" and warned[0]["phase"] == "done"
+
+
+def test_failed_variant_is_a_warning(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    real = render._sample
+
+    def sample(model, positive, latent, seed, settings, on_step):
+        if len(calls["sample"]) == 1 and not calls.get("failed"):   # the second variant
+            calls["failed"] = True
+            raise RuntimeError("CUDA out of memory (variant)")
+        return real(model, positive, latent, seed, settings, on_step)
+    monkeypatch.setattr(render, "_sample", sample)
+    assert render.Renderer(harbor, store, {}, {"action": "variants", "scene_ids": ["s_short"], "n": 3}).run() == ["s_short"]
+    idx = store.read_index("s_short")
+    assert len(idx["takes"]) == 2 and idx["starred"] == idx["takes"][0]["id"]
+    end = _run_events(events, "end")[0]
+    assert end["failed"] == [] and [w["scene_id"] for w in end["warnings"]] == ["s_short"]
+    assert end["warnings"][0]["message"].startswith("variant 2 of 3 failed")
+
+
+def test_stop_during_a_drift_retake_still_stops_the_run(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    import comfy.model_management as mm
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    _face_drift(render, harbor, monkeypatch)
+    _stop_on(render, monkeypatch, calls, 2)          # the drift retake of s_one
+    with pytest.raises(mm.InterruptProcessingException):
+        render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    end = _run_events(events, "end")[0]
+    assert end["interrupted"] is True and end["warnings"] == [] and "s_long" not in end["rendered"]
+    assert len(calls["sample"]) == 1

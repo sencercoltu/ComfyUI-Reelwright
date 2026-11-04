@@ -17,9 +17,16 @@ into one video. Only what you changed gets rendered again.
 - **Global settings with per-scene overrides** (models, VAEs, LoRA stack, seed,
   steps, size). Hollow dot = follows Global; coral dot = overridden.
 - **Incremental rendering.** Each scene has a cache key built from everything
-  that affects its pixels. Edit scene 2 and only scene 2, plus the scenes that
-  continue from it, render again. Resume after a crash. Keep several takes per
-  scene and star one.
+  that affects its pixels, including the take it continues from. Edit scene 2
+  and only scene 2, plus the scenes that continue from it, render again.
+  Finished passes are kept, so after Stop, an error or a crash the next render
+  starts where it stopped. Keep several takes per scene and star one.
+- **Safe runs.** Before using the GPU, a render checks every file, model and
+  upstream take it needs and lists all problems. One failing scene doesn't stop
+  the others. The Render tab estimates how long the queue takes.
+- **Retakes and variants.** Give one pass of a long scene a new seed and keep
+  the rest, or render several takes of a scene at once and compare them A/B
+  (with the face check on, the best match is starred).
 - **Memory friendly.** Every scene is written to MP4 and its frames are freed
   before the next one starts. Prompts can be encoded up front so the 27 GB text
   encoder is unloaded before sampling.
@@ -27,14 +34,21 @@ into one video. Only what you changed gets rendered again.
   them there. Each pass of each scene gets exactly the part of the song it
   covers as an H3 audio reference, so lips and movement follow it, and the
   merge plays the song unchanged, with the scenes' own sound under it or off.
-- **Merge scenes.** One click, no re-render. Cuts, crossfades or dips to black;
-  loudness normalisation; soundtrack tracks (a looping score that ducks too); colour
-  match; subtitles (.srt), chapters, and OpenTimelineIO / FCPXML timelines for
-  Resolve or Premiere.
+  Beat markers show the tempo, beats and bar starts; scene edges, shot cuts
+  and tracks can snap to them. Auto-roll keeps later scenes on the song while
+  you change a scene's length.
+- **Merge scenes.** One click, no re-render, and it can be stopped. Cuts,
+  crossfades or dips to black; loudness normalisation; soundtrack tracks (a
+  looping score that ducks too); colour match; subtitles (.srt), chapters, and
+  OpenTimelineIO / FCPXML timelines (with the soundtrack and markers) for
+  Resolve or Premiere. Draft merges (half size, fast), a range of scenes, and
+  audio stems with an EBU R128 loudness report.
 - **Prompt tools.** A structured six-section editor with `@P1` / `@Mara` tags
   that are renumbered per pass, a live preview of the exact prompt for each
   pass, and an optional OpenAI-compatible LLM for rewrite, pass splitting and
   script import. The LLM runs only when you click.
+- **Undo with names.** The History menu lists every edit by name; click one to
+  go back to it. Undo never changes the view.
 - **Help everywhere.** Hover any control for a tooltip; press **?** on any
   section for the longer explanation.
 
@@ -55,7 +69,9 @@ ComfyUI.
 Requirements:
 
 - A ComfyUI build with the native MiniMax H3 nodes (`comfy_extras/nodes_minimax_h3.py`).
-- **ffmpeg** on `PATH`. It stitches long scenes and does the merge. Single-pass scenes render without it.
+  Without them Reelwright still loads, says why on Global → About, and refuses to render.
+- **ffmpeg** on `PATH`. It stitches long scenes, cuts the soundtrack for each pass,
+  finds beats and does the merge. Single-pass scenes without a soundtrack render without it.
 - Optional: `pip install insightface onnxruntime` for the face drift check.
 
 Models (standard ComfyUI folders):
@@ -98,22 +114,27 @@ node. A wired input replaces the matching Global-tab loader.
    a scene that starts fresh can choose its own cut, crossfade or dip.
 
 Everything is stored in the workflow. The project is also autosaved, with
-versions, under `output/reelwright/<project>/`.
+versions, under `output/reelwright/<project>/`. Each new node gets its own
+folder (`untitled-xxxx` until you name the project), and a pasted or
+duplicated node becomes a separate project.
 
-The **Files** tab shows what every project takes on disk (takes, pass videos,
-cuts, autosaves, assets) as a tree, and deletes what you tick.
+The **Files** tab shows what every project takes on disk (takes, pass cache,
+cuts, autosaves, assets) as a tree, and deletes what you tick. **Repair**
+rebuilds a scene's take list from the takes on disk.
 
 ### How continuation works
 
 H3 places guide frames at any frame of a generation (`MiniMaxH3AddGuide`).
 
-- **Tail clip:** the previous scene's last 39 frames and their audio are fixed
-  at frame 0 of the new scene. The new scene continues the motion, and the merge
-  crossfades inside that overlap.
+- **Tail clip:** the previous scene's last 39 frames (by default; at most 124,
+  and never more than the scene before) and their audio are fixed at frame 0 of
+  the new scene. The new scene continues the motion, and the merge crossfades
+  inside that overlap.
 - **Last frame:** the previous scene's final frame becomes frame 0.
 - Identity always comes from the cast anchors, not from a chain of rendered
   frames. After a set number of chained scenes, a tail continuation falls back
-  to last frame only (the re-anchor rule).
+  to last frame only (the re-anchor rule); it is then planned, trimmed and
+  placed on the timeline as a last-frame start.
 
 ### Long and short scenes
 
@@ -150,8 +171,9 @@ download them a short built-in summary is sent instead.
 | D | duplicate |
 | N | new scene |
 | M | marker |
-| Delete | remove scene (asks first) |
+| Delete | remove the selected marker or track (Timeline); otherwise the scene (asks first) |
 | Ctrl+Z / Ctrl+Shift+Z | undo / redo |
+| Ctrl+S | save now |
 | ? | help |
 | Wheel / Shift + wheel | scroll the timeline sideways / up and down |
 | Drag on the timeline | pan (the playhead stays) |
@@ -166,9 +188,13 @@ delete…).
 ## Development
 
 ```
-python -m pytest -c tests/pytest.ini tests     # core, planner, prompts, cache, ffmpeg merge
+python -m pytest -c tests/pytest.ini tests     # core, planner, prompts, cache, ffmpeg merge, JS model parity (needs node)
+python web-test/interact.py                     # editor interaction checks against a mock backend
 python web-test/shoot.py                        # editor screenshots against a mock backend
 ```
+
+Some tests (routes, the render flow) need ComfyUI: set `COMFYUI_PATH` to a
+ComfyUI checkout and run them with its Python.
 
 `docs/SPEC.md` lists every feature. `docs/ARCHITECTURE.md` describes the project
 JSON, the HTTP routes and the disk layout.

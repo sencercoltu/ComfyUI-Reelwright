@@ -9,10 +9,18 @@ import {
   FPS, sceneStarts, fmtTime, framesOf, nearestGridFrames, estimatePasses, findAsset, findCast,
   effectiveLoras, overrideCount, sceneIndex, newId, assembledDuration, MIN_PASS_FRAMES,
   effective, // added 2026-11-02 v0.3.0
-  overlapSeconds, sceneHasSong, trackLength, // added 2026-11-03 v0.5.0
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] overlapSeconds, sceneHasSong, trackLength, // added 2026-11-03 v0.5.0  (overlapSeconds is deprecated)
+  sceneHasSong, trackLength, // added 2026-11-03 v0.5.0
+  // added 2026-11-03 v0.6.0: visible starts (Next/Prev/Loop), the real overlap of a continuing scene, locked timing
+  sceneAt, sceneOverlapAt, tailOverlapFrames, soundtrackLocked,
+  effectiveStart, MAX_SCENE_SECONDS, // added 2026-11-03 v0.6.0 review: rollLengths
 } from "../model.js";
 import { uploadFiles } from "./assets.js";
-import { trackLanes, trackInspector, syncAudio, stopAudio, sceneVolume } from "./soundtrack.js"; // added 2026-11-03 v0.5.0
+// [OLD 2026-11-03 v0.5.1->v0.6.0] import { trackLanes, trackInspector, syncAudio, stopAudio, sceneVolume } from "./soundtrack.js"; // added 2026-11-03 v0.5.0
+import {
+  trackLanes, trackInspector, syncAudio, stopAudio, sceneVolume, // added 2026-11-03 v0.5.0
+  deleteTrack, nearestBeat, showBeats, beatSnapOn, // added 2026-11-03 v0.6.0
+} from "./soundtrack.js";
 
 const HEAD_W = 150;
 const STATUS_LABEL = {
@@ -29,10 +37,159 @@ function zoomOf(ctx) {
   return ctx.p.ui.zoom || 22;
 }
 
+/* [OLD 2026-11-03 v0.5.1->v0.6.0] found scenes by [start, start + duration): a continuing scene's first frames lie inside
+   the scene before, so Next/Prev/Loop stayed on the old scene (review #7). model.sceneAt(project, t) uses the visible
+   ranges [visibleStart, start + duration) instead.
 function sceneAt(ctx, t) {
   const { starts } = sceneStarts(ctx.p);
   for (const s of ctx.p.scenes) if (t >= starts[s.id] && t < starts[s.id] + s.duration) return s;
   return ctx.p.scenes[ctx.p.scenes.length - 1];
+}
+[/OLD] */
+
+// added 2026-11-03 v0.6.0: Roll instead of Ripple while a soundtrack sets the timing (Auto-roll, on unless turned off):
+// lengthening a scene takes the time from the next one, so every later scene (and its passes) stays on the song.
+export function autoRollOn(p) {
+  return soundtrackLocked(p) && p.ui.autoRoll !== false;
+}
+function rolls(p) {
+  return !p.ui.ripple || autoRollOn(p);
+}
+
+/* [OLD 2026-11-03 v0.6.0 review] kept d_i + d_(i+1): a tail overlap is capped by the lengths of the scenes on both
+   sides of its seam, so the overlaps changed and every later scene moved on the soundtrack
+// added 2026-11-03 v0.6.0: set a scene's length (Scene tab, timeline). When it rolls (Roll, or Auto-roll), the next
+// scene gives or takes the difference and keeps at least one frame. Returns the length set.
+export function setSceneDuration(ctx, id, d, { label = "Scene length", roll = rolls(ctx.p) } = {}) {
+  const p = ctx.p;
+  const i = sceneIndex(p, id);
+  if (i < 0) return 0;
+  const s = p.scenes[i], next = p.scenes[i + 1];
+  let frames = Math.max(1, framesOf(d));
+  if (roll && next) frames = Math.min(frames, framesOf(s.duration + next.duration) - 1);
+  const d1 = frames / FPS;
+  const d0 = s.duration, nextD0 = next?.duration;
+  ctx.actions.edit(q => {
+    const sc = q.scenes.find(x => x.id === id);
+    if (!sc) return;
+    sc.duration = d1;
+    if (roll && next) q.scenes.find(x => x.id === next.id).duration = Math.max(1 / FPS, Math.round((d0 + nextD0 - d1) * FPS) / FPS);
+  }, { label });
+  return d1;
+}
+[/OLD] */
+// added 2026-11-03 v0.6.0 review: Roll keeps every later scene where it is. Scene i gets `frames`; the next scene gets
+// the length that keeps the start of the scene after it (sceneStarts; the film's end when the next scene is the last)
+// and, if it can, where that scene becomes visible. Tail overlaps are capped by the lengths on both sides of their
+// seam, so keeping the sum of the two lengths is not enough. Of the lengths that work, the one closest to keeping the
+// sum wins. When none works, scene i's length is clamped to the nearest one (towards its current length) that does.
+// Returns {frames, next, nextDuration}: frames of scene i and of the next scene (next: null without a next scene), and
+// the next scene's length in seconds: next / FPS, plus the part of a frame that keeps the later scenes exactly where
+// they were when the two lengths were not whole frames.
+export function rollLengths(p, i, frames) {
+  const s = p.scenes[i], next = p.scenes[i + 1];
+  frames = Math.max(1, Math.round(frames));
+  if (!s || !next) return { frames, next: null, nextDuration: null };
+  const after = p.scenes[i + 2];
+  // How scenes i, i+1, i+2 start does not depend on lengths except through the tail caps: read the mode once with
+  // lengths no cap reaches ("fresh", "last_frame": re-anchored or not a tail, "tail"), then a tail's overlap is
+  // measured on a two-scene project (the scene before and the scene), so a long chain of continuing scenes is not
+  // walked again for every length tried.
+  const BIG = 1e4;
+  const modeAt = k => {
+    if (k <= 0 || !p.scenes[k]) return "fresh";
+    const sc = p.scenes.slice();
+    sc[k] = { ...sc[k], duration: BIG };
+    sc[k - 1] = { ...sc[k - 1], duration: BIG };
+    return effectiveStart({ ...p, scenes: sc }, k);
+  };
+  const modes = { [i]: modeAt(i), [i + 1]: modeAt(i + 1), [i + 2]: after ? modeAt(i + 2) : "fresh" };
+  // overlap frames of scene k with lengths (frames) `own` and `prev` for it and the scene before
+  const ovF = (k, own, prev) => {
+    const m = modes[k];
+    if (m === "fresh") return 0;
+    if (m !== "tail") return 1;
+    const two = [{ ...p.scenes[k - 1], duration: prev / FPS, start: { mode: "fresh", overlap_frames: 0 } }, { ...p.scenes[k], duration: own / FPS }];
+    return Math.round(sceneOverlapAt({ ...p, scenes: two }, 1) * FPS);
+  };
+  const prevF = i > 0 ? p.scenes[i - 1].duration * FPS : 0;
+  const afterF = after ? after.duration * FPS : 0;
+  // frames from where scene i becomes visible to the start of scene i+2 (keep; the end of i+1 without one), and to
+  // where scene i+2 becomes visible (vis)
+  const span = (dF, nF, ovI = ovF(i, dF, prevF)) => {
+    const ovA = after ? ovF(i + 2, afterF, nF) : 0;
+    const keep = -ovI + dF - ovF(i + 1, nF, dF) + nF - ovA;
+    return { keep, vis: keep + ovA };
+  };
+  const d0F = s.duration * FPS, n0F = next.duration * FPS;
+  const target = span(d0F, n0F);
+  const near = (a, b) => Math.abs(a - b) <= 0.5 + 1e-6; // within half a frame (lengths off the frame grid)
+  // the exact length for nF frames: the rest of the half frame goes into it (lengths off the frame grid); null when
+  // that length is not one a scene can have (it must round to nF frames and be 1 frame .. MAX_SCENE_SECONDS)
+  const exact = (nF, r) => {
+    const sec = (nF + (target.keep - r.keep)) / FPS;
+    return framesOf(sec) === nF && sec >= 1 / FPS - 1e-12 && sec <= MAX_SCENE_SECONDS ? Math.max(1 / FPS, sec) : null;
+  };
+  const SLACK = 2 * MIN_PASS_FRAMES + 2; // the two overlaps the next scene's length changes are at most 124 frames each
+  // the next scene's length for scene i's dF frames, or null; `strict`: only one that keeps the later scenes exactly
+  const solve = (dF, strict) => {
+    const ovI = ovF(i, dF, prevF);
+    const base = target.keep + ovI - dF; // nF without the two overlaps it changes
+    const lo = Math.max(1, Math.floor(base) - 1), hi = Math.min(Math.round(MAX_SCENE_SECONDS * FPS), Math.ceil(base) + SLACK);
+    if (hi < lo) return null;
+    const guess = Math.min(hi, Math.max(lo, Math.round(d0F + n0F - dF)));
+    for (let dist = 0; guess - dist >= lo || guess + dist <= hi; dist++) {
+      let keepOnly = null;
+      for (const nF of dist ? [guess + dist, guess - dist] : [guess]) {
+        if (nF < lo || nF > hi) continue;
+        const r = span(dF, nF, ovI);
+        if (!near(r.keep, target.keep)) continue;
+        const sec = exact(nF, r);
+        if (sec === null && strict) continue;
+        const got = { nF, sec: sec ?? nF / FPS };
+        if (near(r.vis, target.vis)) return got;
+        if (keepOnly === null) keepOnly = got;
+      }
+      if (keepOnly !== null) return keepOnly;
+    }
+    return null;
+  };
+  const cur = Math.max(1, Math.round(d0F));
+  // no longer than the two scenes plus the three overlaps that can change (the next scene keeps at least 1 frame)
+  frames = Math.min(frames, Math.round(MAX_SCENE_SECONDS * FPS), Math.ceil(d0F + n0F) + 3 * MIN_PASS_FRAMES + 3);
+  // an exact solution as close to the asked length as there is, else one within half a frame
+  for (const strict of [true, false]) {
+    for (let dF = frames, n = 0; n < 100000; n++) {
+      const got = solve(dF, strict);
+      if (got) return { frames: dF, next: got.nF, nextDuration: got.sec };
+      if (dF === cur) break;
+      dF += dF > cur ? -1 : 1;
+    }
+  }
+  // nothing else keeps the later scenes: both stay as they are
+  return { frames: cur, next: Math.max(1, Math.round(n0F)), nextDuration: next.duration, unchanged: true };
+}
+
+// added 2026-11-03 v0.6.0: set a scene's length (Scene tab, timeline). When it rolls (Roll, or Auto-roll), the next
+// scene gives or takes the difference and keeps at least one frame. Returns the length set.
+// added 2026-11-03 v0.6.0 review: rolling uses rollLengths (every later scene keeps its start)
+export function setSceneDuration(ctx, id, d, { label = "Scene length", roll = rolls(ctx.p) } = {}) {
+  const p = ctx.p;
+  const i = sceneIndex(p, id);
+  if (i < 0) return 0;
+  const next = p.scenes[i + 1];
+  let frames = Math.max(1, framesOf(d));
+  let nextD = null, same = false;
+  if (roll && next) ({ frames, nextDuration: nextD, unchanged: same } = rollLengths(p, i, frames));
+  // scene i keeps its own length when the roll could not move (its length is not a whole number of frames)
+  const d1 = same ? p.scenes[i].duration : frames / FPS;
+  ctx.actions.edit(q => {
+    const sc = q.scenes.find(x => x.id === id);
+    if (!sc) return;
+    sc.duration = d1;
+    if (nextD !== null) q.scenes.find(x => x.id === next.id).duration = nextD;
+  }, { label });
+  return d1;
 }
 
 function storyboardImage(ctx, scene) {
@@ -99,7 +256,8 @@ function monitorOf(ctx) {
 
 function setPlayhead(ctx, t, { seekVideo = true } = {}) {
   const { total } = sceneStarts(ctx.p);
-  t = Math.max(0, Math.min(total, t));
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] t = Math.max(0, Math.min(total, t));
+  t = Number.isFinite(t) ? Math.max(0, Math.min(total, t)) : 0; // added 2026-11-03 v0.6.0: never NaN
   ctx.store.update(p => { p.ui.playhead = t; }, { history: false, plan: false, render: false, autosave: false });
   const refs = ctx.tl;
   const z = zoomOf(ctx);
@@ -108,13 +266,15 @@ function setPlayhead(ctx, t, { seekVideo = true } = {}) {
     refs.playheadLabel.textContent = fmtTime(t);
     refs.timecode.textContent = fmtTime(t);
   }
-  const s = sceneAt(ctx, t);
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const s = sceneAt(ctx, t);
+  const s = sceneAt(ctx.p, t);
   const local = t - sceneStarts(ctx.p).starts[s.id];
   const m = monitorOf(ctx);
   if (seekVideo) m.show(s, local);
   return { scene: s, local };
 }
 
+/* [OLD 2026-11-03 v0.5.1->v0.6.0] one animation frame for every editor on the page
 let raf = 0;
 export function stopPlayback(ctx) {
   cancelAnimationFrame(raf);
@@ -123,7 +283,29 @@ export function stopPlayback(ctx) {
   if (ctx.monitor) ctx.monitor.video.pause();
   stopAudio(); // added 2026-11-03 v0.5.0
 }
+[/OLD] */
+// added 2026-11-03 v0.6.0: each editor has its own playback frame (ctx.play) and its own audio players
+function playOf(ctx) {
+  return ctx.play || (ctx.play = { raf: 0 });
+}
 
+export function stopPlayback(ctx) {
+  const pl = playOf(ctx);
+  cancelAnimationFrame(pl.raf);
+  pl.raf = 0;
+  ctx.eph.playing = false;
+  if (ctx.monitor) ctx.monitor.video.pause();
+  stopAudio(ctx);
+  pauseExcerpts(ctx);
+}
+
+// The Scene tab's song excerpts (scene.js) stop when the film plays or the editor closes.
+function pauseExcerpts(ctx) {
+  for (const el of ctx.excerptPlayers || []) if (!el.paused) el.pause();
+}
+
+/* [OLD 2026-11-03 v0.5.1->v0.6.0] a loop over a rendered take wrapped the playhead but never seeked the video (so the
+   next frame jumped back); a deleted or undone playing scene gave a NaN playhead; one rAF for every editor
 function startPlayback(ctx) {
   if (ctx.eph.playing) return;
   const { total } = sceneStarts(ctx.p);
@@ -160,6 +342,52 @@ function startPlayback(ctx) {
   raf = requestAnimationFrame(loop);
   ctx.render();
 }
+[/OLD] */
+// added 2026-11-03 v0.6.0
+function startPlayback(ctx) {
+  if (ctx.eph.playing) return;
+  const pl = playOf(ctx);
+  const { total } = sceneStarts(ctx.p);
+  if (!(ctx.p.ui.playhead < total - 1 / FPS)) setPlayhead(ctx, 0);
+  pauseExcerpts(ctx);
+  ctx.eph.playing = true;
+  const m = monitorOf(ctx);
+  let last = performance.now();
+  let current = setPlayhead(ctx, ctx.p.ui.playhead);
+  m.video.volume = sceneVolume(ctx.p); // the scene level under the soundtrack
+  if (m.src) { m.video.currentTime = current.local; m.video.play().catch(() => {}); }
+  syncAudio(ctx, ctx.p.ui.playhead, true);
+  const loop = now => {
+    if (!ctx.eph.playing) return;
+    const dt = (now - last) / 1000;
+    last = now;
+    const { starts, total: tot } = sceneStarts(ctx.p);
+    // the scene that was playing was deleted (or undone away): go on from the playhead in the scene there now
+    if (starts[current.scene.id] === undefined) current = setPlayhead(ctx, ctx.p.ui.playhead);
+    let t;
+    if (m.src && !m.video.paused && m.sceneId === current.scene.id) t = starts[current.scene.id] + Math.min(m.video.currentTime, current.scene.duration);
+    else t = ctx.p.ui.playhead + dt;
+    if (!Number.isFinite(t)) t = 0;
+    // a loop wraps the playhead; the take and the soundtrack are seeked to it (they would carry on otherwise)
+    let jump = false;
+    const loopR = ctx.eph.loop;
+    if (loopR && t >= loopR.out) { t = loopR.in; jump = true; }
+    if (t >= tot) { setPlayhead(ctx, tot); stopPlayback(ctx); ctx.render(); return; }
+    const before = current.scene.id;
+    const localEnd = t - starts[current.scene.id] >= current.scene.duration;
+    const there = sceneAt(ctx.p, t);
+    current = setPlayhead(ctx, t, { seekVideo: jump || localEnd || current.scene.id !== there.id || !m.src });
+    if (current.scene.id !== before || localEnd || jump) {
+      if (m.src) { m.video.currentTime = current.local; m.video.play().catch(() => {}); }
+    }
+    // soundtrack tracks follow the playhead; the take plays at the scene level
+    m.video.volume = sceneVolume(ctx.p);
+    syncAudio(ctx, t, true, jump);
+    pl.raf = requestAnimationFrame(loop);
+  };
+  pl.raf = requestAnimationFrame(loop);
+  ctx.render();
+}
 
 function togglePlay(ctx) {
   if (ctx.eph.playing) { stopPlayback(ctx); ctx.render(); } else startPlayback(ctx);
@@ -183,7 +411,22 @@ export function onKey(ctx, e) {
   if (k === "m" || k === "M") { addMarker(ctx); return true; }
   if (k === "+" || k === "=") { setZoom(ctx, zoomOf(ctx) * 1.25); return true; }
   if (k === "-") { setZoom(ctx, zoomOf(ctx) / 1.25); return true; }
+  // added 2026-11-03 v0.6.0: Delete removes what the inspector shows: a marker, a soundtrack track, else the scene
+  // (sceneKeys, which asks first)
+  if (k === "Delete" || k === "Backspace") {
+    const mk = ctx.eph.selectedMarker && p.markers.find(m => m.id === ctx.eph.selectedMarker);
+    if (mk) { deleteMarker(ctx, mk); return true; }
+    const tr = ctx.eph.selectedTrack && p.soundtrack.find(t => t.id === ctx.eph.selectedTrack);
+    if (tr) { deleteTrack(ctx, tr); return true; }
+  }
   return false;
+}
+
+// added 2026-11-03 v0.6.0
+function deleteMarker(ctx, marker) {
+  ctx.actions.edit(q => { q.markers = q.markers.filter(m => m.id !== marker.id); }, { label: "Delete marker" });
+  ctx.store.setEph({ selectedMarker: null });
+  ctx.actions.toast("Marker removed. Ctrl+Z brings it back.", "info");
 }
 
 // Scene shortcuts that work from any tab.
@@ -209,8 +452,10 @@ function setZoom(ctx, z) {
 
 function addMarker(ctx) {
   const id = newId("m");
-  ctx.store.update(p => { p.markers.push({ id, t: p.ui.playhead, text: "Marker", color: "amber" }); });
-  ctx.store.setEph({ selectedMarker: id });
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] ctx.store.update(p => { p.markers.push({ id, t: p.ui.playhead, text: "Marker", color: "amber" }); });
+  ctx.store.update(p => { p.markers.push({ id, t: p.ui.playhead, text: "Marker", color: "amber" }); }, { label: "Add marker" });
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] ctx.store.setEph({ selectedMarker: id });
+  ctx.store.setEph({ selectedMarker: id, selectedTrack: null }); // v0.6.0: the marker is what Delete removes now
 }
 
 // ---- Asset bin ----
@@ -268,6 +513,7 @@ function renderInspector(ctx) {
         button({ icon: "close", help: "common.close", variant: "ghost", small: true, onClick: () => ctx.store.setEph({ selectedMarker: null }) })),
       h("div", { class: "rw-form" },
         h("label", { class: "rw-field" }, h("span", { class: "rw-field-label", help: "timeline.marker.text" }, "Text"),
+          /* [OLD 2026-11-03 v0.5.1->v0.6.0] no history labels; the key was the same for every marker
           h("input", { class: "rw-input", key: "marker-text", value: marker.text, help: "timeline.marker.text",
             onChange: e => ctx.actions.edit(q => { q.markers.find(m => m.id === marker.id).text = e.target.value; }) })),
         h("div", { class: "rw-field" }, h("span", { class: "rw-field-label", help: "timeline.marker.color" }, "Colour"),
@@ -279,6 +525,16 @@ function renderInspector(ctx) {
             ctx.actions.edit(q => { q.markers = q.markers.filter(m => m.id !== marker.id); });
             ctx.store.setEph({ selectedMarker: null });
           } }))));
+          [/OLD] */
+          // added 2026-11-03 v0.6.0
+          h("input", { class: "rw-input", key: "marker-text-" + marker.id, value: marker.text, help: "timeline.marker.text",
+            onChange: e => ctx.actions.edit(q => { const m = q.markers.find(x => x.id === marker.id); if (m) m.text = e.target.value; }, { label: "Marker text" }) })),
+        h("div", { class: "rw-field" }, h("span", { class: "rw-field-label", help: "timeline.marker.color" }, "Colour"),
+          segmented({ options: ["amber", "coral", "blue", "green", "pink"], value: marker.color, help: "timeline.marker.color", small: true,
+            onChange: v => ctx.actions.edit(q => { const m = q.markers.find(x => x.id === marker.id); if (m) m.color = v; }, { label: "Marker colour" }) })),
+        h("div", { class: "rw-row" },
+          button({ label: "Jump to marker", icon: "marker", help: "timeline.marker.jump", onClick: () => setPlayhead(ctx, marker.t) }),
+          button({ label: "Delete marker", icon: "trash", help: "timeline.marker.delete", variant: "danger-ghost", onClick: () => deleteMarker(ctx, marker) }))));
   }
   const s = ctx.scene;
   const idx = sceneIndex(p, s.id) + 1;
@@ -340,7 +596,14 @@ function refChips(ctx, s) {
     const what = r.role === "keyframe" ? `keyframe @ ${fmtTime(r.time)}` : r.role === "reference" ? (r.retention || a.defaults.retention) : r.role;
     out.push(chip({ code: a.code, label: (a.name || "").slice(0, 18) + " · " + what, kind, help: "timeline.chip.ref" }));
   }
-  if (s.start.mode === "tail") out.push(chip({ code: "TAIL", label: `${s.start.overlap_frames} f of previous`, kind: "vid", help: "scene.start.tail" }));
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] if (s.start.mode === "tail") out.push(chip({ code: "TAIL", label: `${s.start.overlap_frames} f of previous`, kind: "vid", help: "scene.start.tail" }));
+  // added 2026-11-03 v0.6.0: the overlap it really gets (capped by both scenes' lengths), or that it is re-anchored
+  const si = sceneIndex(p, s.id);
+  if (si > 0 && s.start.mode === "tail") {
+    const f = tailOverlapFrames(p, si);
+    out.push(f > 0 ? chip({ code: "TAIL", label: `${f} f of previous`, kind: "vid", help: "scene.start.tail" })
+      : chip({ code: "TAIL", label: "last frame only (re-anchored)", kind: "vid", help: "scene.start.effective" }));
+  }
   // added 2026-11-03 v0.5.0: the part of the soundtrack each pass covers
   if (sceneHasSong(p, s)) out.push(chip({ code: "SONG", label: "soundtrack · lips and cuts follow it", kind: "aud", help: "timeline.chip.song" }));
   if (!out.length) out.push(h("span", { class: "rw-dim", help: "timeline.chip.none" }, "No references yet: drag assets from the bin onto the scene."));
@@ -357,6 +620,8 @@ function renderTransport(ctx) {
   ctx.tl.timecode = timecode;
   const loop = ctx.eph.loop;
   return h("div", { class: "rw-transport rw-panel" },
+    /* [OLD 2026-11-03 v0.5.1->v0.6.0] by frame 0 of each scene: a continuing scene's frame 0 lies inside the scene before,
+       so Next/Prev/Loop stayed there (review #7)
     button({ icon: "prev", help: "timeline.transport.prev", variant: "ghost", onClick: () => {
       const { starts } = sceneStarts(p);
       const s = sceneAt(ctx, p.ui.playhead);
@@ -373,6 +638,28 @@ function renderTransport(ctx) {
     } }),
     button({ icon: "refresh", help: "timeline.transport.loop", variant: loop ? "accent-ghost" : "ghost", onClick: () => {
       ctx.store.setEph({ loop: loop ? null : (() => { const s = sceneAt(ctx, p.ui.playhead); const st = sceneStarts(p).starts[s.id]; return { in: st, out: st + s.duration }; })() });
+    } }),
+    [/OLD] */
+    // added 2026-11-03 v0.6.0: every jump goes to where a scene first shows new content (its visible start)
+    button({ icon: "prev", help: "timeline.transport.prev", variant: "ghost", onClick: () => {
+      const q = ctx.p;
+      const { visible } = sceneStarts(q);
+      const s = sceneAt(q, q.ui.playhead);
+      const i = sceneIndex(q, s.id);
+      setPlayhead(ctx, q.ui.playhead - visible[s.id] > 0.25 || i === 0 ? visible[s.id] : visible[q.scenes[i - 1].id]);
+    } }),
+    button({ icon: ctx.eph.playing ? "pause" : "play", help: "timeline.transport.play", variant: "solid", onClick: () => togglePlay(ctx) }),
+    button({ icon: "next", help: "timeline.transport.next", variant: "ghost", onClick: () => {
+      const q = ctx.p;
+      const { visible, total: end } = sceneStarts(q);
+      const n = q.scenes[sceneIndex(q, sceneAt(q, q.ui.playhead).id) + 1];
+      setPlayhead(ctx, n ? visible[n.id] : end);
+    } }),
+    button({ icon: "refresh", help: "timeline.transport.loop", variant: loop ? "accent-ghost" : "ghost", onClick: () => {
+      const q = ctx.p;
+      const s = sceneAt(q, q.ui.playhead);
+      const { starts, visible } = sceneStarts(q);
+      ctx.store.setEph({ loop: loop ? null : { in: visible[s.id], out: starts[s.id] + s.duration } });
     } }),
     timecode, h("span", { class: "mono rw-dim" }, "/ " + fmtTime(total)),
     loop && h("span", { class: "mono rw-loop-label", help: "timeline.transport.loop" }, `loop ${fmtTime(loop.in, false)}–${fmtTime(loop.out, false)}`),
@@ -430,7 +717,16 @@ function renderLanes(ctx) {
   const width = Math.max(Math.max(total, trackEnd) * z + 160, 600);
   // added 2026-11-03 v0.5.0: a continuing scene begins inside the one before (the repeated tail or last frame);
   // its block and lane bars start where it becomes visible
-  const ov = (s, i) => (i > 0 ? overlapSeconds(s) : 0);
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const ov = (s, i) => (i > 0 ? overlapSeconds(s) : 0);
+  // added 2026-11-03 v0.6.0: the real overlap (model.sceneOverlapAt: capped by the scene before, re-anchored tails
+  // repeat one frame), read from the memoised timing in O(1)
+  const { visible } = sceneStarts(p);
+  const ov = s => visible[s.id] - starts[s.id];
+  // added 2026-11-03 v0.6.0: only what is near the view is built (a long film has thousands of bars; building and
+  // laying them all out cost 200+ ms per render at 300 scenes). Scrolling past the built part renders again.
+  const vis = laneWindow(ctx, width);
+  const near = (left, w = 0) => left + w >= vis.from && left <= vis.to;
+  const lazyTiles = []; // waveform tiles, painted when they scroll into view
   const step = pickStep(z);
   const selectScene = id => () => ctx.actions.select(id);
 
@@ -453,7 +749,8 @@ function renderLanes(ctx) {
   // added 2026-11-02 v0.3.3: clicks and drags on the ruler are handled by lanesPointerdown (click = playhead, drag = pan)
   const ruler = h("div", { class: "rw-ruler-lane", style: { width: width + "px", "background-size": `${z}px 6px` }, help: "timeline.ruler" });
   // [OLD 2026-11-03 v0.4.3->v0.5.0] for (let t = 0; t <= total + step; t += step) {
-  for (let t = 0; t <= Math.max(total, trackEnd) + step; t += step) {
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] for (let t = 0; t <= Math.max(total, trackEnd) + step; t += step) {
+  for (let t = Math.max(0, Math.floor(vis.from / z / step) * step); t <= Math.min(Math.max(total, trackEnd) + step, vis.to / z + step); t += step) {
     ruler.append(h("span", { class: "rw-tick", style: { left: t * z + "px" } }), h("span", { class: "rw-tick-label mono", style: { left: t * z + 4 + "px" } }, fmtTime(t, false)));
   }
   const loop = ctx.eph.loop;
@@ -468,9 +765,11 @@ function renderLanes(ctx) {
   // Scenes
   const scenesLane = h("div", { class: "rw-lane-body scenes", style: { width: width + "px" } });
   // [OLD 2026-11-03 v0.4.3->v0.5.0] p.scenes.forEach((s, i) => scenesLane.append(sceneBlock(ctx, s, i, starts[s.id], z)));
-  p.scenes.forEach((s, i) => scenesLane.append(sceneBlock(ctx, s, i, starts[s.id], z, ov(s, i))));
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] p.scenes.forEach((s, i) => scenesLane.append(sceneBlock(ctx, s, i, starts[s.id], z, ov(s, i))));
+  p.scenes.forEach((s, i) => { if (near(starts[s.id] * z, s.duration * z)) scenesLane.append(sceneBlock(ctx, s, i, starts[s.id], z, ov(s, i))); });
   p.scenes.forEach((s, i) => {
     if (i === 0) return;
+    if (!near(visible[s.id] * z - 12, 24)) return; // added 2026-11-03 v0.6.0
     const mode = s.start.mode;
     const ic = mode === "fresh" ? "cut" : mode === "tail" ? "tail" : "link";
     scenesLane.append(h("button", {
@@ -499,8 +798,11 @@ function renderLanes(ctx) {
 
   const allLines = p.scenes.flatMap(s => s.dialogue.map(d => ({ s, d, x: (starts[s.id] + d.t) * z }))).sort((a, b) => a.x - b.x);
   allLines.forEach((it, k) => {
-    const c = findCast(p, it.d.speaker);
     const next = allLines[k + 1]?.x ?? Infinity;
+    if (!near(it.x, Math.min(Math.max(28, next - it.x), 2000))) return; // added 2026-11-03 v0.6.0: far from the view
+    const c = findCast(p, it.d.speaker);
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] const c = findCast(p, it.d.speaker);  (moved after the view check)
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] const next = allLines[k + 1]?.x ?? Infinity;  (moved up)
     dlg.append(h("span", {
       class: "rw-dlg", style: { left: it.x + "px", "max-width": Math.max(28, next - it.x - 4) + "px" }, help: "timeline.lane.dialogue", onClick: selectScene(it.s.id),
     /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now
@@ -518,6 +820,9 @@ function renderLanes(ctx) {
     const x00 = starts[s.id] * z;
     const x0 = x00 + ov(s, si) * z;
     const w = (s.duration - ov(s, si)) * z;
+    if (!near(x00, s.duration * z)) return; // added 2026-11-03 v0.6.0: far from the view
+    // added 2026-11-03 v0.6.0: how it really starts (a re-anchored tail continues from the last frame only)
+    const eff = si === 0 ? "fresh" : ov(s, si) * FPS > 1.5 ? "tail" : ov(s, si) > 0 ? "last_frame" : "fresh";
     const picItems = [], audItems = [];
     const anchored = s.cast.map(sc => findCast(p, sc.id)).filter(c => c?.anchors.length);
     if (anchored.length) picItems.push({ left: x0 + 3, width: w - 6, cls: "pic soft", label: anchored.map(c => c.name).join(" · ") + " · anchors", help: "timeline.lane.castAnchors", onClick: selectScene(s.id) });
@@ -547,10 +852,12 @@ function renderLanes(ctx) {
         audItems.push({ left: x0 + 3, width: Math.min(w - 6, (a.duration || 2) * z), cls: "aud", code: a.code, label: `${a.name || ""} · ${ret}`, help: "timeline.lane.audRef", onClick: selectScene(s.id) });
       }
     }
-    if (s.start.mode === "last_frame") pics.append(diamond(x0, "pic", "timeline.lane.lastFrameAuto", true));
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] if (s.start.mode === "last_frame") pics.append(diamond(x0, "pic", "timeline.lane.lastFrameAuto", true));
+    if (eff === "last_frame") pics.append(diamond(x0, "pic", "timeline.lane.lastFrameAuto", true));
     // [OLD 2026-11-03 v0.4.3->v0.5.0] if (s.start.mode === "tail") vids.append(bar({ left: x0, width: (s.start.overlap_frames / FPS) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
     // added 2026-11-03 v0.5.0: the tail clip is the end of the scene before, so it sits under that scene's end
-    if (s.start.mode === "tail" && si > 0) vids.append(bar({ left: x00, width: ov(s, si) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] if (s.start.mode === "tail" && si > 0) vids.append(bar({ left: x00, width: ov(s, si) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
+    if (eff === "tail") vids.append(bar({ left: x00, width: ov(s, si) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
     placeRows(picItems, 2).forEach(it => pics.append(bar({ ...it, rows: 2 })));
     placeRows(audItems, 2).forEach(it => auds.append(bar({ ...it, rows: 2 })));
     s.shots.forEach((sh, k) => {
@@ -579,7 +886,9 @@ function renderLanes(ctx) {
   const lanes = [
     ["Scenes", "film", "text", "timeline.lane.scenes", scenesLane, "scenes", h("span", { class: "mono rw-dim" }, `${p.scenes.length} / ∞`)],
     // added 2026-11-03 v0.5.0: soundtrack tracks under the scenes, then a lane to add one
-    ...trackLanes(ctx, z, width, { trackDrag, scaleOf: () => scaleOf(ctx), zoom: () => zoomOf(ctx) })
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] ...trackLanes(ctx, z, width, { trackDrag, scaleOf: () => scaleOf(ctx), zoom: () => zoomOf(ctx) })
+    // window, lazy: added 2026-11-03 v0.6.0 (waveform tiles near the view only, painted when seen)
+    ...trackLanes(ctx, z, width, { trackDrag, scaleOf: () => scaleOf(ctx), zoom: () => zoomOf(ctx), window: vis, lazy: c => lazyTiles.push(c) })
       .map(l => [l.label, l.ic, l.cls, l.help, l.body, l.kind.filter(Boolean).join(" "), l.extra, l.onHead]),
     ["Pictures", "image", "pic", "timeline.lane.pictures", pics, "two"],
     ["Video refs", "video", "vid", "timeline.lane.video", vids, ""],
@@ -621,7 +930,9 @@ function renderLanes(ctx) {
   [/OLD] */
   // added 2026-11-02 v0.3.3: wheel scrolls sideways when the film is wider than the lanes; Shift + wheel scrolls
   // up and down; Alt + wheel zooms. Click = playhead, drag = pan (see lanesPointerdown).
-  return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onPointerdown: e => lanesPointerdown(ctx, e), wheel: e => {
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onPointerdown: e => lanesPointerdown(ctx, e), wheel: e => {
+  // added 2026-11-03 v0.6.0: onScroll renders again when the view leaves the part that was built
+  const lanesEl = h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onPointerdown: e => lanesPointerdown(ctx, e), onScroll: e => lanesScroll(ctx, e.currentTarget), wheel: e => {
     if (e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); return; }
     const el = ctx.root.querySelector(".rw-lanes");
     if (!el) return;
@@ -637,6 +948,68 @@ function renderLanes(ctx) {
     // [OLD 2026-11-03 v0.4.3->v0.5.0] lanes.map(([label, ic, cls, help, el, kind, extra]) => h("div", { class: ["rw-lane", kind] }, laneHead(label, ic, cls, help, extra), el)),
     lanes.map(([label, ic, cls, help, el, kind, extra, onHead]) => h("div", { class: ["rw-lane", kind] }, laneHead(label, ic, cls, help, extra, onHead), el)),
     playhead));
+  // added 2026-11-03 v0.6.0: waveform tiles are painted when they come near the view (one observer per render)
+  ctx.tl.io?.disconnect();
+  ctx.tl.io = null;
+  if (lazyTiles.length) {
+    if (typeof IntersectionObserver === "function") {
+      const io = ctx.tl.io = new IntersectionObserver(entries => {
+        for (const en of entries) if (en.isIntersecting) { io.unobserve(en.target); en.target.__paint?.(); }
+      }, { root: lanesEl, rootMargin: "0px 400px" });
+      for (const c of lazyTiles) io.observe(c);
+    } else for (const c of lazyTiles) c.__paint?.();
+  }
+  return lanesEl;
+}
+
+// added 2026-11-03 v0.6.0: the part of the lanes (lane pixels, 0 = film start) that a render builds: the view and
+// one and a half views on either side, read from the lanes being replaced (the editor restores their scroll).
+/* [OLD 2026-11-03 v0.6.0 review] used the old scroll position as it was: after a big zoom-out it lay past the end of
+   the new lanes, so nothing near the view was built and the restored scrollLeft (clamped to the new end, no scroll
+   event) showed empty lanes
+function laneWindow(ctx, width) {
+  const el = ctx.root.querySelector(".rw-lanes");
+  const vw = Math.max(400, (el?.clientWidth || ctx.root.clientWidth || 1600) - HEAD_W);
+  const sl = el ? el.scrollLeft : 0;
+  const win = { from: sl - vw * 1.5, to: sl + vw * 2.5, width, vw };
+  ctx.tl = ctx.tl || {};
+  ctx.tl.window = win;
+  return win;
+}
+[/OLD] */
+// added 2026-11-03 v0.6.0 review: the old scroll position is clamped to the new lanes' end first (where the browser
+// will put it when the editor restores it); `sl` is kept so afterRender can check what the view really shows
+function laneWindow(ctx, width) {
+  const el = ctx.root.querySelector(".rw-lanes");
+  const vw = Math.max(400, (el?.clientWidth || ctx.root.clientWidth || 1600) - HEAD_W);
+  const max = el ? Math.max(0, HEAD_W + width - el.clientWidth) : 0;
+  const sl = el ? Math.max(0, Math.min(el.scrollLeft, max)) : 0;
+  const win = { from: sl - vw * 1.5, to: sl + vw * 2.5, width, vw, sl };
+  ctx.tl = ctx.tl || {};
+  ctx.tl.window = win;
+  return win;
+}
+
+// added 2026-11-03 v0.6.0 review: after the editor restored the lanes' scroll: when the view is not where the window
+// was built for (more than a few pixels off), build again once for the real position
+export function afterRender(ctx) {
+  const el = ctx.root.querySelector(".rw-lanes");
+  const win = ctx.tl?.window;
+  if (!el || !win || typeof win.sl !== "number") return;
+  if (Math.abs(el.scrollLeft - win.sl) <= 4) return;
+  win.sl = el.scrollLeft; // once per render
+  lanesScroll(ctx, el);
+}
+
+// Render again (next frame) when the view gets close to the edge of what was built.
+function lanesScroll(ctx, el) {
+  const win = ctx.tl?.window;
+  if (!win) return;
+  const sl = el.scrollLeft, vw = Math.max(400, el.clientWidth - HEAD_W);
+  const short = (sl - vw * 0.5 < win.from && win.from > 0) || (sl + vw * 1.5 > win.to && win.to < win.width);
+  if (short && !ctx.tl.rebuild) {
+    ctx.tl.rebuild = requestAnimationFrame(() => { ctx.tl.rebuild = 0; ctx.store.notify(); });
+  }
 }
 
 // added 2026-11-02 v0.3.3: screen pixels per editor pixel. ComfyUI scales the whole node with the canvas zoom, so
@@ -755,8 +1128,15 @@ export function sceneMenu(ctx, s) {
     { label: "Delete scene", icon: "trash", hint: "Del", help: "timeline.delete", danger: true, disabled: p.scenes.length <= 1,
       onClick: () => { ctx.actions.deleteScene(s.id); ctx.actions.toast(`Deleted ${s.title}. Ctrl+Z brings it back.`, "info"); } },
     [/OLD] */
+    /* [OLD 2026-11-03 v0.5.1->v0.6.0] the count was read after the delete, so deleting one of two scenes said "Scene reset."
     { label: p.scenes.length <= 1 ? "Reset scene" : "Delete scene", icon: "trash", hint: "Del", help: "timeline.delete", danger: true,
       onClick: async () => { if (await ctx.actions.deleteScene(s.id)) ctx.actions.toast(p.scenes.length <= 1 ? "Scene reset." : `Deleted ${s.title}.`, "info"); } },
+    [/OLD] */
+    { label: p.scenes.length <= 1 ? "Reset scene" : "Delete scene", icon: "trash", hint: "Del", help: "timeline.delete", danger: true,
+      onClick: async () => {
+        const last = ctx.p.scenes.length <= 1; // added 2026-11-03 v0.6.0: before the delete
+        if (await ctx.actions.deleteScene(s.id)) ctx.actions.toast(last ? "Scene reset." : `Deleted ${s.title}.`, "info");
+      } },
   ];
 }
 
@@ -779,8 +1159,14 @@ function sceneBlock(ctx, s, i, start, z, ov = 0) {
     // [OLD 2026-11-03 v0.4.3->v0.5.0] style: { left: start * z + 1 + "px", width: w + "px", "--tint": s.color || null },
     style: { left: (start + ov) * z + 1 + "px", width: w + "px", "--tint": s.color || null },
     help: "timeline.scene",
+    dataset: { sid: s.id }, // added 2026-11-03 v0.6.0: found again by onProgress and the stale preview
     // [OLD 2026-11-03 v0.4.3->v0.5.0] onClick: () => ctx.actions.select(s.id),
-    onClick: () => { if (ctx.eph.selectedTrack) ctx.store.setEph({ selectedTrack: null }, false); ctx.actions.select(s.id); },
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] onClick: () => { if (ctx.eph.selectedTrack) ctx.store.setEph({ selectedTrack: null }, false); ctx.actions.select(s.id); },
+    // added 2026-11-03 v0.6.0: a click on a scene closes the marker inspector too (the scene is what Delete removes then)
+    onClick: () => {
+      if (ctx.eph.selectedTrack || ctx.eph.selectedMarker) ctx.store.setEph({ selectedTrack: null, selectedMarker: null }, false);
+      ctx.actions.select(s.id);
+    },
     onDblclick: () => ctx.actions.select(s.id, "scene"),
     menu: () => { ctx.actions.select(s.id); return sceneMenu(ctx, s); }, // added 2026-11-02 v0.2.2
     onDragover: e => { if (e.dataTransfer.types.includes("application/x-rw-asset")) { e.preventDefault(); e.currentTarget.classList.add("drop"); } },
@@ -845,16 +1231,62 @@ function sceneBlock(ctx, s, i, start, z, ov = 0) {
     strip.append(shotTick(ctx, s, sh, z, ov));
   }
   block.append(h("span", { class: "rw-scene-dur mono" }, `${s.duration.toFixed(2)}s · ${framesOf(s.duration)}f`));
+  /* [OLD 2026-11-03 v0.5.1->v0.6.0] built on every render (now also updated in place by onProgress); "skipped" counted as running
   if (prog && !["done", "cached", "error"].includes(prog.phase)) {
     const passPart = prog.passes ? (prog.pass - 1 + (prog.steps ? prog.step / prog.steps : 0)) / prog.passes : 0;
     block.append(h("div", { class: "rw-scene-prog", help: "timeline.scene.progress" }, h("span", { style: { width: Math.round(passPart * 100) + "%" } })),
       h("span", { class: "rw-scene-prog-label mono" }, `${prog.phase} ${prog.pass}/${prog.passes}${prog.steps ? " · " + prog.step + "/" + prog.steps : ""}`));
   }
+  [/OLD] */
+  if (prog && !ctx.isFinal(prog.phase)) block.append(...progressParts(prog)); // added 2026-11-03 v0.6.0
   // [OLD 2026-11-03 v0.4.3->v0.5.0] block.append(resizeHandle(ctx, s, z, block));
   block.append(resizeHandle(ctx, s, z, block, i));
   return block;
 }
 
+// added 2026-11-03 v0.6.0: a scene's progress bar and label (sceneBlock; onProgress updates them in place)
+function progressParts(prog) {
+  const passPart = prog.passes ? (Math.max(1, prog.pass || 1) - 1 + (prog.steps ? prog.step / prog.steps : 0)) / prog.passes : 0;
+  return [
+    h("div", { class: "rw-scene-prog", help: "timeline.scene.progress" }, h("span", { style: { width: Math.round(Math.min(1, passPart) * 100) + "%" } })),
+    h("span", { class: "rw-scene-prog-label mono" }, `${prog.phase} ${prog.pass}/${prog.passes}${prog.steps ? " · " + prog.step + "/" + prog.steps : ""}`),
+  ];
+}
+
+// added 2026-11-03 v0.6.0: a render step (reelwright.progress) updates the scene's progress bar in place; the editor
+// renders the whole tab only when a scene starts or ends or its phase or pass changes (it took 230+ ms at 300 scenes)
+export function onProgress(ctx, d) {
+  if (!d?.scene_id || ctx.isFinal(d.phase)) return;
+  const block = ctx.root.querySelector(`.rw-scene[data-sid="${CSS.escape(d.scene_id)}"]`);
+  if (!block) return; // far from the view, or not on screen
+  const [bar, label] = progressParts(d);
+  const oldBar = block.querySelector(":scope > .rw-scene-prog"), oldLabel = block.querySelector(":scope > .rw-scene-prog-label");
+  if (oldBar && oldLabel) {
+    oldBar.firstChild.style.width = bar.firstChild.style.width;
+    oldLabel.textContent = label.textContent;
+  } else {
+    oldBar?.remove();
+    oldLabel?.remove();
+    block.querySelector(":scope > .rw-resize")?.before(bar, label);
+  }
+}
+
+// added 2026-11-03 v0.6.0: a shot or resize drag that always ends. It follows the pointer with window listeners
+// (trackDrag) instead of pointer capture on the element: a render in the middle of the drag (the plan or the autosave
+// state arriving) replaces the element, which used to drop the capture and leave the drag dead. It ends on pointerup
+// (seen in the capture phase even when ComfyUI stops it), on pointercancel, when the window loses focus, or on a move
+// with no button pressed (a pointerup that never came). onEnd(commit): false after pointercancel (the drag is dropped).
+function captureDrag(onMove, onEnd) {
+  trackDrag(onMove, ev => onEnd(ev?.type !== "pointercancel"));
+}
+
+// added 2026-11-03 v0.6.0: the element on screen now: `el` itself, or what a render put in its place (`sel`)
+function liveEl(ctx, el, sel) {
+  return el.isConnected ? el : ctx.root.querySelector(sel) || el;
+}
+
+/* [OLD 2026-11-03 v0.5.1->v0.6.0] a lost pointerup left the drag running; the tick could be dragged into the hidden
+   tail (trimmed from the cut); no beat snap, no history label
 // [OLD 2026-11-03 v0.4.3->v0.5.0] function shotTick(ctx, s, sh, z) {
 // [OLD 2026-11-03 v0.4.3->v0.5.0]   const tick = h("span", { class: "rw-shot-tick", style: { left: sh.t * z + "px" }, help: "timeline.scene.shot", title: sh.camera || sh.text });
 function shotTick(ctx, s, sh, z, ov = 0) {
@@ -883,7 +1315,47 @@ function shotTick(ctx, s, sh, z, ov = 0) {
   });
   return tick;
 }
+[/OLD] */
+// added 2026-11-03 v0.6.0
+function shotTick(ctx, s, sh, z, ov = 0) {
+  const tick = h("span", { class: "rw-shot-tick", style: { left: (sh.t - ov) * z + "px" }, help: "timeline.scene.shot", title: sh.camera || sh.text, dataset: { shot: sh.id } });
+  tick.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const p = ctx.p;
+    const x0 = e.clientX, t0 = sh.t;
+    // a cut stays after the scene's first visible frame: the repeated tail (or last frame) before it is not in the cut
+    const minT = Math.max(1 / FPS, Math.round(ov * FPS) / FPS + 1 / FPS), maxT = s.duration - 1 / FPS;
+    const start = sceneStarts(p).starts[s.id];
+    const live = () => liveEl(ctx, tick, `.rw-scene[data-sid="${CSS.escape(s.id)}"] .rw-shot-tick[data-shot="${CSS.escape(sh.id)}"]`);
+    let t = t0;
+    captureDrag(ev => {
+      if (minT > maxT) return;
+      t = Math.max(minT, Math.min(maxT, t0 + (ev.clientX - x0) / scaleOf(ctx) / z));
+      let beat = false;
+      if (beatSnapOn(p) && !ev.altKey) { // Snap to beats (Alt: free)
+        const b = nearestBeat(ctx, start + t, 8 / z);
+        if (b !== null && b - start >= minT && b - start <= maxT) { t = b - start; beat = true; }
+      }
+      t = Math.round(t * FPS) / FPS;
+      const el = live();
+      el.style.left = (t - ov) * z + "px";
+      el.dataset.label = fmtTime(t) + (beat ? " · beat" : "");
+    }, commit => {
+      const el = live();
+      delete el.dataset.label;
+      if (commit && t !== t0) {
+        ctx.actions.editScene(s.id, sc => { const x = sc.shots.find(q => q.id === sh.id); if (x) { x.t = t; sc.shots.sort((a, b) => a.t - b.t); } }, { label: "Move shot cut" });
+      } else el.style.left = (t0 - ov) * z + "px";
+      if (ctx.p.ui.selected !== s.id) ctx.actions.select(s.id); // the scene being edited (the release is no click on it now)
+    });
+  });
+  return tick;
+}
 
+/* [OLD 2026-11-03 v0.5.1->v0.6.0] a lost pointerup left the drag running; used the deprecated overlapSeconds; Ripple
+   even while the soundtrack sets the timing; no beat snap, no history label
 // [OLD 2026-11-03 v0.4.3->v0.5.0] function resizeHandle(ctx, s, z, block) {
 function resizeHandle(ctx, s, z, block, index = 0) {
   const handle = h("span", { class: "rw-resize", help: "timeline.scene.resize" });
@@ -926,6 +1398,67 @@ function resizeHandle(ctx, s, z, block, index = 0) {
   });
   return handle;
 }
+[/OLD] */
+// added 2026-11-03 v0.6.0: Roll / Auto-roll take the time from the next scene; Snap to beats puts the cut on a beat
+// (before the 17k+5 grid; Alt: free of beats)
+function resizeHandle(ctx, s, z, block, index = 0) {
+  const handle = h("span", { class: "rw-resize", help: "timeline.scene.resize" });
+  handle.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const x0 = e.clientX, d0 = s.duration;
+    const p = ctx.p;
+    const i = sceneIndex(p, s.id);
+    const next = p.scenes[i + 1];
+    const nextD0 = next?.duration;
+    const roll = rolls(p) && !!next;
+    const auto = roll && p.ui.ripple && autoRollOn(p);
+    const start = sceneStarts(p).starts[s.id];
+    const w0 = block.style.width;
+    const live = () => liveEl(ctx, block, `.rw-scene[data-sid="${CSS.escape(s.id)}"]`);
+    const tip = h("div", { class: "rw-drag-tip mono" });
+    block.append(tip);
+    let d = d0;
+    let nextF = null; // added 2026-11-03 v0.6.0 review: the next scene's length (s) while rolling (rollLengths)
+    captureDrag(ev => {
+      const raw = Math.max(1 / FPS, d0 + (ev.clientX - x0) / scaleOf(ctx) / z);
+      let frames = framesOf(raw), how = "";
+      const b = beatSnapOn(p) && !ev.altKey ? nearestBeat(ctx, start + raw, 8 / z) : null;
+      if (b !== null && b - start >= 1 / FPS) { frames = framesOf(b - start); how = " · beat"; }
+      else if (p.ui.snap) { frames = Math.max(5, nearestGridFrames(frames)); how = " · grid"; }
+      // [OLD 2026-11-03 v0.6.0 review] if (roll) frames = Math.min(frames, framesOf(d0 + nextD0) - 1);
+      // [OLD 2026-11-03 v0.6.0 review] frames = Math.max(1, frames);
+      // added 2026-11-03 v0.6.0 review: rolling keeps every later scene's start (rollLengths; may clamp the drag)
+      frames = Math.max(1, frames);
+      let same = false;
+      if (roll) ({ frames, nextDuration: nextF, unchanged: same } = rollLengths(p, i, frames));
+      // [OLD 2026-11-03 v0.6.0 review] d = frames / FPS;
+      d = same ? d0 : frames / FPS; // added 2026-11-03 v0.6.0 review: a roll that cannot keep the later scenes keeps both lengths
+      // the block starts where the scene becomes visible; a shorter scene can shorten its own tail overlap
+      const q = { ...p, scenes: p.scenes.slice() };
+      q.scenes[i] = { ...s, duration: d };
+      const el = live();
+      el.style.width = (d - (index > 0 ? sceneOverlapAt(q, i) : 0)) * z - 2 + "px";
+      if (tip.parentNode !== el) el.append(tip); // a render replaced the block
+      const est = estimatePasses(d, p.global.long);
+      tip.textContent = `${d.toFixed(2)} s · ${frames} f · ${est.count > 1 ? est.count + " passes" : est.short ? "trimmed" : "1 pass"}${how}${auto ? " · auto-roll" : roll ? " · roll" : ""}`;
+    }, commit => {
+      tip.remove();
+      if (ctx.p.ui.selected !== s.id) ctx.actions.select(s.id); // the scene being edited (the release is no click on it now)
+      if (!commit || d === d0) { live().style.width = w0; return; }
+      ctx.actions.edit(q => {
+        const sc = q.scenes.find(x => x.id === s.id);
+        if (!sc) return;
+        sc.duration = d;
+        const nx = roll && q.scenes.find(x => x.id === next.id);
+        // [OLD 2026-11-03 v0.6.0 review] if (nx) nx.duration = Math.max(1 / FPS, Math.round((d0 + nextD0 - d) * FPS) / FPS);
+        if (nx) nx.duration = nextF !== null ? nextF : Math.max(1 / FPS, Math.round((d0 + nextD0 - d) * FPS) / FPS); // added 2026-11-03 v0.6.0 review
+      }, { label: roll ? "Roll scene edge" : "Scene length" });
+    });
+  });
+  return handle;
+}
 
 function renderToolbar(ctx) {
   const p = ctx.p;
@@ -942,8 +1475,19 @@ function renderToolbar(ctx) {
     button({ icon: "trash", small: true, help: "timeline.delete", variant: "danger-ghost", onClick: () => ctx.actions.deleteScene(s.id) }),
     h("span", { class: "rw-sep" }),
     toggle({ value: p.ui.snap, label: "Snap to 17k+5", help: "timeline.snap", onChange: v => ctx.store.update(q => { q.ui.snap = v; }, { history: false, plan: false }) }),
-    toggle({ value: p.ui.ripple, label: p.ui.ripple ? "Ripple" : "Roll", help: "timeline.ripple", onChange: v => ctx.store.update(q => { q.ui.ripple = v; }, { history: false, plan: false }) }),
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] toggle({ value: p.ui.ripple, label: p.ui.ripple ? "Ripple" : "Roll", help: "timeline.ripple", onChange: v => ctx.store.update(q => { q.ui.ripple = v; }, { history: false, plan: false }) }),
+    // added 2026-11-03 v0.6.0: Auto-roll (below) overrides Ripple while the soundtrack sets the timing
+    toggle({ value: p.ui.ripple && !autoRollOn(p), label: autoRollOn(p) ? "Roll (auto)" : p.ui.ripple ? "Ripple" : "Roll", help: "timeline.ripple", disabled: autoRollOn(p),
+      onChange: v => ctx.store.update(q => { q.ui.ripple = v; }, { history: false, plan: false }) }),
     button({ label: "Marker", icon: "marker", small: true, help: "timeline.addMarker", onClick: () => addMarker(ctx) }),
+    // added 2026-11-03 v0.6.0: beat ticks on the soundtrack lanes, snapping to them, and Auto-roll (shown with a soundtrack)
+    p.soundtrack.some(t => !t.mute) && h("span", { class: "rw-sep" }),
+    p.soundtrack.some(t => !t.mute) && toggle({ value: showBeats(p), label: "Beats", help: "timeline.beats",
+      onChange: v => ctx.store.update(q => { q.ui.beats = v; }, { history: false, plan: false, autosave: false }) }),
+    p.soundtrack.some(t => !t.mute) && toggle({ value: beatSnapOn(p), label: "Snap to beats", help: "timeline.beatSnap",
+      onChange: v => ctx.store.update(q => { q.ui.beatSnap = v; }, { history: false, plan: false, autosave: false }) }),
+    soundtrackLocked(p) && toggle({ value: autoRollOn(p), label: "Auto-roll", help: "timeline.autoRoll",
+      onChange: v => ctx.store.update(q => { q.ui.autoRoll = v; }, { history: false, plan: false, autosave: false }) }),
     h("span", { class: "rw-flex" }),
     button({ icon: "zoomOut", small: true, variant: "ghost", help: "timeline.zoom", onClick: () => setZoom(ctx, z / 1.25) }),
     slider({ value: Math.round(z), min: 4, max: 160, step: 1, help: "timeline.zoom", format: v => v + " px/s", onChange: v => setZoom(ctx, v) }),
@@ -957,7 +1501,8 @@ function renderToolbar(ctx) {
 export function render(ctx) {
   const p = ctx.p;
   const { starts } = sceneStarts(p);
-  const s = sceneAt(ctx, p.ui.playhead);
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const s = sceneAt(ctx, p.ui.playhead);
+  const s = sceneAt(p, p.ui.playhead);
   const m = monitorOf(ctx);
   m.show(s, p.ui.playhead - starts[s.id]);
   return h("div", { class: "rw-tl" },

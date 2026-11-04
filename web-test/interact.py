@@ -21,6 +21,7 @@ def main():
     def check(cond, msg):
         if not cond:
             failures.append(msg)
+            print("FAIL:", msg, flush=True)  # added 2026-11-03 v0.6.0: shown at once (a later crash hides the summary)
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -47,6 +48,10 @@ def main():
         page.keyboard.press("Control+z")
         page.wait_for_timeout(300)
         check(project(page)["scenes"][0]["duration"] == 8.0, "undo did not restore the duration")
+        # v0.6.0: undo keeps the view (the drag selected scene 01); select scene 03 again for the checks below
+        check(project(page)["ui"]["selected"] == "s_01", f"undo changed the selection: {project(page)['ui']['selected']}")
+        page.evaluate("window.__editor.store.update(p => { p.ui.selected = 's_03'; p.ui.playhead = 21.375; }, { history: false, plan: false })")
+        page.wait_for_timeout(200)
 
         # Split the selected scene at the playhead with S.
         n = len(project(page)["scenes"])
@@ -604,9 +609,11 @@ def main():
         check(hts and max(hts) < 22, f"version date wraps: {hts}")
         page.locator(".rw-versions").scroll_into_view_if_needed()
         page.screenshot(path=str(shots / "v036_versions.png"))
+        # v0.6.0 (F2b): deleting a version asks in a dialog (the inline bar vanished on any re-render)
         rows.nth(1).locator("button[data-help='render.versions.delete']").click()
         page.wait_for_timeout(200)
-        rows.nth(1).locator(".rw-confirm button:has-text('Confirm')").click()
+        check(page.locator(".rw-confirm").count() == 0 and page.locator(".rw-modal").count() == 1, "version delete did not open a dialog")
+        page.locator(".rw-modal button:has-text('Delete version')").click()
         page.wait_for_timeout(400)
         check(page.locator(".rw-version").count() == n0 - 1, "single delete did not remove a row")
         page.click("button[data-help='render.versions.deleteAll']")
@@ -797,7 +804,7 @@ def main():
         check(page.locator(".rw-fprev img.rw-fprev-media").count() == 1, "picture preview missing")
         page.click(row("o:reelwright/harbor_lights/cuts") + " .rw-ftree-caret")
         page.wait_for_timeout(200)
-        cut = [r for r in rows() if r.startswith("cut:")][1]
+        cut = [r for r in rows() if r.startswith("cut:") and not r.endswith("_draft")][1]  # v0.6.0: the mock lists a draft cut first
         page.click(row(cut) + " .rw-ftree-caret")
         page.wait_for_timeout(200)
         srt = [r for r in rows() if r.endswith(".srt")][0]
@@ -1014,7 +1021,13 @@ def main():
         page.wait_for_timeout(300)
         t = live()["soundtrack"][0]
         check(abs(t["start"] - 2.0) < 0.05, f"move: start {t['start']}")
-        bx = page.locator(".rw-track-clip").first.bounding_box()
+        # v0.6.0 (F2a): the render after the drop can replace the clip while it is measured (bounding_box() gave None)
+        bx = None
+        for _ in range(10):
+            bx = page.locator(".rw-track-clip").first.bounding_box()
+            if bx:
+                break
+            page.wait_for_timeout(150)
         page.keyboard.down("Alt")
         page.mouse.move(bx["x"] + 2, bx["y"] + 10)
         page.mouse.down()
@@ -1037,7 +1050,12 @@ def main():
         page.wait_for_timeout(300)
         t = live()["soundtrack"][0]
         check(t["volume_db"] == -6 and t["loop"], f"inspector edits: {t}")
-        check(page.locator(".rw-track-clip.ghost").count() > 3, "loop repeats not drawn")
+        # v0.6.0 (F2a): the repeats are one pattern element that ends with the film
+        ghost = page.locator(".rw-track-clip.ghost.pattern")
+        check(ghost.count() == 1 and int(ghost.first.get_attribute("data-repeats") or 0) > 3, "loop repeats not drawn")
+        gb = ghost.first.bounding_box() if ghost.count() else None
+        add_b = page.locator(".rw-add-ghost").bounding_box()
+        check(gb is not None and gb["x"] + gb["width"] <= add_b["x"] - 8 * sc + 1.5, f"loop repeats drawn past the film end: {gb} vs {add_b}")
         page.screenshot(path=str(shots / "v050_loop.png"))
         page.locator(".rw-track-insp button.rw-toggle[data-help='timeline.track.loopToggle']").click()
         page.wait_for_timeout(200)
@@ -1124,6 +1142,337 @@ def main():
             page.wait_for_timeout(200)
         check(page.locator("input[data-help='global.llm.importPart']").count() == 0 and "parts of" in fold.inner_text(), "Script import did not fold")
         page.screenshot(path=str(shots / "v051_llm_folded.png"))
+
+        # ---- added 2026-11-03 v0.6.0 (F1: editor core) ----
+        in_editor_keys = "(() => { const a = document.activeElement; return !!a && a.classList.contains('rw-keys') && !!a.closest('.rw-root'); })()"
+        toast_text = lambda: " | ".join(page.locator(".rw-toast").all_inner_texts())
+        page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
+        page.wait_for_timeout(300)
+
+        # Combobox: Enter and Escape leave focus in the editor (not on the page), so Ctrl+Z stays the editor's.
+        page.click(".rw-tab:has-text('Global')")
+        page.wait_for_timeout(300)
+        lang = page.locator(".rw-combo input[data-help='global.defaults.language']")
+        lang.click()
+        lang.fill("Fren")
+        page.wait_for_timeout(150)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        check(live()["global"]["defaults"]["language"] == "French", f"combobox pick: {live()['global']['defaults']['language']}")
+        check(page.evaluate(in_editor_keys), f"focus after combobox Enter: {page.evaluate('document.activeElement.tagName + \".\" + document.activeElement.className')}")
+        page.keyboard.press("Control+z")
+        page.wait_for_timeout(300)
+        check(live()["global"]["defaults"]["language"] != "French", "Ctrl+Z after a combobox pick did not undo it")
+        lang.click()
+        lang.fill("Ger")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(200)
+        check(page.evaluate(in_editor_keys), "focus after combobox Escape")
+
+        # Number field: partial typing ("-", "1e") puts the stored value back instead of storing null/0.
+        seed = page.locator("input[data-help='global.sampling.seed']")
+        seed0 = live()["global"]["sampling"]["seed"]
+        seed.click()
+        seed.press("Control+a")
+        page.keyboard.type("-")
+        seed.press("Tab")
+        page.wait_for_timeout(300)
+        check(live()["global"]["sampling"]["seed"] == seed0, f"'-' changed the seed to {live()['global']['sampling']['seed']}")
+        seed.click()
+        seed.press("Control+a")
+        page.keyboard.type("1e")
+        seed.press("Tab")
+        page.wait_for_timeout(300)
+        check(live()["global"]["sampling"]["seed"] == seed0 and seed.input_value() == str(seed0), f"'1e' changed the seed: {live()['global']['sampling']['seed']} / {seed.input_value()!r}")
+
+        # Confirm dialog: a delete opens with Cancel focused, so Enter cancels; Tab stays inside; Ctrl+Z does nothing;
+        # Enter on the delete button deletes.
+        page.click(".rw-tab:has-text('Timeline')")
+        page.wait_for_timeout(300)
+        n = len(live()["scenes"])
+        page.locator(".rw-root").focus()
+        page.keyboard.press("Delete")
+        page.wait_for_timeout(200)
+        check(page.locator(".rw-modal").count() == 1, "Delete did not ask")
+        check(page.evaluate("document.activeElement.textContent") == "Cancel", f"dialog focus: {page.evaluate('document.activeElement.textContent')!r}")
+        for _ in range(5):
+            page.keyboard.press("Tab")
+        check(page.evaluate("!!document.activeElement.closest('.rw-modal')"), "Tab left the dialog")
+        page.keyboard.down("Control")
+        check(page.evaluate("document.activeElement.tagName") == "INPUT", "Ctrl in the dialog: focus is not on a field (ComfyUI would undo)")
+        page.keyboard.press("z")
+        page.keyboard.up("Control")
+        page.wait_for_timeout(200)
+        check(page.locator(".rw-modal").count() == 1 and len(live()["scenes"]) == n, "Ctrl+Z in the dialog changed something")
+        page.locator(".rw-modal button:has-text('Cancel')").focus()
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        check(page.locator(".rw-modal").count() == 0 and len(live()["scenes"]) == n, "Enter on Cancel deleted the scene")
+        check(page.evaluate("!!document.activeElement.closest('.rw-root')"), "focus left the editor after the dialog")
+        page.keyboard.press("Delete")
+        page.wait_for_timeout(200)
+        page.keyboard.press("Tab")
+        check(page.evaluate("document.activeElement.textContent") == "Delete scene", f"Tab to the delete button: {page.evaluate('document.activeElement.textContent')!r}")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        check(len(live()["scenes"]) == n - 1, "Enter on the delete button did not delete")
+        page.keyboard.press("Control+z")
+        page.wait_for_timeout(300)
+        check(len(live()["scenes"]) == n, "undo of the delete")
+
+        # Focus helper: a clicked <video controls> and Ctrl on a focused button hand focus to the key field.
+        page.evaluate("""() => { const v = document.createElement('video'); v.controls = true; v.tabIndex = 0; v.id = 'rw-test-video';
+          document.querySelector('.rw-root .rw-body').prepend(v); v.focus(); }""")
+        page.wait_for_timeout(100)
+        check(page.evaluate(in_editor_keys), "focus stayed on a <video controls>")
+        page.evaluate("document.getElementById('rw-test-video')?.remove()")
+        page.evaluate("document.querySelector('.rw-tab').focus()")
+        page.keyboard.down("Control")
+        check(page.evaluate(in_editor_keys), "Ctrl on a focused button did not move focus to the key field")
+        page.keyboard.up("Control")
+
+        # Split keeps the film's length: the second half (last_frame) is one frame longer, its shots move by cut - 1 frame,
+        # and it gets its own seed number.
+        page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
+        page.wait_for_timeout(300)
+        total = lambda: page.evaluate("import('../web/rw/model.js').then(m => m.sceneStarts(window.__editor.project).total)")
+        t0 = total()
+        sp = live()
+        # a scene that the next one does not continue (a later re-anchored tail would change the length by design)
+        cands = [k for k, x in enumerate(sp["scenes"]) if x["duration"] >= 2 and (k + 1 == len(sp["scenes"]) or sp["scenes"][k + 1]["start"]["mode"] == "fresh")]
+        i = cands[0] if cands else len(sp["scenes"]) - 1
+        sid = sp["scenes"][i]["id"]
+        sc = sp["scenes"][i]
+        start = page.evaluate("import('../web/rw/model.js').then(m => m.sceneStarts(window.__editor.project).starts[%r])" % sid)
+        at = round(sc["duration"] / 2 * 24) / 24
+        page.evaluate("window.__editor.actions.splitScene(%r, %r)" % (sid, at))
+        page.wait_for_timeout(300)
+        sp2 = live()
+        a, b = sp2["scenes"][i], sp2["scenes"][i + 1]
+        check(round(total() * 24) == round(t0 * 24), f"split changed the length: {t0} -> {total()}")
+        check(b["start"]["mode"] == "last_frame" and round((a["duration"] + b["duration"]) * 24) == round(sc["duration"] * 24) + 1, f"split halves: {a['duration']} + {b['duration']} of {sc['duration']}")
+        later_shots = [x["t"] for x in sc["shots"] if x["t"] >= at]
+        check(all(abs(y["t"] - (x - at + 1 / 24)) < 1e-3 for x, y in zip(later_shots, b["shots"])), f"shot times in the second half: {[y['t'] for y in b['shots']]}")
+        if "seed_n" in a:
+            check(b.get("seed_n") not in [x.get("seed_n") for x in sp2["scenes"] if x["id"] != b["id"]], f"split seed number reused: {b.get('seed_n')}")
+        page.evaluate("window.__editor.actions.duplicateScene(%r)" % sid)
+        page.wait_for_timeout(300)
+        sp3 = live()
+        if "seed_n" in a:
+            ns = [x.get("seed_n") for x in sp3["scenes"]]
+            check(len(set(ns)) == len(ns), f"duplicate reused a seed number: {ns}")
+        page.screenshot(path=str(shots / "v060_split.png"))
+
+        # Named history: steps carry labels; the History menu jumps to one; the view (tab) is not part of it.
+        labels = [x["label"] for x in page.evaluate("window.__editor.store.history()")]
+        check(labels[-2:] == ["Split scene", "Duplicate scene"], f"history labels: {labels}")
+        page.click(".rw-tab:has-text('Global')")
+        page.wait_for_timeout(200)
+        page.click("button[data-help='app.history']")
+        page.wait_for_timeout(200)
+        items = page.locator(".rw-ctx.rw-history .rw-ctx-item").all_inner_texts()
+        check(len(items) >= 3 and items[0].startswith("Duplicate scene"), f"history menu: {items[:3]}")
+        page.screenshot(path=str(shots / "v060_history.png"))
+        page.locator(".rw-ctx.rw-history .rw-ctx-item:has-text('Split scene')").click()
+        page.wait_for_timeout(300)
+        check(len(live()["scenes"]) == len(sp2["scenes"]) and live()["ui"]["tab"] == "global", f"jump to 'Split scene': {len(live()['scenes'])} scenes, tab {live()['ui']['tab']}")
+        page.evaluate("window.__editor.store.jumpTo(-1)")
+        page.wait_for_timeout(300)
+        check(len(live()["scenes"]) == len(sp["scenes"]), "jump to the start")
+        page.evaluate("window.__editor.store.jumpTo(window.__editor.store.history().length - 1)")
+        page.wait_for_timeout(300)
+        check(len(live()["scenes"]) == len(sp3["scenes"]), "jump to the newest step")
+        page.click(".rw-tab:has-text('Timeline')")
+        page.wait_for_timeout(200)
+        page.locator(".rw-root").focus()
+        page.keyboard.press("Control+z")
+        page.wait_for_timeout(300)
+        check(live()["ui"]["tab"] == "timeline", "undo changed the tab")
+
+        # Run state: "end" with failed / skipped / interrupted clears the run; a rejected run and ComfyUI's own
+        # interrupt clear it too.
+        page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
+        page.wait_for_timeout(300)
+        emit = lambda ev, d: page.evaluate("([e, d]) => window.__host.emit(e, d)", [ev, d])
+        eph = lambda: page.evaluate("(() => { const e = window.__editor.eph; return { running: e.running, run: e.run, lastRun: e.lastRun, progress: e.progress }; })()")
+        emit("reelwright.run", {"slug": "harbor_lights", "run_id": "r1", "phase": "start", "targets": ["s_02", "s_03"], "reused": []})
+        emit("reelwright.progress", {"slug": "harbor_lights", "scene_id": "s_02", "pass": 1, "passes": 1, "step": 3, "steps": 20, "phase": "sample"})
+        emit("reelwright.progress", {"slug": "harbor_lights", "scene_id": "s_02", "pass": 1, "passes": 1, "phase": "error", "message": "CUDA out of memory"})
+        emit("reelwright.progress", {"slug": "harbor_lights", "scene_id": "s_03", "pass": 1, "passes": 1, "step": 2, "steps": 20, "phase": "sample"})
+        page.wait_for_timeout(200)
+        check(page.evaluate("window.__editor.eph.running") and page.evaluate("window.__editor.eph.run.failed.length") == 1, "progress error not recorded in the run")
+        emit("reelwright.run", {"slug": "harbor_lights", "run_id": "r1", "phase": "end", "targets": ["s_02", "s_03"], "reused": [], "rendered": [],
+                                "failed": [{"scene_id": "s_02", "error": "CUDA out of memory"}], "skipped": [{"scene_id": "s_03", "reason": "continues from s_02"}], "interrupted": True})
+        page.wait_for_timeout(300)
+        e = eph()
+        check(not e["running"] and e["run"] is None, f"run still active after end: {e['running']} {e['run']}")
+        check(e["lastRun"] and e["lastRun"]["interrupted"] and len(e["lastRun"]["failed"]) == 1 and len(e["lastRun"]["skipped"]) == 1, f"lastRun: {e['lastRun']}")
+        check(all(x["phase"] in ("done", "cached", "error", "skipped") for x in e["progress"].values()), f"unfinished progress left: {e['progress']}")
+        check("Render stopped" in toast_text(), f"stop toast: {toast_text()}")
+        page.click(".rw-tab:has-text('Render')")
+        page.wait_for_timeout(300)
+        check(page.locator("[data-help='render.banner']").count() == 0, "run banner still shown after the end")
+        page.screenshot(path=str(shots / "v060_run_end.png"))
+        emit("reelwright.run", {"slug": "harbor_lights", "phase": "start", "targets": ["s_01"], "reused": []})
+        emit("reelwright.run", {"slug": "harbor_lights", "phase": "rejected", "error": "Fix these first: Scene 1 has no prompt"})
+        page.wait_for_timeout(200)
+        check(not eph()["running"] and eph()["lastRun"]["rejected"] and "Render not started" in toast_text(), "rejected run")
+        # ComfyUI's interrupt for this node's prompt (no "end" from the backend)
+        emit("reelwright.run", {"slug": "harbor_lights", "phase": "start", "targets": ["s_01"], "reused": []})
+        emit("execution_start", {"prompt_id": "pr-1"})
+        emit("executing", "7")
+        emit("reelwright.progress", {"slug": "harbor_lights", "scene_id": "s_01", "pass": 1, "passes": 1, "step": 4, "steps": 20, "phase": "sample"})
+        emit("execution_interrupted", {"prompt_id": "pr-1", "node_id": "7"})
+        page.wait_for_timeout(200)
+        check(not eph()["running"] and "s_01" not in eph()["progress"], f"execution_interrupted did not clear the run: {eph()['running']}")
+        # the end of the prompt (executing null) after a run that never sent "end"
+        emit("reelwright.run", {"slug": "harbor_lights", "phase": "start", "targets": ["s_01"], "reused": []})
+        emit("execution_start", {"prompt_id": "pr-2"})
+        emit("executing", "7")
+        emit("executing", None)
+        page.wait_for_timeout(200)
+        check(not eph()["running"], "executing null did not clear the run")
+        # another node's error does not touch a run of this node
+        emit("reelwright.run", {"slug": "harbor_lights", "phase": "start", "targets": ["s_01"], "reused": []})
+        emit("execution_error", {"prompt_id": "pr-other", "node_id": "12:7", "exception_message": "boom"})
+        page.wait_for_timeout(100)
+        check(eph()["running"], "an error of node 12:7 (a subgraph node) ended this node's run")
+        emit("reelwright.run", {"slug": "harbor_lights", "phase": "end", "targets": ["s_01"], "reused": [], "rendered": ["s_01"], "failed": [], "skipped": [], "interrupted": False})
+        page.wait_for_timeout(200)
+        check("Render finished" in toast_text(), f"finish toast: {toast_text()}")
+
+        # Queue: a second click while the first request is on its way is ignored; extra fields reach the request.
+        page.evaluate("window.__mockFlags.queueMs = 300")
+        q0 = len(page.evaluate("window.__host.queued"))
+        page.evaluate("Promise.all([window.__editor.actions.run('pending'), window.__editor.actions.run('pending')])")
+        page.wait_for_timeout(500)
+        check(len(page.evaluate("window.__host.queued")) == q0 + 1, f"double queue: {len(page.evaluate('window.__host.queued')) - q0} requests")
+        page.evaluate("window.__mockFlags.queueMs = 0")
+        page.evaluate("window.__editor.actions.run('pass_retake', [], { scene_id: 's_02', pass: 2 })")
+        page.wait_for_timeout(200)
+        lq = page.evaluate("window.__host.queued.at(-1)")
+        check(lq["action"] == "pass_retake" and lq["scene_id"] == "s_02" and lq["pass"] == 2, f"pass_retake request: {lq}")
+        page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: [], reused: [] })")
+        page.wait_for_timeout(200)
+
+        # Merge: one at a time, 409 busy, and Stop.
+        page.evaluate("window.__mockFlags.mergeMs = 600")
+        r = page.evaluate("""async () => { const a = window.__editor.actions; const p1 = a.merge({ draft: true }); const second = await a.merge();
+          await new Promise(r => setTimeout(r, 100)); const job = window.__editor.eph.merge.job; await a.cancelMerge(); const first = await p1;
+          return { second, first, job, phase: window.__editor.eph.merge.phase }; }""")
+        check(r["second"] is False and r["first"] is False and r["job"] and r["phase"] == "cancelled", f"merge guard/cancel: {r}")
+        page.evaluate("window.__mockFlags.mergeMs = 0; window.__mockFlags.mergeBusy = true")
+        r = page.evaluate("window.__editor.actions.merge().then(ok => ({ ok, m: window.__editor.eph.merge }))")
+        page.wait_for_timeout(150)
+        check(r["ok"] is False and r["m"]["busy"] and "Another merge" in toast_text(), f"merge 409 busy: {r} / {toast_text()}")
+        page.evaluate("window.__mockFlags.mergeBusy = false")
+        r = page.evaluate("window.__editor.actions.merge({ draft: true }).then(ok => ({ ok, m: window.__editor.eph.merge }))")
+        check(r["ok"] and r["m"]["phase"] == "end" and r["m"]["draft"], f"draft merge: {r}")
+
+        # Ctrl+S waits for the disk and says when it fails.
+        page.evaluate("window.__mockFlags.autosaveFail = true")
+        page.locator(".rw-root").focus()
+        page.keyboard.press("Control+s")
+        page.wait_for_timeout(300)
+        check("Not saved to disk" in toast_text() and "Disk full" in toast_text(), f"Ctrl+S failure: {toast_text()}")
+        page.evaluate("window.__mockFlags.autosaveFail = false")
+        page.keyboard.press("Control+s")
+        page.wait_for_timeout(300)
+        check("Saved · output/reelwright/harbor_lights" in toast_text(), f"Ctrl+S: {toast_text()}")
+
+        # Folder conflict: /autosave answers 409 slug_conflict; "Use a separate project" moves to harbor_lights-2;
+        # "Take over this folder" resends with force.
+        page.evaluate("window.__mockFlags.slugConflict = 'harbor_lights'; window.__mockFlags.autosaves.length = 0")
+        page.keyboard.press("Control+s")
+        page.wait_for_timeout(300)
+        check(page.locator(".rw-modal").count() == 1 and "Lighthouse Keeper" in page.inner_text(".rw-modal"), "slug conflict dialog missing")
+        # v0.6.0 review: the harmless "Decide later" has focus (a Space typed on was "Use a separate project")
+        check(page.evaluate("document.activeElement.textContent") == "Decide later", "conflict dialog focus")
+        page.screenshot(path=str(shots / "v060_conflict.png"))
+        page.locator(".rw-modal button:has-text('Decide later')").click()
+        page.wait_for_timeout(200)
+        check(page.locator(".rw-footer [data-help='footer.saveConflict']").count() == 1, "footer does not show the conflict")
+        page.locator(".rw-footer [data-help='footer.saveConflict']").click()
+        page.wait_for_timeout(200)
+        page.locator(".rw-modal button:has-text('Use a separate project')").click()
+        page.wait_for_timeout(400)
+        check(live()["slug"] == "harbor_lights-2" and page.evaluate("window.__editor.eph.saveState") == "saved", f"separate project: {live()['slug']} {page.evaluate('window.__editor.eph.saveState')}")
+        page.wait_for_timeout(300)
+        check(page.evaluate("window.__editor.eph.takesSlug") == "harbor_lights-2", "takes not read for the new folder")
+        page.evaluate("window.__mockFlags.slugConflict = 'harbor_lights-2'")
+        page.keyboard.press("Control+s")
+        page.wait_for_timeout(300)
+        page.locator(".rw-modal button:has-text('Take over this folder')").click()
+        page.wait_for_timeout(300)
+        check(page.evaluate("window.__mockFlags.autosaves.at(-1).force") and page.evaluate("window.__editor.eph.saveState") == "saved", "take over did not force")
+        page.evaluate("window.__mockFlags.slugConflict = ''")
+
+        # Takes follow load() and slug changes; a copied node becomes its own project.
+        page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
+        page.wait_for_timeout(400)
+        check(page.evaluate("window.__editor.eph.takesSlug") == "harbor_lights", "takes not refreshed after load()")
+        pid = live().get("project_id")
+        check(bool(pid), "the project has no project_id")
+        new_slug = page.evaluate("window.__editor.forkProject(['harbor_lights-2'])")
+        page.wait_for_timeout(400)
+        fk = live()
+        check(new_slug == "harbor_lights-3" and fk["slug"] == new_slug and fk["project_id"] != pid and not set(x["id"] for x in fk["scenes"]) & set(x["id"] for x in base["scenes"]),
+              f"fork: {new_slug} {fk['project_id']} vs {pid}")
+        check("copy of another Reelwright node" in toast_text() and page.evaluate("window.__editor.eph.takesSlug") == new_slug, "fork toast / takes")
+        page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
+        page.wait_for_timeout(300)
+
+        # ChangeTracker: a widget write tells the host (ComfyUI marks the workflow changed).
+        c0 = page.evaluate("window.__host.changes")
+        page.evaluate("window.__editor.store.update(p => { p.notes = 'x'; }, { label: 'Notes' })")
+        page.wait_for_timeout(400)
+        check(page.evaluate("window.__host.changes") > c0, "no ChangeTracker notice after an edit")
+
+        # IME: no re-render while composing (the textarea stays the same element); the render follows compositionend.
+        page.click(".rw-tab:has-text('Scene')")
+        page.wait_for_timeout(300)
+        ta = page.locator(".rw-psec").nth(1).locator("textarea")
+        ta.click()
+        page.evaluate("""() => { const t = document.querySelector('.rw-psec:nth-of-type(2) textarea') || document.querySelectorAll('.rw-psec textarea')[1];
+          window.__imeTa = t; t.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+          window.__host.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_05', pass: 1, passes: 1, step: 1, steps: 9, phase: 'encode' }); }""")
+        page.wait_for_timeout(300)
+        check(page.evaluate("window.__imeTa.isConnected"), "re-rendered during an IME composition")
+        page.evaluate("window.__imeTa.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'あ' }))")
+        page.wait_for_timeout(300)
+        page.evaluate("window.__host.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_05', pass: 1, passes: 1, phase: 'done' })")
+        page.wait_for_timeout(200)
+
+        # Tags: e-mail addresses are text, @@ is a literal @.
+        hl = page.evaluate("import('../web/rw/prompttext.js').then(m => m.highlightHTML('mail bob@example.com, @@x, @Anna. ok \\u0000' + '1\\u0000'))")
+        check(hl.count("hl-at") == 1 and "hl-esc" in hl and "undefined" not in hl, f"tag highlight: {hl!r}")
+
+        # Teardown: a second editor's listeners go away with destroy(), and its last edit is flushed into its widget.
+        r = page.evaluate("""async () => {
+          const { mountEditor } = await import('../web/rw/editor.js');
+          const h = window.__host, before = h.listenerCount();
+          let json = JSON.stringify(JSON.parse(h.getProject()));
+          const h2 = Object.create(h);
+          h2.getProject = () => json; h2.setProject = j => { json = j; };
+          const div = document.createElement('div'); div.style.cssText = 'position:absolute;left:-4000px;top:0;width:1200px;height:800px';
+          document.body.appendChild(div);
+          const ed = mountEditor(div, h2);
+          await new Promise(r => setTimeout(r, 100));
+          const during = h.listenerCount();
+          ed.store.update(p => { p.name = 'Torn down'; }, { label: 'Rename' });
+          ed.destroy();
+          const after = h.listenerCount();
+          await new Promise(r => setTimeout(r, 300));
+          const res = { before, during, after, flushed: JSON.parse(json).name, empty: div.childElementCount, destroyed: ed.destroyed };
+          div.remove();
+          return res; }""")
+        check(r["during"] > r["before"] and r["after"] == r["before"], f"listeners after destroy: {r}")
+        check(r["flushed"] == "Torn down" and r["empty"] == 0 and r["destroyed"], f"destroy flush/cleanup: {r}")
+        page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
+        page.wait_for_timeout(300)
+        f2a_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 (F2a): Timeline, soundtrack, Scene tabs
+        f2b_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 (F2b): Render, Files, Global, Assets, Cast tabs
+        review_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 review: frontend fixes of the second review
         browser.close()
     httpd.shutdown()
 
@@ -1134,6 +1483,1018 @@ def main():
     print("ok" if not (errors or failures) else f"{len(failures)} failures, {len(errors)} errors")
     return 1 if errors or failures else 0
 
+
+# ---- added 2026-11-03 v0.6.0 (F2a: timeline-side tabs) ----
+def f2a_checks(page, check, saved, shots):
+    """v0.6.0 tabs (F2a): Next/Prev/Loop over continuing scenes, a loop over a take seeks the video, Delete acts on the
+    selection, beats + Snap to beats, Auto-roll keeps later scenes on the song, the "what goes stale" preview, the pass's
+    song excerpt (kept across renders), per-pass budget, shot keys after a re-sort, shots on the beat, no NaN after
+    deleting the playing scene, progress updated in place (also at 300 scenes)."""
+    import base64
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+
+    def cur():
+        return page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(300)
+
+    def tab(name):
+        page.click(f".rw-tab:has-text('{name}')")
+        page.wait_for_timeout(250)
+
+    def timing():
+        return page.evaluate("""() => import('../web/rw/model.js').then(m => { const p = window.__editor.project; const t = m.sceneStarts(p);
+          return { starts: p.scenes.map(s => t.starts[s.id]), visible: p.scenes.map(s => t.visible[s.id]), total: t.total }; })""")
+
+    def handle_box(sid):
+        loc = page.locator(f".rw-scene[data-sid='{sid}'] .rw-resize")
+        for _ in range(5):  # a render (a toast expiring, the plan arriving) can replace it while it is measured
+            loc.wait_for(state="attached", timeout=5000)
+            b = loc.bounding_box()
+            if b:
+                return b
+            page.wait_for_timeout(200)
+        return loc.bounding_box()
+
+    def drag(x0, y0, dx, alt=False):
+        if alt:
+            page.keyboard.down("Alt")
+        page.mouse.move(x0, y0)
+        page.mouse.down()
+        page.mouse.move(x0 + dx, y0, steps=6)
+        page.mouse.up()
+        if alt:
+            page.keyboard.up("Alt")
+        page.wait_for_timeout(300)
+
+    def fresh():
+        # the demo project's pre-0.5 score would become a second (looping) track on load: start without it
+        q = json.loads(saved)
+        q["global"]["merge"]["score"] = {"asset": "", "volume_db": -12, "duck": False}
+        q["soundtrack"] = []
+        return q
+
+    sc = page.evaluate("(() => { const r = document.querySelector('.rw-root'); const b = r.getBoundingClientRect(); return b.width / r.offsetWidth; })()")
+    song = [{"id": "t_song", "asset": "a_a3", "start": 0, "in": 0, "out": 0, "sync": True, "mix": True, "loop": True}]
+
+    # 1. Next / Prev / Loop over a chain of continuing scenes (01 fresh -> 02 last frame -> 03 tail -> 04 tail)
+    p = fresh()
+    p["scenes"][3]["start"]["mode"] = "tail"
+    p["soundtrack"] = []
+    p["ui"]["playhead"] = 0
+    load(p)
+    tab("Timeline")
+    tm = timing()
+    page.locator(".rw-root").focus()
+    page.keyboard.press("Home")
+    seen = []
+    for _ in range(4):
+        page.locator("button[data-help='timeline.transport.next']").click()
+        page.wait_for_timeout(120)
+        seen.append(cur()["ui"]["playhead"])
+    check(all(abs(seen[k] - tm["visible"][k + 1]) < 1e-6 for k in range(4)), f"Next over continuing scenes: {seen} vs {tm['visible'][1:5]}")
+    page.evaluate("t => window.__editor.store.update(p => { p.ui.playhead = t; }, { history: false, plan: false })", tm["visible"][3] + 1.0)
+    got = []
+    for _ in range(3):
+        page.locator("button[data-help='timeline.transport.prev']").click()
+        page.wait_for_timeout(120)
+        got.append(cur()["ui"]["playhead"])
+    want = [tm["visible"][3], tm["visible"][2], tm["visible"][1]]
+    check(all(abs(a - b) < 1e-6 for a, b in zip(got, want)), f"Prev over continuing scenes: {got} vs {want}")
+    page.locator("button[data-help='timeline.transport.loop']").click()
+    page.wait_for_timeout(150)
+    lp = page.evaluate("window.__editor.eph.loop")
+    check(bool(lp) and abs(lp["in"] - tm["visible"][1]) < 1e-6 and abs(lp["out"] - (tm["starts"][1] + p["scenes"][1]["duration"])) < 1e-6,
+          f"Loop on a continuing scene: {lp}")
+    page.locator("button[data-help='timeline.transport.loop']").click()
+    page.wait_for_timeout(120)
+
+    # 2. A loop over a rendered take seeks the take when the playhead wraps (it used to play on past the loop)
+    vid = None
+    if shutil.which("ffmpeg"):
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "take.webm")
+            r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x36:rate=24:duration=6",
+                                "-c:v", "libvpx", "-b:v", "60k", "-g", "6", "-y", out], capture_output=True)
+            if r.returncode == 0:
+                with open(out, "rb") as f:
+                    vid = base64.b64encode(f.read()).decode()
+    if vid is None:
+        print("note: no ffmpeg with libvpx; the loop-seek check is skipped", flush=True)
+    else:
+        page.evaluate("""b64 => { const bin = atob(b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+          const url = URL.createObjectURL(new Blob([u8], { type: 'video/webm' })); const h = window.__host; h.__apiURL0 = h.__apiURL0 || h.apiURL;
+          h.apiURL = function (path) { const f = new URL(path, 'http://x').searchParams.get('filename') || ''; return f.endsWith('.mp4') ? url : h.__apiURL0.call(this, path); }; }""", vid)
+        page.evaluate("window.__editor.store.update(p => { p.ui.playhead = 1.0; p.ui.selected = 's_01'; }, { history: false, plan: false })")
+        page.wait_for_timeout(300)
+        try:
+            page.wait_for_function("document.querySelector('.rw-mon-video').readyState >= 2", timeout=5000)
+        except Exception:
+            pass
+        page.evaluate("window.__editor.store.setEph({ loop: { in: 1.0, out: 2.0 } })")
+        page.wait_for_timeout(100)
+        page.locator(".rw-root").focus()
+        page.keyboard.press(" ")
+        page.wait_for_timeout(2800)
+        st = page.evaluate("(() => { const v = document.querySelector('.rw-mon-video'); return { vt: v.currentTime, paused: v.paused, src: !!v.src, ph: window.__editor.project.ui.playhead }; })()")
+        page.keyboard.press("k")
+        page.wait_for_timeout(150)
+        check(st["src"] and not st["paused"] and 0.95 <= st["ph"] <= 2.05 and st["vt"] <= 2.4, f"a loop over a take did not seek the take: {st}")
+        page.evaluate("window.__editor.store.setEph({ loop: null })")
+        page.evaluate("(() => { const h = window.__host; if (h.__apiURL0) { h.apiURL = h.__apiURL0; delete h.__apiURL0; } })()")
+
+    # 3. Delete removes what is selected: a soundtrack track or a marker (no question), else the scene (it asks)
+    p = fresh()
+    p["soundtrack"] = song
+    p["ui"]["playhead"] = 3.0
+    load(p)
+    tab("Timeline")
+    page.locator(".rw-track-clip[data-tid='t_song']").first.click()
+    page.wait_for_timeout(250)
+    page.keyboard.press("Delete")
+    page.wait_for_timeout(250)
+    check(cur()["soundtrack"] == [] and page.locator(".rw-modal").count() == 0 and len(cur()["scenes"]) == 8,
+          f"Delete did not remove the selected track: {len(cur()['soundtrack'])} tracks, modal {page.locator('.rw-modal').count()}")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(300)
+    check(len(cur()["soundtrack"]) == 1, "undo did not bring the deleted track back")
+    page.locator(".rw-marker").first.click()
+    page.wait_for_timeout(200)
+    page.keyboard.press("Delete")
+    page.wait_for_timeout(250)
+    check(len(cur()["markers"]) == 1 and page.locator(".rw-modal").count() == 0, f"Delete did not remove the selected marker: {cur()['markers']}")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(250)
+    page.locator(".rw-marker").first.click()
+    page.wait_for_timeout(200)
+    page.locator(".rw-scene[data-sid='s_02']").click()
+    page.wait_for_timeout(250)
+    check(page.evaluate("window.__editor.eph.selectedMarker") in (None, "") and page.locator(".rw-insp-head").count() == 1,
+          "a click on a scene did not close the marker inspector")
+    page.keyboard.press("Delete")
+    page.wait_for_timeout(250)
+    check(page.locator(".rw-modal").count() == 1, "Delete with a scene selected should ask first")
+    page.locator(".rw-modal button:has-text('Cancel')").click()
+    page.wait_for_timeout(200)
+    check(len(cur()["scenes"]) == 8 and len(cur()["markers"]) == 2, "Cancel changed the project")
+
+    # 4. Beats: the tempo on the track, the Beats toggle, Snap to beats puts a scene edge on a beat
+    check("BPM" in page.locator(".rw-track-clip[data-tid='t_song']").first.inner_text(), "no tempo on the soundtrack clip")
+    tg = page.locator(".rw-tl-toolbar button.rw-toggle[data-help='timeline.beats']")
+    check(tg.count() == 1, "no Beats toggle")
+    tg.click()
+    page.wait_for_timeout(200)
+    check(cur()["ui"].get("beats") is False, "the Beats toggle did not turn the ticks off")
+    page.locator(".rw-tl-toolbar button.rw-toggle[data-help='timeline.beats']").click()
+    page.wait_for_timeout(200)
+    page.locator(".rw-tl-toolbar button.rw-toggle[data-help='timeline.beatSnap']").click()
+    page.wait_for_timeout(300)
+    check(cur()["ui"].get("beatSnap") is True and cur()["ui"].get("beats") is not False, f"Snap to beats: {cur()['ui']}")
+    beats = page.evaluate("() => import('../web/rw/tabs/soundtrack.js').then(m => Array.from(m.beatTimes({ p: window.__editor.project, store: { notify() {} } }).times))")
+    z = cur()["ui"]["zoom"] or 22
+    end0 = cur()["scenes"][0]["duration"]
+    target = min((b for b in beats if b > end0 + 0.6), default=None)
+    check(target is not None, f"no beats under the film: {beats[:5]}")
+    if target is not None:
+        hb = handle_box("s_01")
+        drag(hb["x"] + hb["width"] / 2, hb["y"] + 20, (target + 0.06 - end0) * z * sc)
+        d = cur()["scenes"][0]["duration"]
+        check(round(d * 24) == round(target * 24), f"the scene edge did not snap to the beat at {target}: {d}")
+        page.keyboard.press("Control+z")
+        page.wait_for_timeout(250)
+    page.locator(".rw-tl-toolbar button.rw-toggle[data-help='timeline.beatSnap']").click()
+    page.wait_for_timeout(200)
+    # a render in the middle of a resize drag (plan or autosave state arriving) no longer ends it; nor does a lost pointerup
+    hb = handle_box("s_01")
+    d0 = cur()["scenes"][0]["duration"]
+    page.mouse.move(hb["x"] + 4, hb["y"] + 20)
+    page.mouse.down()
+    page.mouse.move(hb["x"] + 4 + 1 * z * sc, hb["y"] + 20, steps=3)
+    page.evaluate("window.__editor.store.notify()")
+    page.wait_for_timeout(80)
+    page.mouse.move(hb["x"] + 4 + 2.5 * z * sc, hb["y"] + 20, steps=3)
+    page.evaluate("window.dispatchEvent(new PointerEvent('pointermove', { clientX: 5, clientY: 5, buttons: 0, bubbles: true }))")  # the button was let go elsewhere
+    page.wait_for_timeout(250)
+    d1 = cur()["scenes"][0]["duration"]
+    page.mouse.move(hb["x"] + 4 + 6 * z * sc, hb["y"] + 20, steps=3)
+    page.mouse.up()
+    page.wait_for_timeout(250)
+    check(d1 > d0 + 1.5 and cur()["scenes"][0]["duration"] == d1 and page.locator(".rw-drag-tip:visible").count() == 0,
+          f"resize across a render / lost pointerup: {d0} -> {d1} -> {cur()['scenes'][0]['duration']}")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(250)
+
+    # 5. Auto-roll (on while the soundtrack sets the timing): a longer scene takes the time from the next one, so every
+    # later scene keeps its place on the song; off, the later scenes move along (Ripple)
+    check(page.locator(".rw-tl-toolbar button.rw-toggle[data-help='timeline.autoRoll']").count() == 1 and cur()["ui"]["ripple"],
+          "no Auto-roll toggle with a locked soundtrack")
+    tm0 = timing()
+    d3, d4 = cur()["scenes"][3]["duration"], cur()["scenes"][4]["duration"]
+    hb = handle_box("s_04")
+    drag(hb["x"] + hb["width"] / 2, hb["y"] + 20, 2 * z * sc)
+    tm1 = timing()
+    q = cur()
+    # v0.6.0 review: the sum of the two lengths is no longer the rule (tail overlaps are capped by the lengths around
+    # them); the later scenes keeping their starts is
+    check(q["scenes"][3]["duration"] > d3 and q["scenes"][4]["duration"] < d4
+          and all(abs(tm1["starts"][k] - tm0["starts"][k]) < 1e-6 for k in range(5, 8)) and abs(tm1["total"] - tm0["total"]) < 1e-6,
+          f"auto-roll moved later scenes: {tm0['starts']} -> {tm1['starts']}")
+    page.locator(".rw-tl-toolbar button.rw-toggle[data-help='timeline.autoRoll']").click()
+    page.wait_for_timeout(200)
+    hb = handle_box("s_04")
+    drag(hb["x"] + hb["width"] / 2, hb["y"] + 20, 2 * z * sc)
+    tm2 = timing()
+    check(cur()["ui"].get("autoRoll") is False and tm2["starts"][6] > tm1["starts"][6] + 0.5, f"with Auto-roll off the later scenes should move: {tm1['starts']} -> {tm2['starts']}")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(200)
+    page.locator(".rw-tl-toolbar button.rw-toggle[data-help='timeline.autoRoll']").click()
+    page.wait_for_timeout(200)
+
+    # 6. "What goes stale": dragging a synced track outlines the scenes whose song part would change, before the drop
+    clip = page.locator(".rw-track-clip:not(.ghost)[data-tid='t_song']").first
+    bx = None
+    for _ in range(5):  # a render (a toast expiring) can replace the clip while it is measured
+        clip.wait_for(state="visible", timeout=5000)
+        bx = clip.bounding_box()
+        if bx:
+            break
+        page.wait_for_timeout(200)
+    page.mouse.move(bx["x"] + 30, bx["y"] + bx["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(bx["x"] + 30 + 3 * z * sc, bx["y"] + bx["height"] / 2, steps=6)
+    page.wait_for_timeout(200)
+    n_stale = page.locator(".rw-scene.rw-stale-preview").count()
+    tip = page.locator(".rw-track-clip[data-tid='t_song'] .rw-drag-tip").first.inner_text()
+    page.screenshot(path=str(shots / "v060_stale_preview.png"))
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    check(n_stale >= 1 and "render again" in tip, f"stale preview while dragging: {n_stale} scenes, tip {tip!r}")
+    check(page.locator(".rw-scene.rw-stale-preview").count() == 0, "the stale preview stayed after the drop")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(250)
+
+    # 7. "What H3 receives": listen to the pass's song excerpt; the <audio> survives re-renders
+    page.evaluate("window.__editor.store.update(p => { p.ui.selected = 's_01'; }, { history: false, plan: false })")
+    tab("Scene")
+    ex = page.locator(".rw-excerpt")
+    check(ex.count() == 1, "no song excerpt row in What H3 receives")
+    if ex.count():
+        ex.locator("button[data-help='scene.preview.listen']").click()
+        try:
+            page.wait_for_selector("audio.rw-excerpt-audio", timeout=4000)
+        except Exception:
+            pass
+        page.evaluate("window.__exA = document.querySelector('audio.rw-excerpt-audio')")
+        page.evaluate("window.__editor.store.notify()")
+        page.wait_for_timeout(200)
+        page.evaluate("window.__host.emit('reelwright.progress', { slug: window.__editor.project.slug, scene_id: 's_07', pass: 1, passes: 3, step: 1, steps: 28, phase: 'encode' })")
+        page.wait_for_timeout(200)
+        check(page.evaluate("!!window.__exA && document.querySelector('audio.rw-excerpt-audio') === window.__exA && window.__exA.isConnected"),
+              "the excerpt player was rebuilt by a render (or never built)")
+        page.evaluate("window.__host.emit('reelwright.progress', { slug: window.__editor.project.slug, scene_id: 's_07', pass: 1, passes: 3, phase: 'done' })")
+        page.wait_for_timeout(150)
+
+    # 8. A long scene shows its budget per pass; a shot time keeps focus on its own field after a re-sort
+    page.evaluate("window.__editor.store.update(p => { p.ui.selected = 's_07'; }, { history: false, plan: false })")
+    page.wait_for_timeout(300)
+    check(page.locator(".rw-budget-pass").count() >= 2, "no per-pass budget for a long scene")
+    f = page.locator("input[data-key='shot-t-h_12']")
+    f.click()
+    f.fill("3")
+    f.press("Enter")
+    page.wait_for_timeout(350)
+    order = [x["id"] for x in cur()["scenes"][6]["shots"]]
+    act = page.evaluate("document.activeElement?.dataset?.key || ''")
+    rows = page.evaluate("[...document.querySelectorAll('input[data-help=\"scene.shots.time\"]')].map(e => e.dataset.key)")
+    check(order[1] == "h_12" and act == "shot-t-h_12" and rows[1] == "shot-t-h_12", f"shot time focus after a re-sort: {act} {rows} {order}")
+    page.locator(".rw-root").focus()
+
+    # 9. Shots on the beat: proposed first, applied with one click (one undo step)
+    page.locator("button[data-help='scene.shots.beat']").click()
+    page.wait_for_timeout(300)
+    check(page.locator(".rw-beat-plan").count() == 1, "no beat proposal")
+    page.screenshot(path=str(shots / "v060_shots_on_beat.png"))
+    apply = page.locator(".rw-beat-plan button[data-help='scene.shots.beatApply']")
+    if apply.count():
+        apply.click()
+        page.wait_for_timeout(300)
+        s7 = cur()["scenes"][6]
+        st7 = timing()["starts"][6]
+        local = [b - st7 for b in beats]
+        off = [min(abs(sh["t"] - b) for b in local) for sh in s7["shots"][1:]]
+        hist = page.evaluate("window.__editor.store.history().filter(x => x.done).at(-1)?.label")
+        check(all(o <= 1 / 24 + 1e-6 for o in off) and hist == "Shots on the beat", f"shots on the beat: off {off}, history {hist!r}")
+
+    # 10. Deleting (and undoing) the scene that is playing keeps the playhead a number and playback going
+    tab("Timeline")
+    tm = timing()
+    page.evaluate("t => window.__editor.store.update(p => { p.ui.playhead = t; p.ui.selected = 's_05'; }, { history: false, plan: false })", tm["visible"][4] + 0.5)
+    page.locator(".rw-root").focus()
+    page.keyboard.press(" ")
+    page.wait_for_timeout(300)
+    page.evaluate("window.__editor.actions.deleteScene('s_05', { ask: false })")
+    page.wait_for_timeout(400)
+    ph1, tc1 = cur()["ui"]["playhead"], page.locator(".rw-tc").inner_text()
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(400)
+    ph2, tc2 = cur()["ui"]["playhead"], page.locator(".rw-tc").inner_text()
+    playing = page.evaluate("window.__editor.eph.playing")
+    page.keyboard.press("k")
+    page.wait_for_timeout(150)
+    check(isinstance(ph1, (int, float)) and isinstance(ph2, (int, float)) and "NaN" not in tc1 + tc2 and playing and len(cur()["scenes"]) == 8,
+          f"playhead after deleting the playing scene: {ph1} {ph2} {tc1!r} {tc2!r} playing={playing}")
+
+    # 11. A render step updates the scene's progress bar in place (the tab is not rebuilt), also with 300 scenes
+    probe = """async (sid) => { const f = () => new Promise(r => requestAnimationFrame(() => r()));
+      const h = window.__host, slug = window.__editor.project.slug, sel = `.rw-scene[data-sid="${sid}"]`;
+      h.emit('reelwright.progress', { slug, scene_id: sid, pass: 1, passes: 2, step: 1, steps: 28, phase: 'sample' }); await f(); await f();
+      const b = document.querySelector(sel), ms = [];
+      for (let k = 2; k < 12; k++) { const t0 = performance.now(); h.emit('reelwright.progress', { slug, scene_id: sid, pass: 1, passes: 2, step: k, steps: 28, phase: 'sample' }); await f(); ms.push(performance.now() - t0); }
+      const b2 = document.querySelector(sel);
+      const res = { same: !!b && b === b2, label: b2?.querySelector('.rw-scene-prog-label')?.textContent || '', ms: ms.sort((x, y) => x - y)[5] };
+      h.emit('reelwright.progress', { slug, scene_id: sid, pass: 2, passes: 2, phase: 'done' });
+      return res; }"""
+    def settle():
+        # toasts expiring, a plan or takes arriving re-render the tab on their own; wait until they are done
+        try:
+            page.wait_for_function("document.querySelectorAll('.rw-toast').length === 0", timeout=9000)
+        except Exception:
+            pass
+        page.wait_for_timeout(700)
+
+    settle()
+    r = page.evaluate(probe, "s_07")
+    if not r["same"]:  # once more, in case something else rendered in between
+        settle()
+        r = page.evaluate(probe, "s_07")
+    check(r["same"] and "11/28" in r["label"], f"progress not updated in place: {r}")
+    big = fresh()
+    tmpl = big["scenes"]
+    big["scenes"] = []
+    for i in range(300):
+        s = json.loads(json.dumps(tmpl[i % len(tmpl)]))
+        s["id"] = f"s_p{i}"
+        s["seed_n"] = i
+        for lst in ("refs", "shots", "dialogue"):
+            for x in s[lst]:
+                x["id"] = f"{x['id']}_{i}"
+        big["scenes"].append(s)
+    big["scenes"][0]["start"]["mode"] = "fresh"
+    big["soundtrack"] = song
+    big["ui"]["selected"] = "s_p2"
+    big["ui"]["playhead"] = 0
+    big["ui"]["tab"] = "timeline"
+    load(big)
+    page.wait_for_timeout(800)  # plan, takes and beats arrive first
+    settle()
+    r = page.evaluate(probe, "s_p3")
+    if not r["same"]:
+        settle()
+        r = page.evaluate(probe, "s_p3")
+    print(f"note: a progress event with 300 scenes took {r['ms']:.1f} ms (v0.5.1: about 230 ms)", flush=True)
+    check("11/28" in r["label"] and r["ms"] < 100, f"progress with 300 scenes: {r}")
+    page.screenshot(path=str(shots / "v060_300_scenes.png"))
+
+    load(json.loads(saved))
+    tab("Timeline")
+
+
+# ---- added 2026-11-03 v0.6.0 (F2b: project-side tabs) ----
+def f2b_checks(page, check, saved, shots):
+    """v0.6.0 tabs (F2b): upstream warning + re-render, pass retake, variants, estimates, prompt diff, merge options /
+    Stop / loudness, version diff, Files repair / flags / refused deletes / asset cleanup, dialogs instead of inline bars,
+    media kept across re-renders, outfit delete, From ComfyUI card, profile GETs, project rename, script import."""
+    live = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    emit = lambda ev, d: page.evaluate("([e, d]) => window.__host.emit(e, d)", [ev, d])
+    queued = lambda: page.evaluate("window.__host.queued")
+    toasts = lambda: " | ".join(page.locator(".rw-toast").all_inner_texts())
+    labels = lambda: [x["label"] for x in page.evaluate("window.__editor.store.history()")]
+    undo = lambda: (page.evaluate("window.__editor.store.undo()"), page.wait_for_timeout(250))
+    S = "harbor_lights"
+    prog = lambda sid, ph, **kw: emit("reelwright.progress", {"slug": S, "scene_id": sid, "pass": kw.get("pass_", 1), "passes": kw.get("passes", 3), "step": kw.get("step", 0), "steps": kw.get("steps", 28), "phase": ph, "message": kw.get("message", "")})
+    page.evaluate("window.__fetch0 = window.__host.fetchApi")
+    page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
+    page.wait_for_timeout(300)
+    if page.evaluate("window.__editor.eph.running"):
+        emit("reelwright.run", {"slug": S, "phase": "end", "targets": [], "reused": [], "rendered": []})
+    page.evaluate("window.__editor.store.setEph({ progress: {}, lastRun: null, openTakes: {}, compare: null })")
+    page.click(".rw-tab:has-text('Render')")
+    page.wait_for_function("!!window.__editor.eph.plan?.scenes?.s_03?.upstream_changed", timeout=8000)
+    page.wait_for_timeout(300)
+    order = [s["id"] for s in live()["scenes"]]
+    trow = lambda sid: page.locator(".rw-trow:not(.head)").nth(order.index(sid))
+
+    # "Continues from a different take": one click re-renders the scene and the scenes that continue from it.
+    note = page.locator(".rw-trow-note[data-help='render.table.upstream']")
+    check(note.count() == 1 and "Continues from a different take" in note.inner_text(), f"upstream note: {note.count()}")
+    q0 = len(queued())
+    note.locator("button[data-help='render.table.upstream.rerender']").click()
+    page.wait_for_timeout(300)
+    lq = queued()[-1]
+    check(len(queued()) == q0 + 1 and lq["action"] == "selected" and lq["scenes"][0] == "s_03", f"upstream re-render request: {lq}")
+    page.evaluate("window.__mockFlags.plan = { s_02: { upstream_changed: true, upstream_take: 'v1' } }; window.__editor.store.refreshPlan()")
+    page.wait_for_timeout(400)
+    want = page.evaluate("""async () => { const m = await import('../web/rw/model.js'); const p = window.__editor.project;
+      const i = p.scenes.findIndex(s => s.id === 's_02'); const out = ['s_02'];
+      for (let k = i + 1; k < p.scenes.length; k++) { if (m.effectiveStart(p, k) === 'fresh' || p.scenes[k].lock) break; out.push(p.scenes[k].id); }
+      return out; }""")
+    page.locator(".rw-trow-note[data-help='render.table.upstream']").first.locator("button").click()
+    page.wait_for_timeout(300)
+    lq = queued()[-1]
+    check(lq["action"] == "selected" and lq["scenes"] == want and len(want) >= 2, f"re-render with dependents: {lq['scenes']} vs {want}")
+    page.evaluate("window.__mockFlags.plan = {}; window.__editor.store.refreshPlan()")
+    emit("reelwright.run", {"slug": S, "phase": "end", "targets": [], "reused": [], "rendered": []})
+    page.wait_for_timeout(400)
+
+    # Time estimate of the queue and per scene; passes kept in the pass cache.
+    est = page.locator(".rw-estimate").inner_text() if page.locator(".rw-estimate").count() else ""
+    check(est.startswith("≈") and "min" in est and "without history" in est, f"queue estimate: {est!r}")
+    se = trow("s_03").locator("[data-help='render.table.estimate']")
+    check(se.count() == 1 and "4 min" in se.inner_text(), "scene estimate missing")
+    check("1 kept" in trow("s_07").inner_text(), f"cached passes: {trow('s_07').inner_text()!r}")
+    check(page.locator("[data-help='render.table.manualStar']").count() >= 1, "manual star hint missing")
+
+    # Prompt diff against the starred take ("why?").
+    trow("s_03").locator(".rw-why").click()
+    page.wait_for_timeout(250)
+    box = page.locator(".rw-diff-box")
+    check(box.count() == 1 and box.locator(".rw-diff-line.del").count() >= 1 and "reads the letter" in box.locator(".rw-diff-line.del").first.inner_text()
+          and box.locator(".rw-diff-line.add").count() >= 1, "prompt diff not shown")
+    page.screenshot(path=str(shots / "v060_render_diff.png"))
+    trow("s_03").locator(".rw-why").click()
+
+    # Pass retake (long scene with a starred take): the request names the scene and the pass.
+    page.evaluate("""() => { const e = window.__editor; const t = structuredClone(e.eph.takes);
+      t.scenes.s_07 = { starred: 'v1', takes: [{ id: 'v1', created: 1793560000, quality: 'final', seconds: 32, frames: 768, files: {} }] };
+      e.store.setEph({ takes: t, openTakes: { s_07: true } }); }""")
+    page.wait_for_timeout(250)
+    btns = page.locator(".rw-pass-retake button")
+    check(btns.count() == 3, f"pass retake buttons: {btns.count()}")
+    if btns.count() == 3:
+        btns.nth(1).click()
+        page.wait_for_timeout(300)
+        lq = queued()[-1]
+        check(lq["action"] == "pass_retake" and lq["scene_id"] == "s_07" and lq["pass"] == 2, f"pass retake request: {lq}")
+
+    # Variants: n takes of the selected scene; its take list opens for the A/B compare.
+    page.evaluate("window.__editor.actions.select('s_05')")
+    page.wait_for_timeout(200)
+    nf = page.locator("input[data-help='render.variants.n']")
+    nf.fill("4")
+    nf.press("Tab")
+    page.wait_for_timeout(200)
+    page.click("button[data-help='render.variants']")
+    page.wait_for_timeout(300)
+    lq = queued()[-1]
+    check(lq["action"] == "variants" and lq["scene_ids"] == ["s_05"] and lq["n"] == 4, f"variants request: {lq}")
+    check(page.evaluate("!!window.__editor.eph.openTakes?.s_05"), "variants did not open the take list")
+    emit("reelwright.run", {"slug": S, "phase": "end", "targets": [], "reused": [], "rendered": []})
+    page.wait_for_timeout(300)
+
+    # Progress updates the banner in place (same element); a pass from the pass cache reads "from cache".
+    emit("reelwright.run", {"slug": S, "run_id": "rf", "phase": "start", "targets": ["s_07"], "reused": []})
+    prog("s_07", "sample", step=1)
+    page.wait_for_timeout(300)
+    # the step is written into the same element during the event itself (a full re-render would only come later)
+    st = page.evaluate("""() => { const run = document.querySelector('.rw-run'); if (run) run.__mark = 1;
+      window.__host.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_07', pass: 1, passes: 3, step: 5, steps: 28, phase: 'sample', message: '' });
+      const now = document.querySelector('.rw-run');
+      return { same: !!now && now.__mark === 1, text: document.querySelector('.rw-run-detail')?.textContent || '' }; }""")
+    check(st["same"] and "step 5/28" in st["text"], f"banner not updated in place: {st}")
+    prog("s_07", "reuse", pass_=2, message="pass 2 from the pass cache")
+    page.wait_for_timeout(300)
+    det = page.evaluate("document.querySelector('.rw-run-detail')?.textContent || ''")
+    check("from cache" in det and "reuse" not in det, f"reuse phase: {det!r}")
+
+    # A/B compare videos are the same elements after progress events and re-renders.
+    page.evaluate("window.__editor.store.setEph({ openTakes: { s_02: true } })")
+    page.wait_for_timeout(200)
+    page.locator(".rw-take").nth(0).locator("button[data-help='render.take.compareA']").click()
+    page.wait_for_timeout(150)
+    check(page.evaluate("window.__editor.eph.compare?.a?.scene") == "s_02", "A button did not fill the compare")
+    # the mock serves no video files (empty URLs), so the two panes get blob URLs of their own
+    page.evaluate("""() => { const u = () => URL.createObjectURL(new Blob([new Uint8Array(16)], { type: 'video/mp4' }));
+      window.__editor.store.setEph({ compare: { a: { scene: 's_02', take: 'v1', url: u() }, b: { scene: 's_02', take: 'v2', url: u() } } }); }""")
+    page.wait_for_timeout(200)
+    n_vid = page.evaluate("(() => { const v = [...document.querySelectorAll('.rw-ab video')]; v.forEach(x => { x.__mark = 1; }); return v.length; })()")
+    for k in range(6, 10):
+        prog("s_07", "sample", pass_=3, step=k)
+    prog("s_07", "decode", pass_=3)
+    prog("s_07", "done", pass_=3, message="v2")
+    page.wait_for_timeout(500)
+    kept = page.evaluate("[...document.querySelectorAll('.rw-ab video')].map(v => v.__mark === 1)")
+    check(n_vid == 2 and kept == [True, True], f"A/B videos rebuilt: {n_vid} {kept}")
+    emit("reelwright.run", {"slug": S, "run_id": "rf", "phase": "end", "targets": ["s_07"], "reused": [], "rendered": ["s_07"]})
+    page.wait_for_timeout(300)
+
+    # Last run: failed and skipped scenes per scene, with a retry.
+    emit("reelwright.run", {"slug": S, "run_id": "rg", "phase": "start", "targets": ["s_02", "s_03"], "reused": []})
+    emit("reelwright.run", {"slug": S, "run_id": "rg", "phase": "end", "targets": ["s_02", "s_03"], "reused": [], "rendered": [],
+                            "failed": [{"scene_id": "s_02", "error": "CUDA out of memory"}], "skipped": [{"scene_id": "s_03", "reason": "it continues from 02, which failed"}], "interrupted": False})
+    page.wait_for_timeout(400)
+    lr = page.locator("[data-help='render.lastRun']")
+    check(lr.count() == 1 and "CUDA out of memory" in lr.inner_text() and "skipped" in lr.inner_text(), "last run note missing")
+    check(trow("s_02").locator(".rw-runres.failed").count() == 1 and trow("s_03").locator(".rw-runres.skipped").count() == 1, "per-scene run result missing")
+    lr.locator("button[data-help='render.lastRun.retry']").click()
+    page.wait_for_timeout(300)
+    lq = queued()[-1]
+    check(lq["action"] == "selected" and lq["scenes"] == ["s_02", "s_03"], f"retry request: {lq}")
+    emit("reelwright.run", {"slug": S, "phase": "end", "targets": [], "reused": [], "rendered": []})
+    page.wait_for_timeout(300)
+    page.screenshot(path=str(shots / "v060_render_tab.png"))
+    # a run refused before it started says why
+    emit("reelwright.run", {"slug": S, "phase": "rejected", "error": "Fix these first: 03 The letter: P9 file is missing"})
+    page.wait_for_timeout(300)
+    lr = page.locator("[data-help='render.lastRun']")
+    check(lr.count() == 1 and "Render not started" in lr.inner_text() and "P9 file is missing" in lr.inner_text(), "rejected run not shown")
+    lr.locator("button[data-help='common.close']").click()
+    page.wait_for_timeout(200)
+    check(page.locator("[data-help='render.lastRun']").count() == 0, "last run note did not close")
+
+    # Dialogs instead of inline bars: Everything, a take's delete (survives a progress event).
+    page.click("button[data-help='render.scope.all']")
+    page.wait_for_timeout(200)
+    check(page.locator(".rw-modal").count() == 1 and page.locator(".rw-confirm").count() == 0, "Everything did not open a dialog")
+    q0 = len(queued())
+    page.locator(".rw-modal button:has-text('Cancel')").click()
+    page.wait_for_timeout(200)
+    check(len(queued()) == q0, "Cancel queued a render")
+    page.locator(".rw-take").nth(0).locator("button[data-help='render.take.delete']").click()
+    page.wait_for_timeout(150)
+    prog("s_07", "done", pass_=3, message="v2")
+    page.wait_for_timeout(300)
+    check(page.locator(".rw-modal").count() == 1 and page.locator(".rw-confirm").count() == 0, "take delete dialog vanished after a progress event")
+    page.locator(".rw-modal button:has-text('Cancel')").click()
+    page.wait_for_timeout(200)
+
+    # Merge options: draft, range and stems reach the request; the loudness report shows; Stop cancels a merge.
+    page.evaluate("window.__editor.actions.select('s_05'); window.__mockFlags.merges.length = 0")
+    page.wait_for_timeout(150)
+    page.click("button[data-help='render.merge.draft.on']")
+    page.click("button[data-help='render.merge.range.some']")
+    page.click("button[data-help='render.merge.stems']")
+    page.wait_for_timeout(200)
+    page.locator(".rw-merge .rw-btn-primary").click()
+    page.wait_for_timeout(600)
+    mb = page.evaluate("window.__mockFlags.merges.at(-1)")
+    check(mb and mb["draft"] is True and mb["stems"] is True and mb["range"] == ["s_05", order[-1]], f"merge request: {mb}")
+    loud = page.locator(".rw-merge .rw-loudness")
+    check(loud.count() == 1 and "-16.2 LUFS" in loud.inner_text() and "dBTP" in loud.inner_text(), "loudness report missing")
+    for _ in range(5):  # a re-render (toast expiring) can replace the element while it scrolls
+        try:
+            page.locator(".rw-merge .rw-loudness").scroll_into_view_if_needed(timeout=2000)
+            break
+        except Exception:  # noqa: BLE001
+            page.wait_for_timeout(200)
+    page.screenshot(path=str(shots / "v060_merge_options.png"))
+    page.evaluate("window.__mockFlags.mergeMs = 2000")
+    page.locator(".rw-merge .rw-btn-primary").click()
+    page.wait_for_timeout(300)
+    stop = page.locator(".rw-merge button[data-help='render.merge.stop']")
+    check(stop.count() == 1, "no Stop while merging")
+    if stop.count():
+        stop.click()
+        page.wait_for_timeout(600)
+    check(page.evaluate("window.__editor.eph.merge?.phase") == "cancelled" and "Merge stopped" in page.locator(".rw-merge").inner_text(), f"merge Stop: {page.evaluate('window.__editor.eph.merge?.phase')}")
+    page.evaluate("window.__mockFlags.mergeMs = 0; window.__editor.store.setEph({ mergeOpts: null })")
+
+    # Version diff before a restore: the dialog says what changes; Cancel keeps the project, Restore replaces it.
+    page.evaluate("""() => { window.__mockFlags.versionEdits = vp => {
+        const cur = JSON.parse(JSON.stringify(window.__editor.project));
+        for (const k of Object.keys(vp)) delete vp[k];
+        Object.assign(vp, cur);
+        vp.scenes = vp.scenes.filter(s => s.id !== 's_08');
+        const s = vp.scenes.find(x => x.id === 's_03'); s.duration = 9.5; s.prompt.sections.summary = 'An older summary of the letter scene.';
+        vp.global.quality = vp.global.quality === 'draft' ? 'final' : 'draft'; };
+      window.__editor.store.setEph({ versions: [{ name: 'project_20261103_090000.json', created: 1793696400, size: 21000 }] }); }""")
+    page.wait_for_timeout(200)
+    page.locator(".rw-version button[data-help='render.versions.restore']").click()
+    page.wait_for_timeout(500)
+    msg = page.locator(".rw-modal .rw-vdiff").inner_text() if page.locator(".rw-modal .rw-vdiff").count() else ""
+    check("Removes 1 scene" in msg and "9.50 s" in msg and "summary" in msg and "quality" in msg, f"version diff: {msg!r}")
+    page.screenshot(path=str(shots / "v060_version_diff.png"))
+    page.locator(".rw-modal button:has-text('Cancel')").click()
+    page.wait_for_timeout(200)
+    check("s_08" in [s["id"] for s in live()["scenes"]], "Cancel restored the version")
+    page.locator(".rw-version button[data-help='render.versions.restore']").click()
+    page.wait_for_timeout(500)
+    page.locator(".rw-modal button:has-text('Restore')").click()
+    page.wait_for_timeout(300)
+    pj = live()
+    check("s_08" not in [s["id"] for s in pj["scenes"]] and [s for s in pj["scenes"] if s["id"] == "s_03"][0]["duration"] == 9.5, "Restore did not replace the project")
+    check(labels()[-1].startswith("Restore version"), f"restore label: {labels()[-1:]}")
+    undo()
+    check("s_08" in [s["id"] for s in live()["scenes"]], "undo of the restore")
+    page.evaluate("window.__mockFlags.versionEdits = null; window.__editor.store.setEph({ versions: null })")
+
+    # Global: a rename keeps the folder while its takes were not read; a new node's untitled-xxxx folder follows the name.
+    page.click(".rw-tab:has-text('Global')")
+    page.wait_for_timeout(300)
+    slug0 = live()["slug"]
+    page.evaluate("window.__editor.store.setEph({ takes: null, takesSlug: null })")
+    name = page.locator("input[data-help='global.project.name']")
+    name.fill(live()["name"] + " at night")
+    name.press("Enter")
+    page.wait_for_timeout(300)
+    check(live()["slug"] == slug0, f"rename moved the folder although its takes were not read: {live()['slug']}")
+    check(labels()[-1] == "Rename project", f"rename label: {labels()[-1:]}")
+    undo()
+    page.evaluate("window.__editor.store.update(p => { p.slug = 'untitled-ab12'; p.name = 'Untitled'; }, { label: 'test' })")
+    page.wait_for_timeout(500)
+    page.evaluate("window.__editor.store.setEph({ takes: { scenes: {} }, takesSlug: 'untitled-ab12' })")
+    page.wait_for_timeout(100)
+    name.fill("Night Ferry")
+    name.press("Enter")
+    page.wait_for_timeout(300)
+    want_slug = page.evaluate("import('../web/rw/model.js').then(m => m.slugify('Night Ferry'))")
+    check(live()["slug"] == want_slug, f"untitled folder did not follow the name: {live()['slug']}")
+    undo()
+    undo()
+    check(live()["slug"] == slug0, f"undo of the rename: {live()['slug']}")
+
+    # Global: profiles are read once even while progress events re-render the tab.
+    page.evaluate("""() => { const h = window.__host, f = window.__fetch0; window.__profileCalls = 0;
+      h.fetchApi = async (path, opts) => { if (path === '/reelwright/profiles') { window.__profileCalls++; await new Promise(r => setTimeout(r, 900)); } return f(path, opts); };
+      window.__editor.eph.profiles = undefined; window.__editor.store.notify(); }""")
+    page.evaluate("""async () => { for (let k = 0; k < 6; k++) { window.__host.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_07', pass: 1, passes: 3, step: k, steps: 28, phase: k % 2 ? 'encode' : 'sample' }); await new Promise(r => setTimeout(r, 100)); } }""")
+    page.wait_for_timeout(1200)
+    check(page.evaluate("window.__profileCalls") == 1, f"profile GETs while one was on its way: {page.evaluate('window.__profileCalls')}")
+    page.evaluate("window.__host.fetchApi = window.__fetch0")
+    prog("s_07", "done", pass_=3)
+
+    # Script import: each new scene gets its own seed number; the answer's warnings are listed.
+    page.evaluate("""() => { const h = window.__host, f = window.__fetch0;
+      h.fetchApi = async (path, opts) => { const r = await f(path, opts); if (path !== '/reelwright/llm/script') return r;
+        const j = await r.json(); j.warnings = ['scene 2: "shots" was text, not a list; it became one shot', 'cast 3 has no name, so it was left out'];
+        return new Response(JSON.stringify(j), { status: r.status, headers: { 'Content-Type': 'application/json' } }); };
+      window.__editor.store.setEph({ scriptDraft: null }); }""")
+    page.wait_for_timeout(200)
+    page.fill("textarea[data-help='global.script.text']", "| 01 | 00:01:00 | 8.00 | Verse | Ada lights a candle |\n| 02 | 00:02:00 | 6.00 | Verse | Ada opens the crypt |")
+    page.click("button[data-help='global.script.run']")
+    for _ in range(40):
+        page.wait_for_timeout(250)
+        if page.evaluate("!!window.__editor.eph.scriptDraft && !window.__editor.eph.scriptDraft.busy"):
+            break
+    wn = page.locator("[data-help='global.script.warnings']")
+    check(wn.count() == 1 and "left out" in wn.inner_text(), "import warnings not shown")
+    seeds0 = [s.get("seed_n") for s in live()["scenes"]]
+    n0 = len(seeds0)
+    page.locator("[data-help='global.script.mode'] button").filter(has_text="At the end").first.click()
+    page.click("button[data-help='global.script.apply']")
+    page.wait_for_timeout(400)
+    new = [s.get("seed_n") for s in live()["scenes"][n0:]]
+    check(len(new) == 2 and len(set(new)) == 2 and not set(new) & set(seeds0), f"imported seed numbers: {new} (existing {seeds0})")
+    check(labels()[-1] == "Import script", f"import label: {labels()[-1:]}")
+    undo()
+    page.evaluate("window.__host.fetchApi = window.__fetch0; window.__editor.store.setEph({ scriptDraft: null })")
+
+    # Files: Repair shows its result; new flags have labels; the pass cache has its own pick and "Not in the project"
+    # leaves another project's scene alone; refused deletes show the server's reason; an asset file's delete also
+    # removes its soundtrack track.
+    page.click(".rw-tab:has-text('Files')")
+    page.wait_for_selector(".rw-ftree-row")
+    base = "o:reelwright/harbor_lights"
+    page.evaluate("""b => window.__editor.store.setEph({ filesSel: {}, filesOpen: { 'p:harbor_lights': true, [b + '/scenes']: true, [b + '/scenes/s_05']: true,
+      [b + '/cuts']: true, 'i:reelwright/harbor_lights': true } })""", base)
+    page.wait_for_timeout(300)
+    page.click("button[data-help='files.repair']")
+    page.wait_for_timeout(600)
+    rep = page.locator("[data-help='files.repair.result']")
+    check(rep.count() == 1 and "14 takes found" in rep.inner_text() and "03 · " in rep.inner_text(), f"repair result: {rep.inner_text() if rep.count() else None}")
+    flags = page.evaluate("[...document.querySelectorAll('.rw-ftree-flag')].map(e => e.textContent)")
+    check("pass cache" in flags and "another project" in flags and "draft" in flags, f"flag labels: {sorted(set(flags))}")
+    row = lambda rid: f".rw-ftree-row[data-id='{rid}']"
+    checked = lambda rid: page.evaluate("id => !!document.querySelector(`.rw-ftree-row[data-id=\"${id}\"] .rw-ftree-check`)?.checked", rid)
+    page.click("button[data-help='files.pick.cache']")
+    page.wait_for_timeout(200)
+    check(checked(base + "/scenes/s_05/passes"), "Pass cache pick did not select the pass cache")
+    page.click("button[data-help='files.clear']")
+    page.click("button[data-help='files.pick.orphans']")
+    page.wait_for_timeout(200)
+    check(page.locator(row(base + "/scenes/s_lk1")).count() == 1 and not checked(base + "/scenes/s_lk1"), "Not in the project picked another project's scene")
+    page.click("button[data-help='files.clear']")
+    page.evaluate("window.__mockFlags.filesBusy = 'a merge of this project is running; delete this when it ends'")
+    cut = page.evaluate("[...document.querySelectorAll('.rw-ftree-row.k-cut')].find(r => r.querySelector(\"button[data-help='files.delete']\"))?.dataset.id")
+    page.click(row(cut) + " button[data-help='files.delete']")
+    page.wait_for_timeout(200)
+    page.locator(".rw-modal button:has-text('Delete from disk')").click()
+    page.wait_for_timeout(600)
+    ref = page.locator("[data-help='files.refused']")
+    check(ref.count() == 1 and "a merge of this project is running" in ref.inner_text() and "not deleted" in toasts(), f"refused delete: {ref.inner_text() if ref.count() else None} / {toasts()}")
+    page.evaluate("window.__mockFlags.filesBusy = ''")
+    page.screenshot(path=str(shots / "v060_files_repair.png"))
+    track = [t for t in live()["soundtrack"] if t.get("asset")]
+    aid = track[0]["asset"] if track else None
+    afile = next((a["file"] for a in live()["assets"] if a["id"] == aid), None)
+    if afile and page.locator(row("i:" + afile)).count():
+        page.click(row("i:" + afile) + " button[data-help='files.delete']")
+        page.wait_for_timeout(200)
+        msg = page.locator(".rw-modal-msg").inner_text()
+        check("soundtrack track" in msg, f"asset delete note: {msg!r}")
+        page.locator(".rw-modal button:has-text('Delete from disk')").click()
+        page.wait_for_timeout(700)
+        pj = live()
+        check(not any(t["asset"] == aid for t in pj["soundtrack"]) and not any(a["id"] == aid for a in pj["assets"]), "Files delete left the soundtrack track")
+        undo()
+        check(any(t["asset"] == aid for t in live()["soundtrack"]), "undo did not bring the track back")
+    else:
+        check(False, f"no asset row for the soundtrack asset {aid}")
+
+    # Cast: deleting an outfit moves the scenes that wore it to the default outfit; deleting an entry asks in a dialog.
+    page.click(".rw-tab:has-text('Cast')")
+    page.evaluate("window.__editor.store.setEph({ selectedCast: 'c_mara' })")
+    page.wait_for_timeout(300)
+    wore = [s["id"] for s in live()["scenes"] if any(c["id"] == "c_mara" and c.get("outfit") == "o_oil" for c in s["cast"])]
+    check(len(wore) >= 1, f"no scene wears o_oil: {wore}")
+    out = page.locator(".rw-outfit", has=page.locator("input[data-key='outfit-o_oil']"))
+    out.locator("button[data-help='cast.outfits.remove']").click()
+    page.wait_for_timeout(300)
+    pj = live()
+    left = [s["id"] for s in pj["scenes"] if any(c.get("outfit") == "o_oil" for c in s["cast"])]
+    now = [c.get("outfit") for s in pj["scenes"] if s["id"] in wore for c in s["cast"] if c["id"] == "c_mara"]
+    check(not left and all(o == "" for o in now) and "o_oil" not in [o["id"] for o in pj["cast"][0]["outfits"]], f"outfit refs after delete: {left} {now}")
+    check(labels()[-1].startswith("Delete outfit"), f"outfit label: {labels()[-1:]}")
+    undo()
+    check([s["id"] for s in live()["scenes"] if any(c.get("outfit") == "o_oil" for c in s["cast"])] == wore, "undo of the outfit delete")
+    page.click("button[data-help='cast.delete']")
+    page.wait_for_timeout(200)
+    check(page.locator(".rw-modal").count() == 1 and page.locator(".rw-confirm").count() == 0 and "dialogue line" in page.locator(".rw-modal-msg").inner_text(), "cast delete dialog")
+    page.locator(".rw-modal button:has-text('Cancel')").click()
+    page.wait_for_timeout(200)
+
+    # Assets: the preview stays the same element across re-renders; "From ComfyUI" closed during an import stays closed.
+    page.click(".rw-tab:has-text('Assets')")
+    page.evaluate("window.__editor.store.setEph({ selectedAsset: 'a_v1' })")
+    page.wait_for_timeout(300)
+    page.evaluate("document.querySelector('.rw-asset-preview').__mark = 1")
+    for ph in ("encode", "sample", "decode", "done"):
+        prog("s_07", ph, pass_=3)
+    page.wait_for_timeout(400)
+    check(page.evaluate("document.querySelector('.rw-asset-preview')?.__mark === 1"), "asset preview rebuilt by a re-render")
+    page.evaluate("""() => { const h = window.__host, f = window.__fetch0;
+      h.fetchApi = async (path, opts) => { if (path.startsWith('/reelwright/import')) await new Promise(r => setTimeout(r, 600)); return f(path, opts); }; }""")
+    page.evaluate("window.__editor.store.setEph({ browse: null })")  # the button toggles; an earlier test may have left it open
+    page.wait_for_timeout(150)
+    page.click("button[data-help='assets.browse']")
+    page.wait_for_timeout(400)
+    page.click("button[data-help='assets.browse.root'] >> text=Output")  # output files are never "added" already
+    page.wait_for_timeout(400)
+    page.locator(".rw-browse-tile:not([disabled])").first.click()
+    page.locator(".rw-browse button[data-help='assets.browse.add']").click()
+    page.wait_for_timeout(100)
+    page.locator(".rw-browse button[data-help='common.close']").click()
+    page.wait_for_timeout(1000)
+    check(page.locator(".rw-browse").count() == 0 and page.evaluate("window.__editor.eph.browse") is None, "From ComfyUI came back after closing it")
+    page.evaluate("window.__host.fetchApi = window.__fetch0")
+    page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
+    page.wait_for_timeout(300)
+
+
+
+# ---- added 2026-11-03 v0.6.0 review (second review, frontend fixes) ----
+def review_checks(page, check, saved, shots):
+    """v0.6.0 review: a renamed copy keeps its folder (separateProjectId), no folder dialog from a background autosave,
+    the lanes after a big zoom-out, Auto-roll keeps the later scenes with capped tail overlaps, focus and text of a
+    field across re-renders, variants progress counts takes, run warnings, typed text survives re-renders."""
+    live = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    emit = lambda ev, d: page.evaluate("([e, d]) => window.__host.emit(e, d)", [ev, d])
+    queued = lambda: page.evaluate("window.__host.queued")
+    toasts = lambda: page.locator(".rw-toast").all_inner_texts()
+    active_key = lambda: page.evaluate("document.activeElement?.dataset?.key || document.activeElement?.className || ''")
+    notify = lambda: (page.evaluate("window.__editor.store.notify()"), page.wait_for_timeout(150))
+    S = "harbor_lights"
+
+    def load():
+        page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
+        page.wait_for_timeout(300)
+
+    def tab(name):
+        page.click(f".rw-tab:has-text('{name}')")
+        page.wait_for_timeout(300)
+
+    if page.evaluate("window.__editor.eph.running"):
+        emit("reelwright.run", {"slug": S, "phase": "end", "targets": [], "reused": [], "rendered": []})
+    page.evaluate("window.__editor.store.setEph({ progress: {}, lastRun: null, toasts: [] })")
+    load()
+
+    # 1. A copy that has its own folder (renamed before v0.6.0) only gets a project id of its own: folder and scene ids
+    # stay, nothing is announced, and the id is the same on every load of the same workflow.
+    r = page.evaluate("""async () => { const ed = window.__editor; const before = JSON.parse(JSON.stringify(ed.project));
+      const id1 = ed.separateProjectId(); ed.load(JSON.stringify(before)); const id2 = ed.separateProjectId();
+      await new Promise(r => setTimeout(r, 400));
+      return { before, id1, id2, after: JSON.parse(JSON.stringify(ed.project)), widget: JSON.parse(window.__host.getProject()).project_id }; }""")
+    b0, a1 = r["before"], r["after"]
+    check(r["id1"] == r["id2"] and r["id1"] != b0["project_id"] and a1["project_id"] == r["id1"] and r["widget"] == r["id1"]
+          and a1["slug"] == b0["slug"] and [x["id"] for x in a1["scenes"]] == [x["id"] for x in b0["scenes"]]
+          and not any("copy of another" in t for t in toasts()), f"separateProjectId: {r['id1']} {r['id2']} {b0['project_id']} {a1['slug']}")
+    load()
+
+    # 2. Output width/height have keys: typing the width's value into the height keeps focus in the height across a
+    # re-render, and the next digit lands there too. A committed value shows as stored (1000 -> 992).
+    tab("Global")
+    width = live()["global"]["output"]["width"]
+    hf = page.locator("input[data-key='out-height']")
+    check(page.locator("input[data-key='out-width']").count() == 1 and hf.count() == 1, "output size fields have no keys")
+    hf.click()
+    hf.press("Control+a")
+    page.keyboard.type(str(width), delay=20)
+    notify()
+    k1 = active_key()
+    page.keyboard.type("0", delay=20)
+    page.keyboard.press("Tab")
+    page.wait_for_timeout(300)
+    o = live()["global"]["output"]
+    check(k1 == "out-height" and o["width"] == width and o["height"] == width * 10, f"focus jumped between the size fields: {k1} {o}")
+    wf = page.locator("input[data-key='out-width']")
+    wf.click()
+    wf.press("Control+a")
+    page.keyboard.type("1000", delay=20)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(600)
+    shown = page.evaluate("document.querySelector(\"input[data-key='out-width']\").value")
+    check(live()["global"]["output"]["width"] == 992 and shown == "992" and active_key() == "out-width", f"stale text after a commit: stored {live()['global']['output']['width']}, shows {shown}")
+    page.keyboard.press("Tab")
+    page.wait_for_timeout(300)
+    check(live()["global"]["output"]["width"] == 992, "width changed by leaving the field")
+    # Tab into the next number field selects its text; the commit's re-render keeps it selected, so typing replaces it
+    wf = page.locator("input[data-key='out-width']")
+    wf.click()
+    wf.press("Control+a")
+    page.keyboard.type("1024", delay=20)
+    page.keyboard.press("Tab")
+    page.wait_for_timeout(300)
+    page.keyboard.type("512", delay=20)
+    page.keyboard.press("Tab")
+    page.wait_for_timeout(300)
+    o = live()["global"]["output"]
+    check((o["width"], o["height"]) == (1024, 512), f"Tab into a number field: {o['width']} x {o['height']}")
+    load()
+
+    # 3. Typed text survives re-renders (the flaky 'inspector edits'): a "-" typed into a number field, a select-all
+    # before typing, Playwright's fill (focus + select, then insert) with a render in between. The body is not rebuilt
+    # while the field holds unsaved typing (the footer still is), and is rebuilt after Enter.
+    tab("Timeline")
+    page.evaluate("() => window.__editor.store.setEph({ selectedTrack: window.__editor.project.soundtrack[0].id, selectedMarker: null })")
+    page.wait_for_timeout(300)
+    lvl = ".rw-track-insp input[data-key^='trk-volume_db']"
+
+    def reset_level():
+        page.evaluate("() => window.__editor.store.update(p => { p.soundtrack[0].volume_db = 0; }, { label: 'reset' })")
+        page.wait_for_timeout(700)
+
+    vol = lambda: page.evaluate("window.__editor.project.soundtrack[0].volume_db")
+    reset_level()
+    f = page.locator(lvl)
+    f.click()
+    f.press("Control+a")
+    page.keyboard.type("-", delay=20)
+    page.evaluate(f"document.querySelector(\"{lvl}\").__mark = 1")
+    page.evaluate("window.__editor.store.setEph({ saveState: 'offline', saveError: 'test' })")
+    page.wait_for_timeout(150)
+    kept = page.evaluate(f"document.querySelector(\"{lvl}\").__mark === 1")
+    foot = page.inner_text(".rw-footer")
+    page.keyboard.type("6", delay=20)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(400)
+    rebuilt = page.evaluate(f"document.querySelector(\"{lvl}\").__mark !== 1")
+    check(kept and "Autosave offline" in foot and vol() == -6 and rebuilt, f"typing across a render: kept {kept}, footer {foot[-40:]!r}, stored {vol()}, rebuilt {rebuilt}")
+    page.evaluate("window.__editor.store.setEph({ saveState: 'saved', saveError: '' })")
+    reset_level()
+    page.locator(".rw-root").focus()  # fill() starts from a field that is not focused (as in 'inspector edits')
+    page.wait_for_timeout(100)
+    page.evaluate("""async () => { const el = document.querySelector(".rw-track-insp input[data-key^='trk-volume_db']");
+      el.focus(); el.select(); window.__editor.store.notify(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); }""")
+    page.keyboard.insert_text("-6")
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(300)
+    check(vol() == -6, f"fill with a render between focus and insert: stored {vol()}")
+    reset_level()
+    f = page.locator(lvl)
+    f.click()
+    f.press("Control+a")
+    notify()
+    page.keyboard.type("-9", delay=20)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(300)
+    check(vol() == -9, f"select-all, a render, typing: stored {vol()}")
+    # a field that stores as it is typed (asset search) still re-renders its list while typing
+    tab("Assets")
+    n_all = page.locator(".rw-asset-card").count()
+    page.locator("input[data-key='asset-q']").click()
+    page.keyboard.type("zzzz-none", delay=10)
+    page.wait_for_timeout(300)
+    n_q = page.locator(".rw-asset-card").count()
+    check(n_all > 0 and n_q < n_all, f"asset search did not filter while typing: {n_all} -> {n_q}")
+    page.evaluate("window.__editor.store.setEph({ assetQuery: '' })")
+    page.locator(".rw-root").focus()
+    load()
+
+    # 4. A folder conflict found by the background autosave opens no dialog while typing: the footer shows "Folder
+    # in use" and one toast says so. Render (an explicit action) opens the dialog first, with "Decide later" focused.
+    page.evaluate("window.__mockFlags.slugConflict = 'harbor_lights'; window.__mockFlags.autosaves.length = 0")
+    page.evaluate("window.__editor.store.setEph({ toasts: [] })")
+    tab("Scene")
+    ta = page.locator(".rw-psec").nth(1).locator("textarea")
+    ta.click()
+    ta.press("End")
+    page.keyboard.type(" The candle", delay=25)
+    page.wait_for_timeout(4800)
+    mid = page.evaluate("() => ({ dialog: !!document.querySelector('.rw-modal'), foot: !!document.querySelector(\".rw-footer [data-help='footer.saveConflict']\") })")
+    page.keyboard.type(" flickers", delay=25)
+    page.wait_for_timeout(600)
+    summ = page.evaluate("window.__editor.project.scenes.find(s => s.id === window.__editor.project.ui.selected).prompt.sections.summary")
+    notes = [t for t in toasts() if "Autosave paused" in t]
+    check(not mid["dialog"] and mid["foot"] and page.locator(".rw-modal").count() == 0 and live()["slug"] == S
+          and summ.endswith("The candle flickers") and len(notes) == 1, f"background folder conflict: {mid} {summ[-30:]!r} {notes}")
+    n_q0 = len(queued())
+    page.locator(".rw-root").focus()
+    page.click("button[data-help='app.renderPending']")
+    page.wait_for_timeout(300)
+    check(page.locator(".rw-modal").count() == 1 and page.evaluate("document.activeElement.textContent") == "Decide later", "Render did not ask about the folder first")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    check(len(queued()) == n_q0 and page.locator(".rw-modal").count() == 0, "a render was queued into a folder in use")
+    page.locator(".rw-footer [data-help='footer.saveConflict']").click()
+    page.wait_for_timeout(300)
+    page.locator(".rw-modal button:has-text('Use a separate project')").click()
+    page.wait_for_timeout(500)
+    check(live()["slug"] == "harbor_lights-2" and page.evaluate("window.__editor.eph.saveState") == "saved", f"footer -> separate project: {live()['slug']}")
+    page.evaluate("window.__mockFlags.slugConflict = ''")
+    load()
+
+    # 5. A big zoom-out (the zoom slider from 160 to 8 px/s in one change) shows every scene, not empty lanes.
+    tab("Timeline")
+    page.evaluate("() => window.__editor.store.update(p => { p.ui.zoom = 160; }, { history: false, plan: false })")
+    page.wait_for_timeout(400)
+    page.evaluate("() => { const el = document.querySelector('.rw-lanes'); el.scrollLeft = el.scrollWidth; }")
+    page.wait_for_timeout(500)
+    page.evaluate("""() => { const s = document.querySelector("input.rw-range[data-help='timeline.zoom']"); s.value = 8; s.dispatchEvent(new Event('change', { bubbles: true })); }""")
+    page.wait_for_timeout(800)
+    zv = page.evaluate("""() => { const el = document.querySelector('.rw-lanes'); const r = el.getBoundingClientRect();
+      const vis = [...document.querySelectorAll('.rw-scene')].filter(b => { const q = b.getBoundingClientRect(); return q.right > r.left + 150 && q.left < r.right; });
+      return { visible: vis.length, scenes: window.__editor.project.scenes.length }; }""")
+    check(zv["visible"] == zv["scenes"], f"lanes empty after a big zoom-out: {zv}")
+    page.evaluate("() => window.__editor.store.update(p => { p.ui.zoom = 22; }, { history: false, plan: false })")
+    page.wait_for_timeout(300)
+
+    # 6. Auto-roll keeps every later scene where it is when the tail overlap at a seam is capped by a short scene;
+    # a roll that cannot keep them is clamped (the later scenes still stay).
+    r = page.evaluate("""async () => {
+      const M = await import('../web/rw/model.js'), T = await import('../web/rw/tabs/timeline.js');
+      const ed = window.__editor;
+      ed.store.update(p => { p.scenes[1].duration = 1.5; }, { label: 'setup' });
+      const ctx = { get p() { return ed.project; }, actions: ed.actions };
+      const at = () => { const t = M.sceneStarts(ed.project); return ed.project.scenes.map(s => t.starts[s.id]); };
+      const auto = T.autoRollOn(ed.project), before = at(), t0 = performance.now();
+      T.setSceneDuration(ctx, 's_02', 2.5);
+      const ms = performance.now() - t0, after = at(), d2 = ed.project.scenes[1].duration;
+      T.setSceneDuration(ctx, 's_02', 400);
+      const far = at(), d2far = ed.project.scenes[1].duration;
+      return { auto, before, after, far, d2, d2far, ms }; }""")
+    same = lambda a, b: all(abs(x - y) < 1e-6 for x, y in zip(a[3:], b[3:]))
+    check(r["auto"] and abs(r["d2"] - 2.5) < 1e-9 and same(r["before"], r["after"]) and same(r["before"], r["far"]) and r["d2far"] < 400,
+          f"auto-roll moved later scenes: {r}")
+    check(r["ms"] < 50, f"auto-roll took {r['ms']:.1f} ms")
+    load()
+
+    # 7. Variants (n takes of one scene, a "done" after every take): the title and the banner count takes, the scene
+    # is not done between takes; the end event's warnings show in the toast and the Render tab's last-run banner.
+    page.evaluate("() => window.__editor.actions.run('variants', [], { scene_ids: ['s_07'], n: 3 })")
+    page.wait_for_timeout(200)
+    page.evaluate("window.__host.titles.length = 0")
+    vp = lambda ph, pass_=1, step=0: emit("reelwright.progress", {"slug": S, "scene_id": "s_07", "pass": pass_, "passes": 3, "phase": ph, "step": step, "steps": 20 if step else 0})
+    emit("reelwright.run", {"slug": S, "run_id": "rv", "phase": "start", "targets": ["s_07"], "reused": []})
+    vp("encode")
+    vp("sample", step=10)
+    vp("done", pass_=3)
+    vp("encode")
+    vp("sample", step=5)
+    page.wait_for_timeout(300)
+    t1 = page.evaluate("window.__host.titles.at(-1)")
+    tab("Render")
+    head = page.evaluate("document.querySelector('.rw-run-head')?.textContent || ''")
+    vp("done", pass_=3)
+    page.wait_for_timeout(200)
+    between = page.evaluate("[window.__editor.eph.progress.s_07.phase, window.__host.titles.at(-1)]")
+    check(t1.startswith("rendering 2/3") and "100%" not in t1 and head == "Take 2 of 3" and between[0] != "done" and between[1].startswith("rendering 3/3"),
+          f"variants progress: {t1!r} {head!r} {between}")
+    vp("encode")
+    vp("done", pass_=3)
+    emit("reelwright.run", {"slug": S, "run_id": "rv", "phase": "end", "targets": ["s_07"], "rendered": ["s_07"], "failed": [], "skipped": [], "reused": [],
+                            "warnings": [{"scene_id": "s_07", "message": "variant 3 of 3 failed: out of memory"}], "interrupted": False})
+    page.wait_for_timeout(400)
+    note = page.locator("[data-help='render.lastRun']")
+    check(any("1 warning" in t and "variant 3 of 3 failed" in t for t in toasts()) and note.count() == 1 and "1 warning" in note.inner_text()
+          and "variant 3 of 3 failed" in note.inner_text() and note.locator("button[data-help='render.lastRun.retry']").count() == 0,
+          f"run warnings: {toasts()} {note.count()}")
+    page.screenshot(path=str(shots / "v060_review_warnings.png"))
+    page.evaluate("window.__editor.store.setEph({ lastRun: null, progress: {} })")
+    load()
 
 if __name__ == "__main__":
     sys.exit(main())

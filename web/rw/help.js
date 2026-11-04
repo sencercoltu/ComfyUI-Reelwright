@@ -9,7 +9,9 @@ const more = (id, title, text, tipText) => { H[id] = { tip: tipText || (H[id]?.t
 // ---------- Tabs ----------
 // [OLD 2026-11-03 v0.4.3->v0.5.0] more("tab.timeline", "Timeline", "The whole film at a glance. The Scenes lane shows every scene as a block: drag its right edge to change its length, drag the small white triangles inside it to move shot cuts, and click the round chip between two scenes to change how the second one starts (fresh, from the last frame, or from a tail clip).\n\nThe lanes below show what each scene sends to H3: pictures and keyframes (diamonds), video and audio references, dialogue, camera wording and LoRAs. The asset bin on the left lets you drag assets straight onto a scene.\n\nShortcuts: Space play/pause, J back 1 s, K stop, L play, ←/→ one frame (Shift: 1 s), I/O set a loop, M add a marker, S split at the playhead, D duplicate, N new scene, Delete remove, +/− zoom, Ctrl+Z / Ctrl+Shift+Z undo/redo, ? this help.", "Overview of every scene and lane. Press ? for shortcuts.");
 // added 2026-11-03 v0.5.0: soundtrack lanes
-more("tab.timeline", "Timeline", "The whole film at a glance. The Scenes lane shows every scene as a block: drag its right edge to change its length, drag the small white triangles inside it to move shot cuts, and click the round chip between two scenes to change how the second one starts (fresh, from the last frame, or from a tail clip).\n\nThe lanes below show what each scene sends to H3: pictures and keyframes (diamonds), video and audio references, dialogue, camera wording and LoRAs. The asset bin on the left lets you drag assets straight onto a scene.\n\nSoundtrack lanes (under the scenes) hold audio files laid on the film, such as the song a music video is cut to: drop an audio asset on the Soundtrack lane, drag it into place and trim it there.\n\nShortcuts: Space play/pause, J back 1 s, K stop, L play, ←/→ one frame (Shift: 1 s), I/O set a loop, M add a marker, S split at the playhead, D duplicate, N new scene, Delete remove, +/− zoom, Ctrl+Z / Ctrl+Shift+Z undo/redo, ? this help.", "Overview of every scene and lane. Press ? for shortcuts.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] more("tab.timeline", "Timeline", "The whole film at a glance. The Scenes lane shows every scene as a block: drag its right edge to change its length, drag the small white triangles inside it to move shot cuts, and click the round chip between two scenes to change how the second one starts (fresh, from the last frame, or from a tail clip).\n\nThe lanes below show what each scene sends to H3: pictures and keyframes (diamonds), video and audio references, dialogue, camera wording and LoRAs. The asset bin on the left lets you drag assets straight onto a scene.\n\nSoundtrack lanes (under the scenes) hold audio files laid on the film, such as the song a music video is cut to: drop an audio asset on the Soundtrack lane, drag it into place and trim it there.\n\nShortcuts: Space play/pause, J back 1 s, K stop, L play, ←/→ one frame (Shift: 1 s), I/O set a loop, M add a marker, S split at the playhead, D duplicate, N new scene, Delete remove, +/− zoom, Ctrl+Z / Ctrl+Shift+Z undo/redo, ? this help.", "Overview of every scene and lane. Press ? for shortcuts.");
+// added 2026-11-03 v0.6.0: beats, auto-roll, Delete on the selection
+more("tab.timeline", "Timeline", "The whole film at a glance. The Scenes lane shows every scene as a block: drag its right edge to change its length, drag the small white triangles inside it to move shot cuts, and click the round chip between two scenes to change how the second one starts (fresh, from the last frame, or from a tail clip).\n\nThe lanes below show what each scene sends to H3: pictures and keyframes (diamonds), video and audio references, dialogue, camera wording and LoRAs. The asset bin on the left lets you drag assets straight onto a scene.\n\nSoundtrack lanes (under the scenes) hold audio files laid on the film, such as the song a music video is cut to: drop an audio asset on the Soundtrack lane, drag it into place and trim it there. Beats shows the song's beats on its lane (yellow lines start a bar); Snap to beats makes scene edges, shot cuts and track moves stick to them. While a soundtrack sets the timing, Auto-roll keeps every later scene on the song when you change a scene's length.\n\nShortcuts: Space play/pause, J back 1 s, K stop, L play, ←/→ one frame (Shift: 1 s), I/O set a loop, M add a marker, S split at the playhead, D duplicate, N new scene, Delete removes what is selected (a marker, a track, else the scene), +/− zoom, Ctrl+Z / Ctrl+Shift+Z undo/redo, ? this help.", "Overview of every scene and lane. Press ? for shortcuts.");
 more("tab.scene", "Scene", "Everything that defines one scene: its length, how it starts, references, cast, shots, dialogue, prompt, LoRAs and any Global settings it overrides.\n\nA hollow dot means the setting follows the Global tab; a coral dot means this scene overrides it. Use the arrows or the strip at the top to move between scenes.", "Edit the selected scene.");
 more("tab.assets", "Assets", "Pictures, videos and audio clips the project can use as references. Each asset gets a short code (P1, V1, A1) that you can type in prompts as @P1. Defaults set here (role, retention, features to keep) apply wherever the asset is used, unless a scene overrides them.\n\nH3 accepts per generation pass up to 9 pictures, 3 videos and 3 audio clips (2–15 s each, 15 s in total per type) and 12 files overall. The budget table shows where a scene goes over.", "Upload and manage reference images, videos and audio.");
 more("tab.cast", "Cast", "The story bible: characters, locations and props that appear across scenes. A character's anchor pictures, description, voice and identity LoRA are sent to every scene it is tagged in.\n\nThis is how a subject from scene 1 still looks the same in scene 10: identity always comes from the same anchors, never from a chain of rendered frames, so nothing in between can make it drift.", "Characters, locations and props shared across scenes.");
@@ -19,8 +21,17 @@ more("tab.global", "Global", "Settings every scene inherits: models, LoRAs, outp
 // ---------- App frame ----------
 tip("app.brand", "Reelwright: a timeline editor for MiniMax H3 ref2va inside one ComfyUI node.");
 tip("app.backend", "Whether the Reelwright server routes answer. Without them you can still edit, but statuses, prompt previews, uploads and merging are unavailable.");
-tip("app.undo", "Undo the last edit (Ctrl+Z). Selection and zoom changes are not part of the history.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] tip("app.undo", "Undo the last edit (Ctrl+Z). Selection and zoom changes are not part of the history.");
+tip("app.undo", "Undo the last edit (Ctrl+Z). Undo never changes the view: the tab, zoom, snap, playhead and selection stay as they are.");
 tip("app.redo", "Redo (Ctrl+Shift+Z or Ctrl+Y).");
+// added 2026-11-03 v0.6.0: named undo history, folder conflicts
+tip("app.history", "History: every edit by name. Click a step to go back (or forward) to it.");
+tip("app.history.item", "Go to the project as it was right after this edit. Steps after it stay in the list until you make a new edit.");
+tip("app.history.start", "Go back to the project as it was before every edit in the list.");
+more("app.conflict", "Folder in use", "Each project saves into its own folder under output/reelwright/. This project's folder already holds a different project, for example because a node was copied in an older version or two projects got the same name.\n\nUse a separate project: this project moves to a new folder (name-2, name-3 …) and keeps every edit; its renders start fresh there.\n\nTake over this folder: this project's file replaces the other one's. Do this only when the other project is an older copy of this one.\n\nDecide later: nothing is written to disk until you choose; the workflow keeps your edits.", "This project's folder holds another project.");
+tip("app.conflict.separate", "Save this project in a new folder of its own. Its renders start fresh there.");
+tip("app.conflict.takeover", "Write this project into the folder anyway. Only if the other project is an older copy of this one.");
+tip("app.conflict.later", "Don't write to disk for now. Click “Folder in use” in the footer to decide.");
 more("app.issues", "Issues", "Problems found in the project: references over H3's limits, unknown @tags, dialogue without a language, shots after the end of a scene, missing files, a continuation without a previous scene and more. Errors stop a render; warnings and notes do not.\n\nClick an issue to jump to its scene.", "Problems that may stop or degrade a render. Click to list them.");
 tip("app.issueItem", "Open the scene this issue belongs to.");
 tip("app.issues.fitShots", "Lengthen every scene whose shots or dialogue start after its end, so they fit (the last shot gets the scene's typical shot length). Ctrl+Z undoes it."); // added 2026-11-03 v0.4.3
@@ -33,7 +44,9 @@ tip("footer.status", "How many scenes have a matching take on disk, are stale (c
 tip("footer.running", "The scene, pass and sampling step being rendered right now.");
 // [OLD 2026-11-03 v0.4.3->v0.5.0] tip("footer.length", "Number of scenes, total timeline length, and the length of the final cut after continuation overlaps are trimmed.");
 tip("footer.length", "Number of scenes, timeline length and the length of the final cut. They match: a scene that continues the one before starts inside it, over the frames it repeats, so the timeline already is the cut.");
-tip("footer.save", "Edits are written into the workflow immediately and autosaved to output/reelwright/<project>/ every few seconds.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] tip("footer.save", "Edits are written into the workflow immediately and autosaved to output/reelwright/<project>/ every few seconds.");
+tip("footer.save", "Edits are written into the workflow immediately and autosaved to output/reelwright/<project>/ a few seconds later. Ctrl+S saves now and says if it failed.");
+tip("footer.saveConflict", "Autosave is paused: this project's folder holds another project. Click to choose a separate folder or to take this one over."); // added 2026-11-03 v0.6.0
 
 // ---------- Common ----------
 tip("common.close", "Close.");
@@ -105,7 +118,8 @@ tip("timeline.delete", "Delete the selected scene (Delete). Undo brings it back;
 tip("timeline.moveLeft", "Move the selected scene one place earlier.");
 tip("timeline.moveRight", "Move the selected scene one place later.");
 tip("timeline.snap", "When on, dragging a scene edge snaps to H3's 17k+5 frame grid, so the scene needs no trimming. Off: any whole frame.");
-tip("timeline.ripple", "Ripple: lengthening a scene pushes the later scenes along. Roll: the next scene shrinks by the same amount, so the total stays the same.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] tip("timeline.ripple", "Ripple: lengthening a scene pushes the later scenes along. Roll: the next scene shrinks by the same amount, so the total stays the same.");
+tip("timeline.ripple", "Ripple: lengthening a scene pushes the later scenes along. Roll: the next scene shrinks by the same amount, so the total stays the same. While Auto-roll is on, it always rolls."); // added 2026-11-03 v0.6.0
 tip("timeline.addMarker", "Add a marker at the playhead (M). Markers are notes for you and are not sent to H3.");
 // [OLD 2026-11-02 v0.2.2->v0.3.0] Ctrl + wheel now zooms the ComfyUI canvas, like the wheel outside the node
 // tip("timeline.zoom", "Timeline zoom in pixels per second. Ctrl or Alt + mouse wheel also zooms; + and − on the keyboard too.");
@@ -170,7 +184,8 @@ tip("scene.duration.input", "Type any length in seconds; it is rounded to whole 
 tip("scene.duration.bar", "Where this length sits relative to H3's single-pass range. The green zone is the trained range (124–362 frames).");
 tip("scene.duration.trained", "H3 was trained on 124–362 frames per generation.");
 tip("scene.duration.plan", "How this length will be generated: one pass, several passes, or a trimmed minimum pass.");
-tip("scene.duration.in", "Where the scene starts on the timeline.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] tip("scene.duration.in", "Where the scene starts on the timeline.");
+tip("scene.duration.in", "Where the scene first shows new content in the cut. A continuing scene starts a little earlier, inside the scene before (the repeated tail or last frame)."); // added 2026-11-03 v0.6.0
 tip("scene.duration.out", "Where the scene ends on the timeline.");
 tip("scene.trim.keep", "Which part of the 5.17 s minimum pass to keep.");
 tip("scene.trim.start", "Keep the beginning of the generated pass.");
@@ -211,7 +226,8 @@ tip("scene.prompt.structured", "Six sections following the H3 reference prompt g
 tip("scene.prompt.raw", "One free-form prompt. @tags are still renumbered.");
 tip("scene.prompt.rawEditor", "The whole prompt. Type @ for a list of assets, cast members and @tail.");
 tip("scene.prompt.tasks", "Task tags put at the start of the summary. They are worked out from the references and how the scene starts, as the H3 guide recommends.");
-tip("scene.prompt.unknown", "These @tags match no asset code, cast name or @tail, so they would reach H3 as plain text.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] tip("scene.prompt.unknown", "These @tags match no asset code, cast name or @tail, so they would reach H3 as plain text.");
+tip("scene.prompt.unknown", "These @names match no cast member or asset, so H3 gets them as plain text. That is fine for an @handle; write @@ for a literal @."); // added 2026-11-03 v0.6.0
 tip("scene.prompt.auto.subjects", "Write a <Subject n> line for every cast member in the scene, from their description and anchors.");
 tip("scene.prompt.auto.retention", "Write one retention line per reference: label (fully_preserved, weak_reference …) plus the features to keep.");
 tip("scene.prompt.auto.shots", "Write the shots list ([Shot1], [Shot2] At 00:05.000 …) and the dialogue lines into the description, in time order.");
@@ -398,7 +414,8 @@ tip("cast.outfits.default", "Default outfit for new scenes.");
 tip("cast.outfits.name", "Outfit name.");
 tip("cast.outfits.retention", "How strictly the anchors are followed with this outfit.");
 tip("cast.outfits.keep", "Features to keep with this outfit (face, hair …). Press Enter to add.");
-tip("cast.outfits.remove", "Delete this outfit.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] tip("cast.outfits.remove", "Delete this outfit.");  (scenes that wore it are changed too)
+tip("cast.outfits.remove", "Delete this outfit. Scenes that wore it use the default outfit. Ctrl+Z undoes this.");
 more("cast.appearances", "Appearances", "Every scene this entry is in. With the insightface package installed, Reelwright compares faces in each take against the anchors and shows a similarity score; scores under the threshold are marked as drift.", "Scenes this entry appears in, with face-match scores.");
 tip("cast.appearances.open", "Open this scene.");
 tip("cast.appearances.score", "Face similarity to the anchors (0–1). Below the threshold counts as drift.");
@@ -461,7 +478,8 @@ more("render.seam", "Seam inspector", "The last frame of one scene next to the f
 tip("render.seam.pick", "Which pair of scenes to inspect.");
 tip("render.seam.mode", "Side by side, or one frame over the other.");
 tip("render.seam.mix", "Opacity of the second frame in onion-skin mode.");
-more("render.merge", "Merge scenes", "Joins one take of every scene into a single film. Nothing is re-rendered, so it takes seconds and you can merge again whenever a scene changes.\n\nContinuation seams trim the overlap and crossfade inside it; hard cuts use the transition you choose. Audio gets a short fade at every seam and can be loudness-normalised. A score track can run under the whole film and duck under dialogue. Extras: subtitles from dialogue, a chapter per scene, OpenTimelineIO and FCPXML timelines for Resolve or Premiere, and a project bundle.", "Join the rendered scenes into one film.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] more("render.merge", "Merge scenes", "Joins one take of every scene into a single film. Nothing is re-rendered, so it takes seconds and you can merge again whenever a scene changes.\n\nContinuation seams trim the overlap and crossfade inside it; hard cuts use the transition you choose. Audio gets a short fade at every seam and can be loudness-normalised. A score track can run under the whole film and duck under dialogue. Extras: subtitles from dialogue, a chapter per scene, OpenTimelineIO and FCPXML timelines for Resolve or Premiere, and a project bundle.", "Join the rendered scenes into one film.");  (the score is a soundtrack track now; draft, range, stems and Stop)
+more("render.merge", "Merge scenes", "Joins one take of every scene into a single film. Nothing is re-rendered, so it takes seconds and you can merge again whenever a scene changes.\n\nContinuation seams trim the overlap and crossfade inside it; hard cuts use the transition you choose. Audio gets a short fade at every seam and can be loudness-normalised. Soundtrack tracks (Timeline tab) play under the film. Extras: subtitles from dialogue, a chapter per scene, OpenTimelineIO and FCPXML timelines for Resolve or Premiere, and a project bundle.\n\nThis merge: a draft (half size, fast) to check timing, only a range of scenes, and audio stems with a loudness report. One merge of a project runs at a time; Stop ends it and removes its files.", "Join the rendered scenes into one film.");
 tip("render.merge.use", "Use each scene's starred take, or its newest take.");
 tip("render.merge.missing", "What to do with scenes that have no take: skip them, insert a title slate of the same length, or refuse to merge.");
 /* [OLD 2026-11-02 v0.2.2->v0.3.0] these are now defaults that each scene can override
@@ -494,10 +512,42 @@ tip("render.merge.run", "Merge now. The file appears in output/reelwright/<proje
 tip("render.merge.file", "Open this file.");
 more("render.versions", "Autosaved versions", "The project is autosaved to disk while you edit, with a version kept every few minutes. Restoring a version replaces the current project; Ctrl+Z brings back what you had.", "Earlier versions of the project.");
 tip("render.versions.load", "Load the list of saved versions.");
-tip("render.versions.restore", "Replace the current project with this version.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] tip("render.versions.restore", "Replace the current project with this version.");  (Restore shows a diff first; new text below)
 // added 2026-11-02 v0.3.6
 tip("render.versions.delete", "Delete this version file. It cannot be undone; the project itself is not affected.");
 tip("render.versions.deleteAll", "Delete every autosaved version of this project. The project and its latest autosave stay.");
+// added 2026-11-03 v0.6.0 (F2b): Render tab additions
+tip("render.versions.restore", "Show what this version changes, then replace the current project with it. Ctrl+Z brings back what you had.");
+tip("render.versions.diff", "What restoring changes, read as now → this version: scenes it brings back or removes, lengths, prompt text and Global settings.");
+tip("render.estimate", "About how long the pending scenes take, learned from earlier renders with the same quality and size. Scenes without such renders are not counted.");
+more("render.variants", "Variants", "Renders several takes of the selected scene in one run, each with its own seed. With face check on, the take that matches the cast best is starred; otherwise the first new take is.\n\nWhen they are done, the scene's take list opens: put two takes into the A/B compare to choose, and star the one you like.", "Render several takes of the selected scene at once.");
+tip("render.variants.n", "How many takes to render (2 to 8).");
+more("render.lastRun", "Last render", "Scenes that failed or were skipped in the last render. A scene that continues from a failed one is skipped, because its start is missing. The other scenes rendered as usual.\n\nRender them again once the cause is fixed. Close this note to hide it.", "What went wrong in the last render.");
+tip("render.lastRun.retry", "Render the failed and skipped scenes again.");
+tip("render.table.failed", "This scene failed in the last render. Hover to see why.");
+tip("render.table.skipped", "This scene was skipped in the last render: the scene it continues from failed or was skipped.");
+tip("render.table.estimate", "About how long a new take of this scene takes, from earlier renders.");
+tip("render.table.cachedPasses", "Passes of this scene kept in the pass cache. A render uses them and samples only the rest.");
+tip("render.table.manualStar", "You starred this take by hand. Renders keep your choice.");
+tip("render.table.diff", "Why is this scene stale? Shows how its prompt differs from the prompt of its starred take.");
+tip("render.diff", "The prompt a render would send now (+) against the prompt of the starred take (−), pass by pass.");
+more("render.table.upstream", "Continues from a different take", "This scene continues from the scene before it (last frame or tail clip). That scene now has another starred take than the one this scene's take started from, so the seam no longer matches.\n\nRe-render this scene, and the scenes that continue from it, so they start from the new take.", "The scene before has a new take; this one started from the old one.");
+tip("render.table.upstream.rerender", "Render this scene again, and every scene that continues from it.");
+tip("render.passRetake", "Long scenes are made of passes. A pass retake gives one pass a new seed and keeps the others.");
+tip("render.passRetake.pass", "New seed for this pass only. Earlier passes come from the pass cache; later passes that continue from it render again.");
+tip("render.take.compareNewest", "Put the two newest takes into the A/B compare.");
+tip("render.merge.draft", "Full: the cut at full size. Draft: half size, encoded fast at lower quality, to check timing quickly.");
+tip("render.merge.draft.full", "Full size and quality.");
+tip("render.merge.draft.on", "Half size and fast encoding. The file name ends in _draft.");
+tip("render.merge.range", "Merge every scene, or only the scenes from one to another.");
+tip("render.merge.range.all", "Every scene.");
+tip("render.merge.range.some", "Only the scenes from one scene to another. The file name says which.");
+tip("render.merge.rangeFrom", "First scene of the range.");
+tip("render.merge.rangeTo", "Last scene of the range.");
+tip("render.merge.stems", "Also write the sound as separate WAV files (the scenes, each soundtrack track, the mix) and measure their loudness (EBU R128).");
+tip("render.merge.stemsFolder", "Folder with the stems: scenes.wav, one track_<id>.wav per soundtrack track, and mix.wav.");
+tip("render.merge.stop", "Stop the merge. Its files are removed.");
+more("render.merge.report", "Loudness report", "Measured with EBU R128 on the merged sound.\n\nIntegrated: the average loudness of the whole film, in LUFS. Online video aims at about −16, broadcast at −23.\n\nRange: how much the loudness varies, in LU. Small for a steady mix, larger for dynamic films.\n\nTrue peak: the highest level between samples, in dBTP. Above −1 it may clip after conversion to MP3 or AAC.", "Loudness of the mix and each stem.");
 
 // ---------- Global ----------
 // added 2026-11-02 v0.3.0: saved Global settings
@@ -622,6 +672,9 @@ tip("global.script.discard", "Throw the proposal away.");
 tip("global.script.stop", "Stop the running part. Finished parts are kept; Continue picks up the rest.");
 tip("global.script.retry", "Run the parts that failed or were not reached yet. Finished parts are kept.");
 tip("global.script.part", "One part of the script: its first line and what happened to it.");
+// added 2026-11-03 v0.6.0 (F2b)
+tip("global.script.warnings", "Things in the LLM's answer that were of the wrong kind (a list where text belongs, a number as a name …). They were fixed or left out. Check those scenes before adding them.");
+tip("global.script.warnings.more", "Show every note, or only the first few.");
 tip("global.script.notes", "Text from the start of the script (and table column headings) sent with every part so each part knows the story.");
 tip("scene.rewrite.stop", "Stop the rewrite request.");
 tip("scene.preview.splitStop", "Stop the split request.");
@@ -661,7 +714,9 @@ tip("files.order.natural", "Scenes in timeline order, takes and cuts newest firs
 tip("files.order.size", "Biggest first, to find what takes the space.");
 tip("files.pick", "Add common clean-ups to the selection; nothing is deleted until you press Delete.");
 tip("files.pick.takes", "Select every take that isn't the starred one of its scene.");
-tip("files.pick.passes", "Select the per-pass videos of long scenes. The take's video is already assembled from them, so they are not needed any more.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] tip("files.pick.passes", "Select the per-pass videos of long scenes. The take's video is already assembled from them, so they are not needed any more.");  (the pass cache has its own pick now)
+tip("files.pick.passes", "Select the per-pass videos inside older takes. The take's video is already assembled from them, so they are not needed any more.");
+tip("files.pick.cache", "Select every scene's pass cache. Renders made since v0.6.0 keep finished passes there to resume after Stop or to retake one pass; deleting it only means those passes render again when needed."); // added 2026-11-03 v0.6.0
 tip("files.pick.cuts", "Select every merged cut except the newest, and leftovers of merges that didn't finish.");
 tip("files.pick.versions", "Select every autosaved version file. The project itself stays.");
 tip("files.pick.orphans", "Select scenes, takes, cast sets and asset files the project no longer lists.");
@@ -672,7 +727,8 @@ tip("files.kind.project", "A Reelwright project: its output folder and its input
 tip("files.kind.group", "One part of the project's folder.");
 tip("files.kind.scene", "A scene's folder: its takes and its take list.");
 tip("files.kind.take", "One rendered take: video, first and last frame, tail clip, settings and pass videos.");
-tip("files.kind.passes", "Videos of each generation pass of a long scene; the take's video was assembled from them.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] tip("files.kind.passes", "Videos of each generation pass of a long scene; the take's video was assembled from them.");  (also the scene's pass cache now)
+tip("files.kind.passes", "Videos of single generation passes: inside an older take, the passes it was assembled from; under a scene, the pass cache that renders re-use.");
 tip("files.kind.cut", "One merged cut: the video and its subtitle, timeline and chapter files.");
 tip("files.kind.version", "An autosaved copy of the project file.");
 tip("files.kind.asset", "A file in the project's input folder, used as a reference picture, video or sound.");
@@ -688,12 +744,23 @@ tip("files.flag.newest", "The newest merged cut.");
 tip("files.flag.unfinished", "A partial file left by a merge that didn't finish.");
 tip("files.flag.linked", "A hard link: the same bytes are also elsewhere, so deleting this alone frees nothing.");
 tip("files.flag.intermediate", "Only needed while the take was being assembled.");
+// added 2026-11-03 v0.6.0 (F2b): new flags, Repair, refused deletes
+tip("files.flag.other_project", "A scene folder of another project that once used this folder. It is not this project's leftover, so “Not in the project” never selects it.");
+tip("files.flag.unknown_owner", "A scene folder this project doesn't list, and nothing says whose it is. Check before deleting it.");
+tip("files.flag.cache", "Finished passes kept for re-use: a render after Stop, a pass retake or a moved keep window starts from them. Safe to delete; they are made again when needed.");
+tip("files.flag.draft", "A draft merge: half size, fast encoding.");
+tip("files.flag.range", "A merge of some of the scenes only.");
+more("files.repair", "Repair", "Reads every take's settings file (meta.json) in this project's folder and rebuilds the take lists from them: a lost or damaged list is made again, takes missing from it come back, takes whose folder is gone are dropped, and a lost star moves to the newest take.\n\nUse it after files were moved or deleted by hand, or when a scene shows no takes although they are on disk. Nothing is deleted.", "Rebuild this project's take lists from the takes on disk.");
+tip("files.repair.result", "What the last Repair found and changed.");
+tip("files.refused", "What the server did not delete, and why. A running render or merge of this project keeps its files until it ends.");
+tip("files.merging", "While a merge runs, the takes, cuts and assets it reads can't be deleted.");
 
 // ---- soundtrack (added 2026-11-03 v0.5.0) ----
 more("timeline.lane.track", "Soundtrack track", "An audio file laid on the film, on a lane of its own. Drag the clip to move it (it sticks to scene cuts, the playhead and markers; hold Alt to place it freely), drag its left or right edge to trim the start or end of the file, right-click for more. Click it to edit it in the inspector above.\n\nA track can do two things, each with its own switch:\n• In the cut — it plays unchanged in the merged film, at its level and fades. The scenes' own sound is off under it unless you turn it on (Render tab → Merge → Scene sound).\n• Send to H3 — every pass of every scene it sounds under gets exactly the part of it that pass covers (up to 15 s, silence where the track does not play), as an audio reference with the marker you pick (fully_copy by default). H3 then syncs lips, gestures, movement and cuts to it. Cast voice samples are not sent while a scene gets the song.\n\nWhile a soundtrack sets the timing, scenes keep their exact place: transitions into fresh scenes play as a dip through black inside the scenes, and scenes not rendered yet merge as slates of their length. Moving or trimming a track that is sent to H3 makes the passes it covers stale.", "A soundtrack track. Drag to move, drag an edge to trim, click to edit.");
 tip("timeline.lane.addTrack", "Drop an audio asset from the bin here to lay it on the film where you drop it, or use + to pick one. Add as many tracks as you like.");
 tip("timeline.track.add", "Add an audio asset to the soundtrack, starting at 0:00.");
-tip("timeline.track.clip", "Drag to move (sticks to cuts, the playhead and markers; Alt: free). Drag an edge to trim. Click to edit; right-click for more.");
+// [OLD 2026-11-03 v0.5.1->v0.6.0] tip("timeline.track.clip", "Drag to move (sticks to cuts, the playhead and markers; Alt: free). Drag an edge to trim. Click to edit; right-click for more.");
+tip("timeline.track.clip", "Drag to move (sticks to cuts, the playhead and markers; Alt: free). While you drag a track sent to H3, the passes whose song part would change are outlined. Drag an edge to trim. Click to edit; right-click for more."); // added 2026-11-03 v0.6.0
 tip("timeline.track.trimIn", "Drag to trim the start of the file. The rest of the track stays where it is in the film.");
 tip("timeline.track.trimOut", "Drag to trim the end of the file.");
 tip("timeline.track.loop", "The track repeats here (Loop to the end is on).");
@@ -720,5 +787,22 @@ tip("render.merge.soundtrack", "Soundtrack tracks marked In the cut. They play u
 tip("render.merge.sceneAudio", "The sound each scene was rendered with, under the soundtrack. Off by default for a music video: H3 copies the song into the scenes, so mixing both would double it.");
 tip("render.merge.sceneLevel", "Level of the scenes' own sound under the soundtrack (loudness normalised first, then this).");
 tip("scene.budget.song", "A soundtrack track is sent to H3 for this scene: each pass gets the part of the song it covers.");
+
+// ---- added 2026-11-03 v0.6.0 (F2a: timeline, soundtrack, scene tabs) ----
+tip("timeline.beats", "Show the soundtrack's beats on its lanes. Yellow lines start a bar; short ticks are the other beats.");
+tip("timeline.beatSnap", "Scene edges, shot cuts and moved tracks stick to the nearest beat (within a few pixels). Hold Alt for free movement.");
+more("timeline.autoRoll", "Auto-roll", "A soundtrack sets the timing here: each scene must stay where it is on the song.\n\nWith Auto-roll on, making a scene longer takes the time from the next scene, and making it shorter gives the time to the next scene. Every later scene keeps its place on the song, so the song parts of later passes do not change and they don't render again.\n\nTurn it off to push the later scenes along (Ripple).", "Changing a scene's length moves only the cut to the next scene, so later scenes stay on the song.");
+tip("timeline.track.beats", "The file's tempo and beat grid, found by Reelwright. The beats show on the lane when Beats is on.");
+tip("timeline.track.waveRetry", "The waveform or beats could not be read. Click to try again.");
+tip("timeline.track.stale", "The song part of this pass would change, so the pass would render again.");
+tip("scene.start.effective", "How this scene really starts. A tail start deeper than Global → Continuity allows, or next to a scene shorter than 5 frames, continues from the last frame only.");
+tip("scene.shots.beat", "Suggest shot start times on the soundtrack's beats. You see the changes first and apply them with one click.");
+tip("scene.shots.beatPlan", "The suggested time on the beat for this shot cut. Apply moves them all; Ctrl+Z undoes it.");
+tip("scene.shots.beatApply", "Move these shot cuts onto the beat. Ctrl+Z undoes it.");
+tip("scene.prompt.unknownCode", "This looks like an asset code, but no asset has it. The render stops until it is fixed.");
+tip("scene.prompt.notInScene", "This cast member is not in this scene, so H3 gets only the name, not their pictures.");
+tip("scene.preview.listen", "Build and play the part of the soundtrack this pass is sent, exactly as H3 gets it.");
+tip("scene.preview.excerpt", "The part of the soundtrack this pass is sent: which tracks, where in the film and how H3 treats it.");
+tip("scene.budget.pass", "What each pass of this long scene sends. A pass over a limit is marked.");
 
 export const HELP = H;

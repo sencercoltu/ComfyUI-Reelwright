@@ -5,6 +5,7 @@ as the native nodes without importing ComfyUI.
 """
 
 import math
+import re  # added 2026-11-03 v0.6.0: numeric text check in num()
 
 FPS = 24
 AUDIO_SAMPLE_RATE = 32000
@@ -33,22 +34,37 @@ TASK_TAG_ORDER = ("reference generation", "keyframe completion", "video continua
 ASPECTS = {"21:9": (21, 9), "16:9": (16, 9), "4:3": (4, 3), "1:1": (1, 1), "3:4": (3, 4), "9:16": (9, 16)}
 
 
+# [OLD 2026-11-03 v0.5.1->v0.6.0] loops; NaN/inf raised (model.js looped forever on NaN): now arithmetic, garbage -> 5
+# def align_frames_up(n):
+#     """Smallest 17k+5 frame count >= n (and >= 5)."""
+#     n = max(5, int(round(n)))
+#     while n % 17 != 5:
+#         n += 1
+#     return n
+#
+#
+# def align_frames_down(n):
+#     """Largest 17k+5 frame count <= n, never below 5."""
+#     n = int(n)
+#     if n < 5:
+#         return 5
+#     while n % 17 != 5:
+#         n -= 1
+#     return n
+# [/OLD]
 def align_frames_up(n):
-    """Smallest 17k+5 frame count >= n (and >= 5)."""
+    """Smallest 17k+5 frame count >= n (and >= 5). Not a finite number -> 5 (same as model.js alignFramesUp)."""
+    n = num(n, 0)
     n = max(5, int(round(n)))
-    while n % 17 != 5:
-        n += 1
-    return n
+    return n + (5 - n) % 17
 
 
 def align_frames_down(n):
-    """Largest 17k+5 frame count <= n, never below 5."""
-    n = int(n)
+    """Largest 17k+5 frame count <= n, never below 5. Not a finite number -> 5."""
+    n = int(num(n, 0))
     if n < 5:
         return 5
-    while n % 17 != 5:
-        n -= 1
-    return n
+    return n - (n - 5) % 17
 
 
 def frames_of(seconds):
@@ -84,3 +100,67 @@ def fmt_time(t):
     t = max(0.0, t)
     m = int(t // 60)
     return "{:02d}:{:06.3f}".format(m, t - m * 60)
+
+
+# ---- added 2026-11-03 v0.6.0: value coercion shared by the normalisers (model.py, soundtrack.py). model.js has the
+# same three (num, flag, text) so Python and the editor make the same project out of the same JSON.
+_NUM_TEXT = re.compile(r"^[ \t\n\r]*[-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?[ \t\n\r]*$")
+
+
+def num(v, default=0.0):
+    """v as a finite number (numbers, or text such as "12.5"), else default. True/False are not numbers."""
+    if isinstance(v, bool):
+        return default
+    if isinstance(v, (int, float)):
+        try:
+            return v if math.isfinite(v) else default
+        except OverflowError:  # an int too big for a float
+            return default
+    if isinstance(v, str) and _NUM_TEXT.match(v):
+        x = float(v)
+        return x if math.isfinite(x) else default
+    return default
+
+
+def flag(v, default=False):
+    """v as a bool: booleans as they are, numbers are True unless 0, anything else is default."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        x = num(v, None)
+        return default if x is None else x != 0
+    return default
+
+
+def text(v, default=""):
+    """v as a string: strings as they are, finite numbers written the way JavaScript's String() writes them,
+    anything else (None, lists, objects, booleans) is default."""
+    if isinstance(v, str):
+        return v
+    x = num(v, None) if isinstance(v, (int, float)) else None
+    return default if x is None else js_number(x)
+
+
+def js_number(x):
+    """A finite number as JavaScript's String(x) writes it (1.0 -> "1", 1e-7 -> "1e-7")."""
+    if isinstance(x, int) and abs(x) < 2 ** 53:
+        return str(x)
+    x = float(x)
+    if x == 0:
+        return "0"
+    if x.is_integer() and abs(x) < 2 ** 53:
+        return str(int(x))
+    import decimal
+    sign = "-" if x < 0 else ""
+    t = decimal.Decimal(repr(abs(x))).normalize().as_tuple()  # repr: the shortest digits that read back as x
+    digits = "".join(str(d) for d in t.digits)
+    k = len(digits)
+    n = t.exponent + k  # x = 0.digits * 10**n
+    if k <= n <= 21:
+        return sign + digits + "0" * (n - k)
+    if 0 < n <= 21:
+        return sign + digits[:n] + "." + digits[n:]
+    if -6 < n <= 0:
+        return sign + "0." + "0" * (-n) + digits
+    e = n - 1
+    return sign + digits[0] + ("." + digits[1:] if k > 1 else "") + "e" + ("+" if e > 0 else "-") + str(abs(e))

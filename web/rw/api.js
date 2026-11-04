@@ -23,6 +23,7 @@ async function req(method, route, body, form) {
     const err = new Error(data?.error || data?.message || `${res.status} ${res.statusText}`);
     err.reason = data?.reason || "";
     err.status = res.status;
+    err.data = data; // added 2026-11-03 v0.6.0: the whole answer (e.g. {reason: "slug_conflict", other} from /autosave)
     throw err;
   }
   return data;
@@ -43,8 +44,14 @@ export const rw = {
   takes: slug => req("GET", "/reelwright/takes?slug=" + q(slug)),
   star: (slug, scene_id, take_id) => req("POST", "/reelwright/takes/star", { slug, scene_id, take_id }),
   deleteTake: (slug, scene_id, take_id) => req("POST", "/reelwright/takes/delete", { slug, scene_id, take_id }),
-  merge: project => req("POST", "/reelwright/merge", { project }),
-  autosave: project => req("POST", "/reelwright/autosave", { project }),
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] merge: project => req("POST", "/reelwright/merge", { project }),
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] autosave: project => req("POST", "/reelwright/autosave", { project }),
+  // added 2026-11-03 v0.6.0: merge options {draft, range: [from_sid, to_sid] | null, stems, job}; 409 {error: "busy"}
+  // while another merge of the project runs (err.status 409)
+  merge: (project, opts = {}) => req("POST", "/reelwright/merge", { project, ...opts }),
+  mergeCancel: job => req("POST", "/reelwright/merge/cancel", { job }),
+  // added 2026-11-03 v0.6.0: {force: true} takes over a folder that holds another project (409 slug_conflict)
+  autosave: (project, opts = {}) => req("POST", "/reelwright/autosave", { project, ...opts }),
   versions: slug => req("GET", "/reelwright/versions?slug=" + q(slug)),
   // added 2026-11-02 v0.3.6
   deleteVersions: (slug, names) => req("POST", "/reelwright/versions/delete", { slug, names }),
@@ -82,6 +89,13 @@ export const rw = {
   storage: current => req("GET", "/reelwright/storage?current=" + q(current)),
   deleteStorage: (ids, current) => req("POST", "/reelwright/storage/delete", { ids, current }),
   // added 2026-11-03 v0.5.0: peak levels (0-255) of an input audio file, perSecond values a second, for the soundtrack lanes
+  // added 2026-11-03 v0.6.0: beat grid of an input audio file {bpm, beats, downbeats}; the WAV a pass of a scene
+  // gets from the soundtrack {url}; rebuild a project's take lists from the takes' meta.json {repaired, takes_found}
+  beats: file => req("GET", "/reelwright/beats?file=" + q(file)),
+  // [OLD 2026-11-03 v0.6.0 review] soundtrackExcerpt: (slug, scene_id, pass) => req("POST", "/reelwright/soundtrack/excerpt", { slug, scene_id, pass }),
+  // added 2026-11-03 v0.6.0: the unsaved project may go along, so the excerpt matches what the editor shows
+  soundtrackExcerpt: (slug, scene_id, pass, project) => req("POST", "/reelwright/soundtrack/excerpt", project ? { slug, scene_id, pass, project } : { slug, scene_id, pass }),
+  storageRepair: slug => req("POST", "/reelwright/storage/repair", { slug }),
   async waveform(file, per_second = 50) {
     const res = await host.fetchApi(`/reelwright/waveform?file=${q(file)}&per_second=${per_second}`, { method: "GET" });
     if (!res.ok) throw new Error(`waveform ${res.status}`);

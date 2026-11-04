@@ -94,3 +94,68 @@ def test_short_scene_shifts_content_into_the_window(harbor):
     x = plan["passes"][0]
     assert abs(x["keep_in"] - 1.208) < 0.01
     assert abs(x["shots"][0]["t"] - (x["keep_in"] + 0.5)) < 0.05
+
+
+# ---- added 2026-11-03 v0.6.0 ----
+from reelwright import model  # noqa: E402
+from reelwright.planner import continuation_depth  # noqa: E402,F401  (still importable from the planner)
+
+
+def _chain(durations, modes, overlaps=None, reanchor=2, **scene_patch):
+    p = default_project()
+    p["global"]["continuity"]["reanchor_after"] = reanchor
+    overlaps = overlaps or [39] * len(durations)
+    p["scenes"] = [dict({"id": "s_{}".format(i), "duration": d, "start": {"mode": m, "overlap_frames": o}},
+                        **(scene_patch if i == len(durations) - 1 else {}))
+                   for i, (d, m, o) in enumerate(zip(durations, modes, overlaps))]
+    return normalize_project(p)
+
+
+def test_reanchored_tail_is_planned_as_last_frame():
+    p = _chain([8, 6, 6, 6], ["fresh", "tail", "tail", "tail"], reanchor=2)
+    plan = plan_scene(p, p["scenes"][3], 3)
+    assert plan["start_mode"] == "last_frame" and plan["declared_start_mode"] == "tail"
+    assert plan["passes"][0]["overlap_frames"] == 0
+    plan = plan_scene(p, p["scenes"][2], 2)
+    assert plan["start_mode"] == "tail" and plan["passes"][0]["overlap_frames"] == 39
+
+
+def test_tail_overlap_is_capped_by_the_scene_before():
+    p = _chain([1.0, 10.0], ["fresh", "tail"], [39, 90])
+    assert plan_scene(p, p["scenes"][1], 1)["passes"][0]["overlap_frames"] == 22 == model.tail_overlap_frames(p, 1)
+    p = _chain([0.1, 10.0], ["fresh", "tail"])  # 2 frames before it: no tail clip fits
+    plan = plan_scene(p, p["scenes"][1], 1)
+    assert plan["start_mode"] == "last_frame" and plan["passes"][0]["overlap_frames"] == 0
+
+
+def test_short_reanchored_tail_keeps_the_start_window():
+    p = _chain([8, 6, 6, 2.5], ["fresh", "tail", "tail", "tail"], reanchor=1, trim={"keep": "end", "in": 0})
+    plan = plan_scene(p, p["scenes"][3], 3)
+    assert plan["kind"] == "short" and plan["start_mode"] == "last_frame"
+    assert plan["passes"][0]["keep_in_frames"] == 0  # a continuing scene always keeps the start
+
+
+def test_lines_and_keyframes_at_the_edges_are_kept():
+    p = default_project()
+    p["assets"] = [{"id": "a_k", "kind": "image", "file": "k.png"}]
+    p["scenes"][0].update(duration=8.0, shots=[{"id": "h_neg", "t": -1.0}, {"id": "h_2", "t": 4.0}],
+                          dialogue=[{"id": "d_neg", "t": -0.5, "text": "a"},
+                                    {"id": "d_end", "t": 8.0 - 0.4 / 24, "text": "b"},
+                                    {"id": "d_out", "t": 8.0, "text": "after the end"}],
+                          refs=[{"id": "r_k", "asset": "a_k", "role": "keyframe", "time": 8.0 - 0.3 / 24}])
+    p = normalize_project(p)
+    (x,) = plan_scene(p, p["scenes"][0], 0)["passes"]
+    lines = {d["id"]: d["t"] for d in x["dialogue"]}
+    assert lines == {"d_neg": 0.0, "d_end": 191 / 24}  # clamped into the scene; a line after the end stays out
+    assert x["keyframes"] == [{"ref": "r_k", "frame_idx": 191}]
+    assert x["shots"][0]["id"] == "h_neg" and x["shots"][0]["t"] == 0.0 and not x["shots"][0]["continuing"]
+
+
+def test_long_scene_lines_land_in_exactly_one_pass():
+    p = default_project()
+    p["scenes"][0].update(duration=45.0, dialogue=[{"id": "d{}".format(k), "t": k * 0.5 - 1.0, "text": "x"}
+                                                   for k in range(93)])
+    p = normalize_project(p)
+    plan = plan_scene(p, p["scenes"][0], 0)
+    seen = [d["id"] for x in plan["passes"] for d in x["dialogue"]]
+    assert len(seen) == len(set(seen)) == 92  # every line before the end, once (t = 45.0 is after the end)

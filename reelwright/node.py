@@ -5,6 +5,8 @@ import hashlib
 import json
 import logging
 import os
+import re  # added 2026-11-03 v0.6.0: full cut names
+import uuid  # added 2026-11-03 v0.6.0: merge job ids
 from fractions import Fraction
 
 import folder_paths
@@ -37,6 +39,24 @@ def _roots():
 def _placeholder_video():
     comp = Types.VideoComponents(images=torch.zeros(1, 64, 64, 3), frame_rate=Fraction(24), audio=None)
     return InputImpl.VideoFromComponents(comp)
+
+
+# added 2026-11-03 v0.6.0: <slug>_cut_vN.mp4 only; drafts (cut_vN_draft.mp4), ranges and half-written
+# (.partial.) files are not the film
+FULL_CUT = re.compile(r".+_cut_v(\d+)\.mp4")
+
+
+def full_cuts(store):
+    """added 2026-11-03 v0.6.0: the project's full cuts, newest (highest number) first."""
+    out = []
+    for c in glob.glob(os.path.join(store.cuts_dir(), "*_cut_v*.mp4")):
+        m = FULL_CUT.fullmatch(os.path.basename(c))
+        if m:
+            try:
+                out.append((int(m.group(1)), os.path.getmtime(c), c))
+            except OSError:
+                continue
+    return [c for _, _, c in sorted(out, reverse=True)]
 
 
 class Reelwright(io.ComfyNode):
@@ -75,19 +95,55 @@ class Reelwright(io.ComfyNode):
 
     @classmethod
     def execute(cls, project, run_request, model=None, clip=None, vae=None, audio_vae=None) -> io.NodeOutput:
-        p = normalize_project(project)
-        store = ProjectStore(_roots(), p["slug"])
-        store.autosave(p)
-        wired = {"model": model, "clip": clip, "vae": vae, "audio_vae": audio_vae}
-        write_json(os.path.join(store.dir, "wired.json"),
-                   {"diffusion": model is not None, "text_encoder": clip is not None,
-                    "video_vae": vae is not None, "audio_vae": audio_vae is not None})
+        # [OLD 2026-11-03 v0.5.1->v0.6.0] a failure here (project folder, autosave, analysis) reached the editor only as
+        # ComfyUI's error, and the render status stayed on "queued"
+        # p = normalize_project(project)
+        # store = ProjectStore(_roots(), p["slug"])
+        # store.autosave(p)
+        # wired = {"model": model, "clip": clip, "vae": vae, "audio_vae": audio_vae}
+        # write_json(os.path.join(store.dir, "wired.json"),
+        #            {"diffusion": model is not None, "text_encoder": clip is not None,
+        #             "video_vae": vae is not None, "audio_vae": audio_vae is not None})
+        # try:
+        #     request = json.loads(run_request or "{}")
+        # except json.JSONDecodeError:
+        #     request = {"action": "pending"}
+        #
+        # rendered = Renderer(p, store, wired, request).run()
+        # [/OLD]
+        slug = ""
         try:
-            request = json.loads(run_request or "{}")
-        except json.JSONDecodeError:
-            request = {"action": "pending"}
+            p = normalize_project(project)
+            slug = p.get("slug") or ""
+            store = ProjectStore(_roots(), p["slug"])
+            # [OLD 2026-11-03 v0.5.1->v0.6.0] store.autosave(p)  (overwrote another project living in the same folder)
+            try:
+                store.autosave(p, owner_check=True)
+            except TypeError:  # a storage module without the owner check
+                store.autosave(p)
+            except ValueError as e:
+                if getattr(e, "other", None) is None:
+                    raise
+                raise RuntimeError(
+                    "Reelwright: the folder {!r} holds another project ({}). In the editor choose \"Use a separate "
+                    "project\" or \"Take over this folder\", then render again.".format(
+                        p["slug"], e.other.get("name") or e.other.get("id"))) from e
+            wired = {"model": model, "clip": clip, "vae": vae, "audio_vae": audio_vae}
+            write_json(os.path.join(store.dir, "wired.json"),
+                       {"diffusion": model is not None, "text_encoder": clip is not None,
+                        "video_vae": vae is not None, "audio_vae": audio_vae is not None})
+            try:
+                request = json.loads(run_request or "{}")
+            except json.JSONDecodeError:
+                request = {"action": "pending"}
+            if not isinstance(request, dict):
+                request = {"action": "pending"}
+            renderer = Renderer(p, store, wired, request)
+        except Exception as e:
+            _send("reelwright.run", {"slug": slug, "phase": "rejected", "error": str(e)})  # added 2026-11-03 v0.6.0
+            raise
 
-        rendered = Renderer(p, store, wired, request).run()
+        rendered = renderer.run()  # sends its own run events (rejected / start / end)
 
         wired_flags = {"diffusion": model is not None, "text_encoder": clip is not None,
                        "video_vae": vae is not None, "audio_vae": audio_vae is not None}
@@ -120,16 +176,40 @@ class Reelwright(io.ComfyNode):
         # [/OLD]
         merged, merge_failed = None, False
         if rendered and p["global"]["merge"]["auto_after_render"]:
+            # [OLD 2026-11-03 v0.5.1->v0.6.0] no job id or progress events; only a MergeError was caught
+            # try:
+            #     out = assemble.merge_project(result, store)
+            #     merged = store.output_path(out["files"]["video"])
+            #     _send("reelwright.merge", {"slug": p["slug"], "phase": "end", "files": out["files"],
+            #                                "duration": out.get("duration")})
+            # except merge.MergeError as e:
+            #     merge_failed = True
+            #     log.warning("Reelwright: merge skipped: %s", e)
+            #     # added 2026-11-02 v0.2.1: tell the editor, which used to show nothing for a failed auto-merge
+            #     _send("reelwright.merge", {"slug": p["slug"], "phase": "error", "error": str(e)[-600:]})
+            # [/OLD]
+            # added 2026-11-03 v0.6.0: the merge after a render has a job id (POST /reelwright/merge/cancel stops it,
+            # and so does ComfyUI's Stop); its events carry the id like the editor's own merges
+            job = "merge-" + (renderer.run_id or uuid.uuid4().hex[:12])
+            ev = {"slug": p["slug"], "job": job}
+            _send("reelwright.merge", dict(ev, phase="start"))
             try:
-                out = assemble.merge_project(result, store)
+                out = assemble.merge_project(
+                    result, store, progress=lambda x: _send("reelwright.merge", dict(ev, phase="progress",
+                                                                                     percent=round(x * 100, 1))),
+                    options={"interruptible": True}, job_id=job)
                 merged = store.output_path(out["files"]["video"])
-                _send("reelwright.merge", {"slug": p["slug"], "phase": "end", "files": out["files"],
-                                           "duration": out.get("duration")})
-            except merge.MergeError as e:
+                _send("reelwright.merge", dict(ev, phase="end", files=out["files"], duration=out.get("duration")))
+            except merge.MergeCancelled:
+                merge_failed = True
+                _send("reelwright.merge", dict(ev, phase="end", cancelled=True))
+            except Exception as e:  # noqa: BLE001 - the scenes are rendered; a merge problem must not fail the node
                 merge_failed = True
                 log.warning("Reelwright: merge skipped: %s", e)
-                # added 2026-11-02 v0.2.1: tell the editor, which used to show nothing for a failed auto-merge
-                _send("reelwright.merge", {"slug": p["slug"], "phase": "error", "error": str(e)[-600:]})
+                _send("reelwright.merge", dict(ev, phase="error", error=str(e)[-600:]))
+            except BaseException:  # Stop during the merge: ComfyUI's interrupt goes on up
+                _send("reelwright.merge", dict(ev, phase="end", cancelled=True))
+                raise
 
         last_take = None
         for s in reversed(p["scenes"]):
@@ -137,8 +217,10 @@ class Reelwright(io.ComfyNode):
             if last_take:
                 break
         take_video = store.output_path(last_take["files"]["video"]) if last_take else None
-        cuts = sorted((c for c in glob.glob(os.path.join(store.cuts_dir(), "*_cut_v*.mp4")) if ".partial." not in c),
-                      key=os.path.getmtime, reverse=True)
+        # [OLD 2026-11-03 v0.5.1->v0.6.0] any file named like a cut, newest by time (a draft or range merge would win)
+        # cuts = sorted((c for c in glob.glob(os.path.join(store.cuts_dir(), "*_cut_v*.mp4")) if ".partial." not in c),
+        #               key=os.path.getmtime, reverse=True)
+        cuts = full_cuts(store)
         # an older cut does not show what was just rendered, so after a failed merge the last take comes first
         candidates = [merged] + ([take_video] + cuts if merge_failed else cuts + [take_video])
         video_path, info = None, None

@@ -21,6 +21,54 @@ SCENE_START = re.compile(
 TABLE_ROW = re.compile(r"^\s*\|.*\S")
 TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$")
 NOTES_MAX = 2000  # a longer text before the first block is treated as script, not as notes
+# added 2026-11-03 v0.6.0: text before the first scene heading that is itself a scene (screenplay openings)
+SCREENPLAY_HEADING = re.compile(r"^\s*(?:(?:INT|EXT|EST|INT\.?\s*/\s*EXT|I\s*/\s*E)[.\s]|\.(?!\.)\w)")
+OPENING_LINE = re.compile(r"^\s*(?:FADE IN|COLD OPEN|OPEN ON|OPENING ON|BLACK SCREEN|SUPER:|TITLE CARD)\b", re.I | re.M)
+CHARACTER_CUE = re.compile(r"^[ \t]*[A-Z][A-Z0-9 .'’\-]{1,30}(?:[ \t]*\([^)\n]*\))?[ \t]*\n[ \t]*\S", re.M)
+CAPS_DIALOGUE = re.compile(r"^[ \t]*[A-Z][A-Z .'’\-]{1,24}:[ \t]+\S", re.M)
+TITLE_PAGE = re.compile(r"^\s*(?:title|credit|author|authors|source|draft date|date|contact|copyright|notes|"
+                        r"logline|premise|style|format|genre)\s*:", re.I)
+
+
+def opening_scene(preamble, blocks):
+    """True when the text before the first block is an opening scene rather than notes: it has a screenplay opening
+    ("FADE IN:", "COLD OPEN"), or spoken lines (a name in capitals over a line, or "NAME: line") - two of them, or
+    one when the script uses INT./EXT. headings. A title page ("Title: …", "Logline: …") stays notes."""
+    if not preamble.strip():
+        return False
+    if OPENING_LINE.search(preamble):
+        return True
+    lines = [x for x in preamble.split("\n") if x.strip()]
+    if sum(bool(TITLE_PAGE.match(x)) for x in lines) * 2 >= len(lines):
+        return False
+    # [OLD 2026-11-03 v0.6.0 review] a title in capitals over the premise ("HARBOR LIGHTS\nA short film about ...")
+    # counted as a character cue, so the premise became an opening scene instead of notes
+    # cues = len(CHARACTER_CUE.findall(preamble)) + len(CAPS_DIALOGUE.findall(preamble))
+    # [/OLD]
+    cues = sum(1 for m in CHARACTER_CUE.finditer(preamble) if not _title_line(preamble, m, blocks)) + \
+        len(CAPS_DIALOGUE.findall(preamble))  # added 2026-11-03 v0.6.0 review
+    screenplay = bool(blocks) and SCREENPLAY_HEADING.match(blocks[0]) is not None
+    return cues >= 2 or (cues >= 1 and screenplay)
+
+
+def _cue_name(line):
+    """added 2026-11-03 v0.6.0 review: "MARA (V.O.)" -> "MARA"."""
+    return re.sub(r"\([^)]*\)", "", line).strip().upper()
+
+
+def _title_line(preamble, m, blocks):
+    """added 2026-11-03 v0.6.0 review: a CHARACTER_CUE match that is the title of the text, not a speaker: the first
+    line of the preamble, in capitals, without an extension like (V.O.), whose name speaks nowhere else in the
+    script (no other cue or "NAME: line" with it)."""
+    first = preamble[:m.start()].strip() == ""
+    line = m.group(0).split("\n", 1)[0]
+    if not first or "(" in line:
+        return False
+    name = _cue_name(line)
+    rest = preamble[m.end():] + "\n\n" + "\n\n".join(blocks or [])
+    spoken = {_cue_name(x.group(0).split("\n", 1)[0]) for x in CHARACTER_CUE.finditer(rest)}
+    spoken |= {_cue_name(x.group(0).split(":", 1)[0]) for x in CAPS_DIALOGUE.finditer(rest)}
+    return name not in spoken
 
 
 def _rule(line):
@@ -82,7 +130,15 @@ def split_script(text, part_chars=3000):
     if not blocks:  # no headings or table rows: paragraphs are the blocks
         blocks, preamble = _paragraphs(text), ""
     notes = []
-    if preamble and len(preamble) <= NOTES_MAX:
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] an opening scene before the first heading became notes, which no part makes scenes from
+    # if preamble and len(preamble) <= NOTES_MAX:
+    #     notes.append(preamble)
+    # elif preamble:
+    #     blocks = _paragraphs(preamble) + blocks
+    # [/OLD]
+    if preamble and opening_scene(preamble, blocks):
+        blocks = [preamble] + blocks  # the first part starts with it, as its own block
+    elif preamble and len(preamble) <= NOTES_MAX:
         notes.append(preamble)
     elif preamble:
         blocks = _paragraphs(preamble) + blocks

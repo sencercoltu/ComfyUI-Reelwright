@@ -9,6 +9,7 @@ import {
   ASPECTS, START_MODES, STABLE_LANGUAGES, OVERRIDE_KEYS, adaptCanvas, newId, slugify, defaultScene, effective, FPS,
   sceneIndex, // added 2026-11-02 v0.3.1
   overruns, lengthenToFit, // added 2026-11-03 v0.4.3
+  nextSeedN, // added 2026-11-03 v0.6.0: a seed number per imported scene
 } from "../model.js";
 import { VERSION } from "../version.js";
 
@@ -27,7 +28,12 @@ function modelRow(ctx, label, key, list, input, help) {
 // added 2026-11-02 v0.3.0: saved Global settings shared by every Reelwright node on this ComfyUI
 function profilesCard(ctx) {
   const pr = ctx.eph.profiles;
-  if (!pr) ctx.actions.loadProfiles();
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] if (!pr) ctx.actions.loadProfiles();  (every re-render while the first GET was on its way sent another)
+  // added 2026-11-03 v0.6.0: one request at a time (loadProfiles sets eph.profiles, also when the backend is offline)
+  if (!pr && !ctx.eph.profilesLoading) {
+    ctx.eph.profilesLoading = true;
+    Promise.resolve(ctx.actions.loadProfiles()).finally(() => { ctx.eph.profilesLoading = false; });
+  }
   const list = pr?.profiles || [];
   const sel = list.find(x => x.id === ctx.eph.profileSel) || null;
   const busy = !!ctx.eph.profileBusy;
@@ -76,17 +82,35 @@ function profilesCard(ctx) {
   });
 }
 
+// added 2026-11-03 v0.6.0: true only when the takes of folder `slug` were read (eph.takesSlug) and it has none; takes
+// not read yet (just loaded, backend offline, another folder's list) count as "may have renders"
+function folderIsEmpty(ctx, slug) {
+  const t = ctx.eph.takes;
+  if (!t || ctx.eph.takesSlug !== slug) return false;
+  return !Object.values(t.scenes || {}).some(x => (x?.takes || []).length);
+}
+
 function projectCard(ctx) {
   const p = ctx.p;
   return section({
     title: "Project", help: "global.project",
     children: [
+      /* [OLD 2026-11-03 v0.5.1->v0.6.0] with no takes loaded (not read yet, or another folder's) a rename moved the folder away from its renders; a new node's untitled-xxxx folder never followed the name
       field("Name", text({ value: p.name, key: "proj-name", help: "global.project.name", onChange: v => ctx.actions.edit(q => {
         const auto = q.slug === slugify(q.name);
         q.name = v;
         if (auto && !(ctx.eph.takes?.scenes && Object.keys(ctx.eph.takes.scenes).length)) q.slug = slugify(v);
       }) }), { help: "global.project.name" }),
       field("Folder", text({ value: p.slug, key: "proj-slug", mono: true, help: "global.project.slug", onChange: v => ctx.actions.edit(q => { q.slug = slugify(v); }) }), { help: "global.project.slug" }),
+      [/OLD] */
+      // added 2026-11-03 v0.6.0: the folder follows the name only while it is an automatic one (the slug of the name, or a
+      // new node's untitled-xxxx) and the take list of this very folder has been read and holds no takes
+      field("Name", text({ value: p.name, key: "proj-name", help: "global.project.name", onChange: v => ctx.actions.edit(q => {
+        const auto = q.slug === slugify(q.name) || /^untitled-[a-z0-9]{4}$/.test(q.slug);
+        q.name = v;
+        if (auto && folderIsEmpty(ctx, q.slug)) q.slug = slugify(v);
+      }, { label: "Rename project" }) }), { help: "global.project.name" }),
+      field("Folder", text({ value: p.slug, key: "proj-slug", mono: true, help: "global.project.slug", onChange: v => ctx.actions.edit(q => { q.slug = slugify(v); }, { label: "Change folder" }) }), { help: "global.project.slug" }),
       h("div", { class: "rw-dim small mono", help: "global.project.slug" }, `output/reelwright/${p.slug}/ · input/reelwright/${p.slug}/`),
     ],
   });
@@ -113,7 +137,8 @@ function modelsCard(ctx) {
 
 function lorasCard(ctx) {
   const list = ctx.eph.models?.loras || [];
-  const edit = fn => ctx.actions.edit(q => fn(q.global.loras));
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => fn(q.global.loras));  (no History menu name)
+  const edit = fn => ctx.actions.edit(q => fn(q.global.loras), { label: "Global LoRAs" }); // added 2026-11-03 v0.6.0: History menu name
   const loras = ctx.p.global.loras;
   return section({
     title: "Global LoRA stack", help: "global.loras",
@@ -122,12 +147,21 @@ function lorasCard(ctx) {
       loras.length === 0 && h("div", { class: "rw-empty sm", help: "global.loras" }, "No global LoRAs."),
       loras.map((l, i) => {
         const overriders = ctx.p.scenes.filter(s => s.overrides.loras?.strengths?.[l.id] !== undefined || s.overrides.loras?.mode === "replace").length;
+        /* [OLD 2026-11-03 v0.5.1->v0.6.0] no keys: after a reorder the focus went back to the row in the same position
         return h("div", { class: ["rw-lora-row", !l.enabled && "off"] },
           toggle({ value: l.enabled, help: "global.loras.enabled", onChange: v => edit(ls => { ls[i].enabled = v; }) }),
           h("div", { class: "grow" },
             select({ options: list, value: l.name, placeholder: "choose LoRA", mono: true, help: "global.loras.name", onChange: v => edit(ls => { ls[i].name = v; }) }),
             overriders > 0 && h("div", { class: "rw-c-accent small" }, `${overriders} scene${overriders > 1 ? "s" : ""} override this`)),
           number({ value: l.strength, min: -4, max: 4, step: 0.05, width: "74px", help: "global.loras.strength", onChange: v => edit(ls => { ls[i].strength = v ?? 1; }) }),
+        [/OLD] */
+        // added 2026-11-03 v0.6.0: stable keys (the LoRA's id) so focus stays on the same LoRA after a re-render
+        return h("div", { class: ["rw-lora-row", !l.enabled && "off"] },
+          toggle({ value: l.enabled, key: `glora-on-${l.id || i}`, help: "global.loras.enabled", onChange: v => edit(ls => { ls[i].enabled = v; }) }),
+          h("div", { class: "grow" },
+            select({ options: list, value: l.name, key: `glora-name-${l.id || i}`, placeholder: "choose LoRA", mono: true, help: "global.loras.name", onChange: v => edit(ls => { ls[i].name = v; }) }),
+            overriders > 0 && h("div", { class: "rw-c-accent small" }, `${overriders} scene${overriders > 1 ? "s" : ""} override this`)),
+          number({ value: l.strength, key: `glora-str-${l.id || i}`, min: -4, max: 4, step: 0.05, width: "74px", help: "global.loras.strength", onChange: v => edit(ls => { ls[i].strength = v ?? 1; }) }),
           button({ icon: "chevLeft", small: true, variant: "ghost", help: "global.loras.order", disabled: i === 0, onClick: () => edit(ls => { [ls[i - 1], ls[i]] = [ls[i], ls[i - 1]]; }) }),
           button({ icon: "trash", small: true, variant: "ghost", help: "global.loras.remove", onClick: () => edit(ls => { ls.splice(i, 1); }) }));
       }),
@@ -138,7 +172,8 @@ function lorasCard(ctx) {
 
 function outputCard(ctx) {
   const o = ctx.p.global.output;
-  const set = fn => ctx.actions.edit(q => fn(q.global.output));
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const set = fn => ctx.actions.edit(q => fn(q.global.output));  (no History menu name)
+  const set = fn => ctx.actions.edit(q => fn(q.global.output), { label: "Output setting" }); // added 2026-11-03 v0.6.0: History menu name
   const mp = (o.width * o.height / 1e6).toFixed(2);
   return section({
     title: "Output", help: "global.output",
@@ -154,10 +189,18 @@ function outputCard(ctx) {
       }),
       h("button", { type: "button", class: ["rw-aspect", o.aspect === "custom" && "on"], help: "global.output.custom", onClick: () => set(x => { x.aspect = "custom"; }) },
         h("span", { class: "rw-aspect-box dashed", style: { width: "22px", height: "22px" } }), "custom")),
+      /* [OLD 2026-11-03 v0.6.0 review] no keys: render() found the focused one again by "the same text" and moved
+         focus from the height to the width when both read 1344
       field("Width × height", h("span", { class: "rw-row" },
         number({ value: o.width, min: 32, step: 32, help: "global.output.size", onChange: v => set(x => { x.width = Math.max(32, Math.round((v ?? 32) / 32) * 32); x.aspect = "custom"; }) }),
         h("span", { class: "rw-dim" }, "×"),
         number({ value: o.height, min: 32, step: 32, help: "global.output.size", onChange: v => set(x => { x.height = Math.max(32, Math.round((v ?? 32) / 32) * 32); x.aspect = "custom"; }) })), { help: "global.output.size" }),
+      [/OLD] */
+      // added 2026-11-03 v0.6.0 review: keys, so a re-render puts focus back into the right one
+      field("Width × height", h("span", { class: "rw-row" },
+        number({ value: o.width, min: 32, step: 32, help: "global.output.size", key: "out-width", onChange: v => set(x => { x.width = Math.max(32, Math.round((v ?? 32) / 32) * 32); x.aspect = "custom"; }) }),
+        h("span", { class: "rw-dim" }, "×"),
+        number({ value: o.height, min: 32, step: 32, help: "global.output.size", key: "out-height", onChange: v => set(x => { x.height = Math.max(32, Math.round((v ?? 32) / 32) * 32); x.aspect = "custom"; }) })), { help: "global.output.size" }),
       field("Frame rate", h("span", { class: "rw-locked mono", help: "global.output.fps" }, icon("lock", 11), "24 fps"), { help: "global.output.fps" }),
       field("Audio", h("span", { class: "rw-locked mono", help: "global.output.audio" }, icon("lock", 11), "32 kHz stereo"), { help: "global.output.audio" }),
       field("Reference images", segmented({ small: true, value: o.ref_image_size, help: "global.output.refSize", options: [
@@ -170,7 +213,8 @@ function outputCard(ctx) {
 function samplingCard(ctx) {
   const sm = ctx.p.global.sampling;
   const m = ctx.eph.models || {};
-  const set = fn => ctx.actions.edit(q => fn(q.global.sampling));
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const set = fn => ctx.actions.edit(q => fn(q.global.sampling));  (no History menu name)
+  const set = fn => ctx.actions.edit(q => fn(q.global.sampling), { label: "Sampling setting" }); // added 2026-11-03 v0.6.0: History menu name
   return section({
     title: "Sampling", help: "global.sampling",
     children: [
@@ -194,7 +238,8 @@ function samplingCard(ctx) {
 
 function draftCard(ctx) {
   const d = ctx.p.global.draft;
-  const set = fn => ctx.actions.edit(q => fn(q.global.draft));
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const set = fn => ctx.actions.edit(q => fn(q.global.draft));  (no History menu name)
+  const set = fn => ctx.actions.edit(q => fn(q.global.draft), { label: "Draft setting" }); // added 2026-11-03 v0.6.0: History menu name
   return section({
     title: "Draft quality", help: "global.draft",
     actions: segmented({ small: true, value: ctx.p.global.quality, help: "render.quality", options: [{ value: "draft", label: "Draft" }, { value: "final", label: "Final" }], onChange: v => ctx.actions.edit(q => { q.global.quality = v; }) }),
@@ -211,8 +256,10 @@ function draftCard(ctx) {
 function defaultsCard(ctx) {
   const d = ctx.p.global.defaults;
   const L = ctx.p.global.long;
-  const set = fn => ctx.actions.edit(q => fn(q.global.defaults));
-  const setL = fn => ctx.actions.edit(q => fn(q.global.long));
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const set = fn => ctx.actions.edit(q => fn(q.global.defaults));  (no History menu name)
+  const set = fn => ctx.actions.edit(q => fn(q.global.defaults), { label: "New-scene default" }); // added 2026-11-03 v0.6.0: History menu name
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const setL = fn => ctx.actions.edit(q => fn(q.global.long));  (no History menu name)
+  const setL = fn => ctx.actions.edit(q => fn(q.global.long), { label: "Long-scene setting" }); // added 2026-11-03 v0.6.0: History menu name
   return section({
     title: "New scenes and long scenes", help: "global.defaults",
     children: [
@@ -238,7 +285,8 @@ function defaultsCard(ctx) {
 function llmCard(ctx) {
   const l = ctx.p.global.llm;
   const st = ctx.eph.llm || {};
-  const set = fn => ctx.actions.edit(q => fn(q.global.llm));
+  // [OLD 2026-11-03 v0.5.1->v0.6.0] const set = fn => ctx.actions.edit(q => fn(q.global.llm));  (no History menu name)
+  const set = fn => ctx.actions.edit(q => fn(q.global.llm), { label: "LLM setting" }); // added 2026-11-03 v0.6.0: History menu name
   const keyInput = h("input", { type: "password", class: "rw-input mono", key: "llm-key", placeholder: st.has_key ? "•••••••• stored — type to replace" : "API key (optional for local servers)", help: "global.llm.key", autocomplete: "off" });
   const saveKey = async () => {
     try {
@@ -494,6 +542,10 @@ function scriptCard(ctx) {
         return sc;
       });
       if (!made.length) return;
+      // added 2026-11-03 v0.6.0: each imported scene gets its own seed number (defaultScene gave all of them the same
+      // one, so "+1 per scene" seeds repeated). One edit, so a single Ctrl+Z undoes the import.
+      let seedN = typeof nextSeedN === "function" ? nextSeedN(p) : null;
+      if (Number.isInteger(seedN)) for (const sc of made) sc.seed_n = seedN++;
       if (mode === "replace") {
         p.scenes = made;
         if (p.global.merge.color_ref_scene && !made.some(s => s.id === p.global.merge.color_ref_scene)) p.global.merge.color_ref_scene = "";
@@ -506,7 +558,8 @@ function scriptCard(ctx) {
       p.scenes[0].start.mode = "fresh";
       firstId = made[0].id;
       p.ui.selected = firstId;
-    });
+    // [OLD 2026-11-03 v0.5.1->v0.6.0] });  (no name in the History menu)
+    }, { label: mode === "replace" ? "Replace scenes with script" : "Import script" });
     ctx.store.setEph({ scriptDraft: null });
     ctx.root.focus?.({ preventScroll: true }); // the button is gone after the re-render; keep Ctrl+Z working
     const where = mode === "replace" ? "replaced the old scenes" : mode === "insert" ? `inserted after ${selScene?.title || "the selected scene"}` : "added at the end";
@@ -598,7 +651,9 @@ async function runParts(ctx, draft) {
       const r = await rw.scriptPart(store.project, { script: part.blocks.join("\n"), part: i + 1, parts: draft.parts.length, notes: draft.notes,
         known_cast: draft.cast.map(c => ({ name: c.name, kind: c.kind })), job, can_split: part.blocks.length > 1 });
       if (r.cancelled) { part.status = "stopped"; break; }
-      Object.assign(part, { status: "done", scenes: (r.scenes || []).map(s => ({ ...s, _on: true })), cast: r.cast || [], tokens: r.tokens || 0, ms: r.ms || 0, attempts: r.attempts || 1 });
+      // [OLD 2026-11-03 v0.5.1->v0.6.0] Object.assign(part, { status: "done", scenes: (r.scenes || []).map(s => ({ ...s, _on: true })), cast: r.cast || [], tokens: r.tokens || 0, ms: r.ms || 0, attempts: r.attempts || 1 });  (the answer's warnings were dropped)
+      Object.assign(part, { status: "done", scenes: (r.scenes || []).map(s => ({ ...s, _on: true })), cast: r.cast || [], tokens: r.tokens || 0, ms: r.ms || 0, attempts: r.attempts || 1,
+        warnings: Array.isArray(r.warnings) ? r.warnings.map(String) : [] }); // added 2026-11-03 v0.6.0: what the backend fixed or left out
       addCast(draft, r.cast || []);
     } catch (err) {
       if (err.reason === "cut" && part.blocks.length > 1) {
@@ -645,7 +700,23 @@ function partsView(ctx, draft) {
   return h("div", { class: "rw-script-parts" },
     show ? rows : null,
     draft.notes && many ? h("div", { class: "rw-dim small", help: "global.script.notes", title: draft.notes }, `Sent with every part: ${draft.notes.split("\n")[0].slice(0, 90)}${draft.notes.length > 90 ? "…" : ""}`) : null,
-    draft.splits ? h("div", { class: "rw-note small", help: "global.script.part" }, icon("info", 12), `${draft.splits} part${draft.splits === 1 ? " was" : "s were"} too long for the token budget and ${draft.splits === 1 ? "was" : "were"} split in two.`) : null);
+    draft.splits ? h("div", { class: "rw-note small", help: "global.script.part" }, icon("info", 12), `${draft.splits} part${draft.splits === 1 ? " was" : "s were"} too long for the token budget and ${draft.splits === 1 ? "was" : "were"} split in two.`) : null,
+    importWarnings(ctx, draft)); // added 2026-11-03 v0.6.0
+}
+
+// added 2026-11-03 v0.6.0: what the backend fixed or left out of the LLM's answer (wrong types, items without a name);
+// the first few lines, the rest behind "more"
+function importWarnings(ctx, draft) {
+  const list = draft.parts.flatMap((p, i) => (p.warnings || []).map(w => (draft.parts.length > 1 ? `Part ${i + 1}: ` : "") + w));
+  if (!list.length) return null;
+  const all = !!ctx.eph.scriptWarnAll;
+  const shown = all ? list : list.slice(0, 4);
+  return h("div", { class: "rw-note warn small rw-import-warn", help: "global.script.warnings" }, icon("warn", 12),
+    h("div", { class: "grow" },
+      h("b", null, `${list.length} note${list.length === 1 ? "" : "s"} on the answer: fixed or left out`),
+      shown.map(w => h("div", null, w)),
+      list.length > 4 && h("button", { type: "button", class: "link small", help: "global.script.warnings.more", onClick: () => ctx.store.setEph({ scriptWarnAll: !all }) },
+        all ? "Show fewer" : `Show all ${list.length}`)));
 }
 
 function matrixCard(ctx) {
@@ -676,7 +747,8 @@ function infoCard(ctx) {
     actions: h("span", { class: "mono rw-dim small" }, "editor v" + VERSION),
     children: i ? [
       row("Reelwright backend", true, "v" + (i.version || "?"), "", "global.info.backend"),
-      row("Native MiniMax H3 nodes", i.h3_nodes, "found", "update ComfyUI", "global.info.h3"),
+      // [OLD 2026-11-03 v0.5.1->v0.6.0] row("Native MiniMax H3 nodes", i.h3_nodes, "found", "update ComfyUI", "global.info.h3"),  (did not say why they failed to load)
+      row("Native MiniMax H3 nodes", i.h3_nodes, "found", i.h3_error ? "not loaded: " + i.h3_error : "update ComfyUI", "global.info.h3"), // added 2026-11-03 v0.6.0
       row("ffmpeg", !!i.ffmpeg, typeof i.ffmpeg === "string" ? i.ffmpeg : "found", "merge needs ffmpeg on PATH", "global.info.ffmpeg"),
       // [OLD 2026-11-03 v0.4.0->v0.4.1] row("insightface", !!i.insightface, "face checks on", "face checks off", "global.info.insightface"),
       row("insightface", !!i.insightface, "face checks on", i.insightface_error ? "failed to load: " + i.insightface_error : "face checks off", "global.info.insightface"),

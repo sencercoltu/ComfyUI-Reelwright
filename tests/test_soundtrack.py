@@ -110,11 +110,14 @@ def test_too_little_sound_and_loops(harbor):
 # ---- prompt, cache, lint --------------------------------------------------------------------------------------------
 
 def test_prompt_sends_the_song_instead_of_voices(harbor):
-    before, _ = _build(harbor, 1)
+    # v0.6.0: a voice goes only to the passes where its character speaks (Mara's line at 16 s)
+    plan = plan_scene(harbor, harbor["scenes"][1], 1)
+    k = next(n for n, x in enumerate(plan["passes"]) if x["dialogue"])
+    before, _ = _build(harbor, 1, k)
     assert any(a["cast"] for a in before["audios"])
     p = _song(harbor)
     p["scenes"][1]["prompt"]["sections"]["summary"] += " She sings along to @soundtrack."
-    b, _ = _build(p, 1)
+    b, _ = _build(p, 1, k)
     assert not any(a.get("cast") for a in b["audios"])
     song = [a for a in b["audios"] if a.get("song")]
     assert len(song) == 1
@@ -305,3 +308,77 @@ def test_scene_sound_under_ducked_and_looped_tracks_runs(tmp_path):
     assert total == 7 and merge.probe(out)["duration"] == pytest.approx(7, abs=0.1)
     w = merge.waveform_peaks(out, 50)
     assert min(w["peaks"][10:150]) > 5  # song from the first frame (its first half second is before the film)
+
+
+# ---- added 2026-11-03 v0.6.0: soundtrack in the side files, stems, the pass excerpt, old profiles ------------------
+
+@needs_ffmpeg
+def test_range_merge_exports_the_soundtrack_where_it_plays(harbor, store, roots):
+    import json
+    import xml.etree.ElementTree as ET
+    song_rel = "reelwright/harbor_lights/song.wav"
+    _tone(os.path.join(roots.input, song_rel), 60)
+    p = copy.deepcopy(harbor)
+    p["assets"].append({"id": "a_song", "kind": "audio", "name": "song", "file": song_rel, "duration": 60.0})
+    p["soundtrack"] = [{"asset": "a_song", "start": 1.0, "in": 5.0}]
+    p["markers"] = [{"id": "m_1", "t": 39.0, "text": "door", "color": "green"}, {"id": "m_2", "t": 3.0, "text": "early"}]
+    p = normalize_project(p)
+    tid = p["soundtrack"][0]["id"]
+    r = analyze(p, store)
+    _take(store, r, "s_short", 2.5)
+    store.autosave(p)
+    out = assemble.merge_project(analyze(p, store), store,
+                                 options={"range": ["s_short", "s_short"], "draft": True, "stems": True})
+    offset = scene_starts(p)[0]["s_short"]
+    assert out["duration"] == pytest.approx(2.5, abs=0.01)
+    stems = store.output_path(out["files"]["stems"])
+    assert sorted(os.listdir(stems)) == sorted(["mix.wav", "scenes.wav", "track_{}.wav".format(tid)])
+    assert out["loudness"]["track_{}".format(tid)]["integrated"] is not None
+    doc = json.load(open(store.output_path(out["files"]["otio"])))
+    st = [t for t in doc["tracks"]["children"] if t["name"].startswith("Soundtrack")][0]
+    clip0 = st["children"][0]
+    assert clip0["OTIO_SCHEMA"] == "Clip.2"  # the song already plays when the range starts
+    assert clip0["source_range"]["start_time"]["value"] == round((5.0 + offset - 1.0) * 24)
+    assert [m["name"] for m in doc["tracks"]["markers"]] == ["door"]
+    assert doc["tracks"]["markers"][0]["marked_range"]["start_time"]["value"] == round((39.0 - offset) * 24)
+    root = ET.parse(store.output_path(out["files"]["fcpxml"])).getroot()
+    conn = root.find(".//spine/asset-clip/asset-clip")
+    assert conn is not None and conn.get("lane") == "-1"
+    assert conn.get("start") == "{}/24s".format(round((5.0 + offset - 1.0) * 24))
+
+
+@needs_ffmpeg
+def test_pass_excerpt_is_the_file_a_render_sends(harbor, store, roots):
+    song_rel = "reelwright/harbor_lights/song.wav"
+    _tone(os.path.join(roots.input, song_rel), 30)
+    p = copy.deepcopy(harbor)
+    p["assets"].append({"id": "a_song", "kind": "audio", "name": "song", "file": song_rel, "duration": 30.0})
+    p["soundtrack"] = [{"asset": "a_song", "start": 1.0, "in": 5.0}]
+    p = normalize_project(p)
+    r = analyze(p, store)
+    song, path = assemble.pass_song(r, store, "s_one", 1)
+    assert song == next(a["song"] for a in r["scenes"]["s_one"]["builds"][0]["audios"] if a.get("song"))
+    assert os.path.dirname(path) == os.path.join(store.dir, "soundtrack")
+    pieces = [{"path": os.path.join(roots.input, x["file"]), "src_in": x["src_in"], "src_out": x["src_out"],
+               "at": x["at"]} for x in song["pieces"]]
+    assert merge.render_segment(pieces, song["length"], os.path.join(store.dir, "soundtrack"), cache.file_digest) == path
+    assert merge.probe(path)["duration"] == pytest.approx(song["length"], abs=0.02)
+    with pytest.raises(ValueError):
+        assemble.pass_song(r, store, "s_one", 9)
+    p["soundtrack"][0]["start"] = 500.0  # after the film: no pass hears it
+    assert assemble.pass_song(analyze(p, store), store, "s_one", 1) == (None, None)
+
+
+def test_old_profile_does_not_bring_the_score_back(roots):
+    from reelwright import profiles
+    from reelwright.model import default_global
+    from reelwright.storage import write_json
+    g = default_global()
+    g["merge"]["score"] = {"asset": "a_bed", "volume_db": -9.0, "duck": True}
+    g["merge"].pop("scene_audio", None)
+    write_json(profiles.profiles_path(roots.user), {"profiles": [{"id": "g_1", "name": "old", "global": g}],
+                                                    "default": "g_1"})
+    got = profiles.load(roots.user)["profiles"][0]["global"]["merge"]
+    assert got["score"]["asset"] == "" and got["scene_audio"] == {"mix": True, "volume_db": 0.0}
+    saved = profiles.save(roots.user, "again", g)["profile"]["global"]["merge"]
+    assert saved["score"]["asset"] == ""

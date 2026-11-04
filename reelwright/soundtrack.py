@@ -18,16 +18,37 @@ TRACK_DEFAULTS = {"id": "", "asset": "", "start": 0.0, "in": 0.0, "out": 0.0, "v
                   "loop": False}
 
 
+# [OLD 2026-11-03 v0.5.1->v0.6.0] float() also read "inf", "1_000" and True; model.js reads numbers differently
+# def _f(v, default=0.0):
+#     try:
+#         v = float(v)
+#     except (TypeError, ValueError):
+#         return default
+#     return v if v == v and abs(v) != float("inf") else default
+# [/OLD]
 def _f(v, default=0.0):
-    try:
-        v = float(v)
-    except (TypeError, ValueError):
-        return default
-    return v if v == v and abs(v) != float("inf") else default
+    return float(spec.num(v, default))
 
 
+# [OLD 2026-11-03 v0.5.1->v0.6.0] id/asset could stay numbers or lists, bool("false") was True, JS did not coerce bools
+# def normalize_track(t):
+#     """Fill and clean one track in place."""
+#     for k, v in TRACK_DEFAULTS.items():
+#         if t.get(k) is None:
+#             t[k] = v
+#     for k in ("start", "in", "out", "volume_db", "fade_in", "fade_out"):
+#         t[k] = _f(t[k])
+#     t["in"] = max(0.0, t["in"])
+#     t["fade_in"], t["fade_out"] = max(0.0, t["fade_in"]), max(0.0, t["fade_out"])
+#     for k in ("mute", "sync", "mix", "duck", "loop"):
+#         t[k] = bool(t[k])
+#     if t["marker"] not in MARKERS:
+#         t["marker"] = "fully_copy"
+#     return t
+# [/OLD]
 def normalize_track(t):
-    """Fill and clean one track in place."""
+    """Fill and clean one track in place (same result as model.js normalizeTrack, except that JS also gives a track
+    without an id a new one; model.normalize_project does that here)."""
     for k, v in TRACK_DEFAULTS.items():
         if t.get(k) is None:
             t[k] = v
@@ -36,7 +57,9 @@ def normalize_track(t):
     t["in"] = max(0.0, t["in"])
     t["fade_in"], t["fade_out"] = max(0.0, t["fade_in"]), max(0.0, t["fade_out"])
     for k in ("mute", "sync", "mix", "duck", "loop"):
-        t[k] = bool(t[k])
+        t[k] = spec.flag(t[k], TRACK_DEFAULTS[k])
+    for k in ("id", "asset"):
+        t[k] = spec.text(t[k])
     if t["marker"] not in MARKERS:
         t["marker"] = "fully_copy"
     return t
@@ -76,6 +99,8 @@ def pieces(tracks, t0, length):
     for t in tracks:
         reps = [0]
         if t.get("loop"):
+            if t["length"] <= 1e-3:  # added 2026-11-03 v0.6.0: no repeat could last over 1 ms; a tiny loop hung here
+                continue
             first = int(max(0.0, t0 - t["start"]) // t["length"])
             reps = range(first, first + int(length // t["length"]) + 2)
         for r in reps:
@@ -119,9 +144,19 @@ def migrate_score(p):
     score = m.get("score") or {}
     if not score.get("asset"):
         return False
+    # [OLD 2026-11-03 v0.5.1->v0.6.0] p.setdefault("soundtrack", []).append(normalize_track({
+    # [OLD 2026-11-03 v0.5.1->v0.6.0]     "id": "t_score", "asset": score["asset"], "volume_db": _f(score.get("volume_db"), -12.0),
+    # [OLD 2026-11-03 v0.5.1->v0.6.0]     "sync": False, "mix": True, "duck": bool(score.get("duck", True)), "loop": True}))
+    # duck: read like model.js migrateScore (a null or non-bool duck means the default, True)
+    # added 2026-11-03 v0.6.0: a unique id (an old profile applied twice gave two "t_score" tracks)
+    used = {t.get("id") for t in p.get("soundtrack") or [] if isinstance(t, dict)}
+    tid, k = "t_score", 2
+    while tid in used:
+        tid, k = "t_score_{}".format(k), k + 1
+    # [OLD 2026-11-03 v0.5.1->v0.6.0]     "id": "t_score", "asset": score["asset"], (fixed id)
     p.setdefault("soundtrack", []).append(normalize_track({
-        "id": "t_score", "asset": score["asset"], "volume_db": _f(score.get("volume_db"), -12.0),
-        "sync": False, "mix": True, "duck": bool(score.get("duck", True)), "loop": True}))
+        "id": tid, "asset": score["asset"], "volume_db": _f(score.get("volume_db"), -12.0),
+        "sync": False, "mix": True, "duck": spec.flag(score.get("duck"), True), "loop": True}))
     score["asset"] = ""
     m["scene_audio"] = {"mix": True, "volume_db": 0.0}  # the scenes' sound stays on top, as it was with the score
     return True
