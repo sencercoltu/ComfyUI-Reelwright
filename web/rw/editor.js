@@ -50,6 +50,14 @@ const PENDING = new Set(["stale", "pending", "missing", "queued"]);
 // it depends on a scene that failed)
 const FINAL = new Set(["done", "cached", "error", "skipped"]);
 
+// added 2026-11-04 v0.6.1: a key press for the single-key shortcuts: no Ctrl, Cmd or Alt held. AltGr, which Windows
+// reports as Ctrl+Alt, still counts for the symbol it types (+ - = ? on keyboard layouts that need it), never for a letter.
+function plainKey(e) {
+  if (e.metaKey) return false;
+  if (!e.ctrlKey && !e.altKey) return true;
+  return !!e.getModifierState?.("AltGraph") && e.key.length === 1 && !/\p{L}/u.test(e.key);
+}
+
 // added 2026-11-03 v0.6.0: a fresh per-scene seed number (stable seeds, model.nextSeedN); undefined with a model.js
 // that has no seed numbers yet
 function freshSeedN(p) {
@@ -302,7 +310,8 @@ export function mountEditor(container, host) {
     [/OLD] */
     addScene(afterId) {
       store.update(p => {
-        const i = afterId ? sceneIndex(p, afterId) : p.scenes.length - 1;
+        // [OLD 2026-11-04 v0.6.0->v0.6.1] const i = afterId ? sceneIndex(p, afterId) : p.scenes.length - 1;  (an id no longer in the project gave -1: the scene went first)
+        const at = afterId ? sceneIndex(p, afterId) : -1, i = at < 0 ? p.scenes.length - 1 : at; // added 2026-11-04 v0.6.1: unknown id -> at the end
         const s = defaultScene(p, { title: "Scene " + (p.scenes.length + 1) });
         if (!Number.isInteger(s.seed_n)) { const n = freshSeedN(p); if (n !== undefined) s.seed_n = n; } // added 2026-11-03 v0.6.0
         p.scenes.splice(i + 1, 0, s);
@@ -326,7 +335,8 @@ export function mountEditor(container, host) {
       let ids = [];
       if (!Array.isArray(scenes) || !scenes.length) return ids;
       store.update(p => {
-        const i = afterId ? sceneIndex(p, afterId) : p.scenes.length - 1;
+        // [OLD 2026-11-04 v0.6.0->v0.6.1] const i = afterId ? sceneIndex(p, afterId) : p.scenes.length - 1;  (an id no longer in the project gave -1: the copies went first)
+        const at = afterId ? sceneIndex(p, afterId) : -1, i = at < 0 ? p.scenes.length - 1 : at; // added 2026-11-04 v0.6.1: unknown id -> at the end
         const copies = cloneScenes(p, scenes);
         p.scenes.splice(i + 1, 0, ...copies);
         if (p.scenes[0]) p.scenes[0].start.mode = "fresh";
@@ -467,7 +477,8 @@ export function mountEditor(container, host) {
       store.update(p => {
         const i = sceneIndex(p, id);
         const a = p.scenes[i];
-        const totalF = Math.max(2, Math.round(a.duration * FPS));
+        // [OLD 2026-11-04 v0.6.0->v0.6.1] const totalF = Math.max(2, Math.round(a.duration * FPS));  (a length of exactly n + ½ frames, n even, split into n + 1 frames: the film grew by one)
+        const totalF = Math.max(2, M.framesOf(a.duration)); // added 2026-11-04 v0.6.1: the frame count the model and the renderer use (halves to even)
         const cutF = Math.max(1, Math.min(totalF - 1, Math.round(at * FPS)));
         const cut = cutF / FPS, shift = (cutF - 1) / FPS;
         const r4 = v => Math.round(v * 1e4) / 1e4;
@@ -1037,6 +1048,10 @@ export function mountEditor(container, host) {
     if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) store.redo(); else store.undo(); return; }
     if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); store.redo(); return; }
     if (field) return; // added 2026-11-03 v0.6.0: a slider's arrows move the slider
+    // added 2026-11-04 v0.6.1: Ctrl/Cmd/Alt combinations other than the editor's own (Ctrl+S, Ctrl+Z, Ctrl+Shift+Z,
+    // Ctrl+Y above) belong to the browser and ComfyUI: none of them reaches the single-key shortcuts (Ctrl+D no longer
+    // duplicates a scene, Cmd+← and Alt+← go back again, Ctrl+J opens the downloads)
+    if (!plainKey(e)) return;
     if (e.key === "?") { e.preventDefault(); tips.openPopover("tab." + store.project.ui.tab, root.querySelector(".rw-tab.on") || root); return; }
     const tab = TABS[store.project.ui.tab];
     if (tab.mod.onKey?.(ctx, e)) { e.preventDefault(); return; }

@@ -1067,3 +1067,94 @@ def test_stop_during_a_drift_retake_still_stops_the_run(stubs, harbor, store, ro
     end = _run_events(events, "end")[0]
     assert end["interrupted"] is True and end["warnings"] == [] and "s_long" not in end["rendered"]
     assert len(calls["sample"]) == 1
+
+
+# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) --------------------------------------------------------------------
+
+def test_node_output_survives_a_missing_last_frame(stubs, harbor, roots):
+    """Review 2: a missing or unreadable last.png (or a take entry without files.last, as one rebuilt from meta.json
+    may be) failed the node after the scenes were rendered."""
+    render, calls, events = stubs
+    import torch
+    from reelwright.node import Reelwright
+    from reelwright.storage import ProjectStore
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    Reelwright.execute(json.dumps(harbor), json.dumps({"action": "pending"}))
+    store = ProjectStore(roots, harbor["slug"])
+    os.remove(store.output_path(store.starred_take("s_short")["files"]["last"]))
+    out = Reelwright.execute(json.dumps(harbor), json.dumps({"action": "pending", "token": 2}))
+    assert torch.equal(out.result[1], torch.zeros(1, 64, 64, 3)) and out.result[0].get_duration() > 40
+    idx = store.read_index("s_short")
+    idx["takes"][-1]["files"].pop("last")
+    idx["takes"][-1]["files"]["video"] = "../../outside.mp4"
+    store.write_index("s_short", idx)
+    out = Reelwright.execute(json.dumps(harbor), json.dumps({"action": "pending", "token": 3}))
+    assert out.result[1].shape == (1, 64, 64, 3)
+
+
+def test_preflight_names_each_missing_asset_and_survives_odd_take_paths(stubs, harbor, store, roots):
+    """Review 4a / 4b: a missing asset whose code is part of another one's ("P1" in lint's line about "P10") was left
+    out of pre-flight, and a take file path outside the output folder raised ValueError out of pre-flight."""
+    render, calls, events = stubs
+    from reelwright.model import normalize_project
+    harbor["assets"][3]["code"] = "P10"                      # the letter, a keyframe of s_long
+    p = normalize_project(harbor)
+    assert [a["code"] for a in p["assets"] if a["id"] in ("a_front", "a_letter")] == ["P1", "P10"]
+    os.remove(os.path.join(roots.input, "reelwright/harbor_lights/letter.png"))   # lint reports P10
+    store.add_take("s_one", {"id": "v1", "files": {"video": "../../../etc/passwd", "last": "../../../etc/passwd"}})
+    r = render.Renderer(p, store, {}, {"action": "selected", "scenes": ["s_long"]})
+    os.remove(os.path.join(roots.input, "reelwright/harbor_lights/front.png"))    # gone after the analysis
+    with pytest.raises(RuntimeError) as e:
+        r.preflight(["s_long"])
+    msg = str(e.value)
+    assert "P10 (letter) file is missing" in msg
+    assert "P1 (Mara front) is missing" in msg
+    assert "whose starred take v1 is missing its files" in msg
+    assert render._names_code("02 x: P10 (letter) file is missing", "P10")
+    assert not render._names_code("02 x: P10 (letter) file is missing", "P1")
+
+
+def test_video_guide_length_comes_from_its_video_stream(stubs, harbor, store, roots, tmp_path):
+    """Review 4c: pre-flight sized a video guide from the file's length (an audio track longer than the picture
+    counted) while the render uses the decoded frames; a file without a picture passed pre-flight and failed mid-run."""
+    render, calls, events = stubs
+    from reelwright import media, merge
+    ff = merge.ffmpeg_bin()
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    long_audio = str(tmp_path / "long_audio.mp4")
+    subprocess.run([ff, "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=64x32:r=30:d=4", "-f", "lavfi",
+                    "-i", "sine=d=10", "-pix_fmt", "yuv420p", long_audio], check=True)
+    info = merge.probe(long_audio)
+    assert info["duration"] == pytest.approx(10, abs=0.05) and info["video_frames"] == 96
+    r = render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_one"]})
+    frames, _ = media.load_video(long_audio, max_seconds=15, max_frames=render.REF_MAX_FRAMES)
+    assert r._clip_frames(long_audio) == frames.shape[0] == 96
+    webm = str(tmp_path / "clip.webm")  # no frame count or stream duration, only the Matroska DURATION tag
+    subprocess.run([ff, "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=64x32:r=24:d=3", "-f", "lavfi",
+                    "-i", "sine=d=6", "-c:v", "libvpx", "-c:a", "libopus", webm], check=True)
+    assert r._clip_frames(webm) == 72
+    # a "video" with no picture: refused before any GPU work
+    dolly = os.path.join(roots.input, "reelwright/harbor_lights/dolly.mp4")
+    subprocess.run([ff, "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=d=4", "-f", "mp4", dolly], check=True)
+    harbor["scenes"][0]["refs"] = [{"id": "r_k", "asset": "a_dolly", "role": "keyframe", "time": 1.0}]
+    with pytest.raises(RuntimeError, match="the video has no frames"):
+        render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_one"]}).run()
+    assert calls["sample"] == [] and calls["guides"] == []
+
+
+def test_a_video_without_decodable_frames_says_so(comfy, tmp_path):
+    """Review 10: zero decodable frames made load_video raise IndexError ("index 0 is out of bounds")."""
+    from reelwright import media, merge
+    src = str(tmp_path / "src.mp4")
+    subprocess.run([merge.ffmpeg_bin(), "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=64x32:r=24:d=2",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", src], check=True)
+    data = bytearray(open(src, "rb").read())
+    i = data.find(b"mdat")
+    data[i + 4:i - 4 + int.from_bytes(data[i - 4:i], "big")] = bytes(int.from_bytes(data[i - 4:i], "big") - 8)
+    broken = str(tmp_path / "broken.mp4")
+    with open(broken, "wb") as f:
+        f.write(bytes(data))
+    with pytest.raises(ValueError, match="no video frames could be decoded from broken.mp4"):
+        media.load_video(broken, max_seconds=15)

@@ -395,20 +395,34 @@ function togglePlay(ctx) {
 
 // ---- Keyboard ----
 
+// added 2026-11-04 v0.6.1: a letter shortcut is the letter key without Shift (Shift+S is not S; Caps Lock does not
+// matter). The editor has already kept Ctrl/Cmd/Alt combinations away (editor.js plainKey).
+const letter = (e, ch) => !e.shiftKey && e.key.length === 1 && e.key.toLowerCase() === ch;
+
 export function onKey(ctx, e) {
   const p = ctx.p;
   const k = e.key;
   if (k === " ") { togglePlay(ctx); return true; }
+  /* [OLD 2026-11-04 v0.6.0->v0.6.1] Shift+letter (and Ctrl/Cmd/Alt+letter) acted like the letter
   if (k === "k" || k === "K") { stopPlayback(ctx); ctx.render(); return true; }
   if (k === "l" || k === "L") { startPlayback(ctx); return true; }
   if (k === "j" || k === "J") { setPlayhead(ctx, p.ui.playhead - 1); return true; }
+  [/OLD] */
+  if (letter(e, "k")) { stopPlayback(ctx); ctx.render(); return true; } // added 2026-11-04 v0.6.1: letter()
+  if (letter(e, "l")) { startPlayback(ctx); return true; } // added 2026-11-04 v0.6.1
+  if (letter(e, "j")) { setPlayhead(ctx, p.ui.playhead - 1); return true; } // added 2026-11-04 v0.6.1
   if (k === "ArrowLeft") { setPlayhead(ctx, p.ui.playhead - (e.shiftKey ? 1 : 1 / FPS)); return true; }
   if (k === "ArrowRight") { setPlayhead(ctx, p.ui.playhead + (e.shiftKey ? 1 : 1 / FPS)); return true; }
   if (k === "Home") { setPlayhead(ctx, 0); return true; }
   if (k === "End") { setPlayhead(ctx, sceneStarts(p).total); return true; }
+  /* [OLD 2026-11-04 v0.6.0->v0.6.1] Shift+letter acted like the letter
   if (k === "i" || k === "I") { ctx.store.setEph({ loop: { in: p.ui.playhead, out: Math.max(p.ui.playhead + 0.5, ctx.eph.loop?.out ?? sceneStarts(p).total) } }); return true; }
   if (k === "o" || k === "O") { ctx.store.setEph({ loop: { in: Math.min(ctx.eph.loop?.in ?? 0, p.ui.playhead - 0.5), out: p.ui.playhead } }); return true; }
   if (k === "m" || k === "M") { addMarker(ctx); return true; }
+  [/OLD] */
+  if (letter(e, "i")) { ctx.store.setEph({ loop: { in: p.ui.playhead, out: Math.max(p.ui.playhead + 0.5, ctx.eph.loop?.out ?? sceneStarts(p).total) } }); return true; } // added 2026-11-04 v0.6.1
+  if (letter(e, "o")) { ctx.store.setEph({ loop: { in: Math.min(ctx.eph.loop?.in ?? 0, p.ui.playhead - 0.5), out: p.ui.playhead } }); return true; } // added 2026-11-04 v0.6.1
+  if (letter(e, "m")) { addMarker(ctx); return true; } // added 2026-11-04 v0.6.1
   if (k === "+" || k === "=") { setZoom(ctx, zoomOf(ctx) * 1.25); return true; }
   if (k === "-") { setZoom(ctx, zoomOf(ctx) / 1.25); return true; }
   // added 2026-11-03 v0.6.0: Delete removes what the inspector shows: a marker, a soundtrack track, else the scene
@@ -434,6 +448,7 @@ export function sceneKeys(ctx, e) {
   const s = ctx.scene;
   if (!s) return false;
   const k = e.key;
+  /* [OLD 2026-11-04 v0.6.0->v0.6.1] Shift+S / Shift+D / Shift+N (and Ctrl/Cmd/Alt with them) split, duplicated, added
   if (k === "s" || k === "S") {
     const { starts } = sceneStarts(ctx.p);
     ctx.actions.splitScene(s.id, ctx.p.ui.playhead - starts[s.id]);
@@ -442,6 +457,17 @@ export function sceneKeys(ctx, e) {
   if (k === "d" || k === "D") { ctx.actions.duplicateScene(s.id); return true; }
   if (k === "Delete" || k === "Backspace") { ctx.actions.deleteScene(s.id); return true; }
   if (k === "n" || k === "N") { ctx.actions.addScene(s.id); return true; }
+  return false;
+  [/OLD] */
+  // added 2026-11-04 v0.6.1: letters without Shift only (letter())
+  if (letter(e, "s")) {
+    const { starts } = sceneStarts(ctx.p);
+    ctx.actions.splitScene(s.id, ctx.p.ui.playhead - starts[s.id]);
+    return true;
+  }
+  if (letter(e, "d")) { ctx.actions.duplicateScene(s.id); return true; }
+  if (k === "Delete" || k === "Backspace") { ctx.actions.deleteScene(s.id); return true; }
+  if (letter(e, "n")) { ctx.actions.addScene(s.id); return true; }
   return false;
 }
 

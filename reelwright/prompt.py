@@ -1567,6 +1567,9 @@ def tidy_rewrite(proposal, before, auto, tag_map=None):
         out["detailed_description"] = "\n".join([pre] + [rewritten.get(label, chunk) for label, chunk in mine]).strip()
         given.add("detailed_description")
     for k in REF2VA_SECTIONS:  # sections the reply left out keep their text
-        if k not in given and k not in ("subject_definitions", "retention_analysis"):
+        # [OLD 2026-11-04 v0.6.0->v0.6.1] with auto subjects / retention off, a reply without the key emptied the hand-written text
+        # if k not in given and k not in ("subject_definitions", "retention_analysis"):
+        # added 2026-11-04 v0.6.1: every left-out section keeps its text (an automatic one already holds `before`'s)
+        if k not in given:
             out[k] = str(before.get(k) or "")
     return {k: v.strip() for k, v in out.items()}

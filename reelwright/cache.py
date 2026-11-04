@@ -13,6 +13,17 @@ import os
 from . import soundtrack  # added 2026-11-03 v0.5.0
 
 _memo = {}
+MEMO_MAX = 4096  # added 2026-11-04 v0.6.1: digests kept (one per file version hashed since ComfyUI started)
+
+
+def created_of(take):
+    """added 2026-11-04 v0.6.1: a take's "created" time as whole seconds, 0 when it is missing or not a number (a
+    hand-edited meta.json: int("yesterday") answered /plan with 500)."""
+    try:
+        v = float((take or {}).get("created") or 0)
+    except (TypeError, ValueError, AttributeError):
+        return 0
+    return int(v) if v == v and abs(v) != float("inf") else 0
 
 
 def file_digest(path):
@@ -22,6 +33,8 @@ def file_digest(path):
         return "missing:" + os.path.basename(path)
     k = (path, st.st_size, st.st_mtime_ns)
     if k not in _memo:
+        if len(_memo) > MEMO_MAX:  # added 2026-11-04 v0.6.1: bounded, like analysis._meta_memo
+            _memo.clear()
         h = hashlib.sha1()
         with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(1 << 20), b""):
@@ -152,7 +165,9 @@ def resolve(scene, index, key, has_errors, legacy_key=None, upstream=None):
         if t.get("key") == key:
             return True
         if legacy_key and "upstream" not in t and t.get("key") == legacy_key:
-            return upstream is None or int(t.get("created") or 0) >= int(upstream.get("created") or 0)
+            # [OLD 2026-11-04 v0.6.0->v0.6.1] a "created" that is not a number raised ValueError (500 on /plan)
+            # return upstream is None or int(t.get("created") or 0) >= int(upstream.get("created") or 0)
+            return upstream is None or created_of(t) >= created_of(upstream)  # added 2026-11-04 v0.6.1
         return False
 
     match = starred if starred and fits(starred) else next((t for t in reversed(takes) if fits(t)), None)

@@ -67,6 +67,7 @@ function anchorsCard(ctx, c) {
     try {
       const res = await rw.promoteFrame(p.slug, sid, take.id, which);
       const a = res.asset;
+      /* [OLD 2026-11-04 v0.6.0->v0.6.1] threw when the cast member was deleted while the request ran (half-applied edit, raw TypeError toast)
       ctx.actions.edit(q => {
         q.assets.push({ id: a.id || newId("a"), code: "", kind: "image", name: a.name || `${c.name} frame`, file: a.file, duration: 0, width: a.width || 0, height: a.height || 0,
           category: "subject", defaults: { role: "reference", retention: "fully_preserved", keep: [], soundtrack: false }, notes: "" });
@@ -74,6 +75,19 @@ function anchorsCard(ctx, c) {
         findCast(q, c.id).anchors.push(q.assets[q.assets.length - 1].id);
       });
       ctx.actions.toast("Frame added as an anchor.", "ok");
+      [/OLD] */
+      // added 2026-11-04 v0.6.1: the cast member may be gone by now (deleted while the request ran): the frame still
+      // joins the assets, as an anchor only while the member exists
+      let anchored = false;
+      ctx.actions.edit(q => {
+        q.assets.push({ id: a.id || newId("a"), code: "", kind: "image", name: a.name || `${c.name} frame`, file: a.file, duration: 0, width: a.width || 0, height: a.height || 0,
+          category: "subject", defaults: { role: "reference", retention: "fully_preserved", keep: [], soundtrack: false }, notes: "" });
+        assignCodes(q.assets);
+        const x = findCast(q, c.id);
+        if (x) { x.anchors.push(q.assets[q.assets.length - 1].id); anchored = true; }
+      });
+      if (anchored) ctx.actions.toast("Frame added as an anchor.", "ok");
+      else ctx.actions.toast(`Frame added to the assets. “${c.name}” was deleted meanwhile, so it is not an anchor.`, "warn");
     } catch (err) { ctx.actions.toast("Could not promote the frame: " + err.message, "error"); }
   };
   const anchors = c.anchors.map(id => findAsset(p, id)).filter(Boolean);

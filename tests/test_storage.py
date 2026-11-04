@@ -252,3 +252,70 @@ def test_delete_take_removes_its_folder_after_letting_go_of_the_lock(roots, monk
     assert free == [True]
     assert not os.path.exists(os.path.join(store.scene_dir("s_a"), "takes", "v1"))
     assert store.read_index("s_a")["takes"] == []
+
+
+# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) --------------------------------------------------------------------
+
+def test_two_versions_in_one_second_are_two_files(store, harbor, monkeypatch):
+    """Review 5: the version name had only seconds, so a second snapshot in the same second overwrote the first."""
+    monkeypatch.setattr(storage.time, "time", lambda: 1793700000.25)
+    a = store.autosave(dict(harbor, name="first"), force_version=True)
+    b = store.autosave(dict(harbor, name="second"), force_version=True)
+    assert a != b and storage.VERSION_RE.match(a) and storage.VERSION_RE.match(b) and b > a
+    names = [v["name"] for v in store.list_versions()]
+    assert names == [b, a]
+    assert store.read_version(a)["name"] == "first" and store.read_version(b)["name"] == "second"
+
+
+def test_repair_during_delete_does_not_bring_the_take_back(store, monkeypatch):
+    """Review 6: delete_take removes the folder after letting go of the lock; a repair() (or a damaged-index rebuild)
+    in that window listed the take again from its meta.json, and starred it."""
+    e1 = make_take(store, "s_one", "v1", created=10)
+    store.add_take("s_one", e1)
+    seen = {}
+    rmtree = storage.shutil.rmtree
+
+    def repair_meanwhile(path, *a, **k):
+        assert not os.path.exists(os.path.join(store.scene_dir("s_one"), "takes", "v1"))  # set aside already
+        t = threading.Thread(target=lambda: seen.update(repair=store.repair(), rebuilt=store.index_from_takes("s_one"),
+                                                        next_id=store.new_take_id("s_one")))
+        t.start()
+        t.join()
+        return rmtree(path, *a, **k)
+    monkeypatch.setattr(storage.shutil, "rmtree", repair_meanwhile)
+    store.delete_take("s_one", "v1")
+    idx = store.read_index("s_one")
+    assert idx["takes"] == [] and idx["starred"] is None
+    assert seen["repair"]["takes_found"] == 0 and seen["rebuilt"]["takes"] == []
+    assert seen["next_id"] == "v2"  # the number of the folder still being removed is not handed out
+    assert sorted(os.listdir(os.path.join(store.scene_dir("s_one"), "takes"))) == ["v2"]
+
+
+def test_take_created_that_is_not_a_number(store):
+    """Review (minor, cache.py:155): a hand-edited "created" made /plan answer 500."""
+    from reelwright import cache
+    assert cache.created_of({"created": "yesterday"}) == 0 and cache.created_of({"created": "12.7"}) == 12
+    assert cache.created_of({"created": float("nan")}) == 0 and cache.created_of(None) == 0
+    assert cache.created_of({"created": 1793700000}) == 1793700000
+    t = {"id": "v1", "key": "L", "created": "yesterday"}
+    res = cache.resolve({}, {"takes": [t], "starred": "v1"}, "K", False, legacy_key="L",
+                        upstream={"id": "u", "created": 5})
+    assert res["status"] == "stale" and res["match"] is None
+
+
+def test_job_ids_are_never_shared(store):
+    """Review 8: running() replaced and popped entries by id alone (the first of two jobs with one id to end removed
+    the other's entry), and a made-up id ("render-3") could be the id a caller chose for another job."""
+    with jobs.running(store.slug, "x", "same") as first:
+        with pytest.raises(jobs.Busy):
+            with jobs.running(store.slug, "y", "same"):
+                pass
+        assert jobs.get("same") is first
+    assert jobs.get("same") is None
+    chosen = "render-{}".format(next(jobs._ids) + 1)  # the id running() would make up next
+    with jobs.exclusive(store.slug, "merge", chosen) as merge_job:
+        with jobs.running(store.slug, "render") as render_job:
+            assert render_job.id != chosen and jobs.get(chosen) is merge_job and jobs.get(render_job.id) is render_job
+            assert jobs.is_busy(store.slug, "merge") and jobs.is_busy(store.slug, "render")
+        assert jobs.get(chosen) is merge_job
+    assert not jobs.is_busy(store.slug)

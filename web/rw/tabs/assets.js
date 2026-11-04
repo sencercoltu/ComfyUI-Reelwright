@@ -121,6 +121,8 @@ function grid(ctx) {
 
 // ---- ComfyUI input/output browser (added 2026-11-02 v0.2.0) ----
 
+const browseTimers = new WeakMap(); // added 2026-11-04 v0.6.1: ctx -> the filter field's pending timer (browserCard)
+
 function openBrowser(ctx, patch = {}) {
   const b = { root: "input", q: "", kind: "all", picked: [], files: null, busy: true, ...(ctx.eph.browse || {}), ...patch };
   ctx.store.setEph({ browse: b });
@@ -180,7 +182,7 @@ function browserCard(ctx) {
   const b = ctx.eph.browse;
   const have = new Set(ctx.p.assets.map(a => a.file));
   const picked = new Set(b.picked);
-  let timer = 0;
+  // [OLD 2026-11-04 v0.6.0->v0.6.1] let timer = 0;  (now browseTimers, one per editor)
   const shown = (b.files || []).slice(0, 160);
   const tile = f => {
     const used = b.root === "input" && have.has(f.rel);
@@ -211,8 +213,17 @@ function browserCard(ctx) {
         segmented({ small: true, value: b.kind, help: "assets.browse.kind", options: [
           { value: "all", label: "All" }, { value: "image", label: "Pictures", icon: "image" }, { value: "video", label: "Videos", icon: "video" }, { value: "audio", label: "Audio", icon: "audio" }],
         onChange: v => openBrowser(ctx, { kind: v, busy: true }) }),
+        // [OLD 2026-11-04 v0.6.0->v0.6.1] h("input", { class: "rw-input grow", key: "browse-q", placeholder: "Filter by path, e.g. ComfyUI_0 or portraits", help: "assets.browse.search", value: b.q,
+        // [OLD 2026-11-04 v0.6.0->v0.6.1]   onInput: e => { const v = e.target.value; clearTimeout(timer); timer = setTimeout(() => openBrowser(ctx, { q: v, busy: true }), 300); } })),
+        // (the timer lived in this render: a re-render between two keys left the first one running, and a timer still
+        // running when the card was closed opened it again)
+        // added 2026-11-04 v0.6.1: one filter timer per editor, and it does nothing once the card is closed
         h("input", { class: "rw-input grow", key: "browse-q", placeholder: "Filter by path, e.g. ComfyUI_0 or portraits", help: "assets.browse.search", value: b.q,
-          onInput: e => { const v = e.target.value; clearTimeout(timer); timer = setTimeout(() => openBrowser(ctx, { q: v, busy: true }), 300); } })),
+          onInput: e => {
+            const v = e.target.value;
+            clearTimeout(browseTimers.get(ctx));
+            browseTimers.set(ctx, setTimeout(() => { browseTimers.delete(ctx); if (ctx.eph.browse) openBrowser(ctx, { q: v, busy: true }); }, 300));
+          } })),
       b.error ? h("div", { class: "rw-note err" }, icon("warn", 12), b.error) : null,
       shown.length ? h("div", { class: "rw-browse-grid", dataset: { scroll: "browse" } }, shown.map(tile))
         : h("div", { class: "rw-empty sm" }, b.busy ? "Reading ComfyUI's " + b.root + " folder…" : "No pictures, videos or audio here" + (b.q ? " match." : ".")),

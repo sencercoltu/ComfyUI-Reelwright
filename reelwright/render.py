@@ -12,6 +12,7 @@ import io  # added 2026-11-02 v0.3.5
 import json
 import logging
 import os
+import re  # added 2026-11-04 v0.6.1: asset codes as whole words in pre-flight
 import shutil  # added 2026-11-03 v0.6.0: stale take folders
 import time
 import uuid  # added 2026-11-03 v0.6.0: run ids
@@ -94,6 +95,22 @@ def fit_clip(frame_idx, clip_frames, gen_frames, role="keyframe"):
     n = min(clip, gen - idx)
     n = spec.align_frames_down(n) if n >= 5 else 1
     return idx, 0, n
+
+
+def _names_code(message, code):
+    """added 2026-11-04 v0.6.1: does the message name this asset code as a whole word ("A1" is not in "A10")?"""
+    return bool(code) and re.search(r"(?<![\w@]){}(?!\w)".format(re.escape(str(code))), message) is not None
+
+
+def _take_file_exists(store, files, which):
+    """added 2026-11-04 v0.6.1: a take's file is on disk; a path outside the output folder counts as missing."""
+    rel = files.get(which) if isinstance(files, dict) else None
+    if not isinstance(rel, str) or not rel:
+        return False
+    try:
+        return os.path.isfile(store.output_path(rel))
+    except ValueError:
+        return False
 
 
 def send(event, data):
@@ -460,8 +477,21 @@ class Renderer:
 
     def _clip_frames(self, path):
         """added 2026-11-03 v0.6.0: frames a video guide can have (24 fps, at most 15 s), from its length on disk."""
-        dur = float(merge.probe(path)["duration"] or 0)
-        return min(REF_MAX_FRAMES, max(1, int(round(dur * spec.FPS))))
+        # [OLD 2026-11-04 v0.6.0->v0.6.1] the file's length (its longest stream: an audio track longer than the picture
+        # counted) and never 0, so a file without a picture passed pre-flight and failed mid-run
+        # dur = float(merge.probe(path)["duration"] or 0)
+        # return min(REF_MAX_FRAMES, max(1, int(round(dur * spec.FPS))))
+        # [/OLD]
+        # added 2026-11-04 v0.6.1: the video stream's own frames (as media.load_video counts them), else its length,
+        # else the file's; no video stream is 0 frames (fit_clip: "the video has no frames")
+        info = merge.probe(path)
+        if info.get("has_video") is False:
+            return 0
+        frames = info.get("video_frames")
+        if not frames:
+            dur = float(info.get("video_duration") or info.get("duration") or 0)
+            frames = max(1, int(round(dur * spec.FPS)))
+        return min(REF_MAX_FRAMES, int(frames))
 
     # [OLD 2026-11-03 v0.5.1->v0.6.0] a video guide could fall off the end of the pass (AddGuide raised mid-run), and
     # a 73/90-frame tail overlap got only the 60 frames an older tail.mp4 held
@@ -590,7 +620,10 @@ class Renderer:
                         checked[aid] = bool(a) and bool(a.get("file")) and os.path.isfile(self.store.input_path(a["file"]))
                     except ValueError:
                         checked[aid] = False
-                    if not checked[aid] and not (a and any(a["code"] in m and "missing" in m for m in problems)):
+                    # [OLD 2026-11-04 v0.6.0->v0.6.1] substring match: "A1" was found in lint's line about A10
+                    # if not checked[aid] and not (a and any(a["code"] in m and "missing" in m for m in problems)):
+                    # added 2026-11-04 v0.6.1: the code as a whole word (lint's own line for this asset)
+                    if not checked[aid] and not (a and any(_names_code(m, a["code"]) and "missing" in m for m in problems)):
                         problems.append("{}: {} is missing: {}".format(
                             self.label(sid), "{} ({})".format(a["code"], a["name"]) if a else "a deleted asset",
                             (a or {}).get("file") or "no file"))
@@ -613,7 +646,9 @@ class Renderer:
                 # take = self.store.starred_take(prev)
                 take = self._planned_upstream(sid, prev)  # added 2026-11-03 v0.6.0 review: the take the render uses
                 files = (take or {}).get("files") or {}
-                have = lambda k: bool(files.get(k)) and os.path.isfile(self.store.output_path(files[k]))  # noqa: E731
+                # [OLD 2026-11-04 v0.6.0->v0.6.1] a path outside the output folder raised ValueError out of pre-flight
+                # have = lambda k: bool(files.get(k)) and os.path.isfile(self.store.output_path(files[k]))  # noqa: E731
+                have = lambda k: _take_file_exists(self.store, files, k)  # noqa: E731  added 2026-11-04 v0.6.1
                 if not take:
                     problems.append("{} continues from {}, which has no take yet. Render {} first, or both together."
                                     .format(self.label(sid), self.label(prev), self.label(prev)))

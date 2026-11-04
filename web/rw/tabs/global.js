@@ -40,7 +40,9 @@ function profilesCard(ctx) {
   const run = async (fn, okMsg) => {
     ctx.store.setEph({ profileBusy: true });
     try { const r = await fn(); if (r) ctx.store.setEph({ profiles: { profiles: r.profiles, default: r.default } }); if (okMsg) ctx.actions.toast(okMsg, "ok"); return r; }
-    catch (err) { ctx.actions.toast("Profiles: " + err.message, "error"); return null; }
+    // [OLD 2026-11-04 v0.6.0->v0.6.1] catch (err) { ctx.actions.toast("Profiles: " + err.message, "error"); return null; }  (a stale list stayed after "unknown profile")
+    // added 2026-11-04 v0.6.1: a failed action re-reads the list (the profile may have been deleted from another node)
+    catch (err) { ctx.actions.toast("Profiles: " + err.message, "error"); Promise.resolve(ctx.actions.loadProfiles()).catch(() => {}); return null; }
     finally { ctx.store.setEph({ profileBusy: false }); }
   };
   const nameInput = h("input", { class: "rw-input grow", key: "profile-name", placeholder: "New profile name, e.g. RTX 6000 · draft turbo", help: "global.profiles.name", value: ctx.eph.profileName || "",
@@ -451,6 +453,8 @@ function scriptCard(ctx) {
   };
   [/OLD] */
   // added 2026-11-03 v0.4.2: the script is cut into parts (Global → Limits → Part size) and each part is its own request
+  /* [OLD 2026-11-04 v0.6.0->v0.6.1] "busy" came only after the /llm/script/parts round trip: a second click meanwhile
+     started a second import (two LLM requests for part 1; Stop reached only the second)
   const run = async () => {
     const script = ctx.eph.scriptText || "";
     if (!script.trim()) { ctx.actions.toast("Paste a script first.", "warn"); return; }
@@ -459,6 +463,22 @@ function scriptCard(ctx) {
     let sp;
     try { sp = await rw.scriptParts(script, ctx.p.global.llm.import_part_chars ?? 3000); }
     catch (err) { ctx.actions.toast("Script import failed: " + err.message, "error"); return; }
+    const draft = { busy: false, notes: sp.notes || "", chars: sp.chars, parts: (sp.parts || []).map(blocks => ({ blocks, status: "wait", scenes: [], cast: [] })), scenes: [], cast: [], splits: 0 };
+    await runParts(ctx, draft);
+  };
+  [/OLD] */
+  // added 2026-11-04 v0.6.1: eph.scriptSplitting marks the parts request at once, so the button is disabled and a
+  // second click does nothing until the import runs (busy) or the request failed
+  const run = async () => {
+    const script = ctx.eph.scriptText || "";
+    if (!script.trim()) { ctx.actions.toast("Paste a script first.", "warn"); return; }
+    const old = ctx.store.eph.scriptDraft;
+    if (old?.busy || ctx.store.eph.scriptSplitting) return;
+    ctx.store.setEph({ scriptSplitting: true });
+    let sp;
+    try { sp = await rw.scriptParts(script, ctx.p.global.llm.import_part_chars ?? 3000); }
+    catch (err) { ctx.store.setEph({ scriptSplitting: false }); ctx.actions.toast("Script import failed: " + err.message, "error"); return; }
+    ctx.store.eph.scriptSplitting = false; // runParts renders next, with the draft busy
     const draft = { busy: false, notes: sp.notes || "", chars: sp.chars, parts: (sp.parts || []).map(blocks => ({ blocks, status: "wait", scenes: [], cast: [] })), scenes: [], cast: [], splits: 0 };
     await runParts(ctx, draft);
   };
@@ -575,7 +595,9 @@ function scriptCard(ctx) {
         draft?.scenes && button({ label: "Discard", small: true, help: "global.script.discard", onClick: () => ctx.store.setEph({ scriptDraft: null }) })),
       draft?.scenes && h("div", { class: "rw-script-review" },
       [/OLD] */
-      h("div", { class: "rw-row" }, button({ label: draft?.busy ? `Reading part ${runningIndex(draft) + 1} of ${draft.parts.length}…` : "Propose scenes", icon: "wand", variant: "pink", help: "global.script.run", disabled: !!draft?.busy, onClick: run }),
+      // [OLD 2026-11-04 v0.6.0->v0.6.1] h("div", { class: "rw-row" }, button({ label: draft?.busy ? `Reading part ${runningIndex(draft) + 1} of ${draft.parts.length}…` : "Propose scenes", icon: "wand", variant: "pink", help: "global.script.run", disabled: !!draft?.busy, onClick: run }),
+      // added 2026-11-04 v0.6.1: also disabled ("Reading script…") while the script is being cut into parts
+      h("div", { class: "rw-row" }, button({ label: draft?.busy ? `Reading part ${runningIndex(draft) + 1} of ${draft.parts.length}…` : ctx.eph.scriptSplitting ? "Reading script…" : "Propose scenes", icon: "wand", variant: "pink", help: "global.script.run", disabled: !!draft?.busy || !!ctx.eph.scriptSplitting, onClick: run }),
         draft?.busy && button({ label: draft.stop ? "Stopping…" : "Stop", icon: "close", small: true, help: "global.script.stop", disabled: !!draft.stop, onClick: stop }),
         draft && !draft.busy && draft.parts.some(p => p.status !== "done") && button({ label: draft.parts.some(p => p.status === "failed") ? "Retry failed parts" : "Continue", icon: "refresh", small: true, help: "global.script.retry", onClick: () => runParts(ctx, draft) }),
         draft && !draft.busy && button({ label: "Discard", small: true, help: "global.script.discard", onClick: () => ctx.store.setEph({ scriptDraft: null }) })),
@@ -648,7 +670,10 @@ async function runParts(ctx, draft) {
     draft.job = job;
     store.setEph({ scriptDraft: draft });
     try {
-      const r = await rw.scriptPart(store.project, { script: part.blocks.join("\n"), part: i + 1, parts: draft.parts.length, notes: draft.notes,
+      // added 2026-11-04 v0.6.1: blocks are scenes or paragraphs, so keep a blank line between them; table rows stay together
+      const partText = part.blocks.reduce((s, b, k) => k ? s + (/^\s*\|/.test(b) && /^\s*\|/.test(part.blocks[k - 1]) ? "\n" : "\n\n") + b : b, "");
+      // [OLD 2026-11-04 v0.6.0->v0.6.1] script: part.blocks.join("\n")  (paragraph breaks were lost)
+      const r = await rw.scriptPart(store.project, { script: partText, part: i + 1, parts: draft.parts.length, notes: draft.notes,
         known_cast: draft.cast.map(c => ({ name: c.name, kind: c.kind })), job, can_split: part.blocks.length > 1 });
       if (r.cancelled) { part.status = "stopped"; break; }
       // [OLD 2026-11-03 v0.5.1->v0.6.0] Object.assign(part, { status: "done", scenes: (r.scenes || []).map(s => ({ ...s, _on: true })), cast: r.cast || [], tokens: r.tokens || 0, ms: r.ms || 0, attempts: r.attempts || 1 });  (the answer's warnings were dropped)

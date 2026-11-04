@@ -178,6 +178,9 @@ def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_
         limit = min(limit or float("inf"), int(max_frames) / spec.FPS)
     comp, _ = _window(path, 0.0, limit or 0.0)
     images = comp.images
+    # added 2026-11-04 v0.6.1: no picture decoded (an audio-only or broken file) used to raise IndexError below
+    if not images.shape[0]:
+        raise ValueError("no video frames could be decoded from {}".format(os.path.basename(path)))
     rate = Fraction(comp.frame_rate or spec.FPS)
     src_seconds = images.shape[0] / float(rate) if images.shape[0] else 0.0
     seconds = min(src_seconds, limit) if limit else src_seconds

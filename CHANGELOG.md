@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.6.1 — 2026-11-04
+
+Fixes from an outside review of v0.6.0. Each claim was checked and reproduced first; the ones that were not bugs are left as they were.
+
+- **Autosave can no longer put an older copy over a newer one.** Only one save runs at a time. A save asked for meanwhile (the autosave after an edit, or Ctrl+S) waits for it and then saves the latest project. A late failure of an older save no longer shows "Autosave offline" after a newer save worked. The footer stays on "Saving…" until the newest save answers.
+- **Shortcuts no longer take over browser keys.** Ctrl, Cmd or Alt combinations other than Ctrl+S, Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y go to the browser again: Ctrl+D no longer duplicates a scene, and Ctrl+J, Ctrl+L, Cmd+← and Ctrl+Home no longer move the playhead. Letter shortcuts no longer fire with Shift, so Shift+S no longer splits a scene; Caps Lock does not matter. Plain + and − still zoom the timeline; Ctrl+− and Ctrl+= zoom the page again.
+- **Rewrite keeps hand-written subject definitions and retention lines** when the answer leaves them out and their automatic parts are off. They used to be emptied.
+- **The node no longer fails after a good render** when the last take's `last.png` (or its video) is missing or unreadable. It outputs a blank frame instead.
+- **Pre-flight:**
+  - every missing reference file is listed (a code that starts like another's, such as P1 and P10, could be left out);
+  - a take whose file paths point outside the output folder counts as missing files instead of stopping the check;
+  - video guides are sized from the clip's picture, not from a longer audio track, and a "video" with no picture is refused before any GPU work.
+- **Deleting a take while the take list is repaired or rebuilt no longer brings it back** or stars it. The folder is renamed (`.deleting-…`) under the project lock and removed after. A leftover from an interrupted delete shows in the Files tab and can be deleted.
+- **Script import:**
+  - keeps every shot row of a table that has a rule line between its rows (they vanished into "Table columns");
+  - keeps blank lines between paragraphs and scenes in the text each part sends;
+  - "Propose scenes" is disabled while the script is cut into parts, so a double click no longer starts two imports.
+- **Splitting a scene** whose length lies exactly halfway between two frames no longer adds a frame to the film.
+- **Promoting a take's frame to an anchor** while that cast member is being deleted adds the frame to the assets with a warning instead of failing. An edit that fails part-way is undone completely.
+- **Smaller fixes:**
+  - two version snapshots in the same second no longer overwrite each other;
+  - a reference video with no decodable frames fails its scene with a clear message;
+  - the Files tab no longer fails when a take folder disappears while it loads;
+  - the Assets folder row no longer offers a delete that always failed;
+  - a take whose "created" time is not a number (hand-edited `meta.json`) no longer breaks the plan or the Files tab;
+  - updating a profile that was deleted elsewhere is refused (and the list reloads) instead of creating a duplicate;
+  - uploads that are not multipart, unreadable anchor-sheet pictures and unreadable videos for "promote frame" answer 400 with a reason instead of 500;
+  - closing the ComfyUI files browser right after typing in its filter no longer opens it again;
+  - the prompt autocomplete highlights the best match again whenever the typed tag changes.
+- **For developers:** duplicate explicit job ids are refused by `jobs.running()`; each `/llm/*` request only clears its own job entry and cancel mark; `merge.probe` also reports the video stream's frame count and duration; `cache.created_of()` reads a take's `created` safely; the `file_digest` memo is capped.
+
 ## v0.6.0 — 2026-11-03
 
 Fixes from a full code review, and the features it proposed. Merges that failed, renders stuck on "rendering", lost takes and damaged project files are fixed. Finished passes are kept and reused. New: pass retakes, variants, draft and range merges, audio stems, beat markers and a named undo history.

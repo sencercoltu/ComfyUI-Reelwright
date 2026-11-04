@@ -290,6 +290,9 @@ async def upload(request):
     """One file part ("file") and the project slug ("slug"), in either order. The file is streamed to a temp file
     in 1 MB chunks (writes off the event loop), checked to be readable media, then moved into
     input/reelwright/<slug>/ (added 2026-11-03 v0.6.0)."""
+    # added 2026-11-04 v0.6.1: another body (JSON, none) hit an assert in aiohttp's multipart reader: 500, not 400
+    if not request.content_type.startswith("multipart/"):
+        raise ValueError("send the file as multipart/form-data (fields \"file\" and \"slug\")")
     reader = await request.multipart()
     slug, original, tmp, base, ext = None, None, None, None, None
     try:
@@ -543,6 +546,10 @@ async def anchor_sheet(request):
                             headers={"Cache-Control": "no-store"})
     except (ValueError, FileNotFoundError, json.JSONDecodeError) as e:
         return web.json_response({"error": str(e)}, status=400)
+    # added 2026-11-04 v0.6.1: a file that is not a readable picture (PIL's UnidentifiedImageError is an OSError, a
+    # truncated one OSError or SyntaxError) answered 500
+    except (OSError, SyntaxError) as e:
+        return web.json_response({"error": "a picture can't be read: {}".format(_message(e)[:300])}, status=400)
 
 
 # ---- soundtrack waveforms (added 2026-11-03 v0.5.0) ------------------------------
@@ -855,7 +862,7 @@ async def llm_script(request):
 # ---- long LLM requests: parts, progress, cancel (added 2026-11-03 v0.4.2) -----------------------
 
 LLM_JOBS = {}  # job id -> the asyncio task doing the request
-LLM_CANCELLED = set()
+LLM_CANCELLED = set()  # added 2026-11-04 v0.6.1: holds the cancelled tasks (it held job ids)
 
 
 def _job_id(b):
@@ -874,18 +881,35 @@ async def _llm_job(job, coro):
     """Run an LLM request as a task that POST /reelwright/llm/cancel can stop; a cancelled one answers
     {"cancelled": true}."""
     task = asyncio.ensure_future(coro)
+    # [OLD 2026-11-04 v0.6.0->v0.6.1] two requests with one job id shared an entry: the first to end removed the
+    # other's (Cancel then missed it) and cleared its cancel mark
+    # if job:
+    #     LLM_JOBS[job] = task
+    # try:
+    #     return await task
+    # except asyncio.CancelledError:
+    #     if job in LLM_CANCELLED:
+    #         return {"cancelled": True}
+    #     raise
+    # finally:
+    #     if job:
+    #         LLM_JOBS.pop(job, None)
+    #         LLM_CANCELLED.discard(job)
+    # [/OLD]
+    # added 2026-11-04 v0.6.1: the newest request owns the job id; each one removes only its own entry and mark
+    # (LLM_CANCELLED holds the cancelled tasks)
     if job:
         LLM_JOBS[job] = task
     try:
         return await task
     except asyncio.CancelledError:
-        if job in LLM_CANCELLED:
+        if task in LLM_CANCELLED:
             return {"cancelled": True}
         raise
     finally:
-        if job:
+        if job and LLM_JOBS.get(job) is task:
             LLM_JOBS.pop(job, None)
-            LLM_CANCELLED.discard(job)
+        LLM_CANCELLED.discard(task)
 
 
 @routes.post("/reelwright/llm/cancel")
@@ -895,7 +919,8 @@ async def llm_cancel(request):
     task = LLM_JOBS.get(job)
     if not task or task.done():
         return {"ok": True, "cancelled": False}
-    LLM_CANCELLED.add(job)
+    # [OLD 2026-11-04 v0.6.0->v0.6.1] LLM_CANCELLED.add(job)  (by id: a second request with that id inherited the mark)
+    LLM_CANCELLED.add(task)  # added 2026-11-04 v0.6.1: the task that is cancelled
     task.cancel()
     return {"ok": True, "cancelled": True}
 
@@ -1103,10 +1128,25 @@ async def promote_frame(request):
         if not ff:
             raise ValueError("ffmpeg is needed to grab a frame at a time")
         # [OLD 2026-11-03 v0.5.1->v0.6.0] str(float(b.get("t") or 0)), "-i", store.output_path(take["files"]["video"]),
-        await asyncio.to_thread(subprocess.run, [ff, "-hide_banner", "-loglevel", "error", "-y", "-ss",
-                                                 str(t), "-i", store.output_path(take["files"]["video"]),
-                                                 "-frames:v", "1", dst], check=True)
-    info = await asyncio.to_thread(media.describe, dst)
+        # [OLD 2026-11-04 v0.6.0->v0.6.1] check=True: an ffmpeg failure (unreadable take video) left as a 500
+        # await asyncio.to_thread(subprocess.run, [ff, "-hide_banner", "-loglevel", "error", "-y", "-ss",
+        #                                          str(t), "-i", store.output_path(take["files"]["video"]),
+        #                                          "-frames:v", "1", dst], check=True)
+        # [/OLD]
+        # added 2026-11-04 v0.6.1: ffmpeg's own message, as a 400 like the other unreadable-media answers
+        r = await asyncio.to_thread(subprocess.run, [ff, "-hide_banner", "-loglevel", "error", "-y", "-ss",
+                                                     str(t), "-i", store.output_path(take["files"]["video"]),
+                                                     "-frames:v", "1", dst], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise merge.MergeError("ffmpeg could not grab a frame at {:.2f} s: {}".format(
+                t, (r.stderr or "").strip()[-400:] or "exit code {}".format(r.returncode)))
+    # [OLD 2026-11-04 v0.6.0->v0.6.1] info = await asyncio.to_thread(media.describe, dst)  (an unreadable picture: PIL's OSError, 500)
+    try:  # added 2026-11-04 v0.6.1: 400 like the other unreadable-media answers
+        info = await asyncio.to_thread(media.describe, dst)
+    except FileNotFoundError:
+        raise
+    except (OSError, SyntaxError) as e:
+        raise ValueError("the frame can't be read as a picture: {}".format(_message(e)[:300])) from e
     return {"asset": dict(info, file=os.path.relpath(dst, store.roots.input).replace(os.sep, "/"),
                           name="{} frame".format(which), category="subject")}
 

@@ -996,7 +996,11 @@ def main():
         pj = live()
         z = pj["ui"]["zoom"] or 22
         blocks = page.locator(".rw-scene")
-        b1, b2 = blocks.nth(1).bounding_box(), blocks.nth(2).bounding_box()
+        for _ in range(5):  # a re-render (a toast expiring, a plan answer) can replace a block while it is measured
+            b1, b2 = blocks.nth(1).bounding_box(), blocks.nth(2).bounding_box()
+            if b1 and b2:
+                break
+            page.wait_for_timeout(200)
         check(pj["scenes"][2]["start"]["mode"] == "tail" and abs(b1["x"] + b1["width"] + 2 - b2["x"]) < 1.5,
               f"a tail scene's block starts where the scene before ends: {b1}, {b2}")
         check(page.locator(".rw-lane.track.add").count() == 1, "no Soundtrack lane")
@@ -1473,6 +1477,7 @@ def main():
         f2a_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 (F2a): Timeline, soundtrack, Scene tabs
         f2b_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 (F2b): Render, Files, Global, Assets, Cast tabs
         review_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 review: frontend fixes of the second review
+        v061_checks(page, check, saved, shots)  # added 2026-11-04 v0.6.1: frontend fixes of the third review
         browser.close()
     httpd.shutdown()
 
@@ -2495,6 +2500,283 @@ def review_checks(page, check, saved, shots):
     page.screenshot(path=str(shots / "v060_review_warnings.png"))
     page.evaluate("window.__editor.store.setEph({ lastRun: null, progress: {} })")
     load()
+
+
+# ---- added 2026-11-04 v0.6.1 (third review, frontend) ----
+# The mock's fetchApi is wrapped: each /autosave waits a chosen delay before the "server" handles it (so requests that
+# overlap would land out of order) and the project name of every handled request is recorded (the disk).
+AUTOSAVE_WRAP = """() => {
+  const h = window.__host;
+  if (!h.__realFetch) h.__realFetch = h.fetchApi;
+  const real = h.__realFetch.bind(h);
+  window.__as = { disk: [], sent: [], inflight: 0, maxIn: 0, delays: [], fails: [] };
+  h.fetchApi = async (path, opts) => {
+    if (path !== '/reelwright/autosave') return real(path, opts);
+    const t = window.__as, body = JSON.parse(opts.body);
+    t.sent.push(body.project.name);
+    const d = t.delays.length ? t.delays.shift() : 0, fail = t.fails.length ? t.fails.shift() : false;
+    t.inflight++; t.maxIn = Math.max(t.maxIn, t.inflight);
+    await new Promise(r => setTimeout(r, d));
+    t.inflight--;
+    t.disk.push(body.project.name);
+    if (fail) return new Response(JSON.stringify({ error: 'Disk full' }), { status: 500 });
+    return real(path, opts);
+  };
+}"""
+AUTOSAVE_UNWRAP = "() => { const h = window.__host; if (h.__realFetch) { h.fetchApi = h.__realFetch; delete h.__realFetch; } }"
+
+
+def v061_checks(page, check, saved, shots):
+    """v0.6.1 (third review): autosaves one at a time (F1), shortcuts ignore Ctrl/Cmd/Alt and Shift+letter (F2), a
+    split keeps the frame count (F3), an unknown afterId appends (F4), a throwing edit is rolled back and promoting a
+    frame of a deleted cast member (F5), Propose scenes starts once (F7), the asset browser's filter timer and the
+    autocomplete highlight (minor)."""
+    live = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    S = "harbor_lights"
+
+    def load():
+        page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
+        page.wait_for_timeout(300)
+
+    def tab(name):
+        page.click(f".rw-tab:has-text('{name}')")
+        page.wait_for_timeout(300)
+
+    def saves(js):
+        return page.evaluate("async () => { const ed = window.__editor, st = ed.store, t = window.__as; t.disk = []; t.sent = []; t.maxIn = 0;"
+                             " const name = n => st.update(p => { p.name = n; }, { label: 'Rename' }); const wait = ms => new Promise(r => setTimeout(r, ms));"
+                             + js + " }")
+
+    page.evaluate("window.__editor.store.setEph({ toasts: [], saveState: 'saved', saveError: '', conflict: null })")
+    load()
+
+    # F1. Autosaves never overlap: a save asked for while one is on its way follows it with the latest state, so the
+    # disk ends with the newest project; a late failure of the older request does not mark a newer success offline.
+    page.evaluate(AUTOSAVE_WRAP)
+    r = saves("""t.delays = [600, 40];
+      name('A'); const p1 = st.saveNow(); await wait(30); name('B'); const p2 = st.saveNow();
+      const [r1, r2] = await Promise.all([p1, p2]); await wait(80);
+      return { sent: t.sent, disk: t.disk, maxIn: t.maxIn, r1, r2, state: ed.eph.saveState };""")
+    check(r["maxIn"] == 1 and r["disk"] == ["A", "B"] and r["r1"]["ok"] and r["r2"]["ok"] and r["state"] == "saved", f"Ctrl+S on top of a running save: {r}")
+    r = saves("""t.delays = [600, 40, 40, 40]; t.fails = [true, false];
+      name('E'); const p1 = st.saveNow(); await wait(30); name('F'); const p2 = st.saveNow(); await wait(20); const p3 = st.saveNow(); const p4 = st.saveNow();
+      const [r1, r2, r3, r4] = await Promise.all([p1, p2, p3, p4]); await wait(80);
+      return { sent: t.sent, disk: t.disk, maxIn: t.maxIn, r1, r2, r3, r4, state: ed.eph.saveState, err: ed.eph.saveError };""")
+    check(r["maxIn"] == 1 and r["sent"] == ["E", "F"] and not r["r1"]["ok"] and r["r2"]["ok"] and r["r3"]["ok"] and r["r4"]["ok"]
+          and r["state"] == "saved" and r["err"] == "", f"late error of an older save / waiting saves merged: {r}")
+    # the 4 s debounce fires while a slow save runs: it waits for it
+    r = saves("""t.delays = [4400, 40];
+      name('C'); const p1 = st.saveNow(); await wait(30); name('D'); const mid = ed.eph.saveState;
+      await p1; const after1 = ed.eph.saveState; await wait(300);
+      return { sent: t.sent, disk: t.disk, maxIn: t.maxIn, mid, after1, state: ed.eph.saveState };""")
+    check(r["maxIn"] == 1 and r["disk"] == ["C", "D"] and r["after1"] == "pending" and r["state"] == "saved", f"debounce during a slow save: {r}")
+    # 409 slug_conflict still opens one dialog for Ctrl+S (also when it waited for another save) and pauses autosaving
+    page.evaluate("window.__mockFlags.slugConflict = 'harbor_lights'; window.__editor.store.setEph({ toasts: [] })")
+    r = saves("""t.delays = [400, 20];
+      name('G'); const p1 = st.saveNow(); await wait(20); name('H'); const p2 = st.saveNow();
+      const [r1, r2] = await Promise.all([p1, p2]); await wait(200);
+      return { disk: t.disk, maxIn: t.maxIn, r1, r2, state: ed.eph.saveState, slug: ed.eph.conflict?.slug, modals: document.querySelectorAll('.rw-modal').length };""")
+    check(r["maxIn"] == 1 and r["r1"].get("conflict") and r["r2"].get("conflict") and r["state"] == "conflict" and r["slug"] == S and r["modals"] == 1,
+          f"folder conflict with queued saves: {r}")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    page.evaluate("window.__mockFlags.slugConflict = ''")
+    # dispose: the last edit goes after the save on its way
+    r = page.evaluate("""async () => {
+      const { mountEditor } = await import('../web/rw/editor.js');
+      const h = window.__host, t = window.__as;
+      let json = JSON.stringify(JSON.parse(h.getProject()));
+      const h2 = Object.create(h); h2.getProject = () => json; h2.setProject = j => { json = j; };
+      const div = document.createElement('div'); div.style.cssText = 'position:absolute;left:-4000px;top:0;width:1200px;height:800px';
+      document.body.appendChild(div);
+      const ed = mountEditor(div, h2);
+      await new Promise(r => setTimeout(r, 100));
+      t.disk = []; t.maxIn = 0; t.delays = [500, 20];
+      ed.store.update(p => { p.name = 'T1'; }, { label: 'Rename' }); ed.store.saveNow();
+      await new Promise(r => setTimeout(r, 30));
+      ed.store.update(p => { p.name = 'T2'; }, { label: 'Rename' }); ed.destroy();
+      await new Promise(r => setTimeout(r, 800));
+      div.remove();
+      return { disk: t.disk, maxIn: t.maxIn }; }""")
+    check(r["disk"] == ["T1", "T2"] and r["maxIn"] == 1, f"dispose sent its last edit on top of a running save: {r}")
+    page.evaluate(AUTOSAVE_UNWRAP)
+    page.evaluate("window.__editor.store.setEph({ toasts: [], saveState: 'saved', saveError: '', conflict: null })")
+    load()
+
+    # F2. Ctrl/Cmd/Alt + a shortcut key reaches the browser, not the timeline; Shift+letter is not the letter. The
+    # plain keys, Shift+arrow (1 s), + (Shift+=) and a Caps Lock letter still work.
+    tab("Timeline")
+    look = "() => { const ed = window.__editor, p = ed.project; return { n: p.scenes.length, playhead: p.ui.playhead, playing: !!ed.eph.playing, markers: (p.markers || []).length, zoom: p.ui.zoom, loop: ed.eph.loop || null, sel: p.ui.selected }; }"
+
+    def ready():
+        page.evaluate("() => { window.__editor.store.update(p => { p.ui.tab = 'timeline'; p.ui.selected = 's_03'; p.ui.playhead = 21.375; p.ui.zoom = 13; }, { history: false, plan: false }); window.__editor.store.setEph({ loop: null }); }")
+        page.wait_for_timeout(150)
+        page.locator(".rw-root").focus()
+        return page.evaluate(look)
+
+    before = ready()
+    combos = ["Control+d", "Meta+d", "Alt+d", "Shift+D", "Control+j", "Control+l", "Shift+J", "Control+k", "Control+ArrowLeft", "Meta+ArrowLeft",
+              "Alt+ArrowRight", "Control+Home", "Control+End", "Shift+S", "Control+s", "Shift+N", "Control+n", "Control+m", "Shift+M", "Control+i", "Shift+O",
+              "Control+Minus", "Control+Equal", "Alt+Delete"]
+    moved = []
+    for c in combos:
+        page.keyboard.press(c)
+        page.wait_for_timeout(60)
+        now = page.evaluate(look)
+        if now != before:
+            moved.append((c, {k: (before[k], now[k]) for k in now if now[k] != before[k]}))
+            before = ready()
+    page.wait_for_timeout(300)
+    check(not moved and page.locator(".rw-modal").count() == 0, f"modifier combos reached the shortcuts: {moved}")
+    effects = {}
+    for c in ["d", "j", "Shift+ArrowLeft", "ArrowLeft", "Shift+Equal", "m", "i"]:
+        b0 = ready()
+        page.keyboard.press(c)
+        page.wait_for_timeout(150)
+        a0 = page.evaluate(look)
+        effects[c] = {k: (b0[k], a0[k]) for k in a0 if a0[k] != b0[k]}
+        load()
+    b0 = ready()
+    page.evaluate("() => document.querySelector('.rw-keys').dispatchEvent(new KeyboardEvent('keydown', { key: 'S', code: 'KeyS', bubbles: true, cancelable: true }))")
+    page.wait_for_timeout(150)
+    effects["CapsLock S"] = {"n": (b0["n"], page.evaluate(look)["n"])}  # e.key "S" without Shift
+    load()
+    after = lambda c, k: effects[c].get(k, (None, None))
+    near = lambda v, want: v is not None and abs(v - want) < 1e-9
+    plus1 = lambda c, k: after(c, k)[0] is not None and after(c, k)[1] == after(c, k)[0] + 1
+    ok = (plus1("d", "n") and near(after("j", "playhead")[1], 20.375) and near(after("Shift+ArrowLeft", "playhead")[1], 20.375)
+          and near(after("ArrowLeft", "playhead")[1], 21.375 - 1 / 24) and (after("Shift+Equal", "zoom")[1] or 0) > 13
+          and plus1("m", "markers") and after("i", "loop")[1] and plus1("CapsLock S", "n"))
+    check(ok, f"plain shortcuts: {effects}")
+
+    # F3. Splitting a scene of exactly n + 1/2 frames (n even: the model counts n) keeps n frames in the film.
+    r = page.evaluate("""async () => {
+      const M = await import('../web/rw/model.js'); const ed = window.__editor; const out = [];
+      for (const d of [1.9375, 0.6875, 4.0625]) {
+        ed.store.update(p => { const s = p.scenes.find(x => x.id === 's_03'); s.duration = d; s.shots = []; s.dialogue = []; }, { label: 'setup' });
+        ed.actions.splitScene('s_03', d / 2);
+        const i = ed.project.scenes.findIndex(x => x.id === 's_03'), a = ed.project.scenes[i], b = ed.project.scenes[i + 1];
+        out.push([M.framesOf(d), M.framesOf(a.duration) + M.framesOf(b.duration) - 1]);
+        ed.store.undo(); ed.store.undo();
+      }
+      return out; }""")
+    check(all(x == y for x, y in r), f"split changed the frame count (want, got): {r}")
+    load()
+
+    # F4. addScene / insertScenes after an id that is no longer in the project put the scene at the end.
+    r = page.evaluate("""() => { const ed = window.__editor, n = ed.project.scenes.length;
+      ed.actions.addScene('s_gone'); const a = ed.project.scenes.findIndex(s => s.id === ed.project.ui.selected); ed.store.undo();
+      const ids = ed.actions.insertScenes([JSON.parse(JSON.stringify(ed.project.scenes[2]))], 's_gone'); const b = ed.project.scenes.findIndex(s => s.id === ids[0]); ed.store.undo();
+      ed.actions.addScene('s_02'); const c = ed.project.scenes.findIndex(s => s.id === ed.project.ui.selected); ed.store.undo();
+      return { n, a, b, c }; }""")
+    check(r["a"] == r["n"] and r["b"] == r["n"] and r["c"] == 2, f"stale afterId: {r}")
+    load()
+
+    # F5. A mutator that throws changes nothing (state, undo and redo lists); the error reaches the caller.
+    r = page.evaluate("""() => { const ed = window.__editor, st = ed.store;
+      st.update(p => { p.name = 'one'; }, { label: 'one' }); st.update(p => { p.name = 'two'; }, { label: 'two' }); st.undo();
+      const h0 = JSON.stringify(st.history()), v0 = ed.project.__rwv;
+      let threw = '';
+      try { st.update(p => { p.name = 'half'; p.scenes.pop(); throw new Error('boom'); }, { label: 'bad' }); } catch (e) { threw = e.message; }
+      return { threw, name: ed.project.name, scenes: ed.project.scenes.length, same: JSON.stringify(st.history()) === h0, canRedo: st.canRedo(), stamped: ed.project.__rwv !== v0 }; }""")
+    check(r["threw"] == "boom" and r["name"] == "one" and r["scenes"] == len(json.loads(saved)["scenes"]) and r["same"] and r["canRedo"] and r["stamped"],
+          f"throwing edit not rolled back: {r}")
+    load()
+    # Cast: promote a frame while the cast member is deleted: the frame joins the assets (saved), no anchor, a warning
+    page.evaluate("""() => { const h = window.__host; if (!h.__realFetch) h.__realFetch = h.fetchApi; const real = h.__realFetch.bind(h);
+      h.fetchApi = async (path, opts) => { if (path === '/reelwright/promote_frame') await new Promise(r => setTimeout(r, 400)); return real(path, opts); }; }""")
+    tab("Cast")
+    cid = page.evaluate("window.__editor.project.cast[0].id")
+    page.evaluate("id => window.__editor.store.setEph({ selectedCast: id, toasts: [] })", cid)
+    page.wait_for_timeout(300)
+    n_assets = len(live()["assets"])
+    page.locator("button[data-help='cast.promote']").first.click()
+    page.wait_for_timeout(80)
+    page.evaluate("id => window.__editor.store.update(p => { p.cast = p.cast.filter(c => c.id !== id); }, { label: 'Delete cast' })", cid)
+    page.wait_for_timeout(800)
+    toast = [t["message"] for t in page.evaluate("window.__editor.eph.toasts")]
+    widget = json.loads(page.evaluate("window.__host.getProject()"))
+    check(len(live()["assets"]) == n_assets + 1 and len(widget["assets"]) == n_assets + 1 and any("not an anchor" in t for t in toast)
+          and not any("Could not promote" in t for t in toast), f"promote after the cast member was deleted: {toast}")
+    page.evaluate(AUTOSAVE_UNWRAP)
+    load()
+
+    # F7. "Propose scenes" starts once: the button is disabled while the script is cut into parts.
+    page.evaluate("""() => { const h = window.__host; if (!h.__realFetch) h.__realFetch = h.fetchApi; const real = h.__realFetch.bind(h); window.__llm = [];
+      h.fetchApi = async (path, opts) => { if (path.startsWith('/reelwright/llm/script')) window.__llm.push(path);
+        if (path === '/reelwright/llm/script/parts') await new Promise(r => setTimeout(r, 400)); return real(path, opts); }; }""")
+    tab("Global")
+    page.evaluate("window.__editor.store.setEph({ scriptDraft: null })")
+    page.wait_for_timeout(200)
+    rows = "\n".join(f"| {i:02d} | 00:{i:02d}:00 | 8.00 | Verse | Ada walks past grave number {i} |" for i in range(1, 4))
+    page.fill("textarea[data-help='global.script.text']", "Ada sings.\n\n" + rows)
+    run = page.locator("button[data-help='global.script.run']")
+    run.click()
+    page.wait_for_timeout(120)
+    disabled = run.is_disabled()
+    run.click(force=True)
+    for _ in range(60):
+        page.wait_for_timeout(200)
+        if page.evaluate("!!window.__editor.eph.scriptDraft && !window.__editor.eph.scriptDraft.busy"):
+            break
+    calls = page.evaluate("window.__llm")
+    check(disabled and calls.count("/reelwright/llm/script/parts") == 1 and calls.count("/reelwright/llm/script") == 1, f"Propose scenes twice: disabled {disabled}, {calls}")
+    page.evaluate(AUTOSAVE_UNWRAP)
+    page.evaluate("window.__editor.store.setEph({ scriptDraft: null, scriptText: '' })")
+    load()
+
+    # Minor: the asset browser's filter timer never reopens a closed card, and survives a re-render (one request)
+    page.evaluate("""() => { const h = window.__host; if (!h.__realFetch) h.__realFetch = h.fetchApi; const real = h.__realFetch.bind(h); window.__fq = [];
+      h.fetchApi = async (path, opts) => { if (path.startsWith('/reelwright/files?')) window.__fq.push(new URL(path, 'http://x').searchParams.get('q')); return real(path, opts); }; }""")
+    tab("Assets")
+    page.click("button[data-help='assets.browse']")
+    page.wait_for_timeout(400)
+    page.locator("input[data-help='assets.browse.search']").click()
+    page.keyboard.type("ab", delay=20)
+    page.locator(".rw-browse button[data-help='common.close']").first.click()
+    page.wait_for_timeout(600)
+    reopened = page.evaluate("!!window.__editor.eph.browse")
+    page.click("button[data-help='assets.browse']")
+    page.wait_for_timeout(400)
+    page.evaluate("window.__fq.length = 0")
+    page.locator("input[data-help='assets.browse.search']").click()
+    page.keyboard.type("x", delay=10)
+    page.evaluate("window.__editor.store.notify()")
+    page.wait_for_timeout(60)
+    page.keyboard.type("y", delay=10)
+    page.wait_for_timeout(700)
+    fq = page.evaluate("window.__fq")
+    check(not reopened and fq == ["xy"], f"asset browser filter timer: reopened {reopened}, requests {fq}")
+    page.evaluate(AUTOSAVE_UNWRAP)
+    page.evaluate("window.__editor.store.setEph({ browse: null })")
+    page.locator(".rw-root").focus()
+
+    # Minor: the autocomplete highlight goes back to the best match when the query changes and in the next list
+    tab("Scene")
+    ta = page.locator(".rw-psec").nth(1).locator("textarea")
+    ta.click()
+    ta.press("End")
+    t0 = page.evaluate("document.querySelectorAll('.rw-psec')[1].querySelector('textarea').value")
+    ta.type(" @", delay=30)
+    page.wait_for_timeout(150)
+    hi = lambda: page.evaluate("[...document.querySelectorAll('.rw-ac.on .rw-ac-item')].findIndex(e => e.classList.contains('on'))")
+    for _ in range(3):
+        page.keyboard.press("ArrowDown")
+    down = hi()
+    ta.type("P", delay=30)
+    page.wait_for_timeout(150)
+    narrowed, first = hi(), page.locator(".rw-ac.on .rw-ac-item b").first.inner_text()
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(150)
+    ta.type(" @", delay=30)
+    page.wait_for_timeout(150)
+    nxt = hi()
+    page.keyboard.press("Escape")
+    text = page.evaluate("document.querySelectorAll('.rw-psec')[1].querySelector('textarea').value")
+    check(down == 3 and narrowed == 0 and nxt == 0 and text == f"{t0} {first}  @", f"autocomplete highlight: {down} {narrowed} {nxt} {first!r} {text[-20:]!r}")
+    page.locator(".rw-root").focus()
+    load()
+
 
 if __name__ == "__main__":
     sys.exit(main())

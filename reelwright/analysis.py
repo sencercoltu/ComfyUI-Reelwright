@@ -143,8 +143,9 @@ def _rate_samples(all_takes):
             frames = max(int(t.get("frames") or 0), spec.MIN_PASS_FRAMES)
         if frames <= 0:
             continue
+        # [OLD 2026-11-04 v0.6.0->v0.6.1] int(t.get("created") or 0) raised on a "created" that is not a number
         out.append((secs / frames, t.get("quality"), t.get("width"), t.get("height"), t.get("steps"),
-                    int(t.get("created") or 0)))
+                    cache.created_of(t)))  # added 2026-11-04 v0.6.1
     return out
 
 
@@ -288,7 +289,9 @@ def analyze(project, store, wired=None):
                 used = starred.get("upstream") or {}
                 upstream_changed = used.get("take_id") != (up_take["id"] if up_take else None)
             else:  # before v0.6.0 the take did not say; a newer upstream take means it changed
-                upstream_changed = up_take is None or int(up_take.get("created") or 0) > int(starred.get("created") or 0)
+                # [OLD 2026-11-04 v0.6.0->v0.6.1] a "created" that is not a number raised ValueError (500 on /plan)
+                # upstream_changed = up_take is None or int(up_take.get("created") or 0) > int(starred.get("created") or 0)
+                upstream_changed = up_take is None or cache.created_of(up_take) > cache.created_of(starred)  # added 2026-11-04 v0.6.1
         starred_prompts = None
         if starred:
             starred_prompts = starred.get("prompts")

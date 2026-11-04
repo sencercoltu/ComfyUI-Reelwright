@@ -76,14 +76,78 @@ def probe(path):
         v = next((s for s in info["streams"] if s["codec_type"] == "video"), None)
         a = next((s for s in info["streams"] if s["codec_type"] == "audio"), None)
         dur = float(info["format"].get("duration") or (v or a or {}).get("duration") or 0)
-        return {"duration": dur, "width": int(v["width"]) if v else 0, "height": int(v["height"]) if v else 0,
-                "has_video": v is not None, "has_audio": a is not None}
+        # [OLD 2026-11-04 v0.6.0->v0.6.1] only the file's length (its longest stream), not the video stream's own
+        # return {"duration": dur, "width": int(v["width"]) if v else 0, "height": int(v["height"]) if v else 0,
+        #         "has_video": v is not None, "has_audio": a is not None}
+        # [/OLD]
+        out = {"duration": dur, "width": int(v["width"]) if v else 0, "height": int(v["height"]) if v else 0,
+               "has_video": v is not None, "has_audio": a is not None}
+        # added 2026-11-04 v0.6.1: the video stream's own length (an audio track can run longer than the picture)
+        if v:
+            out.update(_video_length(_int_or_none(v.get("nb_frames")), _rate(v.get("avg_frame_rate") or v.get("r_frame_rate")),
+                                     _float_or_none(v.get("duration")) or _hms((v.get("tags") or {}).get("DURATION"))))
+        return out
     import av
     with av.open(path) as c:
         v = c.streams.video[0] if c.streams.video else None
         dur = float(c.duration / 1e6) if c.duration else 0.0
-        return {"duration": dur, "width": v.width if v else 0, "height": v.height if v else 0,
-                "has_video": v is not None, "has_audio": bool(c.streams.audio)}
+        # [OLD 2026-11-04 v0.6.0->v0.6.1] no video stream length
+        # return {"duration": dur, "width": v.width if v else 0, "height": v.height if v else 0,
+        #         "has_video": v is not None, "has_audio": bool(c.streams.audio)}
+        # [/OLD]
+        out = {"duration": dur, "width": v.width if v else 0, "height": v.height if v else 0,
+               "has_video": v is not None, "has_audio": bool(c.streams.audio)}
+        if v:  # added 2026-11-04 v0.6.1: the video stream's own length
+            vdur = float(v.duration * v.time_base) if v.duration and v.time_base else None
+            out.update(_video_length(v.frames or None, _rate(v.average_rate), vdur))
+        return out
+
+
+# ---- added 2026-11-04 v0.6.1: the video stream's own length, for pre-flight (render.Renderer._clip_frames) ----------
+
+def _int_or_none(x):
+    try:
+        n = int(x)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _float_or_none(x):
+    try:
+        f = float(x)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and 0 < f < float("inf") else None
+
+
+def _rate(x):
+    """"30000/1001", "24/1", a Fraction or a number -> Fraction, or None (0/0 is unknown)."""
+    from fractions import Fraction
+    try:
+        r = Fraction(str(x)) if isinstance(x, str) else Fraction(x)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    return r if r > 0 else None
+
+
+def _hms(x):
+    """Matroska's DURATION tag "00:00:03.000000000" -> 3.0, or None."""
+    m = re.fullmatch(r"\s*(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)\s*", str(x or ""))
+    return _float_or_none(int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else None
+
+
+def _video_length(n_src, rate, seconds):
+    """{video_frames, video_duration}: the 24 fps frames media.load_video makes from the video stream (from its frame
+    count and rate; else from its duration) and the stream's seconds; None where the file does not say."""
+    frames = None
+    if n_src and rate:
+        # load_video: round(n_src / rate * 24) frames, never past the last source frame
+        frames = min(int(round(n_src * FPS / rate)), int((n_src - 1) * FPS // rate) + 1)
+        seconds = seconds or float(n_src / rate)
+    elif seconds:
+        frames = int(round(seconds * FPS))
+    return {"video_frames": frames, "video_duration": seconds}
 
 
 def _f(x):

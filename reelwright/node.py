@@ -59,6 +59,31 @@ def full_cuts(store):
     return [c for _, _, c in sorted(out, reverse=True)]
 
 
+def _take_file(store, take, which):
+    """added 2026-11-04 v0.6.1: the path of one of a take's files, or None when the take list entry has no such file
+    or a path outside the output folder (an entry rebuilt from meta.json only has to have files.video)."""
+    files = take.get("files") if isinstance(take, dict) else None
+    rel = files.get(which) if isinstance(files, dict) else None
+    if not isinstance(rel, str) or not rel:
+        return None
+    try:
+        return store.output_path(rel)
+    except ValueError:
+        return None
+
+
+def _last_frame(store, take):
+    """added 2026-11-04 v0.6.1: the take's last.png as an IMAGE; the 64x64 placeholder when the take has none or it
+    can't be read (the scenes are rendered by then, so this must not fail the node)."""
+    path = _take_file(store, take, "last") if take else None
+    if path:
+        try:
+            return media.load_image(path)
+        except Exception as e:  # noqa: BLE001 - missing, truncated or not a picture
+            log.warning("Reelwright: the last frame %s can't be read: %s", path, e)
+    return torch.zeros(1, 64, 64, 3)
+
+
 class Reelwright(io.ComfyNode):
     @classmethod
     def define_schema(cls):
@@ -216,7 +241,8 @@ class Reelwright(io.ComfyNode):
             last_take = store.starred_take(s["id"])
             if last_take:
                 break
-        take_video = store.output_path(last_take["files"]["video"]) if last_take else None
+        # [OLD 2026-11-04 v0.6.0->v0.6.1] a take entry without files.video raised: take_video = store.output_path(last_take["files"]["video"]) if last_take else None
+        take_video = _take_file(store, last_take, "video") if last_take else None  # added 2026-11-04 v0.6.1
         # [OLD 2026-11-03 v0.5.1->v0.6.0] any file named like a cut, newest by time (a draft or range merge would win)
         # cuts = sorted((c for c in glob.glob(os.path.join(store.cuts_dir(), "*_cut_v*.mp4")) if ".partial." not in c),
         #               key=os.path.getmtime, reverse=True)
@@ -235,7 +261,11 @@ class Reelwright(io.ComfyNode):
                 break
 
         video = InputImpl.VideoFromFile(video_path) if video_path else _placeholder_video()
-        last = media.load_image(store.output_path(last_take["files"]["last"])) if last_take else torch.zeros(1, 64, 64, 3)
+        # [OLD 2026-11-04 v0.6.0->v0.6.1] a missing or unreadable last.png (or an entry without files.last) failed the
+        # node after the scenes were rendered
+        # last = media.load_image(store.output_path(last_take["files"]["last"])) if last_take else torch.zeros(1, 64, 64, 3)
+        # [/OLD]
+        last = _last_frame(store, last_take)  # added 2026-11-04 v0.6.1: the placeholder when it can't be read
         audio = {"waveform": torch.zeros(1, 2, 1), "sample_rate": 48000}
         if video_path and info["has_audio"]:
             audio = media.load_audio(video_path)

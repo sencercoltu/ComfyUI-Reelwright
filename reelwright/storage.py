@@ -28,6 +28,10 @@ ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
 VERSION_RE = re.compile(r"^project_\d{8}_\d{6}\.json\Z")
 MAX_VERSIONS = 50
 VERSION_INTERVAL = 120  # seconds between automatic version snapshots
+# added 2026-11-04 v0.6.1: a deleted take's folder while delete_take removes it (ID_RE refuses the ".", so
+# takes_on_disk, repair() and the take routes never see it as a take)
+DELETING = ".deleting-"
+DELETING_RE = re.compile(r"^\.deleting-v(\d+)-[0-9a-f]+\Z")
 
 
 class Roots:
@@ -298,6 +302,8 @@ class ProjectStore:
             tdir = os.path.join(self.scene_dir(scene_id), "takes")
             used = [int(t["id"][1:]) for t in idx["takes"] if re.match(r"^v\d+$", str(t.get("id")))]
             used += [int(x[1:]) for x in _listdir(tdir) if re.match(r"^v\d+$", x)]
+            # added 2026-11-04 v0.6.1: a take folder delete_take is still removing (.deleting-vN-<hex>) keeps its number
+            used += [int(m.group(1)) for m in (DELETING_RE.match(x) for x in _listdir(tdir)) if m]
             n = 1 + max(used or [0])
             os.makedirs(tdir, exist_ok=True)
             while True:
@@ -351,14 +357,34 @@ class ProjectStore:
             #     elif os.path.isdir(d):
             #         shutil.rmtree(d)
             # [/OLD]
-        # added 2026-11-03 v0.6.0 review: the take is off the list, so its folder is removed after the lock is let go
-        # (new_take_id never hands out the id of a folder that is still on disk)
-        # added 2026-11-03 v0.6.0: the take folder by its own name (a link is removed, never followed)
-        d = os.path.join(self.scene_dir(scene_id), "takes", check_id(take_id))
-        if os.path.islink(d) or os.path.isfile(d):
-            os.remove(d)
-        elif os.path.isdir(d):
-            shutil.rmtree(d)
+            # added 2026-11-04 v0.6.1: the folder is renamed to .deleting-<id>-<hex> before the lock is let go, so a
+            # repair() or a damaged-index rebuild (takes_on_disk) during the removal no longer lists it again (and
+            # stars it); new_take_id still counts the renamed folder, so the id is not handed out meanwhile
+            d = os.path.join(self.scene_dir(scene_id), "takes", check_id(take_id))
+            target = d
+            if os.path.isdir(d) and not os.path.islink(d):
+                moved = os.path.join(os.path.dirname(d), "{}{}-{}".format(DELETING, take_id, uuid.uuid4().hex[:8]))
+                try:
+                    os.rename(d, moved)
+                    target = moved
+                except OSError as e:  # e.g. Windows while a file in it is open: removed in place, as before
+                    log.warning("Reelwright: could not set the take folder %s aside before removing it: %s", d, e)
+        # [OLD 2026-11-04 v0.6.0->v0.6.1] the folder was removed under its own name: repair() could list it again meanwhile
+        # # added 2026-11-03 v0.6.0 review: the take is off the list, so its folder is removed after the lock is let go
+        # # (new_take_id never hands out the id of a folder that is still on disk)
+        # # added 2026-11-03 v0.6.0: the take folder by its own name (a link is removed, never followed)
+        # d = os.path.join(self.scene_dir(scene_id), "takes", check_id(take_id))
+        # if os.path.islink(d) or os.path.isfile(d):
+        #     os.remove(d)
+        # elif os.path.isdir(d):
+        #     shutil.rmtree(d)
+        # [/OLD]
+        # added 2026-11-04 v0.6.1: the take is off the list and its folder set aside; removed after the lock is let go
+        # (a link is removed, never followed)
+        if os.path.islink(target) or os.path.isfile(target):
+            os.remove(target)
+        elif os.path.isdir(target):
+            shutil.rmtree(target)
 
     def starred_take(self, scene_id):
         idx = self.read_index(scene_id)
@@ -427,7 +453,9 @@ class ProjectStore:
             changed = previous != project
             name = None
             if force_version or (changed and time.time() - newest >= VERSION_INTERVAL):
-                name = time.strftime("project_%Y%m%d_%H%M%S.json")
+                # [OLD 2026-11-04 v0.6.0->v0.6.1] a second version in the same second overwrote the first
+                # name = time.strftime("project_%Y%m%d_%H%M%S.json")
+                name = _free_version_name(vdir)  # added 2026-11-04 v0.6.1
                 write_json(os.path.join(vdir, name), project)
                 for v in self.list_versions()[MAX_VERSIONS:]:
                     try:
@@ -539,6 +567,18 @@ class SlugConflict(ValueError):
     def __init__(self, other):
         super().__init__("the folder {!r} holds another project".format(other.get("name") or other.get("id")))
         self.other = other
+
+
+def _free_version_name(vdir, now=None):
+    """added 2026-11-04 v0.6.1: project_<date>_<time>.json for now, or for the next second that has no version yet
+    (two versions in one second used to share one file: the second overwrote the first). The name keeps VERSION_RE's
+    shape, so the editor and delete_versions read it as before."""
+    now = time.time() if now is None else now
+    for k in range(3600):
+        name = time.strftime("project_%Y%m%d_%H%M%S.json", time.localtime(now + k))
+        if not os.path.exists(os.path.join(vdir, name)):
+            return name
+    return time.strftime("project_%Y%m%d_%H%M%S.json", time.localtime(now))
 
 
 def _listdir(path):

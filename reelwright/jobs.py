@@ -47,17 +47,44 @@ class Job:
             raise Cancelled("{} cancelled".format(self.kind))
 
 
+def _new_job(slug, kind, job_id):
+    """added 2026-11-04 v0.6.1 (call with _guard held): a Job whose id is not in use. A made-up id skips ids a caller
+    chose ("render-3" sent as a merge id); a chosen id that is in use raises Busy (one entry per id)."""
+    if job_id and job_id in _running:
+        raise Busy(_running[job_id])
+    job = Job(slug, kind, job_id)
+    while job.id in _running:
+        job.id = "{}-{}".format(kind, next(_ids))
+    return job
+
+
+# [OLD 2026-11-04 v0.6.0->v0.6.1] the entry was replaced and popped by id alone: a job with the same id as another
+# took the other's entry, and the first of them to end removed the entry of the one still running
+# @contextlib.contextmanager
+# def running(slug, kind, job_id=None):
+#     """Register a job for the duration of the block: `with jobs.running(slug, "merge") as job: ...`."""
+#     job = Job(slug, kind, job_id)
+#     with _guard:
+#         _running[job.id] = job
+#     try:
+#         yield job
+#     finally:
+#         with _guard:
+#             _running.pop(job.id, None)
+# [/OLD]
 @contextlib.contextmanager
 def running(slug, kind, job_id=None):
-    """Register a job for the duration of the block: `with jobs.running(slug, "merge") as job: ...`."""
-    job = Job(slug, kind, job_id)
+    """Register a job for the duration of the block: `with jobs.running(slug, "merge") as job: ...`.
+    added 2026-11-04 v0.6.1: raises Busy when `job_id` is the id of a job that is running."""
     with _guard:
+        job = _new_job(slug, kind, job_id)
         _running[job.id] = job
     try:
         yield job
     finally:
         with _guard:
-            _running.pop(job.id, None)
+            if _running.get(job.id) is job:  # added 2026-11-04 v0.6.1: only its own entry
+                _running.pop(job.id, None)
 
 
 class Busy(RuntimeError):
@@ -78,7 +105,8 @@ def exclusive(slug, kind, job_id=None):
             other = _running[job_id]
         if other is not None:
             raise Busy(other)
-        job = Job(slug, kind, job_id)
+        # [OLD 2026-11-04 v0.6.0->v0.6.1] job = Job(slug, kind, job_id)  (a made-up id could be one a caller chose)
+        job = _new_job(slug, kind, job_id)  # added 2026-11-04 v0.6.1
         _running[job.id] = job
     try:
         yield job

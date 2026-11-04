@@ -75,6 +75,14 @@ def _rule(line):
     return "|" in line and bool(TABLE_RULE.match(line))
 
 
+def _first_row(lines, i):
+    """added 2026-11-04 v0.6.1: is lines[i] the first row of its table (no table row above it, rules skipped)?"""
+    j = i - 1
+    while j >= 0 and _rule(lines[j]):
+        j -= 1
+    return j < 0 or not TABLE_ROW.match(lines[j])
+
+
 def _paragraphs(text):
     return [p.strip("\n") for p in re.split(r"\n\s*\n", text) if p.strip()]
 
@@ -109,7 +117,11 @@ def split_script(text, part_chars=3000):
     lines = text.split("\n")
     heads, skip = [], set()
     for i in range(len(lines) - 1):
-        if TABLE_ROW.match(lines[i]) and not _rule(lines[i]) and _rule(lines[i + 1]):
+        # [OLD 2026-11-04 v0.6.0->v0.6.1] any row over a rule was a heading: in a table with a rule between its rows
+        # every shot row went to the notes ("Table columns") and no part made a scene of it
+        # if TABLE_ROW.match(lines[i]) and not _rule(lines[i]) and _rule(lines[i + 1]):
+        # added 2026-11-04 v0.6.1: only the table's first row (rules above it do not count) is its heading
+        if TABLE_ROW.match(lines[i]) and not _rule(lines[i]) and _rule(lines[i + 1]) and _first_row(lines, i):
             heads.append(lines[i].strip() + "\n" + lines[i + 1].strip())
             skip.update((i, i + 1))
     pre, blocks, cur = [], [], None

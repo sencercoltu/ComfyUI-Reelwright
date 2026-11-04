@@ -259,3 +259,38 @@ def test_delete_refuses_ids_that_are_not_a_list(roots):
         with pytest.raises(ValueError):
             files.delete(roots, bad)
     assert files.delete(roots, None)["removed"] == 0
+
+
+# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) --------------------------------------------------------------------
+
+def test_assets_folder_is_not_offered_for_delete(roots, disk):
+    """Review 12c: the Assets group (i:reelwright/<slug>) was offered for delete, and delete always refused it."""
+    cur = files.scan_project(roots, "harbor_lights", "harbor_lights")
+    assets = find(cur, "i:reelwright/harbor_lights")
+    assert assets["del"] is False and assets["why"]
+    assert find(assets, "i:reelwright/harbor_lights/stray.png")["del"] is True  # its files still are
+    assert "not a Reelwright file" in files.delete(roots, [assets["id"]])["errors"][0]["error"]  # unchanged
+
+
+def test_scan_survives_a_take_folder_removed_meanwhile(roots, disk, monkeypatch):
+    """Review 12a: a take folder deleted between listing and sorting (getmtime) answered 500; so did a "created" that
+    is not a number. A take folder storage.delete_take is still removing says so."""
+    store, _ = disk
+    real = os.path.getmtime
+
+    def gone(path):
+        if path.replace(os.sep, "/").endswith("/takes/v9"):
+            raise FileNotFoundError(path)
+        return real(path)
+    monkeypatch.setattr(files.os.path, "getmtime", gone)
+    idx = store.read_index("s_one")
+    idx["takes"][0]["created"] = "yesterday"
+    store.write_index("s_one", idx)
+    put(os.path.join(store.scene_dir("s_one"), "takes", ".deleting-v1-0a1b2c3d", "x.mp4"), 10)
+    cur = files.scan_project(roots, "harbor_lights", "harbor_lights")
+    takes = [c["take"] for c in find(cur, "o:reelwright/harbor_lights/scenes/s_one")["children"] if c["kind"] == "take"]
+    assert set(takes) == {"v1", "v2", "v9", ".deleting-v1-0a1b2c3d"}
+    leftover = find(cur, "o:reelwright/harbor_lights/scenes/s_one/takes/.deleting-v1-0a1b2c3d")
+    assert "being removed" in leftover["note"] and leftover["del"]
+    r = files.delete(roots, [leftover["id"]], current="harbor_lights")
+    assert r["errors"] == [] and not os.path.exists(os.path.join(store.scene_dir("s_one"), "takes", ".deleting-v1-0a1b2c3d"))

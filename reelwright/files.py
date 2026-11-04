@@ -15,10 +15,12 @@ import shutil
 import time
 from collections import Counter
 
+from . import cache  # added 2026-11-04 v0.6.1: cache.created_of
 from . import jobs  # added 2026-11-03 v0.6.0: nothing a render or merge is using is deleted
 from .model import normalize_project
 # [OLD 2026-11-03 v0.5.1->v0.6.0] from .storage import SLUG_RE, VERSION_RE, ProjectStore, check_slug, read_json, safe_join
 from .storage import CUT_COUNTER, SLUG_RE, VERSION_RE, ProjectStore, check_slug, read_json, safe_join
+from .storage import DELETING  # added 2026-11-04 v0.6.1
 
 TAKE_RE = re.compile(r"^scenes/([A-Za-z0-9_-]{1,64})/takes/([A-Za-z0-9_-]{1,64})$")
 # [OLD 2026-11-03 v0.5.1->v0.6.0] CUT_RE = re.compile(r"^(?P<stem>.+_cut_v(?P<n>\d+))(?P<rest>(\.partial)?\..+)$")
@@ -86,6 +88,14 @@ def _listdir(path):
         return sorted(os.listdir(path))
     except OSError:
         return []
+
+
+def _mtime(path):
+    """added 2026-11-04 v0.6.1: modification time, 0 when the path went away meanwhile."""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0
 
 
 def _asset_uses(p):
@@ -207,7 +217,10 @@ def scan_project(roots, slug, current=None):
             listed = {t["id"]: t for t in idx["takes"]}
             tdir = os.path.join(scene_dir, "takes")
             take_ids = [x for x in _listdir(tdir) if os.path.isdir(os.path.join(tdir, x))]
-            take_ids.sort(key=lambda x: (-(listed.get(x, {}).get("created") or os.path.getmtime(os.path.join(tdir, x))), x))
+            # [OLD 2026-11-04 v0.6.0->v0.6.1] a take folder removed during the scan (getmtime) or a "created" that is not a
+            # number (unary minus on text) answered 500
+            # take_ids.sort(key=lambda x: (-(listed.get(x, {}).get("created") or os.path.getmtime(os.path.join(tdir, x))), x))
+            take_ids.sort(key=lambda x: (-(cache.created_of(listed.get(x)) or _mtime(os.path.join(tdir, x))), x))  # added 2026-11-04 v0.6.1
             for tid in take_ids:
                 t = listed.get(tid)
                 tn = _dir("o", o, os.path.join(tdir, tid), label=tid, kind="take", skip=())
@@ -223,10 +236,14 @@ def scan_project(roots, slug, current=None):
                 if t is None:
                     tn["flags"].append("unlisted")
                     tn["note"] = "not in the take list (an unfinished or older render)"
+                    if tid.startswith(DELETING):  # added 2026-11-04 v0.6.1: storage.delete_take sets the folder aside
+                        tn["note"] = "a deleted take whose folder is being removed (left over if it stays)"
                 else:
                     if idx["starred"] == tid:
                         tn["flags"].append("starred")
-                    bits = [t.get("quality") or "", "{:.1f} s".format(t["seconds"]) if t.get("seconds") else "", _when(t.get("created"))]
+                    # [OLD 2026-11-04 v0.6.0->v0.6.1] _when(t.get("created")) raised on a "created" that is not a number
+                    bits = [t.get("quality") or "", "{:.1f} s".format(t["seconds"]) if t.get("seconds") else "",
+                            _when(cache.created_of(t))]  # added 2026-11-04 v0.6.1
                     tn["note"] = " · ".join(b for b in bits if b)
                 _add(sn, tn)
             for x in _listdir(scene_dir):  # index.json and anything else next to takes/
@@ -332,6 +349,9 @@ def scan_project(roots, slug, current=None):
             by_file.setdefault(a.get("file") or "", []).append(a)
         assets = _dir("i", i, store.input_dir, label="Assets", kind="group")
         assets["note"] = "input/reelwright/" + slug
+        # added 2026-11-04 v0.6.1: the folder itself can't be deleted by id (_resolve wants reelwright/<slug>/<name>;
+        # the whole project goes with "p:<slug>"), so it was offered and always refused; its files are deleted one by one
+        assets["del"], assets["why"] = False, "the project's asset folder; select the files in it, or delete the whole project"
 
         def mark(n):
             for c in n["children"]:

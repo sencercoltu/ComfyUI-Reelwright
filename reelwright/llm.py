@@ -412,8 +412,10 @@ def retry_after(value):
 
 
 def http_error(status, raw, content_type="", headers=None):
-    """LLMError for an HTTP error answer: 429 is retried (after Retry-After), other 4xx are not, 5xx are; a context
-    window error is never retried; a web page says the base URL is wrong."""
+    # [OLD 2026-11-04 v0.6.0->v0.6.1] docstring: "429 is retried (after Retry-After), ..." (it left out RETRY_AFTER_MAX)
+    """LLMError for an HTTP error answer: 429 is retried after Retry-After (ask() gives up at once when the server
+    asks for more than RETRY_AFTER_MAX seconds, and says so), other 4xx are not, 5xx are; a context window error is
+    never retried; a web page says the base URL is wrong. (docstring corrected 2026-11-04 v0.6.1)"""
     if _looks_like_page(raw, content_type):
         return LLMError("HTTP {}: {}.".format(status, HTML_PAGE), "html", retry=False)
     try:

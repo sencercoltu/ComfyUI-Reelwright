@@ -449,3 +449,64 @@ def test_bad_input_answers_400_not_500(api, harbor):
     for status, body in out[:-1]:
         assert status == 400 and body["error"], body
     assert out[-1][0] == 200 and out[-1][1]["parts"] == []
+
+
+# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) --------------------------------------------------------------------
+
+def test_unreadable_input_answers_400_not_500(api, store, roots):
+    """Review 11 and minor: an upload that is not multipart (an assert in aiohttp), an anchor sheet of a file that is
+    not a picture (PIL's UnidentifiedImageError) and a frame grab from an unreadable take video (CalledProcessError)
+    answered 500."""
+    run, _, _ = api
+    os.makedirs(store.input_dir, exist_ok=True)
+    with open(os.path.join(store.input_dir, "fake.png"), "wb") as f:
+        f.write(b"not a picture at all")
+    d = store.take_dir("s_one", "v1")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "v.mp4"), "wb") as f:
+        f.write(b"not a video either")
+    store.add_take("s_one", {"id": "v1", "files": {"video": store.rel_output(os.path.join(d, "v.mp4"))}})
+
+    async def go(c):
+        out = [await post(c, "/reelwright/upload", {"slug": "harbor_lights"})]
+        r = await c.post("/reelwright/upload", data=b"raw bytes")
+        out.append((r.status, await r.json()))
+        r = await c.get("/reelwright/sheet", params={"files": json.dumps(["reelwright/harbor_lights/fake.png"])})
+        out.append((r.status, await r.json()))
+        out.append(await post(c, "/reelwright/promote_frame", {"slug": "harbor_lights", "scene_id": "s_one",
+                                                               "take_id": "v1", "which": "time", "t": 0.5}))
+        return out
+    for status, body in run(go):
+        assert status == 400 and body["error"], (status, body)
+
+
+def test_llm_requests_with_one_job_id_keep_their_own_entries(api):
+    """Review 9: two requests with the same job id shared one LLM_JOBS entry; the first to end removed the other's,
+    so Stop no longer reached the one still running."""
+    run, routes, _ = api
+
+    async def go(c):
+        gates = [asyncio.Event(), asyncio.Event()]
+
+        async def slow(ev):
+            await ev.wait()
+            return {"done": True}
+        first = asyncio.ensure_future(routes._llm_job("jj", slow(gates[0])))
+        await asyncio.sleep(0.05)
+        second = asyncio.ensure_future(routes._llm_job("jj", slow(gates[1])))
+        await asyncio.sleep(0.05)
+        owner = routes.LLM_JOBS["jj"]
+        gates[0].set()
+        a = await first
+        still = routes.LLM_JOBS.get("jj") is owner
+        stop = await post(c, "/reelwright/llm/cancel", {"job": "jj"})
+        try:
+            b = await asyncio.wait_for(asyncio.shield(second), 5)
+        except asyncio.TimeoutError:  # Stop missed it: let it end
+            gates[1].set()
+            b = await second
+        return a, still, stop, b, dict(routes.LLM_JOBS), set(routes.LLM_CANCELLED)
+    a, still, stop, b, left, marks = run(go)
+    assert a == {"done": True} and still
+    assert stop[1]["cancelled"] is True and b == {"cancelled": True}
+    assert left == {} and marks == set()

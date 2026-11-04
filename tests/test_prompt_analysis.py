@@ -655,3 +655,21 @@ def test_written_shot_lines_move_only_timeline_times(harbor):
     builds, _ = _passes(p, 1)
     d2 = _desc(builds[1]["prompt"]).split("\n")
     assert d2[1].startswith("[Shot 2] At 00:00.917, the shot cuts to rain: <d>[English] Meet me at 10:30.</d>")
+
+
+# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) --------------------------------------------------------------------
+
+def test_rewrite_keeps_hand_written_subject_and_retention_lines():
+    """Review 1: with automatic subject definitions / retention lines off, a rewrite answer that left the key out
+    emptied the hand-written text (the docstring says they keep their text)."""
+    from reelwright.prompt import REF2VA_SECTIONS, tidy_rewrite
+    before = {k: "" for k in REF2VA_SECTIONS}
+    before.update(subject_definitions="@Mara is the keeper, shown in @P1.", retention_analysis="@Mara: face kept.",
+                  summary="old")
+    out = tidy_rewrite({"summary": "new"}, before, {"subjects": False, "retention": False, "shots": False}, {})
+    assert out["summary"] == "new"
+    assert out["subject_definitions"] == before["subject_definitions"]
+    assert out["retention_analysis"] == before["retention_analysis"]
+    # a key the answer does give still replaces the text, and automatic parts still keep theirs
+    out = tidy_rewrite({"subject_definitions": "@Mara, older."}, before, {"subjects": False, "retention": True}, {})
+    assert out["subject_definitions"] == "@Mara, older." and out["retention_analysis"] == "@Mara: face kept."

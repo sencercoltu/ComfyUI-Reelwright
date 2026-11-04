@@ -130,3 +130,18 @@ def test_a_title_in_capitals_over_the_premise_stays_notes():
     for opening in ("MARA\nWhere is he?", "FINN (V.O.)\nShe never came back."):
         out = split_script(opening + "\n\n" + "\n\n".join(talk), 600)
         assert out["parts"][0][0] == opening and out["notes"] == ""
+
+
+# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) ----
+def test_rules_between_table_rows_keep_the_rows():
+    """Review 7a: every row over a rule counted as a table heading, so in a table with a rule between its rows each
+    shot row went to the notes ("Table columns") and no part made a scene of it."""
+    text = "| # | Time | Shot |\n|---|:---:|---|\n" + "\n|---|---|---|\n".join(ROW.format(i, i, i + 1, i) for i in range(1, 41))
+    out = split_script(text, 1500)
+    assert out["notes"] == "Table columns:\n| # | Time | Shot |\n|---|:---:|---|" and out["blocks"] == 40
+    assert [b for p in out["parts"] for b in p][0].startswith("| 01 |")
+    # a rule above the heading (a boxed table) does not make the heading a row, and two tables have two headings
+    boxed = "|---|---|\n| # | Shot |\n|---|---|\n" + rows(30) + "\n\nThe second act.\n\n| No | Shot |\n|--|--|\n" + rows(30)
+    out = split_script(boxed, 1500)
+    assert out["notes"].count("Table columns:") == 2 and out["blocks"] == 60  # "The second act." joins row 30
+    assert "| # | Shot |" not in "".join(b for p in out["parts"] for b in p)

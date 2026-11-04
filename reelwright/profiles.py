@@ -64,6 +64,10 @@ def save(user_root, name, glob, pid=None, make_default=None):
     data = load(user_root)
     now = int(time.time())
     hit = next((x for x in data["profiles"] if x["id"] == pid), None) if pid else None
+    # added 2026-11-04 v0.6.1: an id that is not saved (deleted meanwhile, e.g. in another tab) is refused like delete()
+    # and set_default() do; it used to add a second profile of that name. "Save as new" sends no id.
+    if pid and hit is None:
+        raise ValueError("unknown profile (it may have been deleted in another tab); use Save as new")
     if hit is None:
         if len(data["profiles"]) >= MAX_PROFILES:
             raise ValueError("Too many profiles; delete one first")

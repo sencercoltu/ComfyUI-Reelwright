@@ -281,3 +281,18 @@ def test_media_counts_voice_video_sound_and_song():
     assert counts[2]["audio"] == 2 and counts[2]["audio_seconds"] == 5.0 + passes[2]["gen_frames"] / 24
     p["assets"][3]["file"] = ""
     assert not any(model.scene_media_counts(p, s, x)["song"] for x in passes)
+
+
+# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) ----
+def test_profile_update_of_a_deleted_profile_is_refused(tmp_path):
+    """Review 13: save() with an id that is not saved (deleted in another tab) added a second profile of that name;
+    delete() and set_default() refuse such an id, and so does save() now. "Save as new" sends no id."""
+    import pytest
+    from reelwright import profiles
+    root = str(tmp_path)
+    a = profiles.save(root, "Box", {"steps": 8})["profile"]
+    with pytest.raises(ValueError, match="unknown profile"):
+        profiles.save(root, "Box", {"steps": 12}, pid="g_gone")
+    assert [(x["id"], x["global"]) for x in profiles.load(root)["profiles"]] == [(a["id"], {"steps": 8})]
+    assert len(profiles.save(root, "Box 2", {"steps": 4}, pid=None)["profiles"]) == 2
+    assert len(profiles.save(root, "Box 3", {"steps": 4}, pid="")["profiles"]) == 3

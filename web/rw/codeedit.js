@@ -22,10 +22,13 @@ export function codeEditor({ value, onInput, onChange, key, help, candidates, pl
     pre.style.height = hgt + "px";
   }
 
+  let lastQ = null; // added 2026-11-04 v0.6.1: the query the list was opened for (openList)
+
   function closeList() {
     list.classList.remove("on");
     matches = [];
     token = null;
+    lastQ = null; // added 2026-11-04 v0.6.1: the next list starts on its first row
   }
 
   function openList() {
@@ -38,6 +41,9 @@ export function codeEditor({ value, onInput, onChange, key, help, candidates, pl
     matches = candidates.filter(c => c.tag.toLowerCase().startsWith(q) || c.label.toLowerCase().includes(q.slice(1))).slice(0, 8);
     if (!matches.length) { closeList(); return; }
     token = { start: ta.selectionStart - m[0].length, end: ta.selectionStart };
+    // [OLD 2026-11-04 v0.6.0->v0.6.1] active = Math.min(active, matches.length - 1);  (the highlight stayed on row n when the query narrowed and in the next list, so Enter inserted another tag than the best match)
+    if (q !== lastQ) active = 0; // added 2026-11-04 v0.6.1: a new or changed query starts on the best match
+    lastQ = q;
     active = Math.min(active, matches.length - 1);
     list.replaceChildren(...matches.map((c, i) => h("div", {
       class: ["rw-ac-item", i === active && "on"], role: "option",
