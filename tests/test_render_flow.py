@@ -52,7 +52,17 @@ def stubs(comfy, monkeypatch):
                                 "images": sorted(kw["ref_images"] or {}), "videos": sorted(kw["ref_videos"] or {}),
                                 "video_audios": sorted(kw["ref_video_audios"] or {}), "audios": sorted(kw["ref_audios"] or {}),
                                 # added 2026-11-03 v0.5.0: seconds of each reference audio
-                                "audio_secs": [round(a["waveform"].shape[-1] / a["sample_rate"], 3) for a in (kw["ref_audios"] or {}).values()]})
+                                "audio_secs": [round(a["waveform"].shape[-1] / a["sample_rate"], 3) for a in (kw["ref_audios"] or {}).values()],
+                                # added 2026-11-05 v0.7.0: what reaches the node, in the order it is presented
+                                "image_order": list(kw["ref_images"] or {}),
+                                "image_shapes": [tuple(v.shape) for v in (kw["ref_images"] or {}).values()],
+                                "image_means": [round(float(v.float().mean()), 3) for v in (kw["ref_images"] or {}).values()],
+                                "video_order": list(kw["ref_videos"] or {}),
+                                "video_frames": [int(v.shape[0]) for v in (kw["ref_videos"] or {}).values()],
+                                "video_last_means": [round(float(v[-1].float().mean()), 3)
+                                                     for v in (kw["ref_videos"] or {}).values()],
+                                "video_audio_secs": {k: round(a["waveform"].shape[-1] / a["sample_rate"], 3)
+                                                     for k, a in (kw["ref_video_audios"] or {}).items()}})
         return types.SimpleNamespace(result=([["cond", {}]], {"samples": torch.zeros(1), "frames": kw["length"],
                                                              "size": (kw["width"], kw["height"])}))
 
@@ -124,9 +134,11 @@ def test_render_pending_then_cache_then_partial(stubs, harbor, store, roots):
     assert done == ["s_one", "s_long", "s_short"]
 
     # encode-first: every pass was encoded before sampling began
+    # v0.7.0: except s_long's pass 1, which sends the tail clip of s_one (made in this run) as <Video 1>; it is
+    # encoded when it is rendered (tests/test_render_flow.py::test_continuation_reaches_the_node)
     long_passes = len(analyze(harbor, store)["scenes"]["s_long"]["plan"]["passes"])
     assert len(calls["encode"]) == 1 + long_passes + 1
-    long_enc = calls["encode"][1]
+    long_enc = calls["encode"][1]  # v0.7.0: s_long pass 2 (after a cut: no continuation)
     # Mara's sheet (v0.6.0: the keyframe picture named in the prompt goes only with the pass that holds the keyframe)
     assert long_enc["images"][0] == "ref_image_0"
     assert long_enc["videos"] == ["ref_video_0"] and long_enc["video_audios"] == ["ref_video_audio_0"]
@@ -379,10 +391,18 @@ def test_render_with_a_soundtrack(stubs, harbor, store, roots):
     plans = analyze(p, store)["scenes"]
     lengths = [min(spec.REF_MEDIA_MAX_SECONDS, x["gen_frames"] / spec.FPS) for sid in done for x in plans[sid]["plan"]["passes"]]
     assert len(calls["encode"]) == len(lengths)
-    for enc, want in zip(calls["encode"], lengths):
+    # [OLD v0.6.1] the encodes came in pass order
+    # for enc, want in zip(calls["encode"], lengths):
+    #     assert "Audio" in enc["prompt"] and "is the song this part of the film is cut to" in enc["prompt"]
+    #     assert want in [pytest.approx(x, abs=0.01) for x in enc["audio_secs"]]
+    # assert len(calls["encode"][1]["audios"]) == 1  # the long scene sends the song, not Mara's voice
+    # [/OLD]
+    # v0.7.0: the long scene's pass 1 sends the tail of the scene before as <Video 1>, so it is encoded when it is
+    # rendered (after the scene before), not with the others
+    for enc in calls["encode"]:
         assert "Audio" in enc["prompt"] and "is the song this part of the film is cut to" in enc["prompt"]
-        assert want in [pytest.approx(x, abs=0.01) for x in enc["audio_secs"]]
-    assert len(calls["encode"][1]["audios"]) == 1  # the long scene sends the song, not Mara's voice
+        assert len(enc["audios"]) == 1  # the song, not Mara's voice
+    assert sorted(round(x, 2) for e in calls["encode"] for x in e["audio_secs"]) == sorted(round(x, 2) for x in lengths)
     wavs = os.listdir(os.path.join(store.dir, "soundtrack"))
     assert len(wavs) == len(lengths)  # one WAV per pass: each covers another part of the song
     assert all(w.endswith(".wav") and ".partial" not in w for w in wavs)
@@ -1158,3 +1178,98 @@ def test_a_video_without_decodable_frames_says_so(comfy, tmp_path):
         f.write(bytes(data))
     with pytest.raises(ValueError, match="no video frames could be decoded from broken.mp4"):
         media.load_video(broken, max_seconds=15)
+
+
+# ---- the continuation as a named reference (added 2026-11-05 v0.7.0) ----------------------------------------------
+
+def _continuing_harbor(harbor, roots, on=True):
+    """s_one (fresh) -> s_lf (last-frame start, Mara's sheet) -> s_long (tail start, dolly video with its sound,
+    three passes joined by overlap seams)."""
+    from reelwright.model import normalize_project
+    harbor["global"]["output"].update(width=64, height=32)
+    harbor["global"]["long"]["seam_mode"] = "overlap"
+    harbor["global"]["continuity"]["name_continuation"] = on
+    _real_assets(harbor, roots)
+    lf = {"id": "s_lf", "title": "Pier", "duration": 6.0, "start": {"mode": "last_frame"}, "cast": [{"id": "c_mara"}],
+          "shots": [{"id": "h_lf", "t": 0, "camera": "Medium", "text": "@Mara turns to the sea"}]}
+    harbor["scenes"] = [harbor["scenes"][0], lf, harbor["scenes"][1]]
+    return normalize_project(harbor)
+
+
+def _encodes_by_pass(calls, analysis):
+    """{(scene id, pass index): encode call}, matched by prompt."""
+    want = {b["prompt"]: (sid, n + 1) for sid, sr in analysis["scenes"].items() for n, b in enumerate(sr["builds"])}
+    return {want[e["prompt"]]: e for e in calls["encode"]}
+
+
+def test_continuation_reaches_the_node(stubs, harbor, store, roots, monkeypatch):
+    """The last frame of the scene before is ref_image_0, the tail clip (124 frames and its sound) ref_video_0 and,
+    after an overlap seam, the last 124 frames of the pass before ref_video_0; the guides are as before."""
+    render, calls, events = stubs
+    from reelwright import media
+    from reelwright.analysis import analyze
+    p = _continuing_harbor(harbor, roots)
+    first_sample = []
+    real_sample = render._sample
+
+    def sample(*a, **k):
+        first_sample.append(len(calls["encode"]))
+        return real_sample(*a, **k)
+    monkeypatch.setattr(render, "_sample", sample)
+    assert render.Renderer(p, store, {}, {"action": "pending"}).run() == ["s_one", "s_lf", "s_long"]
+    r = analyze(p, store)
+    assert [x["seam_before"] for x in r["scenes"]["s_long"]["plan"]["passes"]] == ["none", "overlap", "overlap"]
+    assert first_sample[0] == 1  # encode-first did s_one only: the others need footage made in this run
+    enc = _encodes_by_pass(calls, r)
+    assert len(enc) == len(calls["encode"]) == 5
+    one_last = media.load_image(store.output_path(store.starred_take("s_one")["files"]["last"]))
+    lf_last = media.load_image(store.output_path(store.starred_take("s_lf")["files"]["last"]))
+    e = enc[("s_lf", 1)]
+    assert e["image_order"] == ["ref_image_0", "ref_image_1"] and e["video_order"] == []
+    assert e["image_shapes"][0] == (1, 32, 64, 3) and e["image_means"][0] == pytest.approx(float(one_last.mean()), abs=0.01)
+    assert e["prompt"].count("<Picture 1> is the first frame of [Shot 1], the last frame of the scene before.") == 1
+    e = enc[("s_long", 1)]
+    assert e["video_order"] == ["ref_video_0", "ref_video_1"] and e["video_frames"][0] == 124
+    assert e["video_last_means"][0] == pytest.approx(float(lf_last.mean()), abs=0.02)  # it ends on that last frame
+    assert e["video_audio_secs"]["ref_video_audio_0"] == pytest.approx(124 / 24, abs=0.06)
+    assert e["video_audio_secs"]["ref_video_audio_1"] == pytest.approx(4.2, abs=0.06)  # the dolly's own sound
+    for n in (2, 3):
+        e = enc[("s_long", n)]
+        assert e["video_order"][0] == "ref_video_0" and e["video_frames"][0] == 124
+        assert e["video_last_means"][0] == pytest.approx(1.0, abs=0.01)  # the stub's passes end on white
+        assert e["video_audio_secs"]["ref_video_audio_0"] == pytest.approx(124 / 24, abs=0.01)
+        assert "<Video 1> is the end of the previous part of this scene" in e["prompt"]
+    # the latent anchors are unchanged: frame 0 of s_lf, the 39-frame tail with sound, 39-frame overlaps
+    assert [g for g in calls["guides"] if g["frame_idx"] == 0] == [
+        {"frame_idx": 0, "frames": 1, "audio": False}, {"frame_idx": 0, "frames": 39, "audio": True},
+        {"frame_idx": 0, "frames": 39, "audio": True}, {"frame_idx": 0, "frames": 39, "audio": True}]
+
+    # the scene before is not rendered in this run: its take is there, so the pass is encoded first again
+    calls["encode"].clear()
+    first_sample.clear()
+    p["scenes"][1]["shots"][0]["text"] = "@Mara turns to the sea and waves"
+    assert render.Renderer(p, store, {}, {"action": "pending"}).run() == ["s_lf", "s_long"]
+    assert first_sample[0] == 1
+    e = _encodes_by_pass(calls, analyze(p, store))[("s_lf", 1)]
+    assert e["image_means"][0] == pytest.approx(float(one_last.mean()), abs=0.01)
+
+
+def test_continuation_switched_off_sends_what_v061_sent(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    from reelwright.analysis import analyze
+    p = _continuing_harbor(harbor, roots, on=False)
+    first_sample = []
+    real_sample = render._sample
+
+    def sample(*a, **k):
+        first_sample.append(len(calls["encode"]))
+        return real_sample(*a, **k)
+    monkeypatch.setattr(render, "_sample", sample)
+    assert render.Renderer(p, store, {}, {"action": "pending"}).run() == ["s_one", "s_lf", "s_long"]
+    assert first_sample[0] == len(calls["encode"]) == 5  # encode-first: every pass before sampling
+    enc = _encodes_by_pass(calls, analyze(p, store))
+    assert enc[("s_lf", 1)]["image_order"] == ["ref_image_0"]
+    assert enc[("s_long", 1)]["video_order"] == ["ref_video_0"] and enc[("s_long", 1)]["video_frames"][0] != 124
+    assert enc[("s_long", 2)]["video_order"] == ["ref_video_0"]
+    assert not any("<Video 1> is the end" in e["prompt"] or "the last frame of the scene before" in e["prompt"]
+                   for e in calls["encode"])

@@ -1,0 +1,3253 @@
+{
+ "about": "Reelwright v0.6.1 (GitHub 2b5d7ff) builds and cache keys of these projects, written by gen_v061_expect.py; v0.7.0 with continuity.name_continuation off must give the same",
+ "expect": [
+  {
+   "s_auto_off": {
+    "builds": [
+     {
+      "audios": [
+       {
+        "asset": null,
+        "cast": null,
+        "ref": null,
+        "song": {
+         "codes": [
+          "A3"
+         ],
+         "length": 5.1667,
+         "marker": "fully_copy",
+         "pieces": [
+          {
+           "asset": "a_song",
+           "at": 0.0,
+           "file": "reelwright/fx/song.wav",
+           "src_in": 29.5,
+           "src_out": 34.6667
+          }
+         ],
+         "start": 99.5
+        }
+       }
+      ],
+      "guides": [
+       {
+        "frame_idx": 0,
+        "source": "prev_scene_last",
+        "type": "image"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Mara in her grey coat, shown in <Picture 1> and <Picture 2>.\n\nsummary:\n[reference generation + keyframe completion + audio reuse]\n\nretention_analysis:\nN/A\n\ndetailed_description:\nNight. <Subject 1> closes the door.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P2": "<Picture 2>",
+       "@soundtrack": "<Audio 1>"
+      },
+      "tags": [
+       "reference generation",
+       "keyframe completion",
+       "audio reuse"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "876293b172516a51f3beb9a92442c66f72a013babaa571527e4f886fab1a310c",
+    "pass_keys": [
+     "76b577d942ca2baa41f403c2b478e5d5f0fc4fb0a695731a8551114041bea4a1"
+    ],
+    "status": "missing"
+   },
+   "s_full": {
+    "builds": [
+     {
+      "audios": [
+       {
+        "asset": null,
+        "cast": null,
+        "ref": null,
+        "song": {
+         "codes": [
+          "A3"
+         ],
+         "length": 5.1667,
+         "marker": "fully_copy",
+         "pieces": [
+          {
+           "asset": "a_song",
+           "at": 0.0,
+           "file": "reelwright/fx/song.wav",
+           "src_in": 20.1667,
+           "src_out": 25.3333
+          }
+         ],
+         "start": 90.1667
+        }
+       }
+      ],
+      "guides": [
+       {
+        "frame_idx": 0,
+        "source": "prev_scene_last",
+        "type": "image"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_front",
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_p0"
+        ],
+        "cast": null,
+        "ref": "r_q0"
+       },
+       {
+        "assets": [
+         "a_p1"
+        ],
+        "cast": null,
+        "ref": "r_q1"
+       },
+       {
+        "assets": [
+         "a_p2"
+        ],
+        "cast": null,
+        "ref": "r_q2"
+       },
+       {
+        "assets": [
+         "a_p3"
+        ],
+        "cast": null,
+        "ref": "r_q3"
+       },
+       {
+        "assets": [
+         "a_p4"
+        ],
+        "cast": null,
+        "ref": "r_q4"
+       },
+       {
+        "assets": [
+         "a_p5"
+        ],
+        "cast": null,
+        "ref": "r_q5"
+       },
+       {
+        "assets": [
+         "a_p6"
+        ],
+        "cast": null,
+        "ref": "r_q6"
+       },
+       {
+        "assets": [
+         "a_p7"
+        ],
+        "cast": null,
+        "ref": "r_q7"
+       },
+       {
+        "assets": [
+         "a_p8"
+        ],
+        "cast": null,
+        "ref": "r_q8"
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>.\n<Subject 2> is the content shown in <Picture 2>.\n<Subject 3> is the content shown in <Picture 3>.\n<Subject 4> is the content shown in <Picture 4>.\n<Subject 5> is the content shown in <Picture 5>.\n<Subject 6> is the content shown in <Picture 6>.\n<Subject 7> is the content shown in <Picture 7>.\n<Subject 8> is the content shown in <Picture 8>.\n<Subject 9> is the content shown in <Picture 9>.\n<Subject 10> is the content shown in <Picture 10>.\n<Audio 1> is the song this part of the film is cut to; it plays unchanged as the final soundtrack.\n\nsummary:\n[reference generation + keyframe completion + audio reuse] The target video shows <Subject 1>, <Subject 2>, <Subject 3>, <Subject 4>, <Subject 5>, <Subject 6>, <Subject 7>, <Subject 8>, <Subject 9>, and <Subject 10> and unfolds over 1 shot. The picture is cut to <Audio 1>: mouths, movement and cuts follow its vocals and beat.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n<Subject 2> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 3> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 4> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 5> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 6> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 7> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 8> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 9> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 10> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Audio 1>: fully_copy - the complete signal is reused as the final audio track; singing lip movements, gestures, motion and cuts follow its vocals and beat.\n\ndetailed_description:\n[Shot 1]\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       },
+       {
+        "asset": "a_p0",
+        "cast": null,
+        "number": 2,
+        "outfit": null,
+        "pictures": [
+         2
+        ],
+        "ref": "r_q0",
+        "videos": []
+       },
+       {
+        "asset": "a_p1",
+        "cast": null,
+        "number": 3,
+        "outfit": null,
+        "pictures": [
+         3
+        ],
+        "ref": "r_q1",
+        "videos": []
+       },
+       {
+        "asset": "a_p2",
+        "cast": null,
+        "number": 4,
+        "outfit": null,
+        "pictures": [
+         4
+        ],
+        "ref": "r_q2",
+        "videos": []
+       },
+       {
+        "asset": "a_p3",
+        "cast": null,
+        "number": 5,
+        "outfit": null,
+        "pictures": [
+         5
+        ],
+        "ref": "r_q3",
+        "videos": []
+       },
+       {
+        "asset": "a_p4",
+        "cast": null,
+        "number": 6,
+        "outfit": null,
+        "pictures": [
+         6
+        ],
+        "ref": "r_q4",
+        "videos": []
+       },
+       {
+        "asset": "a_p5",
+        "cast": null,
+        "number": 7,
+        "outfit": null,
+        "pictures": [
+         7
+        ],
+        "ref": "r_q5",
+        "videos": []
+       },
+       {
+        "asset": "a_p6",
+        "cast": null,
+        "number": 8,
+        "outfit": null,
+        "pictures": [
+         8
+        ],
+        "ref": "r_q6",
+        "videos": []
+       },
+       {
+        "asset": "a_p7",
+        "cast": null,
+        "number": 9,
+        "outfit": null,
+        "pictures": [
+         9
+        ],
+        "ref": "r_q7",
+        "videos": []
+       },
+       {
+        "asset": "a_p8",
+        "cast": null,
+        "number": 10,
+        "outfit": null,
+        "pictures": [
+         10
+        ],
+        "ref": "r_q8",
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P10": "<Subject 6>",
+       "@P11": "<Subject 7>",
+       "@P12": "<Subject 8>",
+       "@P13": "<Subject 9>",
+       "@P14": "<Subject 10>",
+       "@P2": "<Picture 1>",
+       "@P6": "<Subject 2>",
+       "@P7": "<Subject 3>",
+       "@P8": "<Subject 4>",
+       "@P9": "<Subject 5>",
+       "@soundtrack": "<Audio 1>"
+      },
+      "tags": [
+       "reference generation",
+       "keyframe completion",
+       "audio reuse"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "a2f5e4a1da4a17af82131452e7543c6f9b1f2bc0f956f844d7e1f2e4650a3a66",
+    "pass_keys": [
+     "b6edfd65999033d3270b4370ba765533bacb71818091734a658d89143a58aaab"
+    ],
+    "status": "missing"
+   },
+   "s_lf": {
+    "builds": [
+     {
+      "audios": [
+       {
+        "asset": "a_voice",
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "asset": "a_rain",
+        "cast": null,
+        "ref": "r_rain"
+       }
+      ],
+      "guides": [
+       {
+        "frame_idx": 0,
+        "source": "prev_scene_last",
+        "type": "image"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1> and <Picture 2>.\n<Audio 1> is the voice-timbre reference for <Subject 1> (S1).\n<Audio 2> is the audio reference.\n\nsummary:\n[reference generation + keyframe completion + audio reference] <Subject 1> finds the boat she waited for, continuing from the end of the previous shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n<Audio 1>: reference - the voice timbre and delivery of <Subject 1> follow <Audio 1> without copying the original signal.\n<Audio 2>: reference - sound is referenced without copying the original signal.\n\ndetailed_description:\nSoft dusk light.\n[Shot 1] A medium shot: <Subject 1> turns to the sea. <Subject 1> (S1) whispers, <d>[English] There you are.</d>\n[Shot 2] At 00:03.500, the shot cuts to a close-up of <Subject 1>'s eyes.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@A1": "<Audio 1>",
+       "@A2": "<Audio 2>",
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P2": "<Picture 2>"
+      },
+      "tags": [
+       "reference generation",
+       "keyframe completion",
+       "audio reference"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "2c9b0f99c063fc4c2f6d260a6cfa74ccbb2be6d44c9a1f2385db203b822e8aa4",
+    "pass_keys": [
+     "a706b02c3232a4c7d1787a2d3881f88f4f793a598845a8d75afdda363c230f15"
+    ],
+    "status": "missing"
+   },
+   "s_long": {
+    "builds": [
+     {
+      "audios": [],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 39,
+        "source": "prev_scene_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       }
+      ],
+      "issues": [
+       {
+        "level": "info",
+        "message": "@P3 guides another pass, so this pass names it in words: \u201cthe letter\u201d",
+        "tag": "@P3"
+       }
+      ],
+      "prompt": "subject_definitions:\n<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1> and <Picture 2>.\n<Video 1> is the camera-movement and pacing reference.\n<Audio 1> is the synchronized audio track of <Video 1>.\n\nsummary:\n[reference generation + video continuation + audio reference] <Subject 1> walks home as a storm builds, holding the letter, camera like <Video 1>.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - identity and appearance are retained.\n<Video 1> (camera movement and pacing): fully_preserved - camera movement and pacing are retained.\n<Audio 1>: reference - the soundtrack of <Video 1> is referenced without copying the original signal.\n\ndetailed_description:\n[Shot 1] A wide shot: Mara leaves the pier.\n[Shot 2] At 00:06.000, the shot cuts to a tracking shot: along the seawall.\n[Shot 3] At 00:14.375, the shot cuts to a medium shot: the rain starts.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P2": "<Picture 2>",
+       "@V1": "<Video 1>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation",
+       "audio reference"
+      ],
+      "unknown": [],
+      "videos": [
+       {
+        "asset": "a_dolly",
+        "audio_number": 1,
+        "ref": "r_dolly",
+        "soundtrack": true
+       }
+      ]
+     },
+     {
+      "audios": [
+       {
+        "asset": "a_voice",
+        "cast": "c_mara",
+        "ref": null
+       }
+      ],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 39,
+        "source": "prev_pass_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       }
+      ],
+      "issues": [
+       {
+        "level": "info",
+        "message": "@P3 guides another pass, so this pass names it in words: \u201cthe letter\u201d",
+        "tag": "@P3"
+       }
+      ],
+      "prompt": "subject_definitions:\n<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1> and <Picture 2>.\n<Video 1> is the camera-movement and pacing reference.\n<Audio 1> is the synchronized audio track of <Video 1>.\n<Audio 2> is the voice-timbre reference for <Subject 1> (S1).\n\nsummary:\n[reference generation + video continuation + audio reference] <Subject 1> walks home as a storm builds, holding the letter, camera like <Video 1>.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 2]): fully_preserved - identity and appearance are retained.\n<Video 1> (camera movement and pacing): fully_preserved - camera movement and pacing are retained.\n<Audio 1>: reference - the soundtrack of <Video 1> is referenced without copying the original signal.\n<Audio 2>: reference - the voice timbre and delivery of <Subject 1> follow <Audio 2> without copying the original signal.\n\ndetailed_description:\n[Shot 1] The shot continues seamlessly from the previous moment. A tracking shot: along the seawall.\n[Shot 2] At 00:00.917, the shot cuts to a medium shot: the rain starts. <Subject 1> (S1) mutters, <d>[English] Almost home.</d>\n[Shot 3] At 00:08.542, the shot cuts to a wide shot: she reaches the door.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@A1": "<Audio 2>",
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P2": "<Picture 2>",
+       "@V1": "<Video 1>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation",
+       "audio reference"
+      ],
+      "unknown": [],
+      "videos": [
+       {
+        "asset": "a_dolly",
+        "audio_number": 1,
+        "ref": "r_dolly",
+        "soundtrack": true
+       }
+      ]
+     },
+     {
+      "audios": [],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 39,
+        "source": "prev_pass_tail",
+        "type": "clip"
+       },
+       {
+        "asset": "a_letter",
+        "audio": false,
+        "frame_idx": 73,
+        "source": "asset",
+        "type": "image"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_letter"
+        ],
+        "cast": null,
+        "ref": "r_letter"
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1> and <Picture 2>.\n<Picture 3> is the keyframe of [Shot 2] at 00:03.042.\n<Video 1> is the camera-movement and pacing reference.\n<Audio 1> is the synchronized audio track of <Video 1>.\n\nsummary:\n[reference generation + keyframe completion + video continuation + audio reference] <Subject 1> walks home as a storm builds, holding <Picture 3>, camera like <Video 1>.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - identity and appearance are retained.\n<Picture 3> ([Shot 2] keyframe at 00:03.042): fully_preserved - composition is retained.\n<Video 1> (camera movement and pacing): fully_preserved - camera movement and pacing are retained.\n<Audio 1>: reference - the soundtrack of <Video 1> is referenced without copying the original signal.\n\ndetailed_description:\n[Shot 1] The shot continues seamlessly from the previous moment. A medium shot: the rain starts.\n[Shot 2] At 00:00.042, the shot cuts to a wide shot: she reaches the door.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P2": "<Picture 2>",
+       "@P3": "<Picture 3>",
+       "@V1": "<Video 1>"
+      },
+      "tags": [
+       "reference generation",
+       "keyframe completion",
+       "video continuation",
+       "audio reference"
+      ],
+      "unknown": [],
+      "videos": [
+       {
+        "asset": "a_dolly",
+        "audio_number": 1,
+        "ref": "r_dolly",
+        "soundtrack": true
+       }
+      ]
+     }
+    ],
+    "key": "5bc8c78ff690954e80bdb974086c5f00333b36d67979196f932b1bb09a952ca9",
+    "pass_keys": [
+     "6fc7e14414b649dfc399ac978f82eb6aa3a785db9d77c9b065bdcfca61f5c7c7",
+     "60de567610395383b45740b1deef5e2ce4949195ff6cf2edcdc6348a1f4d969c",
+     "284061ac2d4f538f58bd3cf49122ab339eb40ca6072698274d9d1757fd4353bc"
+    ],
+    "status": "missing"
+   },
+   "s_many": {
+    "builds": [
+     {
+      "audios": [
+       {
+        "asset": null,
+        "cast": null,
+        "ref": null,
+        "song": {
+         "codes": [
+          "A3"
+         ],
+         "length": 5.1667,
+         "marker": "fully_copy",
+         "pieces": [
+          {
+           "asset": "a_song",
+           "at": 0.0,
+           "file": "reelwright/fx/song.wav",
+           "src_in": 15.2083,
+           "src_out": 20.375
+          }
+         ],
+         "start": 85.2083
+        }
+       }
+      ],
+      "guides": [
+       {
+        "frame_idx": 0,
+        "source": "prev_scene_last",
+        "type": "image"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_p0"
+        ],
+        "cast": null,
+        "ref": "r_p0"
+       },
+       {
+        "assets": [
+         "a_p1"
+        ],
+        "cast": null,
+        "ref": "r_p1"
+       },
+       {
+        "assets": [
+         "a_p2"
+        ],
+        "cast": null,
+        "ref": "r_p2"
+       },
+       {
+        "assets": [
+         "a_p3"
+        ],
+        "cast": null,
+        "ref": "r_p3"
+       },
+       {
+        "assets": [
+         "a_p4"
+        ],
+        "cast": null,
+        "ref": "r_p4"
+       },
+       {
+        "assets": [
+         "a_p5"
+        ],
+        "cast": null,
+        "ref": "r_p5"
+       },
+       {
+        "assets": [
+         "a_p6"
+        ],
+        "cast": null,
+        "ref": "r_p6"
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1> and <Picture 2>.\n<Subject 2> is the content shown in <Picture 3>.\n<Subject 3> is the content shown in <Picture 4>.\n<Subject 4> is the content shown in <Picture 5>.\n<Subject 5> is the content shown in <Picture 6>.\n<Subject 6> is the content shown in <Picture 7>.\n<Subject 7> is the content shown in <Picture 8>.\n<Subject 8> is the content shown in <Picture 9>.\n<Audio 1> is the song this part of the film is cut to; it plays unchanged as the final soundtrack.\n\nsummary:\n[reference generation + keyframe completion + audio reuse] The target video shows <Subject 1>, <Subject 2>, <Subject 3>, <Subject 4>, <Subject 5>, <Subject 6>, <Subject 7>, and <Subject 8> and unfolds over 1 shot. The picture is cut to <Audio 1>: mouths, movement and cuts follow its vocals and beat.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n<Subject 2> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 3> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 4> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 5> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 6> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 7> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Subject 8> (appears in [Shot 1]): fully_preserved - overall look is retained.\n<Audio 1>: fully_copy - the complete signal is reused as the final audio track; singing lip movements, gestures, motion and cuts follow its vocals and beat.\n\ndetailed_description:\n[Shot 1]\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       },
+       {
+        "asset": "a_p0",
+        "cast": null,
+        "number": 2,
+        "outfit": null,
+        "pictures": [
+         3
+        ],
+        "ref": "r_p0",
+        "videos": []
+       },
+       {
+        "asset": "a_p1",
+        "cast": null,
+        "number": 3,
+        "outfit": null,
+        "pictures": [
+         4
+        ],
+        "ref": "r_p1",
+        "videos": []
+       },
+       {
+        "asset": "a_p2",
+        "cast": null,
+        "number": 4,
+        "outfit": null,
+        "pictures": [
+         5
+        ],
+        "ref": "r_p2",
+        "videos": []
+       },
+       {
+        "asset": "a_p3",
+        "cast": null,
+        "number": 5,
+        "outfit": null,
+        "pictures": [
+         6
+        ],
+        "ref": "r_p3",
+        "videos": []
+       },
+       {
+        "asset": "a_p4",
+        "cast": null,
+        "number": 6,
+        "outfit": null,
+        "pictures": [
+         7
+        ],
+        "ref": "r_p4",
+        "videos": []
+       },
+       {
+        "asset": "a_p5",
+        "cast": null,
+        "number": 7,
+        "outfit": null,
+        "pictures": [
+         8
+        ],
+        "ref": "r_p5",
+        "videos": []
+       },
+       {
+        "asset": "a_p6",
+        "cast": null,
+        "number": 8,
+        "outfit": null,
+        "pictures": [
+         9
+        ],
+        "ref": "r_p6",
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P10": "<Subject 6>",
+       "@P11": "<Subject 7>",
+       "@P12": "<Subject 8>",
+       "@P2": "<Picture 2>",
+       "@P6": "<Subject 2>",
+       "@P7": "<Subject 3>",
+       "@P8": "<Subject 4>",
+       "@P9": "<Subject 5>",
+       "@soundtrack": "<Audio 1>"
+      },
+      "tags": [
+       "reference generation",
+       "keyframe completion",
+       "audio reuse"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "0be9def59ce0d296d39a92f8d69666e86449dbe1fbaebf5f2d495b7418eb962d",
+    "pass_keys": [
+     "4dc563d54fe9a258a6869b2f6cb73604cab198408281d3735158d879d93e2e15"
+    ],
+    "status": "missing"
+   },
+   "s_one": {
+    "builds": [
+     {
+      "audios": [
+       {
+        "asset": "a_voice",
+        "cast": "c_mara",
+        "ref": null
+       }
+      ],
+      "guides": [],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_pier"
+        ],
+        "cast": null,
+        "ref": "r_pier"
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1> and <Picture 2>.\n<Subject 2> is The wooden pier at dusk, shown in <Picture 3>.\n<Audio 1> is the voice-timbre reference for <Subject 1> (S1).\n\nsummary:\n[reference generation + audio reference] The target video shows <Subject 1> and <Subject 2> and unfolds over 1 shot. <Audio 1> provides the voice timbre.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n<Subject 2> (appears in [Shot 1]): fully_preserved - layout, lighting, and materials are retained.\n<Audio 1>: reference - the voice timbre and delivery of <Subject 1> follow <Audio 1> without copying the original signal.\n\ndetailed_description:\n[Shot 1] A wide shot: boats rock in the harbor, <Subject 1> watches. <Subject 1> (S1) says, <d>[English] Not tonight.</d>\n\noverall_soundscape:\nWaves and gulls.\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       },
+       {
+        "asset": "a_pier",
+        "cast": null,
+        "number": 2,
+        "outfit": null,
+        "pictures": [
+         3
+        ],
+        "ref": "r_pier",
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@A1": "<Audio 1>",
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P2": "<Picture 2>",
+       "@P4": "<Subject 2>"
+      },
+      "tags": [
+       "reference generation",
+       "audio reference"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "be01242bde662bb9937edd4ebe1044f9f602b1bf2cfcd6f392d4f35f979d661b",
+    "pass_keys": [
+     "9f84facb7505ecc2de686e830ce6e52be0ad571d00aca8890802c6ef3e26029a"
+    ],
+    "status": "missing"
+   },
+   "s_over": {
+    "builds": [
+     {
+      "audios": [
+       {
+        "asset": "a_tvoice",
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 39,
+        "source": "prev_scene_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "[reference generation + video continuation + audio reference] <Subject 1> meets <Subject 2> in the hallway.",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       },
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 2,
+        "outfit": null,
+        "pictures": [
+         3
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@A4": "<Audio 1>",
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P2": "<Picture 2>",
+       "@P5": "<Picture 3>",
+       "@Tom O'Brien": "<Subject 2>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation",
+       "audio reference"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "30c0acf1bd19be04ba7b8cf018c634942850610eede9bffd8a14f4db58d24cc0",
+    "pass_keys": [
+     "1f50dff3634dc0333181afaa184206a20c03508dc2ff6634a2c052bd00bcfa7c"
+    ],
+    "status": "missing"
+   },
+   "s_raw": {
+    "builds": [
+     {
+      "audios": [],
+      "guides": [
+       {
+        "frame_idx": 0,
+        "source": "prev_scene_last",
+        "type": "image"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_pier"
+        ],
+        "cast": null,
+        "ref": "r_pier2"
+       }
+      ],
+      "issues": [],
+      "prompt": "[reference generation + keyframe completion] <Subject 1> steps inside from the end of the previous shot; the pier <Subject 2> behind her.",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       },
+       {
+        "asset": "a_pier",
+        "cast": null,
+        "number": 2,
+        "outfit": null,
+        "pictures": [
+         3
+        ],
+        "ref": "r_pier2",
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P2": "<Picture 2>",
+       "@P4": "<Subject 2>"
+      },
+      "tags": [
+       "reference generation",
+       "keyframe completion"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "374af203dfb82256d9c6693e102b46ce38a175af3b33c6cd05ca062ba6ac392d",
+    "pass_keys": [
+     "49a7d50d376d18c4218a440e66d02a71cc3436416cfd9eaec3b092cf7a39b69b"
+    ],
+    "status": "missing"
+   },
+   "s_seams": {
+    "builds": [
+     {
+      "audios": [
+       {
+        "asset": "a_rain",
+        "cast": null,
+        "ref": "r_rain2"
+       }
+      ],
+      "guides": [],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       }
+      ],
+      "issues": [
+       {
+        "level": "info",
+        "message": "@V2 guides another pass, so this pass names it in words: \u201cthe door clip\u201d",
+        "tag": "@V2"
+       }
+      ],
+      "prompt": "subject_definitions:\n<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1> and <Picture 2>.\n<Audio 1> is the audio reference.\n\nsummary:\n[reference generation + audio reference] The target video shows <Subject 1> and unfolds over 2 shots.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 2]): fully_preserved - identity and appearance are retained.\n<Audio 1>: reference - sound is referenced without copying the original signal.\n\ndetailed_description:\n[Shot 1] Rain lashes the deck.\n[Shot 2] At 00:12.000, the shot cuts to <Subject 1> at the rail.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@A2": "<Audio 1>",
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P2": "<Picture 2>"
+      },
+      "tags": [
+       "reference generation",
+       "audio reference"
+      ],
+      "unknown": [],
+      "videos": []
+     },
+     {
+      "audios": [
+       {
+        "asset": null,
+        "cast": null,
+        "ref": null,
+        "song": {
+         "codes": [
+          "A3"
+         ],
+         "length": 9.4167,
+         "marker": "fully_copy",
+         "pieces": [
+          {
+           "asset": "a_song",
+           "at": 1.2917,
+           "file": "reelwright/fx/song.wav",
+           "src_in": 0.0,
+           "src_out": 8.125
+          }
+         ],
+         "start": 68.7083
+        }
+       },
+       {
+        "asset": "a_rain",
+        "cast": null,
+        "ref": "r_rain2"
+       }
+      ],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 39,
+        "source": "prev_pass_tail",
+        "type": "clip"
+       },
+       {
+        "asset": "a_clip",
+        "audio": false,
+        "frame_idx": 157,
+        "source": "asset",
+        "type": "clip"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1> and <Picture 2>.\n<Video 1> is the clip placed in [Shot 1] at 00:06.542; the target video passes through its frames.\n<Audio 1> is the song this part of the film is cut to; it plays unchanged as the final soundtrack.\n<Audio 2> is the audio reference.\n\nsummary:\n[reference generation + video continuation + audio reuse + audio reference] The target video shows <Subject 1> and unfolds over 1 shot. The picture is cut to <Audio 1>: mouths, movement and cuts follow its vocals and beat.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n<Video 1> ([Shot 1] clip at 00:06.542): fully_preserved - its frames are kept as they are.\n<Audio 1>: fully_copy - the complete signal is reused as the final audio track; singing lip movements, gestures, motion and cuts follow its vocals and beat.\n<Audio 2>: reference - sound is referenced without copying the original signal.\n\ndetailed_description:\n[Shot 1] The shot continues seamlessly from the previous moment. <Subject 1> at the rail.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@A2": "<Audio 2>",
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P2": "<Picture 2>",
+       "@V2": "<Video 1>",
+       "@soundtrack": "<Audio 1>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation",
+       "audio reuse",
+       "audio reference"
+      ],
+      "unknown": [],
+      "videos": [
+       {
+        "asset": "a_clip",
+        "guide": true,
+        "ref": "r_door",
+        "soundtrack": false
+       }
+      ]
+     },
+     {
+      "audios": [
+       {
+        "asset": null,
+        "cast": null,
+        "ref": null,
+        "song": {
+         "codes": [
+          "A3"
+         ],
+         "length": 9.4167,
+         "marker": "fully_copy",
+         "pieces": [
+          {
+           "asset": "a_song",
+           "at": 0.0,
+           "file": "reelwright/fx/song.wav",
+           "src_in": 6.5,
+           "src_out": 15.9167
+          }
+         ],
+         "start": 76.5
+        }
+       },
+       {
+        "asset": "a_rain",
+        "cast": null,
+        "ref": "r_rain2"
+       }
+      ],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 39,
+        "source": "prev_pass_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_front"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       },
+       {
+        "assets": [
+         "a_side"
+        ],
+        "cast": "c_mara",
+        "ref": null
+       }
+      ],
+      "issues": [
+       {
+        "level": "info",
+        "message": "@V2 guides another pass, so this pass names it in words: \u201cthe door clip\u201d",
+        "tag": "@V2"
+       }
+      ],
+      "prompt": "subject_definitions:\n<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1> and <Picture 2>.\n<Audio 1> is the song this part of the film is cut to; it plays unchanged as the final soundtrack.\n<Audio 2> is the audio reference.\n\nsummary:\n[reference generation + video continuation + audio reuse + audio reference] The target video shows <Subject 1> and unfolds over 1 shot. The picture is cut to <Audio 1>: mouths, movement and cuts follow its vocals and beat.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n<Audio 1>: fully_copy - the complete signal is reused as the final audio track; singing lip movements, gestures, motion and cuts follow its vocals and beat.\n<Audio 2>: reference - sound is referenced without copying the original signal.\n\ndetailed_description:\n[Shot 1] The shot continues seamlessly from the previous moment. <Subject 1> at the rail.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_mara",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1,
+         2
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@A2": "<Audio 2>",
+       "@Mara": "<Subject 1>",
+       "@P1": "<Picture 1>",
+       "@P2": "<Picture 2>",
+       "@soundtrack": "<Audio 1>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation",
+       "audio reuse",
+       "audio reference"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "ce16c2300e2913e53893e2b09cf1fc75d2cf899da545a04c0b69a79ec56dc348",
+    "pass_keys": [
+     "b9314f61f4a0613858f59dc1e1746541bbe1b6567c4b505f6692a2274f960e51",
+     "89997a4e3b67d5849e0b1a8df12f43ea3af69a76608bbb452772e997a488d32a",
+     "ee2ec7d5fa60aaf09494dc9860a714f4fa42d40bfecac68995a260dac9e5ed0e"
+    ],
+    "status": "missing"
+   },
+   "s_short": {
+    "builds": [
+     {
+      "audios": [],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 22,
+        "source": "prev_scene_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [],
+      "issues": [],
+      "prompt": "subject_definitions:\nN/A\n\nsummary:\n[video continuation] The target video unfolds over 1 shot.\n\nretention_analysis:\nN/A\n\ndetailed_description:\n[Shot 1] A hand on the door, the end of the previous shot.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [],
+      "tag_map": {},
+      "tags": [
+       "video continuation"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "098bf728f7b29516130ffe58b29b7148113a66b06cfda4cca4b85f1189bf3e8b",
+    "pass_keys": [
+     "231e8147563f8c23e6385ddaf92d5b3109c90c7f84cccb64b52fe4531718709b"
+    ],
+    "status": "missing"
+   },
+   "s_vid3": {
+    "builds": [
+     {
+      "audios": [
+       {
+        "asset": null,
+        "cast": null,
+        "ref": null,
+        "song": {
+         "codes": [
+          "A3"
+         ],
+         "length": 6.5833,
+         "marker": "fully_copy",
+         "pieces": [
+          {
+           "asset": "a_song",
+           "at": 0.0,
+           "file": "reelwright/fx/song.wav",
+           "src_in": 23.5417,
+           "src_out": 30.125
+          }
+         ],
+         "start": 93.5417
+        }
+       }
+      ],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 39,
+        "source": "prev_scene_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Video 1> is the camera-movement and pacing reference.\n<Video 2> is the camera-movement and pacing reference.\n<Video 3> is the camera-movement and pacing reference.\n<Audio 1> is the synchronized audio track of <Video 1>.\n<Audio 2> is the song this part of the film is cut to; it plays unchanged as the final soundtrack.\n\nsummary:\n[reference generation + video continuation + audio reuse + audio reference] The target video unfolds over 1 shot. The picture is cut to <Audio 2>: mouths, movement and cuts follow its vocals and beat.\n\nretention_analysis:\n<Video 1> (camera movement and pacing): fully_preserved - camera movement and pacing are retained.\n<Video 2> (camera movement and pacing): fully_preserved - camera movement and pacing are retained.\n<Video 3> (camera movement and pacing): fully_preserved - camera movement and pacing are retained.\n<Audio 1>: reference - the soundtrack of <Video 1> is referenced without copying the original signal.\n<Audio 2>: fully_copy - the complete signal is reused as the final audio track; singing lip movements, gestures, motion and cuts follow its vocals and beat.\n\ndetailed_description:\n[Shot 1]\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [],
+      "tag_map": {
+       "@V1": "<Video 1>",
+       "@V2": "<Video 2>",
+       "@soundtrack": "<Audio 2>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation",
+       "audio reuse",
+       "audio reference"
+      ],
+      "unknown": [],
+      "videos": [
+       {
+        "asset": "a_dolly",
+        "audio_number": 1,
+        "ref": "r_v1",
+        "soundtrack": true
+       },
+       {
+        "asset": "a_clip",
+        "ref": "r_v2",
+        "soundtrack": false
+       },
+       {
+        "asset": "a_dolly",
+        "ref": "r_v3",
+        "soundtrack": false
+       }
+      ]
+     }
+    ],
+    "key": "e7b3b4033fd2709050736c4ba3c5e44eba89cd9b2c104c6e49c086e2a4593f1b",
+    "pass_keys": [
+     "88a102cb88c49fa04e06870951b494239d27300d7298749aa66430fc9e1607b8"
+    ],
+    "status": "missing"
+   }
+  },
+  {
+   "s_c0": {
+    "builds": [
+     {
+      "audios": [],
+      "guides": [],
+      "images": [
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Tom O'Brien, shown in <Picture 1>.\n\nsummary:\n[reference generation] The target video shows <Subject 1> and unfolds over 1 shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n\ndetailed_description:\n[Shot 1] <Subject 1> keeps walking.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@P5": "<Picture 1>",
+       "@Tom O'Brien": "<Subject 1>"
+      },
+      "tags": [
+       "reference generation"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "119e6f612e532f64af5760a8b6083f5f3e1071912eb8082721dd319e710f925d",
+    "pass_keys": [
+     "22a27732e39b0598e9a317046978167481e100f17899db0fb8fd708e38d609a2"
+    ],
+    "status": "missing"
+   },
+   "s_c1": {
+    "builds": [
+     {
+      "audios": [],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 22,
+        "source": "prev_scene_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Tom O'Brien, shown in <Picture 1>.\n\nsummary:\n[reference generation + video continuation] The target video shows <Subject 1> and unfolds over 1 shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n\ndetailed_description:\n[Shot 1] <Subject 1> keeps walking.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@P5": "<Picture 1>",
+       "@Tom O'Brien": "<Subject 1>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "aadec532cca5f4c6afa6b1c8120eeb2972c92b3480fb041822875b28658baad3",
+    "pass_keys": [
+     "c02d92f55e9e70e9e2d718a68a4d055b6a1af068998caa7290df00c556b9f812"
+    ],
+    "status": "missing"
+   },
+   "s_c2": {
+    "builds": [
+     {
+      "audios": [],
+      "guides": [
+       {
+        "frame_idx": 0,
+        "source": "prev_scene_last",
+        "type": "image"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Tom O'Brien, shown in <Picture 1>.\n\nsummary:\n[reference generation + keyframe completion] The target video shows <Subject 1> and unfolds over 1 shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n\ndetailed_description:\n[Shot 1] <Subject 1> keeps walking.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@P5": "<Picture 1>",
+       "@Tom O'Brien": "<Subject 1>"
+      },
+      "tags": [
+       "reference generation",
+       "keyframe completion"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "8ce5c022ae9170908241285b30e951eeccdd66efcdcbc64e5d9b77339b1575cc",
+    "pass_keys": [
+     "2101cbeda94bac8169d93200a718b6c1eae49d860f36f07f866b0e88125e4423"
+    ],
+    "status": "missing"
+   },
+   "s_c3": {
+    "builds": [
+     {
+      "audios": [],
+      "guides": [
+       {
+        "frame_idx": 0,
+        "source": "prev_scene_last",
+        "type": "image"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Tom O'Brien, shown in <Picture 1>.\n\nsummary:\n[reference generation + keyframe completion] The target video shows <Subject 1> and unfolds over 1 shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n\ndetailed_description:\n[Shot 1] <Subject 1> keeps walking.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@P5": "<Picture 1>",
+       "@Tom O'Brien": "<Subject 1>"
+      },
+      "tags": [
+       "reference generation",
+       "keyframe completion"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "171bffa326414b02aed44fc30f4aeb161145cb0260419606f17428ef3d5442ff",
+    "pass_keys": [
+     "67856d80d0605e16228352843d8f77ffb7fc38b21a8d2095a49a09a4a873de7d"
+    ],
+    "status": "missing"
+   },
+   "s_c4": {
+    "builds": [
+     {
+      "audios": [],
+      "guides": [
+       {
+        "frame_idx": 0,
+        "source": "prev_scene_last",
+        "type": "image"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Tom O'Brien, shown in <Picture 1>.\n\nsummary:\n[reference generation + keyframe completion] The target video shows <Subject 1> and unfolds over 1 shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n\ndetailed_description:\n[Shot 1] <Subject 1> keeps walking.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@P5": "<Picture 1>",
+       "@Tom O'Brien": "<Subject 1>"
+      },
+      "tags": [
+       "reference generation",
+       "keyframe completion"
+      ],
+      "unknown": [],
+      "videos": []
+     },
+     {
+      "audios": [],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 56,
+        "source": "prev_pass_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Tom O'Brien, shown in <Picture 1>.\n\nsummary:\n[reference generation + video continuation] The target video shows <Subject 1> and unfolds over 1 shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n\ndetailed_description:\n[Shot 1] The shot continues seamlessly from the previous moment. <Subject 1> keeps walking.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@P5": "<Picture 1>",
+       "@Tom O'Brien": "<Subject 1>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation"
+      ],
+      "unknown": [],
+      "videos": []
+     },
+     {
+      "audios": [],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 56,
+        "source": "prev_pass_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Tom O'Brien, shown in <Picture 1>.\n\nsummary:\n[reference generation + video continuation] The target video shows <Subject 1> and unfolds over 1 shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n\ndetailed_description:\n[Shot 1] The shot continues seamlessly from the previous moment. <Subject 1> keeps walking.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@P5": "<Picture 1>",
+       "@Tom O'Brien": "<Subject 1>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "0949d710d06b870587a428b909405a1bbb8e06e4db0ec0094850887e22140829",
+    "pass_keys": [
+     "61a40d19c0e36e786ac288210bf90293c55aba66ddf802d4805fb9023e1d60ed",
+     "b23a6611c99c8cc678d065c4cc054cc11f876f550e44988646101a2159d2673e",
+     "49faa25d845d48610fe568f7f4b3538bf41251fd262424bd70ea642093c07562"
+    ],
+    "status": "missing"
+   },
+   "s_c5": {
+    "builds": [
+     {
+      "audios": [],
+      "guides": [],
+      "images": [
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Tom O'Brien, shown in <Picture 1>.\n\nsummary:\n[reference generation] The target video shows <Subject 1> and unfolds over 1 shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n\ndetailed_description:\n[Shot 1] <Subject 1> keeps walking.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@P5": "<Picture 1>",
+       "@Tom O'Brien": "<Subject 1>"
+      },
+      "tags": [
+       "reference generation"
+      ],
+      "unknown": [],
+      "videos": []
+     },
+     {
+      "audios": [],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 56,
+        "source": "prev_pass_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Tom O'Brien, shown in <Picture 1>.\n\nsummary:\n[reference generation + video continuation] The target video shows <Subject 1> and unfolds over 1 shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n\ndetailed_description:\n[Shot 1] The shot continues seamlessly from the previous moment. <Subject 1> keeps walking.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@P5": "<Picture 1>",
+       "@Tom O'Brien": "<Subject 1>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation"
+      ],
+      "unknown": [],
+      "videos": []
+     },
+     {
+      "audios": [],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 56,
+        "source": "prev_pass_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Tom O'Brien, shown in <Picture 1>.\n\nsummary:\n[reference generation + video continuation] The target video shows <Subject 1> and unfolds over 1 shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n\ndetailed_description:\n[Shot 1] The shot continues seamlessly from the previous moment. <Subject 1> keeps walking.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@P5": "<Picture 1>",
+       "@Tom O'Brien": "<Subject 1>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "dfc4016b17fc3b7f23eff4f581c73fe55d87f713d7798b47bd9889fd6e62fddd",
+    "pass_keys": [
+     "b6410f6838b7a80761b285e5be4995d8397a32db05d42255409b00be40c20671",
+     "80da551ebdd3814e03fd8cb0ccd2b07c997247c05743ee52c6d49c88b0784215",
+     "8a30e60bd3078eb74ad47c092ef6d1dd501de12a05d9ef51b2448f1ce1bed85c"
+    ],
+    "status": "missing"
+   },
+   "s_c6": {
+    "builds": [
+     {
+      "audios": [],
+      "guides": [
+       {
+        "audio": true,
+        "frame_idx": 0,
+        "frames": 90,
+        "source": "prev_scene_tail",
+        "type": "clip"
+       }
+      ],
+      "images": [
+       {
+        "assets": [
+         "a_tom"
+        ],
+        "cast": "c_tom",
+        "ref": null
+       }
+      ],
+      "issues": [],
+      "prompt": "subject_definitions:\n<Subject 1> is Tom O'Brien, shown in <Picture 1>.\n\nsummary:\n[reference generation + video continuation] The target video shows <Subject 1> and unfolds over 1 shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.\n\ndetailed_description:\n[Shot 1] <Subject 1> keeps walking.\n\noverall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A",
+      "subjects": [
+       {
+        "asset": null,
+        "cast": "c_tom",
+        "number": 1,
+        "outfit": null,
+        "pictures": [
+         1
+        ],
+        "ref": null,
+        "videos": []
+       }
+      ],
+      "tag_map": {
+       "@P5": "<Picture 1>",
+       "@Tom O'Brien": "<Subject 1>"
+      },
+      "tags": [
+       "reference generation",
+       "video continuation"
+      ],
+      "unknown": [],
+      "videos": []
+     }
+    ],
+    "key": "0efbfa32c99257dbb54b5bcab5cccf202e2edd0a67ba5c44597e2d8aaa0b5483",
+    "pass_keys": [
+     "a06f654b86dd6b3f1b6e885320536c2f4193e64d3b4ad63b4fde8e8f13515657"
+    ],
+    "status": "missing"
+   }
+  }
+ ],
+ "projects": [
+  {
+   "assets": [
+    {
+     "description": "A woman with auburn hair in a grey coat",
+     "file": "reelwright/fx/front.png",
+     "id": "a_front",
+     "kind": "image",
+     "name": "Mara front"
+    },
+    {
+     "file": "reelwright/fx/side.png",
+     "id": "a_side",
+     "kind": "image",
+     "name": "Mara side"
+    },
+    {
+     "duration": 4.2,
+     "file": "reelwright/fx/voice.wav",
+     "id": "a_voice",
+     "kind": "audio",
+     "name": "voice"
+    },
+    {
+     "file": "reelwright/fx/letter.png",
+     "id": "a_letter",
+     "kind": "image",
+     "name": "letter"
+    },
+    {
+     "duration": 4.2,
+     "file": "reelwright/fx/dolly.mp4",
+     "id": "a_dolly",
+     "kind": "video",
+     "name": "dolly"
+    },
+    {
+     "duration": 6.0,
+     "file": "reelwright/fx/rain.wav",
+     "id": "a_rain",
+     "kind": "audio",
+     "name": "rain"
+    },
+    {
+     "duration": 40.0,
+     "file": "reelwright/fx/song.wav",
+     "id": "a_song",
+     "kind": "audio",
+     "name": "song"
+    },
+    {
+     "category": "location",
+     "description": "The wooden pier at dusk",
+     "file": "reelwright/fx/pier.png",
+     "id": "a_pier",
+     "kind": "image",
+     "name": "pier"
+    },
+    {
+     "duration": 1.0,
+     "file": "reelwright/fx/door.mp4",
+     "id": "a_clip",
+     "kind": "video",
+     "name": "door clip"
+    },
+    {
+     "file": "reelwright/fx/tom.png",
+     "id": "a_tom",
+     "kind": "image",
+     "name": "Tom"
+    },
+    {
+     "duration": 3.0,
+     "file": "reelwright/fx/tvoice.wav",
+     "id": "a_tvoice",
+     "kind": "audio",
+     "name": "tom voice"
+    },
+    {
+     "file": "reelwright/fx/p0.png",
+     "id": "a_p0",
+     "kind": "image",
+     "name": "pic 0"
+    },
+    {
+     "file": "reelwright/fx/p1.png",
+     "id": "a_p1",
+     "kind": "image",
+     "name": "pic 1"
+    },
+    {
+     "file": "reelwright/fx/p2.png",
+     "id": "a_p2",
+     "kind": "image",
+     "name": "pic 2"
+    },
+    {
+     "file": "reelwright/fx/p3.png",
+     "id": "a_p3",
+     "kind": "image",
+     "name": "pic 3"
+    },
+    {
+     "file": "reelwright/fx/p4.png",
+     "id": "a_p4",
+     "kind": "image",
+     "name": "pic 4"
+    },
+    {
+     "file": "reelwright/fx/p5.png",
+     "id": "a_p5",
+     "kind": "image",
+     "name": "pic 5"
+    },
+    {
+     "file": "reelwright/fx/p6.png",
+     "id": "a_p6",
+     "kind": "image",
+     "name": "pic 6"
+    },
+    {
+     "file": "reelwright/fx/p7.png",
+     "id": "a_p7",
+     "kind": "image",
+     "name": "pic 7"
+    },
+    {
+     "file": "reelwright/fx/p8.png",
+     "id": "a_p8",
+     "kind": "image",
+     "name": "pic 8"
+    }
+   ],
+   "camera_presets": [
+    {
+     "id": "k_5cec3ea8",
+     "name": "Slow push-in",
+     "text": "slow push-in toward the subject"
+    },
+    {
+     "id": "k_0837d612",
+     "name": "Locked-off",
+     "text": "static locked-off camera"
+    },
+    {
+     "id": "k_e4d44659",
+     "name": "Crane up",
+     "text": "slow crane up revealing the scene"
+    },
+    {
+     "id": "k_63fa462a",
+     "name": "Handheld pan \u2192",
+     "text": "handheld camera panning right"
+    },
+    {
+     "id": "k_6f43c4ce",
+     "name": "Rack focus",
+     "text": "rack focus from foreground to background"
+    },
+    {
+     "id": "k_c341dbed",
+     "name": "Macro",
+     "text": "macro close-up, shallow depth of field"
+    }
+   ],
+   "cast": [
+    {
+     "anchors": [
+      "a_front",
+      "a_side"
+     ],
+     "description": "woman, early 30s, auburn hair",
+     "id": "c_mara",
+     "name": "Mara",
+     "pack_sheet": "auto",
+     "speaker": "S1",
+     "voice": "a_voice"
+    },
+    {
+     "anchors": [
+      "a_tom"
+     ],
+     "id": "c_tom",
+     "name": "Tom O'Brien",
+     "speaker": "S2",
+     "voice": "a_tvoice"
+    }
+   ],
+   "global": {
+    "continuity": {
+     "face_check": false,
+     "face_threshold": 0.8,
+     "on_drift": "flag",
+     "reanchor_after": 10
+    },
+    "defaults": {
+     "duration": 8.0,
+     "language": "English",
+     "overlap_frames": 39,
+     "start_mode": "last_frame"
+    },
+    "draft": {
+     "lora": "",
+     "lora_strength": 1.0,
+     "scale": 0.5,
+     "steps": 8
+    },
+    "llm": {
+     "base_url": "",
+     "context_tokens": 0,
+     "import_guides": false,
+     "import_max_tokens": 16384,
+     "import_part_chars": 3000,
+     "import_thinking": "same",
+     "include_guides": true,
+     "max_tokens": 2048,
+     "max_wait_s": 900,
+     "model": "",
+     "preset": "h3_ref2va",
+     "retries": 2,
+     "temperature": 0.4,
+     "thinking": "auto",
+     "timeout_s": 120
+    },
+    "long": {
+     "crossfade_frames": 12,
+     "cut_snap_seconds": 2.0,
+     "max_pass_frames": 362,
+     "overlap_frames": 39,
+     "seam_mode": "overlap"
+    },
+    "loras": [],
+    "memory": {
+     "encode_first": true,
+     "group_by_lora": true,
+     "policy": "free_cache"
+    },
+    "merge": {
+     "audio_fade_frames": 6,
+     "auto_after_render": true,
+     "bundle": false,
+     "chapters": true,
+     "codec": "h264",
+     "color_match": false,
+     "color_ref_scene": "",
+     "crf": 16,
+     "fcpxml": true,
+     "hard_cut": "cut",
+     "loudness": -16.0,
+     "missing": "skip",
+     "normalize": true,
+     "otio": true,
+     "scene_audio": {
+      "mix": false,
+      "volume_db": -12.0
+     },
+     "score": {
+      "asset": "",
+      "duck": true,
+      "volume_db": -12.0
+     },
+     "subtitles": true,
+     "transition_frames": 12,
+     "use": "starred"
+    },
+    "models": {
+     "audio_vae": "minimax_h3_audio_vae_fp32.safetensors",
+     "clip_device": "default",
+     "diffusion": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+     "latent_upscaler": "",
+     "text_encoder": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+     "video_vae": "minimax_h3_video_vae_int8_convrot.safetensors",
+     "weight_dtype": "default"
+    },
+    "output": {
+     "aspect": "16:9",
+     "height": 768,
+     "ref_image_size": "match",
+     "width": 1344
+    },
+    "quality": "final",
+    "sampling": {
+     "sampler": "res_multistep",
+     "scheduler": "simple",
+     "seed": 104729,
+     "seed_mode": "increment",
+     "shift_audio": 3.0,
+     "shift_video": 12.0,
+     "sigma_shift": false,
+     "steps": 20
+    }
+   },
+   "id": "p_bd30c72d",
+   "markers": [],
+   "name": "Fixture Harbor",
+   "project_id": "",
+   "scenes": [
+    {
+     "cast": [
+      {
+       "id": "c_mara"
+      }
+     ],
+     "dialogue": [
+      {
+       "id": "d_a",
+       "speaker": "c_mara",
+       "t": 3.0,
+       "text": "Not tonight."
+      }
+     ],
+     "duration": 8.0,
+     "id": "s_one",
+     "prompt": {
+      "sections": {
+       "overall_soundscape": "Waves and gulls."
+      }
+     },
+     "refs": [
+      {
+       "asset": "a_pier",
+       "id": "r_pier",
+       "role": "reference"
+      }
+     ],
+     "shots": [
+      {
+       "camera": "Wide",
+       "t": 0,
+       "text": "boats rock in the harbor, @Mara watches"
+      }
+     ],
+     "title": "Harbor at dusk"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_mara"
+      }
+     ],
+     "dialogue": [
+      {
+       "delivery": "whispers",
+       "id": "d_b",
+       "speaker": "c_mara",
+       "t": 2.0,
+       "text": "There you are."
+      }
+     ],
+     "duration": 6.0,
+     "id": "s_lf",
+     "prompt": {
+      "sections": {
+       "detailed_description": "Soft dusk light.\n[Shot 2] At 00:03.500, the shot cuts to a close-up of @Mara's eyes.",
+       "summary": "@Mara finds the boat she waited for, continuing from @tail."
+      }
+     },
+     "refs": [
+      {
+       "asset": "a_rain",
+       "id": "r_rain",
+       "role": "reference"
+      }
+     ],
+     "shots": [
+      {
+       "camera": "Medium",
+       "t": 0,
+       "text": "@Mara turns to the sea"
+      },
+      {
+       "camera": "Close-up",
+       "t": 3.5,
+       "text": "her eyes"
+      }
+     ],
+     "start": {
+      "mode": "last_frame"
+     },
+     "title": "Pier"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_mara"
+      }
+     ],
+     "dialogue": [
+      {
+       "delivery": "mutters",
+       "id": "d_1",
+       "speaker": "c_mara",
+       "t": 16.0,
+       "text": "Almost home."
+      }
+     ],
+     "duration": 32.0,
+     "id": "s_long",
+     "prompt": {
+      "sections": {
+       "summary": "@Mara walks home as a storm builds, holding @P3, camera like @V1."
+      }
+     },
+     "refs": [
+      {
+       "asset": "a_letter",
+       "id": "r_letter",
+       "role": "keyframe",
+       "time": 25.0
+      },
+      {
+       "asset": "a_dolly",
+       "id": "r_dolly",
+       "role": "reference",
+       "soundtrack": true
+      }
+     ],
+     "shots": [
+      {
+       "camera": "Wide",
+       "t": 0,
+       "text": "Mara leaves the pier"
+      },
+      {
+       "camera": "Tracking",
+       "t": 6,
+       "text": "along the seawall"
+      },
+      {
+       "camera": "Medium",
+       "t": 14.375,
+       "text": "the rain starts"
+      },
+      {
+       "camera": "Wide",
+       "t": 22,
+       "text": "she reaches the door"
+      }
+     ],
+     "start": {
+      "mode": "tail",
+      "overlap_frames": 39
+     },
+     "title": "The long walk home"
+    },
+    {
+     "duration": 2.5,
+     "id": "s_short",
+     "shots": [
+      {
+       "t": 0,
+       "text": "a hand on the door, @tail"
+      }
+     ],
+     "start": {
+      "mode": "tail",
+      "overlap_frames": 22
+     },
+     "title": "Hand on the door",
+     "trim": {
+      "in": 1.208,
+      "keep": "custom"
+     }
+    },
+    {
+     "cast": [
+      {
+       "id": "c_mara"
+      }
+     ],
+     "duration": 5.0,
+     "id": "s_raw",
+     "prompt": {
+      "mode": "raw",
+      "raw": "@Mara steps inside from @tail; the pier @P4 behind her."
+     },
+     "refs": [
+      {
+       "asset": "a_pier",
+       "id": "r_pier2",
+       "role": "reference"
+      }
+     ],
+     "start": {
+      "mode": "last_frame"
+     },
+     "title": "Inside"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_mara"
+      },
+      {
+       "id": "c_tom"
+      }
+     ],
+     "dialogue": [
+      {
+       "id": "d_t",
+       "speaker": "c_tom",
+       "t": 3.0,
+       "text": "You're late."
+      }
+     ],
+     "duration": 6.0,
+     "id": "s_over",
+     "prompt": {
+      "pass_prompts": {
+       "1": "[video continuation] @Mara meets @{Tom O'Brien} in the hallway."
+      }
+     },
+     "start": {
+      "mode": "tail",
+      "overlap_frames": 39
+     },
+     "title": "Hallway"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_mara"
+      }
+     ],
+     "duration": 30.0,
+     "id": "s_seams",
+     "prompt": {
+      "sections": {
+       "detailed_description": "[Shot 1] Rain lashes the deck.\n[Shot 2] At 00:12.000, the shot cuts to @Mara at the rail."
+      }
+     },
+     "refs": [
+      {
+       "asset": "a_rain",
+       "id": "r_rain2",
+       "role": "reference"
+      },
+      {
+       "asset": "a_clip",
+       "id": "r_door",
+       "role": "keyframe",
+       "time": 20.0
+      }
+     ],
+     "shots": [
+      {
+       "camera": "Wide",
+       "t": 0,
+       "text": "the storm hits the harbor"
+      },
+      {
+       "camera": "Medium",
+       "t": 12,
+       "text": "@Mara holds the rail, @V2 at the door"
+      }
+     ],
+     "start": {
+      "mode": "fresh"
+     },
+     "title": "Storm"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_mara"
+      }
+     ],
+     "duration": 5.0,
+     "id": "s_many",
+     "refs": [
+      {
+       "asset": "a_p0",
+       "id": "r_p0",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p1",
+       "id": "r_p1",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p2",
+       "id": "r_p2",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p3",
+       "id": "r_p3",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p4",
+       "id": "r_p4",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p5",
+       "id": "r_p5",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p6",
+       "id": "r_p6",
+       "role": "reference"
+      }
+     ],
+     "start": {
+      "mode": "last_frame"
+     },
+     "title": "Gallery"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_mara"
+      }
+     ],
+     "duration": 5.0,
+     "id": "s_full",
+     "refs": [
+      {
+       "asset": "a_p0",
+       "id": "r_q0",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p1",
+       "id": "r_q1",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p2",
+       "id": "r_q2",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p3",
+       "id": "r_q3",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p4",
+       "id": "r_q4",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p5",
+       "id": "r_q5",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p6",
+       "id": "r_q6",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p7",
+       "id": "r_q7",
+       "role": "reference"
+      },
+      {
+       "asset": "a_p8",
+       "id": "r_q8",
+       "role": "reference"
+      }
+     ],
+     "start": {
+      "mode": "last_frame"
+     },
+     "title": "Packed"
+    },
+    {
+     "duration": 6.0,
+     "id": "s_vid3",
+     "refs": [
+      {
+       "asset": "a_dolly",
+       "id": "r_v1",
+       "role": "reference",
+       "soundtrack": true
+      },
+      {
+       "asset": "a_clip",
+       "id": "r_v2",
+       "role": "reference"
+      },
+      {
+       "asset": "a_dolly",
+       "id": "r_v3",
+       "role": "reference"
+      }
+     ],
+     "start": {
+      "mode": "tail",
+      "overlap_frames": 39
+     },
+     "title": "Three clips"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_mara"
+      }
+     ],
+     "duration": 5.0,
+     "id": "s_auto_off",
+     "prompt": {
+      "auto": {
+       "retention": false,
+       "shots": false,
+       "subjects": false
+      },
+      "sections": {
+       "detailed_description": "Night. @Mara closes the door.",
+       "subject_definitions": "<Subject 1> is Mara in her grey coat."
+      }
+     },
+     "start": {
+      "mode": "last_frame"
+     },
+     "title": "Written"
+    }
+   ],
+   "schema": 1,
+   "slug": "fx_harbor",
+   "soundtrack": [
+    {
+     "asset": "a_song",
+     "id": "t_song",
+     "in": 0.0,
+     "start": 70.0,
+     "sync": true
+    }
+   ],
+   "ui": {
+    "playhead": 0,
+    "ripple": true,
+    "selected": "s_cad71b10",
+    "snap": true,
+    "tab": "timeline",
+    "zoom": 22
+   }
+  },
+  {
+   "assets": [
+    {
+     "description": "A woman with auburn hair in a grey coat",
+     "file": "reelwright/fx/front.png",
+     "id": "a_front",
+     "kind": "image",
+     "name": "Mara front"
+    },
+    {
+     "file": "reelwright/fx/side.png",
+     "id": "a_side",
+     "kind": "image",
+     "name": "Mara side"
+    },
+    {
+     "duration": 4.2,
+     "file": "reelwright/fx/voice.wav",
+     "id": "a_voice",
+     "kind": "audio",
+     "name": "voice"
+    },
+    {
+     "file": "reelwright/fx/letter.png",
+     "id": "a_letter",
+     "kind": "image",
+     "name": "letter"
+    },
+    {
+     "duration": 4.2,
+     "file": "reelwright/fx/dolly.mp4",
+     "id": "a_dolly",
+     "kind": "video",
+     "name": "dolly"
+    },
+    {
+     "duration": 6.0,
+     "file": "reelwright/fx/rain.wav",
+     "id": "a_rain",
+     "kind": "audio",
+     "name": "rain"
+    },
+    {
+     "duration": 40.0,
+     "file": "reelwright/fx/song.wav",
+     "id": "a_song",
+     "kind": "audio",
+     "name": "song"
+    },
+    {
+     "category": "location",
+     "description": "The wooden pier at dusk",
+     "file": "reelwright/fx/pier.png",
+     "id": "a_pier",
+     "kind": "image",
+     "name": "pier"
+    },
+    {
+     "duration": 1.0,
+     "file": "reelwright/fx/door.mp4",
+     "id": "a_clip",
+     "kind": "video",
+     "name": "door clip"
+    },
+    {
+     "file": "reelwright/fx/tom.png",
+     "id": "a_tom",
+     "kind": "image",
+     "name": "Tom"
+    },
+    {
+     "duration": 3.0,
+     "file": "reelwright/fx/tvoice.wav",
+     "id": "a_tvoice",
+     "kind": "audio",
+     "name": "tom voice"
+    },
+    {
+     "file": "reelwright/fx/p0.png",
+     "id": "a_p0",
+     "kind": "image",
+     "name": "pic 0"
+    },
+    {
+     "file": "reelwright/fx/p1.png",
+     "id": "a_p1",
+     "kind": "image",
+     "name": "pic 1"
+    },
+    {
+     "file": "reelwright/fx/p2.png",
+     "id": "a_p2",
+     "kind": "image",
+     "name": "pic 2"
+    },
+    {
+     "file": "reelwright/fx/p3.png",
+     "id": "a_p3",
+     "kind": "image",
+     "name": "pic 3"
+    },
+    {
+     "file": "reelwright/fx/p4.png",
+     "id": "a_p4",
+     "kind": "image",
+     "name": "pic 4"
+    },
+    {
+     "file": "reelwright/fx/p5.png",
+     "id": "a_p5",
+     "kind": "image",
+     "name": "pic 5"
+    },
+    {
+     "file": "reelwright/fx/p6.png",
+     "id": "a_p6",
+     "kind": "image",
+     "name": "pic 6"
+    },
+    {
+     "file": "reelwright/fx/p7.png",
+     "id": "a_p7",
+     "kind": "image",
+     "name": "pic 7"
+    },
+    {
+     "file": "reelwright/fx/p8.png",
+     "id": "a_p8",
+     "kind": "image",
+     "name": "pic 8"
+    }
+   ],
+   "camera_presets": [
+    {
+     "id": "k_15c79ccd",
+     "name": "Slow push-in",
+     "text": "slow push-in toward the subject"
+    },
+    {
+     "id": "k_0635d09d",
+     "name": "Locked-off",
+     "text": "static locked-off camera"
+    },
+    {
+     "id": "k_5059a655",
+     "name": "Crane up",
+     "text": "slow crane up revealing the scene"
+    },
+    {
+     "id": "k_19fd0d71",
+     "name": "Handheld pan \u2192",
+     "text": "handheld camera panning right"
+    },
+    {
+     "id": "k_d30c1550",
+     "name": "Rack focus",
+     "text": "rack focus from foreground to background"
+    },
+    {
+     "id": "k_71f9830e",
+     "name": "Macro",
+     "text": "macro close-up, shallow depth of field"
+    }
+   ],
+   "cast": [
+    {
+     "anchors": [
+      "a_front",
+      "a_side"
+     ],
+     "description": "woman, early 30s, auburn hair",
+     "id": "c_mara",
+     "name": "Mara",
+     "pack_sheet": "auto",
+     "speaker": "S1",
+     "voice": "a_voice"
+    },
+    {
+     "anchors": [
+      "a_tom"
+     ],
+     "id": "c_tom",
+     "name": "Tom O'Brien",
+     "speaker": "S2",
+     "voice": "a_tvoice"
+    }
+   ],
+   "global": {
+    "continuity": {
+     "face_check": false,
+     "face_threshold": 0.8,
+     "on_drift": "flag",
+     "reanchor_after": 1
+    },
+    "defaults": {
+     "duration": 8.0,
+     "language": "English",
+     "overlap_frames": 39,
+     "start_mode": "last_frame"
+    },
+    "draft": {
+     "lora": "",
+     "lora_strength": 1.0,
+     "scale": 0.5,
+     "steps": 8
+    },
+    "llm": {
+     "base_url": "",
+     "context_tokens": 0,
+     "import_guides": false,
+     "import_max_tokens": 16384,
+     "import_part_chars": 3000,
+     "import_thinking": "same",
+     "include_guides": true,
+     "max_tokens": 2048,
+     "max_wait_s": 900,
+     "model": "",
+     "preset": "h3_ref2va",
+     "retries": 2,
+     "temperature": 0.4,
+     "thinking": "auto",
+     "timeout_s": 120
+    },
+    "long": {
+     "crossfade_frames": 12,
+     "cut_snap_seconds": 2.0,
+     "max_pass_frames": 243,
+     "overlap_frames": 56,
+     "seam_mode": "auto"
+    },
+    "loras": [],
+    "memory": {
+     "encode_first": true,
+     "group_by_lora": true,
+     "policy": "free_cache"
+    },
+    "merge": {
+     "audio_fade_frames": 6,
+     "auto_after_render": true,
+     "bundle": false,
+     "chapters": true,
+     "codec": "h264",
+     "color_match": false,
+     "color_ref_scene": "",
+     "crf": 16,
+     "fcpxml": true,
+     "hard_cut": "cut",
+     "loudness": -16.0,
+     "missing": "skip",
+     "normalize": true,
+     "otio": true,
+     "scene_audio": {
+      "mix": false,
+      "volume_db": -12.0
+     },
+     "score": {
+      "asset": "",
+      "duck": true,
+      "volume_db": -12.0
+     },
+     "subtitles": true,
+     "transition_frames": 12,
+     "use": "starred"
+    },
+    "models": {
+     "audio_vae": "minimax_h3_audio_vae_fp32.safetensors",
+     "clip_device": "default",
+     "diffusion": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+     "latent_upscaler": "",
+     "text_encoder": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+     "video_vae": "minimax_h3_video_vae_int8_convrot.safetensors",
+     "weight_dtype": "default"
+    },
+    "output": {
+     "aspect": "16:9",
+     "height": 768,
+     "ref_image_size": "match",
+     "width": 1344
+    },
+    "quality": "final",
+    "sampling": {
+     "sampler": "res_multistep",
+     "scheduler": "simple",
+     "seed": 104729,
+     "seed_mode": "increment",
+     "shift_audio": 3.0,
+     "shift_video": 12.0,
+     "sigma_shift": false,
+     "steps": 20
+    }
+   },
+   "id": "p_340f4aef",
+   "markers": [],
+   "name": "Fixture Chain",
+   "project_id": "",
+   "scenes": [
+    {
+     "cast": [
+      {
+       "id": "c_tom"
+      }
+     ],
+     "duration": 6.0,
+     "id": "s_c0",
+     "shots": [
+      {
+       "t": 0,
+       "text": "@{Tom O'Brien} keeps walking"
+      }
+     ],
+     "start": {
+      "mode": "fresh",
+      "overlap_frames": 39
+     },
+     "title": "Link 0"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_tom"
+      }
+     ],
+     "duration": 1.5,
+     "id": "s_c1",
+     "shots": [
+      {
+       "t": 0,
+       "text": "@{Tom O'Brien} keeps walking"
+      }
+     ],
+     "start": {
+      "mode": "tail",
+      "overlap_frames": 39
+     },
+     "title": "Link 1"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_tom"
+      }
+     ],
+     "duration": 6.0,
+     "id": "s_c2",
+     "shots": [
+      {
+       "t": 0,
+       "text": "@{Tom O'Brien} keeps walking"
+      }
+     ],
+     "start": {
+      "mode": "tail",
+      "overlap_frames": 73
+     },
+     "title": "Link 2"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_tom"
+      }
+     ],
+     "duration": 5.0,
+     "id": "s_c3",
+     "shots": [
+      {
+       "t": 0,
+       "text": "@{Tom O'Brien} keeps walking"
+      }
+     ],
+     "start": {
+      "mode": "last_frame",
+      "overlap_frames": 39
+     },
+     "title": "Link 3"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_tom"
+      }
+     ],
+     "duration": 20.0,
+     "id": "s_c4",
+     "shots": [
+      {
+       "t": 0,
+       "text": "@{Tom O'Brien} keeps walking"
+      }
+     ],
+     "start": {
+      "mode": "tail",
+      "overlap_frames": 22
+     },
+     "title": "Link 4"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_tom"
+      }
+     ],
+     "duration": 18.0,
+     "id": "s_c5",
+     "shots": [
+      {
+       "t": 0,
+       "text": "@{Tom O'Brien} keeps walking"
+      }
+     ],
+     "start": {
+      "mode": "fresh",
+      "overlap_frames": 39
+     },
+     "title": "Link 5"
+    },
+    {
+     "cast": [
+      {
+       "id": "c_tom"
+      }
+     ],
+     "duration": 4.0,
+     "id": "s_c6",
+     "shots": [
+      {
+       "t": 0,
+       "text": "@{Tom O'Brien} keeps walking"
+      }
+     ],
+     "start": {
+      "mode": "tail",
+      "overlap_frames": 90
+     },
+     "title": "Link 6"
+    }
+   ],
+   "schema": 1,
+   "slug": "fx_chain",
+   "soundtrack": [],
+   "ui": {
+    "playhead": 0,
+    "ripple": true,
+    "selected": "s_cf53d3ae",
+    "snap": true,
+    "tab": "timeline",
+    "zoom": 22
+   }
+  }
+ ]
+}

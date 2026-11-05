@@ -176,6 +176,8 @@ def test_per_scene_transition(harbor, store, roots):
     p["global"]["merge"].update(hard_cut="cut", transition_frames=12, audio_fade_frames=6, missing="block")
     p["scenes"][1]["transition"] = {"mode": "dip", "frames": 24, "audio_fade_frames": None}
     p["scenes"][2]["transition"] = {"mode": "", "frames": None, "audio_fade_frames": 0}
+    for s in p["scenes"]:  # added 2026-11-05 v0.7.0: a v0.6.1 project; scene.merge is built from these on load
+        s.pop("merge", None)
     takes = {}
     for s, path in zip(p["scenes"], (a, b, c)):
         store.add_take(s["id"], {"id": "v1", "key": "k", "files": {"video": os.path.relpath(path, roots.output)}, "seconds": 3.0})

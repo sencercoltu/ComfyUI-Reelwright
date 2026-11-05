@@ -254,6 +254,8 @@ def test_scene_starts_and_visible_start():
 
 def test_media_counts_voice_video_sound_and_song():
     p = default_project()
+    # v0.7.0: without the continuation clips of the overlap seams (tests/test_continuation.py counts those)
+    p["global"]["continuity"]["name_continuation"] = False
     p["assets"] = [{"id": "a_pic", "kind": "image", "file": "x.png"},
                    {"id": "a_v", "kind": "audio", "file": "v.wav", "duration": 4.0},
                    {"id": "a_vid", "kind": "video", "file": "c.mp4", "duration": 5.0},

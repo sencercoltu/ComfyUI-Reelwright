@@ -312,6 +312,11 @@ function rulesCard(ctx) {
           h("span", { class: "rw-chain" }, h("span", { class: "rw-chain-src" }, "anchors"), ["02", "03", "06", "10"].map(n => h("span", { class: "rw-chain-dot" }, n)))),
         h("div", { class: "rw-dim small" }, "Reelwright always sends the anchors, so scene 10 gets the same identity input as scene 2.")),
       field("Re-anchor after", number({ value: g.reanchor_after, min: 0, max: 20, width: "64px", help: "cast.rules.reanchor", onChange: v => set(c => { c.reanchor_after = v ?? 2; }) }), { help: "cast.rules.reanchor" }),
+      // added 2026-11-05 v0.7.0: the continuation (previous last frame or tail clip) as a named reference in the prompt
+      // (global.continuity.name_continuation, contract A; missing in an older project = on)
+      field("Continuation", toggle({ value: g.name_continuation !== false, label: "Name it in the prompt", key: "rules-name-cont", help: "cast.rules.nameContinuation",
+        onChange: v => ctx.actions.edit(q => { q.global.continuity.name_continuation = v; }, { label: v ? "Name the continuation" : "Don't name the continuation" }) }),
+      { help: "cast.rules.nameContinuation" }),
       field("Face check", toggle({ value: g.face_check, help: "cast.rules.faceCheck", onChange: v => set(c => { c.face_check = v; }) }), { help: "cast.rules.faceCheck" }),
       field("Threshold", slider({ value: g.face_threshold, min: 0.5, max: 0.99, step: 0.01, help: "cast.rules.threshold", format: v => v.toFixed(2), onChange: v => set(c => { c.face_threshold = v; }) }), { help: "cast.rules.threshold" }),
       field("On drift", segmented({ small: true, value: g.on_drift, help: "cast.rules.onDrift", options: [

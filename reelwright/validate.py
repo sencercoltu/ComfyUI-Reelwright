@@ -36,7 +36,8 @@ def _sent_assets(b):
     out = set()
     for img in b["images"]:
         out.update(img["assets"])
-    out.update(v["asset"] for v in b["videos"])
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] out.update(v["asset"] for v in b["videos"])
+    out.update(v["asset"] for v in b["videos"] if v.get("asset"))  # v0.7.0: the continuation clip is no asset
     for au in b["audios"]:
         if au.get("song"):
             out.update(x["asset"] for x in au["song"].get("pieces") or [])
@@ -52,7 +53,24 @@ def _media_counts(p, scene, pass_, b, ctx):
     assets = ctx["index"]["assets"]
     counts = getattr(_model, "scene_media_counts", None)
     if counts is not None:
-        c = dict(counts(p, scene, pass_, starts=ctx["starts"]))
+        # [OLD 2026-11-05 v0.6.1->v0.7.0] c = dict(counts(p, scene, pass_, starts=ctx["starts"]))
+        # added 2026-11-05 v0.7.0: the continuation reference as the build sends it. The model counts it by the same
+        # rule, but a pass whose text uses fixed reference numbers, or whose guide pictures named in the text take the
+        # room, leaves it out (prompt.build_pass); then the pass counts as in v0.6.1.
+        mode = ctx["start_mode"].get(scene["id"])
+        c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode))
+        sent = next((x for x in b["images"] + b["videos"] if x.get("continuation")), None)
+        kind = "" if not sent else "picture" if sent in b["images"] else "video_audio" if sent["soundtrack"] else "video"
+        if c.get("continuation", "") != kind:
+            c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, continuation=False))
+            c["continuation"] = kind
+            c["pictures" if kind == "picture" else "videos"] += 1 if kind else 0
+            c["files"] += 1 if kind else 0
+            if kind.startswith("video"):
+                c["video_seconds"] += float(sent.get("frames") or 0) / spec.FPS
+            if kind == "video_audio":
+                c["audio"] += 1
+                c["audio_seconds"] += float(sent.get("frames") or 0) / spec.FPS
         roles = {r["id"]: r["role"] for r in scene["refs"]}
         for img in b["images"]:
             if img["ref"] and roles.get(img["ref"]) in ("first_frame", "last_frame", "keyframe"):
@@ -85,6 +103,46 @@ def _tail_overlap(p, i, plan):
     if plan.get("start_mode") == "tail" and plan["passes"]:
         return plan["passes"][0]["overlap_frames"] / spec.FPS
     return 0.0
+
+
+def _colour_name(c):
+    """added 2026-11-05 v0.7.0"""
+    return {"#000000": "black", "#ffffff": "white"}.get(str(c or "").lower(), str(c or "black"))
+
+
+def _merge_issues(p, i, s, name, ctx, locked, scene_ids):
+    """added 2026-11-05 v0.7.0: problems with how scene i sits in the cut (scene.merge): a fade out on a scene the
+    next one continues from, a fade in on a continuing scene, a colour reference scene that is not in the project,
+    and (info) a transition that a soundtrack setting the timing turns into a dip inside both scenes."""
+    out = []
+    mg = s.get("merge") if isinstance(s.get("merge"), dict) else {}
+    sid = s["id"]
+    starts = ctx["start_mode"]
+    mode = starts.get(sid, "fresh") if i > 0 else "fresh"
+    nxt = p["scenes"][i + 1] if i + 1 < len(p["scenes"]) else None
+    next_mode = starts.get(nxt["id"]) if nxt is not None else None
+    if (mg.get("fade_out") or {}).get("frames") and next_mode in ("tail", "last_frame"):
+        out.append(_issue("warn", "{}: it fades out to {}, but the next scene continues from its {}, which {} not "
+                                  "faded, so the picture jumps back from the colour".format(
+                                      name, _colour_name(mg["fade_out"].get("color")),
+                                      "last frame" if next_mode == "last_frame" else "last frames",
+                                      "is" if next_mode == "last_frame" else "are"), sid))
+    if (mg.get("fade_in") or {}).get("frames") and mode in ("tail", "last_frame"):
+        out.append(_issue("warn", "{}: it fades in from {}, but it continues the scene before, so the picture jumps "
+                                  "from that scene to the colour".format(name, _colour_name(mg["fade_in"].get("color"))),
+                          sid))
+    if mg.get("color_match") == "scene" and mg.get("color_ref") not in scene_ids:
+        out.append(_issue("warn", "{}: its colour match names a scene that is not in the project, so it is not colour "
+                                  "matched; choose another scene".format(name), sid))
+    kind = mg.get("transition") or "cut"
+    if locked and i > 0 and mode == "fresh" and kind != "cut" and mg.get("frames"):
+        colour = _colour_name(mg.get("color"))
+        if kind == "dip":
+            text = "its dip through {} plays inside both scenes (nothing overlaps)".format(colour)
+        else:
+            text = "its {} plays as a dip through {} inside both scenes (nothing overlaps)".format(kind, colour)
+        out.append(_issue("info", "{}: with the soundtrack setting the timing, {}".format(name, text), sid))
+    return out
 
 
 def _passes_label(name, indexes, n_passes):
@@ -152,13 +210,18 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
         if t["start"] < 0:
             issues.append(_issue("info", "{}: it starts {:.2f} s before the film, so that part is not heard".format(
                 label, -t["start"])))
-    if soundtrack.locked(p):
-        hard = [(s.get("transition") or {}).get("mode") or p["global"]["merge"]["hard_cut"]
-                for i, s in enumerate(p["scenes"]) if i > 0 and s["start"]["mode"] == "fresh"]
-        if any(h in ("crossfade", "dip") for h in hard):
-            issues.append(_issue("info", "Crossfades and dips play as a dip through black inside the scenes, so the "
-                                         "soundtrack keeps its timing"))
-        # the Merge card says that scenes not rendered yet become slates; as an issue it showed on every project
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] one line for the project, from scene.transition / Global -> Merge (now per scene,
+    # from scene.merge, in _merge_issues)
+    # if soundtrack.locked(p):
+    #     hard = [(s.get("transition") or {}).get("mode") or p["global"]["merge"]["hard_cut"]
+    #             for i, s in enumerate(p["scenes"]) if i > 0 and s["start"]["mode"] == "fresh"]
+    #     if any(h in ("crossfade", "dip") for h in hard):
+    #         issues.append(_issue("info", "Crossfades and dips play as a dip through black inside the scenes, so the "
+    #                                      "soundtrack keeps its timing"))
+    #     # the Merge card says that scenes not rendered yet become slates; as an issue it showed on every project
+    # [/OLD]
+    locked = soundtrack.locked(p)  # added 2026-11-05 v0.7.0
+    scene_ids = {s["id"] for s in p["scenes"]}  # added 2026-11-05 v0.7.0
 
     for i, s in enumerate(p["scenes"]):
         sid = s["id"]
@@ -235,6 +298,7 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                 has_first = True
         if has_first and i > 0 and s["start"]["mode"] != "fresh":
             issues.append(_issue("warn", "{}: a first-frame reference and a continuation both anchor frame 0".format(name), sid))
+        issues += _merge_issues(p, i, s, name, ctx, locked, scene_ids)  # added 2026-11-05 v0.7.0: scene.merge
 
         for entry in s["cast"]:
             c = cast.get(entry["id"])
@@ -332,7 +396,12 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             # added 2026-11-03 v0.5.0: the soundtrack segment counts as an audio ref of its own length
             audio_items = [{"code": "soundtrack", "duration": x["song"]["length"]} if x.get("song") else assets[x["asset"]]
                            for x in b["audios"]]
-            for kind, items in (("video", [assets[v["asset"]] for v in b["videos"]]),
+            # added 2026-11-05 v0.7.0: the continuation clip (no asset) by its length
+            video_items = [{"code": _prompt.CONT_WHAT.get(v.get("source"), "the continuation clip"),
+                            "duration": float(v.get("frames") or 0) / spec.FPS} if v.get("continuation")
+                           else assets[v["asset"]] for v in b["videos"]]
+            # [OLD 2026-11-05 v0.6.1->v0.7.0] for kind, items in (("video", [assets[v["asset"]] for v in b["videos"]]),
+            for kind, items in (("video", video_items),
                                 ("audio", audio_items)):
                 total = 0.0
                 for a in items:

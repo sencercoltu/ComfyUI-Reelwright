@@ -18,8 +18,8 @@ ComfyUI-Reelwright/
     files.py             Files tab: disk-use tree and deleting (pure + fs)
     media.py             load images/video/audio to tensors, write files (comfy)
     render.py            render run using the native H3 nodes (comfy + torch)
-    assemble.py          the cut plan and merge_project: takes -> merge.join (ffmpeg)
-    merge.py             ffmpeg merge, srt/chapters/otio/fcpxml/color match, loudness (ffmpeg)
+    assemble.py          the cut plan and merge_project: takes -> merge.join (ffmpeg); v0.7.0: scene.merge, per-scene colour match
+    merge.py             ffmpeg merge, srt/chapters/otio/fcpxml/color match, loudness (ffmpeg); v0.7.0: transitions, fades, filmstrips
     beats.py             v0.6.0: tempo, beats and bar starts of an audio file (numpy + ffmpeg)
     llm.py               OpenAI-compatible client and prompt templates (aiohttp)
     scriptparts.py       cuts a long script into parts for the import (v0.4.2); imported scene length vs shots (v0.4.3) (pure)
@@ -30,6 +30,7 @@ ComfyUI-Reelwright/
   web/
     reelwright.js        ComfyUI extension: registers the DOM widget
     rw/*.js, rw/tabs/*.js, rw/reelwright.css
+    rw/cut.js            v0.7.0: scene.merge helpers shared by the Scene tab's In the cut card and the timeline
   tests/                 pytest for the pure modules, merge, routes and the JS model (test_model_parity.py)
   web-test/              mock backend (mock.js), interaction checks (interact.py), screenshots (shoot.py)
 ```
@@ -71,7 +72,8 @@ lives on disk.
     "long": { "max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
               "seam_mode": "auto", "cut_snap_seconds": 2.0 },       // auto | cuts | overlap
     "memory": { "policy": "free_cache", "encode_first": true, "group_by_lora": true },  // keep | free_cache | unload_all
-    "continuity": { "reanchor_after": 2, "face_check": false, "face_threshold": 0.8, "on_drift": "flag" }, // flag | retake
+    "continuity": { "reanchor_after": 2, "face_check": false, "face_threshold": 0.8, "on_drift": "flag", // flag | retake
+                    "name_continuation": true },  // v0.7.0: send the frame / clip a pass continues from as <Picture 1> / <Video 1>
     "llm": { "base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
              "include_guides": true,                      // v0.2.0: send MiniMax's guides when downloaded
              "thinking": "auto",                          // v0.3.2: auto | off (chat_template_kwargs enable_thinking=false)
@@ -80,11 +82,11 @@ lives on disk.
              "import_part_chars": 3000,                   // v0.4.2: script import part size, 0 = whole script
              "import_max_tokens": 16384, "import_thinking": "same", "import_guides": false },  // same | off
     "merge": { "use": "starred", "missing": "skip",                 // skip | slate | block
-               "hard_cut": "cut", "transition_frames": 12,           // cut | crossfade | dip
-               "audio_fade_frames": 6, "loudness": -16.0, "normalize": true,
+               "hard_cut": "cut", "transition_frames": 12,           // cut | crossfade | dip; v0.7.0: deprecated, see scene.merge
+               "audio_fade_frames": 6, "loudness": -16.0, "normalize": true,   // audio_fade_frames: v0.7.0 deprecated
                "score": { "asset": "", "volume_db": -12.0, "duck": true },  // v0.5.0: moved to "soundtrack" on load
                "scene_audio": { "mix": false, "volume_db": -12.0 },          // v0.5.0: the scenes' sound under the soundtrack
-               "color_match": false, "color_ref_scene": "",
+               "color_match": false, "color_ref_scene": "",          // v0.7.0: deprecated (read only by the scene.merge migration)
                "codec": "h264", "crf": 16,
                "subtitles": true, "chapters": true, "otio": true, "fcpxml": true, "bundle": false,
                "auto_after_render": true }
@@ -114,7 +116,20 @@ lives on disk.
       "color": "",                                        // optional tint for the timeline block
       "start": { "mode": "fresh", "overlap_frames": 39 },  // fresh | last_frame | tail
       "transition": { "mode": "", "frames": null,          // fresh starts only: "" (merge default) | cut | crossfade | dip
-                      "audio_fade_frames": null },         //   null = use Global → Merge
+                      "audio_fade_frames": null },         //   null = use Global → Merge. v0.7.0: deprecated, read only by the migration
+      "merge": {                                           // v0.7.0: how the scene sits in the cut (see "Merge: scene.merge")
+        "transition": "cut",       // cut | crossfade | dip | wipe | slide | circle | dissolve | pixelize | radial | zoom (fresh starts)
+        "direction": "left",       // left | right | up | down (wipe, slide)
+        "frames": 12,              // transition length; frame counts are whole frames 0 .. 14400
+        "color": "#000000",        // dip colour, "#rrggbb" (anything else → "#000000")
+        "audio_frames": 6,         // the sound's fade out / in at a plain cut into this scene
+        "fade_in": { "frames": 0, "color": "#000000" },   // picture fades in from the colour at the first frame
+        "fade_out": { "frames": 0, "color": "#000000" },  // picture fades out to the colour at the last frame
+        "audio_fade_in": 0, "audio_fade_out": 0,          // the scene's own sound, frames
+        "volume_db": 0.0, "mute": false,                  // the scene's own sound; -60 .. 24 dB
+        "color_match": "off",      // off | previous | scene
+        "color_ref": "",           // scene id when color_match is "scene"
+        "brightness": 0.0, "contrast": 1.0, "saturation": 1.0 },  // ffmpeg eq: -1 .. 1, 0 .. 2, 0 .. 3
       "trim": { "keep": "start", "in": 0.0 },             // short scenes: start | middle | end | custom
       "refs": [ { "id": "r_1", "asset": "a_2", "role": "reference",   // reference | first_frame | last_frame | keyframe
                   "time": 0.0, "retention": "weak_reference", "keep": [], "soundtrack": false } ],
@@ -169,6 +184,13 @@ timing, overlaps, visible starts, frame counts, seeds, slugs and budgets.
 - Slugs: a valid slug is kept as typed; otherwise `slugify(slug or name)`: NFKD transliteration ("Ömer" → "omer"), at most 64 characters, `untitled` when no Latin letter is left.
 - `project_id`: Python keeps a string or uses `""` (it never invents one, so normalising twice agrees). JS keeps a non-empty string or creates one; the store first copies a pre-0.6 project's stable `id` into it.
 - A pre-0.5 `merge.score` becomes a soundtrack track in both (`migrate_score` / `migrateScore`), also when a Global profile is applied.
+- `scene.merge` (v0.7.0, `_norm_merge` / `normMerge`, run on every scene after the seed repair). A scene whose `merge` is missing or not an object gets one built from its v0.6.1 settings (`_migrated_merge` / `migratedMerge`), so it merges as before:
+  - `transition` = `scene.transition.mode`, else `global.merge.hard_cut` (a value other than cut / crossfade / dip is `cut`, as v0.6.1 treated it);
+  - `frames` = `scene.transition.frames` ?? `global.merge.transition_frames`; `audio_frames` = `scene.transition.audio_fade_frames` ?? `global.merge.audio_fade_frames`;
+  - when `global.merge.color_match` is `true`: the reference is `color_ref_scene` if it names a scene of the project, else the first scene; every other scene gets `color_match: "scene"`, `color_ref: <reference>`.
+
+  Then every field is coerced: an unknown transition is `cut`, direction `left`, colour match `off`; frame counts are whole numbers 0 .. 14400 (fractions cut off); colours `#rrggbb` in lower case, else `#000000`; `volume_db` −60 .. 24, `brightness` −1 .. 1, `contrast` 0 .. 2, `saturation` 0 .. 3; missing fields take `default_merge()`. It is idempotent, and applying a Global profile does not migrate again (the scenes already have `merge`). `scene.transition` and the Global keys stay in the JSON; nothing else reads them. A scene inserted without `merge` gets one at the next normalise, so the UI reads it through `cut.js mergeOf()`.
+- `global.continuity.name_continuation` (v0.7.0) is a bool like the other Global keys; missing is `true`.
 
 ### Seeds (v0.6.0)
 
@@ -204,6 +226,18 @@ where `pass_soundtrack` gives the pass a part of it. Without a pass, each count 
 the most any one pass uses. `validate.py` adds the guide pictures and clips the
 text names.
 
+v0.7.0: `scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True)`
+and `sceneBudget(project, scene, pass = null, continuation = true)` also count the
+continuation reference (`pass_continuation`, see "Continuation as a named
+reference"): one picture, or one video with `continuation_frames / 24` seconds plus
+an audio slot for its sound when fewer than 3 are used. They return a key
+`continuation`: `"picture" | "video" | "video_audio" | ""` (without a pass: the first
+pass that has one). A continuation picture counts for *Auto* packing (JS
+`sceneAutoPacks` too). When the pass still has more than 9 pictures or 12 files
+(picture), or 3 videos or 12 files (clip), the continuation is left out and the pass
+counts as in v0.6.1, matching what `build_pass` sends. `mode` is the scene's
+effective start when the caller has it; `continuation=False` counts as v0.6.1.
+
 ### Tag syntax (v0.6.0)
 
 A tag is `@` + a name: runs of Unicode letters, digits, combining marks and `_`,
@@ -215,7 +249,7 @@ after a letter, digit, `_` or `@` starts no tag, so e-mail addresses are text.
 - Python (`prompt.tag_re()`, built on first use): `(?<![\w<marks>@])@(?:\{([^}\n]+)\}|(?!@)(<name>))`, where `<marks>` lists every combining mark (Python's `\w` has none).
 - JS (`prompttext.js TAG_SOURCE`, flags `gu`): `(?<![\p{L}\p{N}\p{M}_@])@(?!@)(?:\{([^}\n]+)\}|([\p{L}\p{N}\p{M}_]+(?:['’.\-][\p{L}\p{N}\p{M}_]+)*))`.
 - Names compare without case and with `’` read as `'`. `@X's` that does not resolve but `@X` does is `@X` + `'s`. The canonical token is `@Name` when the whole name matches the name rule, else `@{Name}` (`prompt.tag_token`, `model.js tagCandidates`).
-- Resolution per pass: an asset sent with this pass → its label; an asset of the scene that guides another pass → its words (info); an asset code not attached to the scene, or an unknown name like `P3`/`V1`/`A2` → error; `@tail` → "the end of the previous shot" (warn when the scene starts fresh); `@soundtrack` / `@song` → `<Audio n>`, or "the soundtrack" when the pass gets no song (info; warn when no track is sent to H3); a cast member in the pass → `<Subject n>`; a cast member not in the scene → the name (warn); anything else → left as typed (warn).
+- Resolution per pass: an asset sent with this pass → its label; an asset of the scene that guides another pass → its words (info); an asset code not attached to the scene, or an unknown name like `P3`/`V1`/`A2` → error; `@tail` → "the end of the previous shot" (warn when the scene starts fresh; v0.7.0: in a pass that names the continuation, its label `<Picture 1>` / `<Video 1>`, and `tag_map["@tail"]` is set so Rewrite turns the label back into `@tail`); `@soundtrack` / `@song` → `<Audio n>`, or "the soundtrack" when the pass gets no song (info; warn when no track is sent to H3); a cast member in the pass → `<Subject n>`; a cast member not in the scene → the name (warn); anything else → left as typed (warn).
 
 ## HTTP routes (all JSON unless noted)
 
@@ -228,7 +262,7 @@ after a letter, digit, `_` or `@` starts no tag, so e-mail addresses are text.
 | GET | `/reelwright/takes?slug=` | – | `{scenes: {<id>: {starred, auto_star?, project_id?, takes:[{id, key, created, quality, seconds, frames, face, files:{video, first, last, tail, passes}, …}]}}}`; take fields under "Takes"; per-pass `prompts` are left out (v0.6.0); folders whose name is not an id are skipped |
 | POST | `/reelwright/takes/star` | `{slug, scene_id, take_id}` | `{ok}` |
 | POST | `/reelwright/takes/delete` | `{slug, scene_id, take_id}` | `{ok}`; when the starred take goes, the newest left is starred and recorded as `auto_star` (v0.6.0). v0.6.1: under the lock the take folder is renamed to `takes/.deleting-<id>-<hex>` (repair and index rebuilds skip it; `new_take_id` still counts it), then removed after the lock |
-| POST | `/reelwright/merge` | `{project, draft?, range?: [from_scene_id, to_scene_id], stems?, job?}` | `{ok: true, files:{video, chapters?, srt?, otio?, fcpxml?, bundle?, stems?, loudness?}, duration, skipped[], created, soundtrack, job, draft, range: [first_id, last_id]\|null, loudness?}`. v0.6.0: one merge per project: 409 `{error: "busy", message}`; cancelled → 200 `{ok: false, cancelled: true, job}`; autosaves with the owner check first, so 409 `{error, reason: "slug_conflict", other}` too. `loudness` (with `stems`) = `{target, integrated, lra, true_peak, mix, scenes, "track_<id>"}` (LUFS, LU, dBTP; null = silent) |
+| POST | `/reelwright/merge` | `{project, draft?, range?: [from_scene_id, to_scene_id], stems?, job?}` | `{ok: true, files:{video, chapters?, srt?, otio?, fcpxml?, bundle?, stems?, loudness?}, duration, skipped[], created, soundtrack, job, draft, range: [first_id, last_id]\|null, loudness?}`. v0.6.0: one merge per project: 409 `{error: "busy", message}`; cancelled → 200 `{ok: false, cancelled: true, job}`; autosaves with the owner check first, so 409 `{error, reason: "slug_conflict", other}` too. `loudness` (with `stems`) = `{target, integrated, lra, true_peak, mix, scenes, "track_<id>"}` (LUFS, LU, dBTP; null = silent). v0.7.0: `warnings: [text]`, e.g. a scene whose colour reference scene is gone or has no finished take (it is not colour matched); also written to the server log, not sent with the `reelwright.merge` event |
 | POST | `/reelwright/merge/cancel` | `{job}`, or `{slug}` for any merge of the project (the one after a render) | v0.6.0: `{ok: true, cancelled: bool}`; ffmpeg is killed and the merge's files are removed |
 | POST | `/reelwright/autosave` | `{project, version?, force?}` | `{ok, version}`. v0.6.0: 409 `{error, reason: "slug_conflict", other: {id, name}}` when the folder's `project.json` has another non-empty `project_id`, unless `force: true`; a folder without one adopts the incoming id |
 | GET | `/reelwright/versions?slug=` | – | `{versions:[{name, created, size}]}` |
@@ -261,6 +295,7 @@ after a letter, digit, `_` or `@` starts no tag, so e-mail addresses are text.
 | POST | `/reelwright/storage/repair` | `{slug}` | v0.6.0, `ProjectStore.repair`: `{ok, repaired:[scene_id], takes_found, added, dropped, project: "ok"\|"missing"\|"damaged"}`; re-lists every scene's takes from their `meta.json` (a missing or damaged index.json is rebuilt, unlisted finished takes are added, takes whose folder is gone are dropped, a lost star moves to the newest take); the pass cache is not a take |
 | GET | `/reelwright/beats?file=<input-relative path>` | – | v0.6.0, `beats.cached`: `{bpm, beats:[s], downbeats:[s], duration, file}`; `bpm` 0 and empty lists for silence or under 2 s; 400 without the file or ffmpeg. Cached in memory and in `user/reelwright/cache/beats/<content digest>.json` |
 | POST | `/reelwright/soundtrack/excerpt` | `{slug, scene_id, pass (1-based), project?}` | v0.6.0, `assemble.pass_song`: the WAV H3 gets as the soundtrack for that pass, made with the calls a render makes (the same file under `soundtrack/`): `{url: "/view?…&type=output", file, start, length, codes[], marker, pieces:[{asset, src_in, src_out, at}]}`, or `{url: null, file: null, reason}` when the pass gets no song. Without `project` the saved `project.json` is used |
+| GET | `/reelwright/filmstrip?file=<output-relative video>&h=` | – | v0.7.0, `merge.filmstrip`: `{file, url, interval, count, tile_w, tile_h, duration}`. One JPEG row of `count` tiles, each `tile_w` × `tile_h` (`h` 16–256, default 54; the video's aspect, even width); tile k is about the frame at k × `interval` s (ffmpeg `fps`). `interval` is 0.25 s up to 150 s of video, else duration / 600; when the row would pass 65,500 px (the widest JPEG ffmpeg writes) there are fewer tiles, further apart. `file` is the sprite, output-relative (`<video name>.filmstrip_<h>.jpg` next to the video, with a `.json` of the layout); `url` is its `/view` URL plus `&v=<video mtime_ns>`. Made once and reused while the video's size and mtime are unchanged; written through a temporary file under a per-sprite lock; at most 2 filmstrip ffmpeg runs at a time (a `threading.BoundedSemaphore`). 400: `file` not under `output/reelwright/`, not a video extension, a bad `h`, or a file ffmpeg can't read; 404: no such file |
 
 Errors (v0.6.0): a body that is not a JSON object, or a field of the wrong type, answers 400 with the reason.
 `SlugConflict` and `MergeBusy` answer 409, LLM failures 502 `{error, reason}`.
@@ -297,7 +332,7 @@ What a run does (v0.6.0, `render.Renderer.run`):
 1. Registers a `"render"` job for the project (`jobs.running`), picks and orders the targets.
 2. Pre-flight, before any GPU work: the H3 nodes import (`render.h3_available()`; render.py imports them lazily, so the extension loads without them), the slug is valid, lint errors of the targets ("fix these first"), model files, every reference / anchor / voice / song-piece / guide file of every pass, each continuing scene has a starred upstream take with `last` and `tail` or `video` (or its upstream renders earlier in this run), asset video guides fit their pass (`fit_clip`), ffmpeg when a target has several passes or a song. Every problem in one `RuntimeError`, sent as `rejected`.
 3. Re-stars cached scenes whose matching take is not starred, except where the star was picked by hand (`cache.manual_star`). Sends `start`.
-4. Renders scene by scene. A failing scene sends `error` and the run goes on; a scene that continues from a failed or skipped scene sends `skipped`. Memory is freed after every scene (`_free(policy)`), also after a failure. Encode-first skips passes the pass cache will provide.
+4. Renders scene by scene. A failing scene sends `error` and the run goes on; a scene that continues from a failed or skipped scene sends `skipped`. Memory is freed after every scene (`_free(policy)`), also after a failure. Encode-first skips passes the pass cache will provide. v0.7.0: it also leaves for render time every pass whose continuation reference is made in this run (`Renderer._late_encode`: a pass that names the pass before, or a continuing scene whose scene before is a target of this run). Those passes are encoded just before they sample (`encode(scene, sr, n, upstream, prev_pass)`), after encode-first has dropped the text encoder, so it is loaded again (from disk once, then kept in `Models.clips` for the run).
 5. Sends `end`; raises `"Reelwright: N scene(s) failed: …"` when any failed.
 
 `fit_clip(frame_idx, clip_frames, gen_frames, role)` places a video guide: a
@@ -331,6 +366,11 @@ used when the pass key in its `meta.json` and the seeds match (not for passes th
 depend on the upstream take). After each finished take the cache is pruned to the
 passes some take uses. Single-pass scenes that are not short don't use the cache.
 
+While a long scene renders, the frames of a pass are handed to the next pass when they
+are joined by an overlap seam: only the overlap (v0.6.1), or v0.7.0, when the next pass
+names the pass before (`<Video 1>`), its last max(overlap, 124) frames (about 1.5 GB of
+float32 at 1344×768) with the pass's sound.
+
 Before a new take, take folders that are not in `index.json` and have no
 `meta.json` (stopped renders) are removed. `Store.new_take_id` skips every number
 listed or on disk and creates the folder at once, so an id is never reused.
@@ -340,6 +380,7 @@ listed or on disk and creates the folder at once, so an id is never reused.
 - `cache.pass_key(…, upstream_take=None)`: a `prev_scene*` guide also holds the id of the take the scene continues from, so a new upstream take makes it stale. The take is the one the scene before *provides*: its matching take when it is cached (its starred take when that was picked by hand), its starred take when it is locked, none when it is stale or missing and will be rendered (then `analysis.rekey` computes the keys at render time from the take just made).
 - `cache.scene_key(plan, keys, crossfade_frames)`: the long-scene crossfade counts when the plan has overlap seams.
 - The v0.5.1 key (no upstream take, no crossfade) is computed beside it. A take without an `upstream` field (made before v0.6.0) with that key still matches, unless the take it continues from is newer than it (`cache.resolve`). So upgrading does not make every continuing scene stale.
+- v0.7.0: `cache.py` is unchanged. A continuation reference hashes as a picture with no assets (`[]`) or a video with no asset (`asset_digest(None)`); what it is made from is already in the key (the guides' upstream key, the upstream take, the previous pass's file key), and the prompt text differs. With `name_continuation` off every key is v0.6.1's (`tests/test_continuation.py` compares against builds stored from v0.6.1 in `tests/data/v061_continuation.json`). With it on, continuing scenes and the passes after an overlap seam get new keys; fresh scenes, and the passes before the first named pass, keep theirs.
 - `cache.manual_star(index)`: the star was picked by hand when it differs from `index.auto_star` (the take a render or a fallback starred); an index without `auto_star` (before v0.6.0) counts the newest take as automatic. A hand-picked star is kept by runs, and it is the take the next scene continues from.
 
 ### Plan fields (v0.6.0, `analysis.plan_response`)
@@ -378,6 +419,10 @@ project that rendered into it, from `project.json`, for the Files tab).
 the whole scene at CRF 4: from memory for one pass, decoded from the end of the
 joined video for several. `last.png` is its last frame. A tail guide that needs
 more frames than an older `tail.mp4` holds is cut from the end of the take's video.
+v0.7.0: a tail start's `<Video 1>` is the upstream take's whole `tail.mp4` with its
+sound (`Renderer._upstream_tail_clip`); for a take made before v0.6.0 (a 60-frame
+tail) the last 124 frames of its video are used when they are more. A last-frame
+start's `<Picture 1>` is the upstream take's `last.png`, the same picture its guide uses.
 
 ## Disk layout
 
@@ -387,6 +432,8 @@ output/reelwright/<slug>/
   versions/project_YYYYmmdd_HHMMSS.json
   scenes/<scene_id>/index.json       {starred, takes:[...], auto_star?, project_id?}   (v0.6.0: auto_star, project_id)
   scenes/<scene_id>/takes/<take_id>/<slug>_<NN>_<title>_<take_id>.mp4 first.png last.png tail.mp4 meta.json   (video.mp4 before v0.2.0)
+  scenes/<scene_id>/takes/<take_id>/<video name>.filmstrip_<h>.jpg .json   v0.7.0: the timeline's filmstrip
+                                                      (merge.filmstrip; .partial files while one is written)
   scenes/<scene_id>/takes/<take_id>/passes/p1.mp4 …   before v0.6.0 only; still read (see Pass cache)
   scenes/<scene_id>/passes/<file key>.mp4 .json       v0.6.0: pass cache, shared by the scene's takes
                                                       (<key>.<pid>.partial.mp4 while one is written)
@@ -465,6 +512,44 @@ prompts get the task tags once (`place_task_tags`). Written `[Shot N]` lines go
 to the pass that holds that shot, renumbered, with times moved to pass time
 (`written_shots`).
 
+## Continuation as a named reference (v0.7.0)
+
+With `global.continuity.name_continuation` on (the default), the footage a pass
+continues from is also sent to `MiniMaxH3ReferenceToVideo` as reference 1 and named
+in the prompt, as MiniMax's `ref-en.txt` does for a first-frame picture (2.2) and a
+continued video (2.3). The `MiniMaxH3AddGuide` anchoring is unchanged.
+
+- Which passes: `model.pass_continuation(p, i, pass_, mode=None)` (JS `passContinuation`) → `"picture" | "video" | ""`. `""` when the switch is off, for scene 0 and for fresh starts. Pass 1 of an effective `tail` start with an overlap → `"video"`; pass 1 of an effective `last_frame` start (a re-anchored tail too) → `"picture"`; a later pass → `"video"` when `seam_before` is `"overlap"`, else `""`. `continuation_frames(...)` (JS `continuationFrames`): 124 after a pass seam, min(124, frames of the scene before) for a tail start, 0 for no clip.
+- Refs: `prompt.continuation_of(p, scene, i, pass_, ctx)` → `{kind, source, frames}` or None; `source` is `prev_scene_last`, `prev_scene_tail` or `prev_pass_tail`. `collect_refs(…, continuation=)` puts it first: `images[0] = {"assets": [], "source": "prev_scene_last", "continuation": True, …}` or `videos[0] = {"asset": None, "source", "frames", "soundtrack", "continuation": True, …}`. The clip's `soundtrack` (its sound as `<Audio N>`) is true when the pass's other video sounds and audio refs leave one of the 3 audio slots. `PassRefs.continuation` = `{kind, source, frames, label: "<Picture 1>" | "<Video 1>", audio_number}`. Every other number follows (`number()`), so subjects, `@P` / `@V` / `@A` labels and `tag_map` move up by one.
+- `build_pass` builds the pass as in v0.6.1 (anchor only), with an issue, when:
+  - the written text (pass prompt, raw prompt, written sections, shots) holds `<Picture N>` (picture continuation) or `<Video N>` / `<Audio N>` (clip) and not the editor's own definition (`OWN_DEFINITION`, so a hand-edited copy of a v0.7.0 build is kept): `info`;
+  - `over_budget(refs)`: more than 9 pictures, 3 videos or 12 files even after *Auto* packing: `warn`, with the counts.
+
+  A clip without a free audio slot goes without its sound (`info`). `build_pass` returns `continuation` (`PassRefs.continuation`, or None).
+- Text: `continuation_definition` (subject_definitions), `continuation_retention` (`fully_preserved`; the clip's sound is `reference`), `_cite_continuation` (`[Shot 1] The shot begins from <Picture 1>.` / `… continues seamlessly from the final frames of <Video 1>.`; a `[Shot 1]` that "continues seamlessly from the previous moment" says from what; without a `[Shot 1]`, one is added before the first `[Shot N]`), and the automatic summary. Written prompts go through `_name_in_written`: six-section text gets the lines in their sections (a missing subject_definitions section is added); other text gets the definition in front, after the task tags. Lines that already start with the label are left alone. `task_tags` adds *keyframe completion* (picture) or *video continuation* (+ *audio reference* for its sound) and does not count it for *reference generation*.
+- Render: `Renderer.encode(scene, sr, n, upstream=None, prev_pass=None)` sends it as `ref_image_0`, or `ref_video_0` (+ `ref_video_audio_0`). `_continuation_ref`: `prev_scene_last` → the upstream take's `last.png`; `prev_scene_tail` → `_upstream_tail_clip(take)` (see Takes); `prev_pass_tail` → the last ≤ 124 frames of the pass before and the matching end of its sound. Encode-first leaves such passes for render time when their source is made in the same run (`_late_encode`, see "Running a render").
+- Lint: `validate._sent_assets` skips the asset-less clip; `_media_counts` passes the effective start, so the budget matches what the build sends; the 2–15 s video check names the clip by its source ("the tail clip of the scene before is 1.0 s").
+- Tests: `tests/test_continuation.py` (off gives the stored v0.6.1 builds and keys; on changes only the passes that continue), parity fixtures in `tests/test_model_parity.py`.
+
+## Merge: scene.merge (v0.7.0)
+
+Each scene's `merge` object sets how it sits in the cut; `assemble.scene_merge(s, p)`
+returns it (normalising a scene that was not). `cut_plan` turns it into segment keys,
+`color_match` adds the gains, and `merge.build_command` reads them. The Global
+transition, audio fade and colour-match keys are no longer read by the merge.
+
+- Joins in `cut_plan` (unchanged rules for continuations):
+  - the first segment of a cut is `join: "first"` (a tail scene starts after its overlap);
+  - an effective `tail` start with an overlap, right after the scene before in the cut: crossfade over min(`global.long.crossfade_frames`, overlap) inside the overlap; not right after it: a cut after the overlap;
+  - an effective `last_frame` start right after the scene before: a cut one frame in;
+  - otherwise (a fresh start, or a last-frame scene whose scene before is not right before it): `merge.transition`. For anything but `cut`, d = min(`frames`, half the scene before, half this scene) in whole frames. With `soundtrack.locked(p)`: `vfade_out` + `vfade_out_color` on the segment before and `vfade_in` + `vfade_in_color` on this one, d/2 each, through `merge.color` (the join stays a cut, so nothing moves). Otherwise `join: "dip"` or `"xfade"`, `transition` (+ `transition_expr`) from `merge.xfade_transition(kind, direction, color)` and `dur` d.
+- Every segment gets `fade = audio_frames / 24` (a slate takes its missing scene's) and, from `_scene_look`: `edge_in` / `edge_out` (`{frames, color}`), `afade_in` / `afade_out` (seconds), `mute` or `volume_db`, and `eq` (brightness, contrast, saturation) when it is not the default. `merge_with_job` calls `merge.join(…, audio_fade_frames=0)`.
+- `xfade_transition`: crossfade → `fade`, dissolve, wipe / slide → `wipeleft` … `slidedown`, circle → `circleopen`, pixelize, radial, zoom → `zoomin`; dip → `fadeblack` (black), `fadewhite` (white), or `custom` with `_dip_expr(color)` for any other colour: the colour in yuv420p values (`yuv_of`, BT.601 limited range, as ffmpeg's `fade` and colour source give it); the picture before reaches the colour in the first fifth and the next comes out of it over the rest. The expression is written out without `st()` / `ld()`, whose variables xfade's slice threads share. Both inputs of a custom xfade get `format=yuv420p` first, because a fade to a colour other than black or a colour-match gain leaves a segment in RGB.
+- `assemble.color_match(result, store, segments, cancel)` sets each segment's `gain` (`merge.match_gain`, per channel 0.8 .. 1.25): *previous* = the mean colour of the segment before (slates skipped) times its own gain; *scene* = the mean of `color_ref`'s segment in this cut, else of the whole video of its picked take (`global.merge.use`), as rendered. `color_ref` equal to the scene's own id does nothing. A reference that is gone or has no take gives a warning text. Means are memoised per file and range; `cancel()` runs before each.
+- `build_command`, per scene. Picture: trim → fit to the canvas → `colorchannelmixer` (gain) → `eq` → own fades (`fade` from / to the colour; the first or last frame is the colour; black is written `black`, so v0.6.1 graphs are unchanged, other colours `0xrrggbb`) → the timing dip (`_vfades`). Sound: mute (silence) → `volume` → own fades (`afade`) → the cut fades (`fade`, at most half the segment, only at plain cuts). Overlapping joins use `xfade` and `acrossfade` over the same frames.
+- The merge answer gains `warnings` (also logged). FCPXML and OTIO are unchanged: overlapping scenes are cut where the next one starts.
+- Tests: `tests/test_scene_merge.py`. `test_a_v061_project_merges_exactly_as_before` loads the v0.6.1 code from `REELWRIGHT_BASE_V061` (skipped when it is missing) and compares the ffmpeg arguments, filter graph, entries and timing of a converted project, with and without a soundtrack; the only difference is the identity `colorchannelmixer=rr=1:gg=1:bb=1` v0.6.1 ran on the reference scene.
+
 ## Editor ↔ backend details
 
 - The editor hides the `project` and `run_request` widgets. It attaches a non-serialized DOM widget named `reelwright_editor`.
@@ -498,3 +583,13 @@ Editor (`web/rw/editor.js`):
 - `ctx.actions.edit(fn, {label, …})`, `run(action, scenes, extra)`, `merge({draft, range, stems})`, `cancelMerge()`, `insertScenes(scenes, afterId, {label})` (fresh ids and `seed_n`), `saveNow()`, `showHistory(anchor)`, `resolveConflict()`; `ctx.isFinal(phase)`; `ctx.eph.merge` `{phase, job, draft, range, stems, files?, loudness?, percent?, error?}`; `ctx.eph.takesSlug` (the folder `eph.takes` came from; takes are read again whenever the slug changes and after every load, never for the mount-time project).
 - Dialogs: `ui.confirmDialog(root, {title, message, okLabel, cancelLabel, danger, help})` → Promise<bool> and `ui.choiceDialog(root, {title, message, choices, cancelValue, focus, danger, help})` → value are the only confirmation UI (`confirmInline` is unused and deprecated). Enter presses the focused button, danger dialogs open with Cancel focused, Tab stays inside, Ctrl+Z is swallowed.
 - Focus: give inputs a stable `key` (`text({key})`, `h(tag, {key})` → `data-key`), built from ids (`shot-t-<id>`, `dlg-text-<id>`). After a re-render the focused field is found by `data-key`, else by help id and the same text, else by position. `ui.focusGuard` keeps focus inside the editor (a click on `<video controls>`, a closed dropdown or dialog hands it back to the key field); `ui.keepFocus(el)` does it by hand. Keys of an IME composition are ignored, and the code editor reports its value on `compositionend`.
+
+### Cut settings, filmstrips and the Merge card (v0.7.0)
+
+- `web/rw/cut.js`: `TRANSITIONS` (value, label, short timeline tag), `DIRECTIONS`, `DIRECTED` (wipe, slide), `mergeDefaults()` (model.js `defaultMerge()`), `mergeOf(scene)` (a complete copy, for reading), `ensureMerge(scene)` (completes `scene.merge` in place, for an edit), `joinOf(p, i)` → `{kind: "first" | "continuation" | "cut" | "transition", mode, m, overlap?, crossfade?, asDip?}` (`asDip`: a soundtrack sets the timing), `transitionLabel(m)`.
+- Scene tab `cutCard` (In the cut): input keys `cut-<field>-<sceneId>`; every edit has a History label ("Transition", "Fade in colour", "Scene sound level", "Mute scene sound", "Colour match scene", "Reset …"); **Apply to all…** is a `choiceDialog` and one `edit` step ("Cut settings → all scenes" / "Cut settings → later scenes"); a copy whose `color_ref` is the target scene gets `color_match: "off"`. The Merge card's **In the cut** button sets `eph.scrollToCut` and opens the Scene tab, whose `afterRender` scrolls the card into view and flashes it.
+- Render tab: the Merge card's Hard cuts, Transition, Audio fade, Colour match and reference controls are gone (commented out); the version diff reports "in the cut" when `scene.merge` differs and no longer compares `scene.transition`.
+- Timeline filmstrips (`tabs/timeline.js`): a `WeakMap` ctx → `{map, takes, queue, live, timer}`, keyed `<video>|<take.created>`. Asked for only from `sceneBlock` (so only for blocks the lane window builds), at most 3 requests at a time, tile height 54. The sprite is preloaded with `new Image()` before an entry counts as ready; arrivals are batched into one `store.notify()` after 40 ms, and only while the Timeline tab shows. When `eph.takes` changes (not to null), entries whose take is no longer starred or was rendered again, and failed entries, are dropped. Cells are 44 px × `tile_w / tile_h` wide; a cell shows tile round(t / `interval`), t = the block's visible offset + the cell's middle / zoom; only cells inside `ctx.tl.window` are built, and cells past the take's length are dimmed. The take's `first.png` stays underneath. Cut marks (`cutMarks`) use `joinOf`.
+- `api.js`: `rw.filmstrip(file, h = 54)`; `viewURL(rel, type, version)` puts an optional `version` in the query as `rwv=` (the timeline passes the take's `created`, so a sprite rewritten at the same path is loaded again).
+- `editor.forkProject` maps each scene's `merge.color_ref` to the new scene ids.
+- The editor does not show the merge answer's `warnings` yet; they are in the answer and the server log.

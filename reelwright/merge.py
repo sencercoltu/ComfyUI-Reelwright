@@ -6,6 +6,7 @@ concat (cuts) or xfade/acrossfade (crossfades, dips, continuation overlaps).
 """
 
 import json
+import math  # added 2026-11-05 v0.7.0: filmstrip_layout
 import logging  # added 2026-11-03 v0.6.0
 import os
 import re
@@ -219,7 +220,12 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
     added 2026-11-03 v0.6.0: preset (x264/x265 preset; "veryfast" for drafts). stems: {"scenes": wav, "mix": wav,
     "tracks": [wav per track]} also writes the audio stems in the same ffmpeg run: the scenes' sound (after loudness
     normalisation, at the level it has in the mix; at 0 dB when it is not mixed), each track as heard in the cut
-    (after ducking) and the final mix."""
+    (after ducking) and the final mix.
+    added 2026-11-05 v0.7.0 (scene.merge, set by assemble.cut_plan): transition / transition_expr (the xfade of an
+    overlapping join, see xfade_transition), vfade_in_color / vfade_out_color, edge_in / edge_out ({frames, color}:
+    the scene's own picture fades), afade_in / afade_out (seconds), volume_db, mute, eq (brightness, contrast,
+    saturation). Picture: trim -> colour-match gain -> eq -> own fades -> timing dip. Sound: level -> own fades -> the
+    cut's fade (fade)."""
     if not segments:
         raise MergeError("nothing to merge")
     ffmpeg = ffmpeg or ffmpeg_bin()
@@ -268,9 +274,11 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
             if seg.get("gain"):
                 r, g, b = seg["gain"]
                 v += ",colorchannelmixer=rr={:.4f}:gg={:.4f}:bb={:.4f}".format(r, g, b)
+            v += _eq(seg) + _edge_fades(seg, n_frames)  # added 2026-11-05 v0.7.0: the scene's eq and its own fades
             v += _vfades(seg, length)  # added 2026-11-03 v0.5.0
             graph.append(v + "[v{}]".format(k))
-            if seg.get("has_audio", True):
+            # [OLD 2026-11-05 v0.6.1->v0.7.0] if seg.get("has_audio", True):
+            if seg.get("has_audio", True) and not seg.get("mute"):  # added 2026-11-05 v0.7.0: a muted scene is silent
                 # [OLD 2026-11-03 v0.6.0 review] a = ("[{s}:a]atrim=start={a}:end={b},asetpts=PTS-STARTPTS,aresample={r},"
                 # [OLD 2026-11-03 v0.6.0 review]      "aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration={d}").format(
                 # [OLD 2026-11-03 v0.6.0 review]     s=src, a=_f(seg["in"]), b=_f(seg["out"]), r=AUDIO_RATE, d=_f(length))
@@ -278,6 +286,8 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
                 a = ("[{s}:a]atrim=start={a}:end={b},asetpts=PTS-STARTPTS,aresample={r},"
                      "aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration={d}").format(
                     s=src, a=_f(seg["in"]), b=_f(seg["in"] + length), r=AUDIO_RATE, d=_f(length))
+                if float(seg.get("volume_db") or 0.0):  # added 2026-11-05 v0.7.0: the scene's own sound level
+                    a += ",volume={}dB".format(float(seg["volume_db"]))
             else:
                 a = "anullsrc=r={}:cl=stereo,atrim=duration={}".format(AUDIO_RATE, _f(length))
         else:
@@ -289,6 +299,7 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
             graph.append("color=c=0x15171C:s={}x{}:r={}:d={},trim=end_frame={},format=yuv420p,setsar=1[v{}]".format(
                 width, height, FPS, _f((n_frames + 0.5) / FPS), n_frames, k))
             a = "anullsrc=r={}:cl=stereo,atrim=duration={}".format(AUDIO_RATE, _f(length))
+        a += _edge_afades(seg, length)  # added 2026-11-05 v0.7.0: the scene's own sound fades at its edges
         # [OLD 2026-11-03 v0.6.0 review] nxt = segments[k + 1]["join"] if k + 1 < len(segments) else None
         nxt = joins[k + 1] if k + 1 < len(segments) else None  # added 2026-11-03 v0.6.0 review: a 0-frame xfade is a cut
         # [OLD 2026-11-02 v0.2.2->v0.3.0] one audio fade for every cut; a segment's "fade" (seconds) now sets the fade at the cut into it
@@ -317,7 +328,19 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
             graph.append("[{}][v{}]concat=n=2:v=1:a=0,settb=expr=1/{}[vc{}]".format(vcur, k, FPS, k))
             graph.append("[{}][a{}]concat=n=2:v=0:a=1[ac{}]".format(acur, k, k))
         else:
-            trans = "fadeblack" if seg["join"] == "dip" else "fade"
+            # [OLD 2026-11-05 v0.6.1->v0.7.0] trans = "fadeblack" if seg["join"] == "dip" else "fade"
+            # added 2026-11-05 v0.7.0: the scene's transition (xfade_transition); a custom one carries its expression
+            trans = seg.get("transition") or ("fadeblack" if seg["join"] == "dip" else "fade")
+            ina, inb = vcur, "v{}".format(k)
+            if trans == "custom" and seg.get("transition_expr"):
+                # the expression's colour is in yuv420p values, and a fade to a colour or a colour-match gain leaves
+                # a segment in RGB (xfade then runs in RGB): both sides are made yuv420p first
+                graph.append("[{}]format=yuv420p[xa{}]".format(vcur, k))
+                graph.append("[v{}]format=yuv420p[xb{}]".format(k, k))
+                ina, inb = "xa{}".format(k), "xb{}".format(k)
+                trans = "custom:expr='{}'".format(seg["transition_expr"])
+            elif trans == "custom":
+                trans = "fadeblack"
             # [OLD 2026-11-03 v0.6.0 review] exact seconds; the picture before it could be shorter than offset + duration
             # graph.append("[{}][v{}]xfade=transition={}:duration={}:offset={}[vc{}]".format(
             #     vcur, k, trans, _f(seg["dur"]), _f(starts[k]), k))
@@ -326,8 +349,10 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
             # added 2026-11-03 v0.6.0 review: whole frames from frame_timeline; the picture before is exactly
             # offset + duration frames, so the crossfade keeps every frame of both
             dur = rows[k][2] / FPS
-            graph.append("[{}][v{}]xfade=transition={}:duration={}:offset={}[vc{}]".format(
-                vcur, k, trans, _f(dur), _f(rows[k][0] / FPS), k))
+            # [OLD 2026-11-05 v0.6.1->v0.7.0] graph.append("[{}][v{}]xfade=transition={}:duration={}:offset={}[vc{}]".format(
+            # [OLD 2026-11-05 v0.6.1->v0.7.0]     vcur, k, trans, _f(dur), _f(rows[k][0] / FPS), k))
+            graph.append("[{}][{}]xfade=transition={}:duration={}:offset={}[vc{}]".format(  # added 2026-11-05 v0.7.0
+                ina, inb, trans, _f(dur), _f(rows[k][0] / FPS), k))
             graph.append("[{}][a{}]acrossfade=d={}[ac{}]".format(acur, k, _f(dur), k))
         vcur, acur = "vc{}".format(k), "ac{}".format(k)
 
@@ -450,15 +475,137 @@ def _loudnorm(loudness, total):
         loudness, AUDIO_RATE, _f(total))
 
 
+# [OLD 2026-11-05 v0.6.1->v0.7.0] the dip that keeps the timing was always through black
+# def _vfades(seg, length):
+#     """added 2026-11-03 v0.5.0: picture fades to / from black inside a segment."""
+#     out = ""
+#     fi, fo = min(seg.get("vfade_in", 0.0), length / 2), min(seg.get("vfade_out", 0.0), length / 2)
+#     if fi > 0:
+#         out += ",fade=t=in:st=0:d={}:color=black".format(_f(fi))
+#     if fo > 0:
+#         out += ",fade=t=out:st={}:d={}:color=black".format(_f(length - fo), _f(fo))
+#     return out
+# [/OLD]
 def _vfades(seg, length):
-    """added 2026-11-03 v0.5.0: picture fades to / from black inside a segment."""
+    """added 2026-11-03 v0.5.0: picture fades to / from black inside a segment (a dip that keeps the timing).
+    added 2026-11-05 v0.7.0: through the colour in vfade_in_color / vfade_out_color ("#rrggbb", black by default)."""
     out = ""
     fi, fo = min(seg.get("vfade_in", 0.0), length / 2), min(seg.get("vfade_out", 0.0), length / 2)
     if fi > 0:
-        out += ",fade=t=in:st=0:d={}:color=black".format(_f(fi))
+        out += ",fade=t=in:st=0:d={}:color={}".format(_f(fi), ffmpeg_color(seg.get("vfade_in_color")))
     if fo > 0:
-        out += ",fade=t=out:st={}:d={}:color=black".format(_f(length - fo), _f(fo))
+        out += ",fade=t=out:st={}:d={}:color={}".format(_f(length - fo), _f(fo), ffmpeg_color(seg.get("vfade_out_color")))
     return out
+
+
+# ---- a scene's look and sound in the cut: scene.merge (added 2026-11-05 v0.7.0) -----------------------------------
+# Segment keys build_command reads for these (assemble.cut_plan sets them from scene.merge):
+#   transition / transition_expr   the xfade transition of an overlapping join (xfade_transition)
+#   vfade_in_color / vfade_out_color   the colour of a dip that keeps the timing (vfade_in / vfade_out)
+#   edge_in / edge_out: {"frames", "color"}   the scene's own fade from / to a colour at its first / last frame
+#   afade_in / afade_out (seconds)   the scene's own sound fading in / out at its edges
+#   volume_db, mute   the scene's own sound; eq: (brightness, contrast, saturation)
+
+XFADE_NAMES = {"crossfade": "fade", "dissolve": "dissolve", "circle": "circleopen", "pixelize": "pixelize",
+               "radial": "radial", "zoom": "zoomin"}
+DIRECTIONS = ("left", "right", "up", "down")
+
+
+def color_hex(c):
+    """"#rrggbb" (any case) -> "rrggbb" in lower case; anything else -> "000000"."""
+    s = str(c or "")
+    return s[1:].lower() if re.fullmatch(r"#[0-9a-fA-F]{6}", s) else "000000"
+
+
+def ffmpeg_color(c):
+    """"#rrggbb" as an ffmpeg colour: black is written "black" (as before v0.7.0), anything else 0xrrggbb."""
+    h = color_hex(c)
+    return "black" if h == "000000" else "0x" + h
+
+
+def yuv_of(c):
+    """(Y, U, V) of "#rrggbb" in 8-bit limited-range BT.601, the values ffmpeg's fade filter and colour source give a
+    colour in yuv420p."""
+    h = color_hex(c)
+    r, g, b = (int(h[k:k + 2], 16) for k in (0, 2, 4))
+    y = 16 + (65.481 * r + 128.553 * g + 24.966 * b) / 255
+    u = 128 + (-37.797 * r - 74.203 * g + 112.0 * b) / 255
+    v = 128 + (112.0 * r - 93.786 * g - 18.214 * b) / 255
+    return tuple(int(min(255, max(0, round(x)))) for x in (y, u, v))
+
+
+def _dip_expr(color):
+    """xfade's fadeblack with another colour, as a custom expression (P runs from 1 to 0): the picture before goes to
+    the colour in the first fifth, the next comes out of it over the rest. Written out without st()/ld(), whose
+    variables xfade's slice threads would share."""
+    y, u, v = yuv_of(color)
+    c = "if(eq(PLANE,0),{},if(eq(PLANE,1),{},{}))".format(y, u, v)
+    t1, t2 = "clip((P-0.8)/0.2,0,1)", "clip((P-0.2)/0.8,0,1)"
+    s1, s2 = "({0}*{0}*(3-2*{0}))".format(t1), "({0}*{0}*(3-2*{0}))".format(t2)
+    return "(A*{s1}+{c}*(1-{s1}))*P+({c}*{s2}+B*(1-{s2}))*(1-P)+0.5".format(s1=s1, s2=s2, c=c)
+
+
+def xfade_transition(kind, direction="left", color="#000000"):
+    """(xfade transition, custom expression or None) for scene.merge.transition: crossfade = fade, dissolve,
+    wipe / slide + direction, circle = circleopen, pixelize, radial, zoom = zoomin; dip = fadeblack (black),
+    fadewhite (white) or a custom expression shaped like fadeblack for any other colour."""
+    if kind in ("wipe", "slide"):
+        return kind + (direction if direction in DIRECTIONS else "left"), None
+    if kind == "dip":
+        h = color_hex(color)
+        if h == "000000":
+            return "fadeblack", None
+        if h == "ffffff":
+            return "fadewhite", None
+        return "custom", _dip_expr(color)
+    return XFADE_NAMES.get(kind, "fade"), None
+
+
+def _num_text(x):
+    return "{:.4f}".format(float(x)).rstrip("0").rstrip(".") if float(x) else "0"
+
+
+def _eq(seg):
+    """The scene's brightness, contrast and saturation (ffmpeg eq), "" when they are the defaults."""
+    e = seg.get("eq")
+    if not e:
+        return ""
+    b, c, s = (float(x) for x in e)
+    if (b, c, s) == (0.0, 1.0, 1.0):
+        return ""
+    return ",eq=brightness={}:contrast={}:saturation={}".format(_num_text(b), _num_text(c), _num_text(s))
+
+
+def _edge_fades(seg, n_frames):
+    """The scene's own picture fades: from a colour at its first frame (frame 0 is the colour, frame N the picture)
+    and to a colour at its last frame (the last frame is the colour, the frame N before it the picture), N frames
+    each, never longer than the segment."""
+    out = ""
+    fi, fo = seg.get("edge_in") or {}, seg.get("edge_out") or {}
+    n_in = min(int(fi.get("frames") or 0), n_frames)
+    if n_in > 0:
+        out += ",fade=t=in:st=0:d={}:color={}".format(_f(n_in / FPS), ffmpeg_color(fi.get("color")))
+    n_out = min(int(fo.get("frames") or 0), n_frames - 1)
+    if n_out > 0:
+        out += ",fade=t=out:st={}:d={}:color={}".format(_f((n_frames - 1 - n_out) / FPS), _f(n_out / FPS),
+                                                        ffmpeg_color(fo.get("color")))
+    return out
+
+
+def _edge_afades(seg, length):
+    """The scene's own sound fading in at its start and out at its end (seconds), never longer than the segment."""
+    out = ""
+    ai, ao = min(float(seg.get("afade_in") or 0.0), length), min(float(seg.get("afade_out") or 0.0), length)
+    if ai > 0:
+        out += ",afade=t=in:st=0:d={}".format(_f(ai))
+    if ao > 0:
+        out += ",afade=t=out:st={}:d={}".format(_f(length - ao), _f(ao))
+    return out
+
+
+def match_gain(target, mean):
+    """Per-channel gains that move a clip's mean colour to `target` (the colour_gains rule, 0.8 .. 1.25)."""
+    return tuple(min(1.25, max(0.8, target[c] / max(1.0, mean[c]))) for c in range(3))
 
 
 def _track_filter(graph, src, j, t, total):
@@ -1180,3 +1327,93 @@ def write_bundle(path, files):
         for arcname, src in files.items():
             if src and os.path.isfile(src):
                 z.write(src, arcname)
+
+
+# ---- timeline filmstrips (added 2026-11-05 v0.7.0) -----------------------------------------------------------------
+# One row of small frames of a video, a frame every `interval` seconds, so the timeline can show the frame that is at
+# each time of a rendered scene. Made once per video and tile height and kept next to the video as
+# <video name>.filmstrip_<h>.jpg with a .json that says how it was cut; made again when the video changes.
+
+FILMSTRIP_MAX_WIDTH = 65500  # the widest JPEG ffmpeg's mjpeg encoder writes (the format allows 65535)
+FILMSTRIP_MAX_TILES = 600
+FILMSTRIP_STEP = 0.25  # seconds between frames, for videos up to 150 s (longer ones get 600 frames)
+FILMSTRIP_VERSION = 1
+_STRIP_LOCKS = {}
+_STRIP_GUARD = threading.Lock()
+
+
+def filmstrip_paths(video_path, h):
+    """(sprite .jpg, its .json) next to the video for tiles `h` pixels high."""
+    root = os.path.splitext(video_path)[0]
+    return "{}.filmstrip_{}.jpg".format(root, int(h)), "{}.filmstrip_{}.json".format(root, int(h))
+
+
+def filmstrip_layout(duration, width, height, h):
+    """(interval, count, tile_w, tile_h): a tile every 0.25 s for up to 150 s of video, else duration / 600; tiles of
+    the video's aspect, h high (an even width); fewer, further apart, when the row would pass 65500 px."""
+    tile_h = int(h)
+    tile_w = max(2, int(tile_h * float(width) / max(1.0, float(height)) / 2 + 0.5) * 2)
+    duration = float(duration)
+    interval = FILMSTRIP_STEP if duration <= FILMSTRIP_STEP * FILMSTRIP_MAX_TILES else duration / FILMSTRIP_MAX_TILES
+    count = max(1, int(math.ceil(duration / interval - 1e-9)))
+    cap = max(1, FILMSTRIP_MAX_WIDTH // tile_w)
+    if count > cap:
+        count = cap
+        interval = duration / count
+    return interval, count, tile_w, tile_h
+
+
+def _strip_lock(path):
+    with _STRIP_GUARD:
+        if len(_STRIP_LOCKS) > 256:
+            _STRIP_LOCKS.clear()
+        return _STRIP_LOCKS.setdefault(path, threading.Lock())
+
+
+def _read_meta(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def filmstrip(video_path, h=54, ffmpeg=None):
+    """The filmstrip of a video, made when it is missing or the video changed (size or mtime): {path, interval,
+    count, tile_w, tile_h, duration}. Tile k shows the video at about k * interval seconds (ffmpeg's fps filter
+    picks the frame nearest that time). Raises MergeError when ffmpeg is missing or the file is not a video."""
+    ffmpeg = ffmpeg or ffmpeg_bin()
+    if not ffmpeg:
+        raise MergeError("ffmpeg was not found on PATH")
+    jpg, meta_path = filmstrip_paths(video_path, h)
+    with _strip_lock(jpg):
+        st = os.stat(video_path)
+        key = {"version": FILMSTRIP_VERSION, "size": st.st_size, "mtime_ns": st.st_mtime_ns, "h": int(h)}
+        meta = _read_meta(meta_path)
+        if meta and all(meta.get(k) == v for k, v in key.items()) and os.path.isfile(jpg):
+            return dict(meta, path=jpg)
+        info = probe(video_path)
+        if not info.get("has_video") or not info.get("width") or not info.get("height"):
+            raise MergeError("{} has no picture".format(os.path.basename(video_path)))
+        duration = float(info.get("video_duration") or info.get("duration") or 0.0)
+        if duration <= 0:
+            raise MergeError("{} has no length".format(os.path.basename(video_path)))
+        interval, count, tile_w, tile_h = filmstrip_layout(duration, info["width"], info["height"], h)
+        tmp = "{}.{}.{}.partial.jpg".format(jpg[:-4], os.getpid(), threading.get_ident())
+        vf = "fps=fps={:.9f},scale={}:{}:flags=bilinear,setsar=1,tile={}x1".format(1.0 / interval, tile_w, tile_h, count)
+        try:
+            run_ffmpeg([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostats", "-y", "-i", video_path, "-an", "-sn",
+                        "-dn", "-vf", vf, "-frames:v", "1", "-q:v", "5", "-update", "1", tmp])
+            if not os.path.isfile(tmp):
+                raise MergeError("ffmpeg made no filmstrip of {}".format(os.path.basename(video_path)))
+            os.replace(tmp, jpg)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        meta = dict(key, interval=interval, count=count, tile_w=tile_w, tile_h=tile_h, duration=duration)
+        tmp_meta = "{}.{}.{}.partial".format(meta_path, os.getpid(), threading.get_ident())
+        with open(tmp_meta, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        os.replace(tmp_meta, meta_path)
+        return dict(meta, path=jpg)

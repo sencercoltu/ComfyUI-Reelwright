@@ -21,6 +21,13 @@ SECTION_KEYS = ("subject_definitions", "summary", "retention_analysis",
 OVERRIDE_KEYS = ("seed", "steps", "sampler", "scheduler", "width", "height",
                  "diffusion", "text_encoder", "video_vae", "audio_vae", "quality")
 TRANSITIONS = ("cut", "crossfade", "dip")  # added 2026-11-02 v0.3.0: per-scene hard-cut transition
+# added 2026-11-05 v0.7.0: scene.merge, how a scene sits in the cut (model.js has the same values). TRANSITIONS stays
+# for the deprecated scene.transition (read once, by the migration in _norm_merge)
+MERGE_TRANSITIONS = ("cut", "crossfade", "dip", "wipe", "slide", "circle", "dissolve", "pixelize", "radial", "zoom")
+MERGE_DIRECTIONS = ("left", "right", "up", "down")
+COLOR_MATCH_MODES = ("off", "previous", "scene")
+MERGE_MAX_FRAMES = 14400  # frame counts in scene.merge: 0 .. 600 s
+COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")  # "#rrggbb" (fullmatch)
 CODE_PREFIX = {"image": "P", "video": "V", "audio": "A"}
 # added 2026-11-03 v0.6.0: what normalize_project enforces (model.js has the same values)
 MIN_SCENE_SECONDS = 1.0 / spec.FPS
@@ -91,7 +98,14 @@ def default_global():
         "long": {"max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
                  "seam_mode": "auto", "cut_snap_seconds": 2.0},
         "memory": {"policy": "free_cache", "encode_first": True, "group_by_lora": True},
-        "continuity": {"reanchor_after": 2, "face_check": False, "face_threshold": 0.8, "on_drift": "flag"},
+        # [OLD 2026-11-05 v0.6.1->v0.7.0] no name_continuation switch
+        # "continuity": {"reanchor_after": 2, "face_check": False, "face_threshold": 0.8, "on_drift": "flag"},
+        # [/OLD]
+        # added 2026-11-05 v0.7.0: name_continuation: the frame or clip a continuing scene (or a pass after an overlap
+        # seam) starts from is also sent as reference <Picture 1> / <Video 1> and named in the prompt; False: it is
+        # only anchored (MiniMaxH3AddGuide), as in v0.6.1 (see pass_continuation)
+        "continuity": {"reanchor_after": 2, "face_check": False, "face_threshold": 0.8, "on_drift": "flag",
+                       "name_continuation": True},
         # [OLD 2026-11-02 v0.1.0->v0.2.0] no switch for sending MiniMax's prompt guides
         # "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va"},
         # [/OLD]
@@ -130,6 +144,19 @@ def default_prompt():
             "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}}
 
 
+def default_merge():
+    """added 2026-11-05 v0.7.0: scene.merge of a new scene, how it sits in the cut (assemble.cut_plan reads it).
+    transition: how a fresh start joins the scene before (MERGE_TRANSITIONS), direction for wipe / slide, frames its
+    length, color the dip colour; audio_frames: the sound's fade out / in at a cut; fade_in / fade_out: the picture
+    from / to a colour at the scene's first / last frame; audio_fade_in / _out (frames); volume_db and mute: the
+    scene's own sound; color_match: off | previous | scene (color_ref: that scene's id); brightness, contrast,
+    saturation: ffmpeg eq. model.js defaultMerge is the same."""
+    return {"transition": "cut", "direction": "left", "frames": 12, "color": "#000000", "audio_frames": 6,
+            "fade_in": {"frames": 0, "color": "#000000"}, "fade_out": {"frames": 0, "color": "#000000"},
+            "audio_fade_in": 0, "audio_fade_out": 0, "volume_db": 0.0, "mute": False,
+            "color_match": "off", "color_ref": "", "brightness": 0.0, "contrast": 1.0, "saturation": 1.0}
+
+
 # [OLD 2026-11-03 v0.5.1->v0.6.0] no seed_n; a malformed project (global not a dict) crashed here
 # def default_scene(project=None, **patch):
 #     d = (project or {}).get("global", {}).get("defaults") or default_global()["defaults"]
@@ -152,6 +179,9 @@ def default_scene(project=None, **patch):
         "transition": {"mode": "", "frames": None, "audio_fade_frames": None},
         # added 2026-11-03 v0.6.0: the scene's number in "+1 per scene" seed mode, fixed at creation
         "seed_n": next_seed_n(project),
+        # added 2026-11-05 v0.7.0: how the scene sits in the cut (replaces "transition" and Global -> Merge's
+        # transition and colour-match settings)
+        "merge": default_merge(),
     }
     scene.update(patch)
     return scene
@@ -335,6 +365,10 @@ def normalize_project(raw):
     if not p["scenes"]:
         p["scenes"].append(default_scene(p, title="Scene 1"))
     _repair_seed_ns(p["scenes"])
+    # added 2026-11-05 v0.7.0: scene.merge; a scene without one gets it from its v0.6 transition and Global -> Merge
+    scene_ids = {s["id"] for s in p["scenes"]}
+    for s in p["scenes"]:
+        _norm_merge(s, g["merge"], p["scenes"][0]["id"], scene_ids)
 
     p["markers"] = _objects(p.get("markers"))
     for m in p["markers"]:
@@ -584,6 +618,67 @@ def _norm_scene(s, d, lang, used_ids):
     tn["mode"] = tn["mode"] if tn.get("mode") in ("",) + TRANSITIONS else ""
     for k in ("frames", "audio_fade_frames"):
         tn[k] = spec.num(tn.get(k), None)
+
+
+# ---- scene.merge (added 2026-11-05 v0.7.0; model.js normMerge / migratedMerge are the same) ----
+
+def _merge_frames(v, default):
+    """A frame count of scene.merge: a whole number 0 .. MERGE_MAX_FRAMES (fractions are cut off)."""
+    return min(MERGE_MAX_FRAMES, max(0, int(spec.num(v, default))))
+
+
+def _merge_color(v):
+    """"#rrggbb" in lower case; anything else is black."""
+    return v.lower() if isinstance(v, str) and COLOR_RE.fullmatch(v) else "#000000"
+
+
+def _clamp(v, default, lo, hi):
+    return min(hi, max(lo, spec.num(v, default)))
+
+
+def _migrated_merge(s, gm, first_id, scene_ids):
+    """scene.merge for a scene saved before v0.7.0, built so it merges exactly as before: the transition is the
+    scene's own transition mode or Global -> Merge -> hard cut (an unknown one was a cut), its length and audio fade
+    the scene's own or the global ones; with Global colour match on, every scene but the reference matches the
+    reference scene (Global's colour reference scene, or the first scene when that is empty or gone)."""
+    tn = s.get("transition") if isinstance(s.get("transition"), dict) else {}
+    hard = gm.get("hard_cut")
+    m = default_merge()
+    m["transition"] = tn.get("mode") or (hard if hard in TRANSITIONS else "cut")
+    m["frames"] = tn["frames"] if tn.get("frames") is not None else gm.get("transition_frames")
+    m["audio_frames"] = tn["audio_fade_frames"] if tn.get("audio_fade_frames") is not None else gm.get("audio_fade_frames")
+    if gm.get("color_match") is True:
+        ref = gm.get("color_ref_scene") if gm.get("color_ref_scene") in scene_ids else first_id
+        if s["id"] != ref:
+            m["color_match"], m["color_ref"] = "scene", ref
+    return m
+
+
+def _norm_merge(s, gm, first_id, scene_ids):
+    """scene.merge in place (see default_merge). gm: the normalised Global -> Merge; first_id, scene_ids: the
+    project's first scene id and every scene id (for the migration of a scene that has no merge object)."""
+    m = s.get("merge")
+    if not isinstance(m, dict):
+        m = _migrated_merge(s, gm, first_id, scene_ids)
+    m["transition"] = m["transition"] if m.get("transition") in MERGE_TRANSITIONS else "cut"
+    m["direction"] = m["direction"] if m.get("direction") in MERGE_DIRECTIONS else "left"
+    m["frames"] = _merge_frames(m.get("frames"), 12)
+    m["color"] = _merge_color(m.get("color"))
+    m["audio_frames"] = _merge_frames(m.get("audio_frames"), 6)
+    for k in ("fade_in", "fade_out"):
+        f = m[k] = m[k] if isinstance(m.get(k), dict) else {}
+        f["frames"] = _merge_frames(f.get("frames"), 0)
+        f["color"] = _merge_color(f.get("color"))
+    for k in ("audio_fade_in", "audio_fade_out"):
+        m[k] = _merge_frames(m.get(k), 0)
+    m["volume_db"] = _clamp(m.get("volume_db"), 0.0, -60.0, 24.0)
+    m["mute"] = spec.flag(m.get("mute"), False)
+    m["color_match"] = m["color_match"] if m.get("color_match") in COLOR_MATCH_MODES else "off"
+    _text_field(m, "color_ref", "")
+    m["brightness"] = _clamp(m.get("brightness"), 0.0, -1.0, 1.0)
+    m["contrast"] = _clamp(m.get("contrast"), 1.0, 0.0, 2.0)
+    m["saturation"] = _clamp(m.get("saturation"), 1.0, 0.0, 3.0)
+    s["merge"] = m
 
 
 # ---- stable seeds (added 2026-11-03 v0.6.0) ----
@@ -891,7 +986,39 @@ def visible_start(p, sid):
 COUNT_KEYS = ("pictures", "videos", "video_seconds", "audio", "audio_seconds", "files")
 
 
-def scene_media_counts(p, scene, pass_=None, starts=None):
+# ---- the continuation as a named reference (added 2026-11-05 v0.7.0; model.js passContinuation / continuationFrames
+# are the same, tests/test_model_parity.py) ----
+def pass_continuation(p, i, pass_, mode=None):
+    """What pass_ (a planner pass) of scene i sends as reference 1 for the footage it continues from, when Global ->
+    Continuity -> name_continuation is on: "picture" (pass 1 of a last-frame start, a re-anchored tail too: the last
+    frame of the scene before is <Picture 1>), "video" (pass 1 of a tail start: the tail clip of the scene before is
+    <Video 1>; a later pass after an overlap seam: the end of the pass before), else "". The same passes get the
+    MiniMaxH3AddGuide anchors (prompt.collect_refs). mode: effective_start(p, i) when the caller has it."""
+    if not spec.flag(((p.get("global") or {}).get("continuity") or {}).get("name_continuation", True), True):
+        return ""
+    if int(spec.num(pass_.get("index"), 1)) > 1:
+        return "video" if pass_.get("seam_before") == "overlap" else ""
+    if i is None or i <= 0:
+        return ""
+    if mode is None:
+        mode = effective_start(p, i)
+    if mode == "tail" and pass_.get("overlap_frames"):
+        return "video"
+    return "picture" if mode in ("last_frame", "tail") else ""
+
+
+def continuation_frames(p, i, pass_, mode=None):
+    """Frames of the clip pass_continuation sends as <Video 1>: the tail clip render keeps of the scene before (its
+    last 124 frames, fewer when that scene is shorter) or the last 124 frames of the pass before; 0 for no clip."""
+    if pass_continuation(p, i, pass_, mode) != "video":
+        return 0
+    if int(spec.num(pass_.get("index"), 1)) > 1:
+        return spec.MIN_PASS_FRAMES
+    return min(spec.MIN_PASS_FRAMES, scene_frames(p["scenes"][i - 1]))
+
+
+# [OLD 2026-11-05 v0.6.1->v0.7.0] def scene_media_counts(p, scene, pass_=None, starts=None):
+def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True):  # mode, continuation: v0.7.0
     """What one pass of `scene` sends H3, counted the way prompt.collect_refs presents references:
 
     pictures       cast anchors (+ outfit pictures; a packed sheet is 1) and reference pictures, each asset once
@@ -904,13 +1031,21 @@ def scene_media_counts(p, scene, pass_=None, starts=None):
 
     pass_ is a planner pass (needs start, gen_frames, dialogue). pass_=None plans the scene and returns, for each
     count, the most any of its passes uses (song: any pass). starts: scene_starts(p)[0] if you have it already.
-    Guide pictures (first/last frame, keyframes) that the prompt text names are not counted."""
+    Guide pictures (first/last frame, keyframes) that the prompt text names are not counted.
+
+    added 2026-11-05 v0.7.0: the continuation reference (pass_continuation) counts too, as one picture or one video
+    (plus an audio slot for its sound when one is free); continuation: "picture" | "video" | "video_audio" (with its
+    sound) | "" says which (pass_=None: the first pass that has one). A continuation picture counts for "auto"
+    packing; one that still does not fit (pictures <= 9, videos <= 3, files <= 12) is left out, and the pass counts as
+    in v0.6.1. mode: effective_start of the scene when known; continuation=False counts as v0.6.1 did."""
     if pass_ is None:
         from .planner import plan_scene  # planner imports model
         i = next((k for k, s in enumerate(p["scenes"]) if s["id"] == scene["id"]), 0)
-        outs = [scene_media_counts(p, scene, x, starts) for x in plan_scene(p, scene, i)["passes"]]
+        # [OLD 2026-11-05 v0.6.1->v0.7.0] outs = [scene_media_counts(p, scene, x, starts) for x in plan_scene(p, scene, i)["passes"]]
+        outs = [scene_media_counts(p, scene, x, starts, mode, continuation) for x in plan_scene(p, scene, i)["passes"]]
         out = {k: max(o[k] for o in outs) for k in COUNT_KEYS}
         out["song"] = any(o["song"] for o in outs)
+        out["continuation"] = next((o["continuation"] for o in outs if o["continuation"]), "")  # added 2026-11-05 v0.7.0
         return out
     idx = project_index(p)
     assets, cast = idx["assets"], idx["cast"]
@@ -931,7 +1066,11 @@ def scene_media_counts(p, scene, pass_=None, starts=None):
     anchors = {a for _, ids in people for a in ids}
     ref_pics = {r["asset"] for r in scene["refs"]
                 if r["role"] == "reference" and r["asset"] in assets and assets[r["asset"]]["kind"] == "image"}
-    auto_pack = len(anchors) + len(ref_pics - anchors) > spec.MAX_REF_IMAGES
+    # added 2026-11-05 v0.7.0: the continuation reference of this pass; a picture counts for "auto" packing
+    i = next((k for k, s in enumerate(p["scenes"]) if s["id"] == scene["id"]), None)
+    cont = pass_continuation(p, i, pass_, mode) if continuation else ""
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] auto_pack = len(anchors) + len(ref_pics - anchors) > spec.MAX_REF_IMAGES
+    auto_pack = len(anchors) + len(ref_pics - anchors) + (1 if cont == "picture" else 0) > spec.MAX_REF_IMAGES
     if starts is None:
         starts = scene_starts(p)[0]
     song = _soundtrack.pass_soundtrack(p, starts.get(scene["id"], 0.0), pass_)
@@ -969,4 +1108,22 @@ def scene_media_counts(p, scene, pass_=None, starts=None):
     if song:
         out["audio_seconds"] += song["length"]
     out["files"] = out["pictures"] + out["videos"] + len(sounds) + (1 if song else 0)
+    # added 2026-11-05 v0.7.0: the continuation reference, when it fits (else the pass counts as in v0.6.1)
+    out["continuation"] = ""
+    if cont == "picture":
+        if out["pictures"] + 1 > spec.MAX_REF_IMAGES or out["files"] + 1 > spec.MAX_REF_FILES:
+            return scene_media_counts(p, scene, pass_, starts, mode, continuation=False)
+        out["pictures"] += 1
+        out["files"] += 1
+        out["continuation"] = "picture"
+    elif cont == "video" and out["videos"] + 1 <= spec.MAX_REF_VIDEOS and out["files"] + 1 <= spec.MAX_REF_FILES:
+        secs = continuation_frames(p, i, pass_, mode) / spec.FPS
+        out["videos"] += 1
+        out["files"] += 1
+        out["video_seconds"] += secs
+        out["continuation"] = "video"
+        if out["audio"] < spec.MAX_REF_AUDIOS:  # its sound, when an audio slot is free
+            out["audio"] += 1
+            out["audio_seconds"] += secs
+            out["continuation"] = "video_audio"
     return out

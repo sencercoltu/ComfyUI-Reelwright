@@ -26,6 +26,13 @@ export const OVERRIDE_KEYS = ["seed", "steps", "sampler", "scheduler", "width", 
 export const OVERRIDE_KEYS = ["seed", "steps", "sampler", "scheduler", "width", "height",
   "diffusion", "text_encoder", "video_vae", "audio_vae", "quality"];
 export const TRANSITIONS = ["cut", "crossfade", "dip"]; // added 2026-11-02 v0.3.0
+// added 2026-11-05 v0.7.0: scene.merge (same values as reelwright/model.py). TRANSITIONS stays for the deprecated
+// scene.transition (read once, by the migration in normMerge)
+export const MERGE_TRANSITIONS = ["cut", "crossfade", "dip", "wipe", "slide", "circle", "dissolve", "pixelize", "radial", "zoom"];
+export const MERGE_DIRECTIONS = ["left", "right", "up", "down"];
+export const COLOR_MATCH_MODES = ["off", "previous", "scene"];
+export const MERGE_MAX_FRAMES = 14400; // frame counts in scene.merge: 0 .. 600 s
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 const CODE_PREFIX = { image: "P", video: "V", audio: "A" };
 // added 2026-11-03 v0.6.0: what normalizeProject enforces (same values as reelwright/model.py)
@@ -225,7 +232,10 @@ function defaultGlobal() {
     defaults: { duration: 8.0, start_mode: "last_frame", overlap_frames: 39, language: "English" },
     long: { max_pass_frames: 362, overlap_frames: 39, crossfade_frames: 12, seam_mode: "auto", cut_snap_seconds: 2.0 },
     memory: { policy: "free_cache", encode_first: true, group_by_lora: true },
-    continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag" },
+    // [OLD 2026-11-05 v0.6.1->v0.7.0] continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag" },
+    // added 2026-11-05 v0.7.0: name_continuation: the frame or clip a continuing scene (or a pass after an overlap seam)
+    // starts from is also sent as <Picture 1> / <Video 1> and named in the prompt (false: anchored only, as v0.6.1)
+    continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag", name_continuation: true },
     /* [OLD 2026-11-02 v0.1.0->v0.2.0] no switch for sending MiniMax's prompt guides
     llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va" },
     [/OLD] */
@@ -276,8 +286,23 @@ export function defaultScene(project, patch = {}) {
     transition: { mode: "", frames: null, audio_fade_frames: null },
     // added 2026-11-03 v0.6.0: the scene's number in "+1 per scene" seed mode, fixed at creation
     seed_n: nextSeedN(project),
+    // added 2026-11-05 v0.7.0: how the scene sits in the cut (replaces "transition" and Global -> Merge's transition
+    // and colour-match settings)
+    merge: defaultMerge(),
     ...patch,
   };
+}
+
+// added 2026-11-05 v0.7.0: scene.merge of a new scene (model.py default_merge): how it sits in the cut. transition:
+// how a fresh start joins the scene before (MERGE_TRANSITIONS), direction for wipe / slide, frames its length, color
+// the dip colour; audio_frames: the sound's fade out / in at a cut; fade_in / fade_out: the picture from / to a colour
+// at the scene's first / last frame; audio_fade_in / _out (frames); volume_db and mute: the scene's own sound;
+// color_match: off | previous | scene (color_ref: that scene's id); brightness, contrast, saturation: ffmpeg eq.
+export function defaultMerge() {
+  return { transition: "cut", direction: "left", frames: 12, color: "#000000", audio_frames: 6,
+    fade_in: { frames: 0, color: "#000000" }, fade_out: { frames: 0, color: "#000000" },
+    audio_fade_in: 0, audio_fade_out: 0, volume_db: 0.0, mute: false,
+    color_match: "off", color_ref: "", brightness: 0.0, contrast: 1.0, saturation: 1.0 };
 }
 
 export function defaultProject(name = "Untitled") {
@@ -441,6 +466,9 @@ export function normalizeProject(raw) {
   for (const s of p.scenes) normScene(s, g.defaults, lang, used);
   if (!p.scenes.length) p.scenes.push(defaultScene(p, { title: "Scene 1" }));
   repairSeedNs(p.scenes);
+  // added 2026-11-05 v0.7.0: scene.merge; a scene without one gets it from its v0.6 transition and Global -> Merge
+  const sceneIds = new Set(p.scenes.map(s => s.id));
+  for (const s of p.scenes) normMerge(s, g.merge, p.scenes[0].id, sceneIds);
 
   p.markers = objects(p.markers);
   for (const m of p.markers) {
@@ -661,6 +689,61 @@ function normScene(s, d, lang, usedIds) {
   const tn = s.transition = isObj(s.transition) ? s.transition : {};
   tn.mode = ["", ...TRANSITIONS].includes(tn.mode) ? tn.mode : "";
   for (const k of ["frames", "audio_fade_frames"]) tn[k] = num(tn[k], null);
+}
+
+// ---- scene.merge (added 2026-11-05 v0.7.0; model.py _norm_merge / _migrated_merge are the same) ----
+// a frame count of scene.merge: a whole number 0 .. MERGE_MAX_FRAMES (fractions are cut off)
+function mergeFrames(v, dflt) {
+  return Math.min(MERGE_MAX_FRAMES, Math.max(0, Math.trunc(num(v, dflt))));
+}
+// "#rrggbb" in lower case; anything else is black
+function mergeColor(v) {
+  return typeof v === "string" && COLOR_RE.test(v) ? v.toLowerCase() : "#000000";
+}
+function clampNum(v, dflt, lo, hi) {
+  return Math.min(hi, Math.max(lo, num(v, dflt)));
+}
+// scene.merge for a scene saved before v0.7.0, built so it merges exactly as before: the scene's own transition mode or
+// Global -> Merge -> hard cut (an unknown one was a cut), its own length and audio fade or the global ones; with Global
+// colour match on, every scene but the reference matches the reference scene (Global's colour reference scene, or the
+// first scene when that is empty or gone)
+function migratedMerge(s, gm, firstId, sceneIds) {
+  const tn = isObj(s.transition) ? s.transition : {};
+  const hard = gm.hard_cut;
+  const m = defaultMerge();
+  m.transition = tn.mode || (TRANSITIONS.includes(hard) ? hard : "cut");
+  m.frames = tn.frames !== undefined && tn.frames !== null ? tn.frames : gm.transition_frames;
+  m.audio_frames = tn.audio_fade_frames !== undefined && tn.audio_fade_frames !== null ? tn.audio_fade_frames : gm.audio_fade_frames;
+  if (gm.color_match === true) {
+    const ref = sceneIds.has(gm.color_ref_scene) ? gm.color_ref_scene : firstId;
+    if (s.id !== ref) { m.color_match = "scene"; m.color_ref = ref; }
+  }
+  return m;
+}
+// scene.merge in place (see defaultMerge). gm: the normalised Global -> Merge; firstId, sceneIds: the project's first
+// scene id and every scene id (for the migration of a scene that has no merge object).
+function normMerge(s, gm, firstId, sceneIds) {
+  let m = s.merge;
+  if (!isObj(m)) m = migratedMerge(s, gm, firstId, sceneIds);
+  m.transition = MERGE_TRANSITIONS.includes(m.transition) ? m.transition : "cut";
+  m.direction = MERGE_DIRECTIONS.includes(m.direction) ? m.direction : "left";
+  m.frames = mergeFrames(m.frames, 12);
+  m.color = mergeColor(m.color);
+  m.audio_frames = mergeFrames(m.audio_frames, 6);
+  for (const k of ["fade_in", "fade_out"]) {
+    const f = m[k] = isObj(m[k]) ? m[k] : {};
+    f.frames = mergeFrames(f.frames, 0);
+    f.color = mergeColor(f.color);
+  }
+  for (const k of ["audio_fade_in", "audio_fade_out"]) m[k] = mergeFrames(m[k], 0);
+  m.volume_db = clampNum(m.volume_db, 0, -60, 24);
+  m.mute = flag(m.mute, false);
+  m.color_match = COLOR_MATCH_MODES.includes(m.color_match) ? m.color_match : "off";
+  textField(m, "color_ref", "");
+  m.brightness = clampNum(m.brightness, 0, -1, 1);
+  m.contrast = clampNum(m.contrast, 1, 0, 2);
+  m.saturation = clampNum(m.saturation, 1, 0, 3);
+  s.merge = m;
 }
 
 // ---- stable seeds (added 2026-11-03 v0.6.0, same as model.py) ----
@@ -1115,8 +1198,19 @@ export function sceneAutoPacks(project, scene) {
   return anchors.size + refs.size > 9;
 }
 [/OLD] */
+/* [OLD 2026-11-05 v0.6.1->v0.7.0] did not count the continuation picture (<Picture 1> of a last-frame start)
 export function sceneAutoPacks(project, scene) {
   return scenePeople(project, scene).autoPack;
+}
+[/OLD] */
+// added 2026-11-05 v0.7.0: the first pass's continuation picture takes a slot too (as sceneBudget / prompt.collect_refs)
+export function sceneAutoPacks(project, scene) {
+  const sp = scenePeople(project, scene);
+  if (sp.autoPack) return true;
+  const i = sceneIndex(project, scene.id);
+  if (i <= 0) return false;
+  const first = planScene(project, scene, i).passes[0];
+  return !!first && passContinuation(project, i, first) === "picture" && sp.unpacked + 1 > MAX_REF_IMAGES;
 }
 
 // added 2026-11-03 v0.6.0: the cast a scene sends, as prompt.collect_refs / model.scene_media_counts: its cast list
@@ -1137,8 +1231,14 @@ function scenePeople(project, scene) {
   }
   const anchors = new Set(people.flatMap(x => x.ids));
   const refPics = new Set(scene.refs.filter(r => r.role === "reference" && assets.get(r.asset)?.kind === "image").map(r => r.asset));
+  /* [OLD 2026-11-05 v0.6.1->v0.7.0] no unpacked count
   const autoPack = anchors.size + [...refPics].filter(a => !anchors.has(a)).length > MAX_REF_IMAGES;
   return { people, autoPack, assets };
+  [/OLD] */
+  // added 2026-11-05 v0.7.0: unpacked (pictures before packing) for sceneBudget's continuation picture
+  const unpacked = anchors.size + [...refPics].filter(a => !anchors.has(a)).length;
+  const autoPack = unpacked > MAX_REF_IMAGES;
+  return { people, autoPack, assets, unpacked };
 }
 export function castPacks(project, scene, c) {
   const n = c.anchors.filter(id => findAsset(project, id)?.kind === "image").length;
@@ -1178,15 +1278,50 @@ export function sheetURL(project, c, cell = 192) {
 // only where passSoundtrack gives one, files = pictures + videos + audio files. With a pass (from planScene): that
 // pass; without: the most any pass of the scene uses (song: any pass).
 // {pictures, videos, videoSeconds, audio, audioSeconds, files, song}
-export function sceneBudget(project, scene, pass = null) {
+// added 2026-11-05 v0.7.0: + continuation: "picture" | "video" | "video_audio" (with its sound) | "" (see
+// passContinuation; without a pass: the first pass that has one). A continuation picture counts for "auto" packing;
+// one that still does not fit (pictures <= 9, videos <= 3, files <= 12) is left out. continuation=false: as v0.6.1.
+const MAX_REF_VIDEOS = 3, MAX_REF_AUDIOS = 3, MAX_REF_FILES = 12; // added 2026-11-05 v0.7.0 (spec.py)
+
+// added 2026-11-05 v0.7.0, same as model.pass_continuation: what a pass (from planScene) of scene i sends as reference 1
+// for the footage it continues from when Global -> Continuity -> name_continuation is on: "picture" (pass 1 of a
+// last-frame start, a re-anchored tail too), "video" (pass 1 of a tail start; a later pass after an overlap seam), "".
+export function passContinuation(project, i, pass, mode = null) {
+  if (!flag(project.global?.continuity?.name_continuation ?? true, true)) return "";
+  if (Math.trunc(num(pass.index, 1)) > 1) return pass.seam_before === "overlap" ? "video" : "";
+  if (i === null || i === undefined || i <= 0) return "";
+  if (mode === null) mode = effectiveStart(project, i);
+  if (mode === "tail" && pass.overlap_frames) return "video";
+  return mode === "last_frame" || mode === "tail" ? "picture" : "";
+}
+
+// added 2026-11-05 v0.7.0, same as model.continuation_frames: frames of the clip sent as <Video 1> (the tail clip of the
+// scene before: its last 124 frames or fewer; the last 124 frames of the pass before), 0 for none.
+export function continuationFrames(project, i, pass, mode = null) {
+  if (passContinuation(project, i, pass, mode) !== "video") return 0;
+  if (Math.trunc(num(pass.index, 1)) > 1) return MIN_PASS_FRAMES;
+  return Math.min(MIN_PASS_FRAMES, sceneFrames(project.scenes[i - 1]));
+}
+
+// [OLD 2026-11-05 v0.6.1->v0.7.0] export function sceneBudget(project, scene, pass = null) {
+export function sceneBudget(project, scene, pass = null, continuation = true) {
   if (!pass) {
+    /* [OLD 2026-11-05 v0.6.1->v0.7.0] no continuation
     const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x));
+    [/OLD] */
+    const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x, continuation));
     const b = {};
     for (const k of ["pictures", "videos", "videoSeconds", "audio", "audioSeconds", "files"]) b[k] = Math.max(...outs.map(o => o[k]));
     b.song = outs.some(o => o.song);
+    b.continuation = outs.find(o => o.continuation)?.continuation || ""; // added 2026-11-05 v0.7.0
     return b;
   }
-  const { people, autoPack, assets } = scenePeople(project, scene);
+  // [OLD 2026-11-05 v0.6.1->v0.7.0] const { people, autoPack, assets } = scenePeople(project, scene);
+  // added 2026-11-05 v0.7.0: the continuation reference of this pass; a picture counts for "auto" packing
+  const { people, assets, unpacked } = scenePeople(project, scene);
+  const idx = project.scenes.findIndex(x => x.id === scene.id);
+  const cont = continuation ? passContinuation(project, idx < 0 ? null : idx, pass) : "";
+  const autoPack = unpacked + (cont === "picture" ? 1 : 0) > MAX_REF_IMAGES;
   const song = passSoundtrack(project, timing(project).starts[scene.id] ?? 0, pass);
   const speaking = new Set((pass.dialogue || []).map(d => d.speaker));
   const b = { pictures: 0, videos: 0, videoSeconds: 0, audio: 0, audioSeconds: 0, files: 0, song: !!song };
@@ -1214,6 +1349,21 @@ export function sceneBudget(project, scene, pass = null) {
   for (const a of sounds) b.audioSeconds += Number(a.duration) || 0;
   if (song) b.audioSeconds += song.length;
   b.files = b.pictures + b.videos + sounds.length + (song ? 1 : 0);
+  // added 2026-11-05 v0.7.0: the continuation reference, when it fits (else the pass counts as in v0.6.1)
+  b.continuation = "";
+  if (cont === "picture") {
+    if (b.pictures + 1 > MAX_REF_IMAGES || b.files + 1 > MAX_REF_FILES) return sceneBudget(project, scene, pass, false);
+    b.pictures++;
+    b.files++;
+    b.continuation = "picture";
+  } else if (cont === "video" && b.videos + 1 <= MAX_REF_VIDEOS && b.files + 1 <= MAX_REF_FILES) {
+    const secs = continuationFrames(project, idx, pass) / FPS;
+    b.videos++;
+    b.files++;
+    b.videoSeconds += secs;
+    b.continuation = "video";
+    if (b.audio < MAX_REF_AUDIOS) { b.audio++; b.audioSeconds += secs; b.continuation = "video_audio"; } // its sound
+  }
   return b;
 }
 

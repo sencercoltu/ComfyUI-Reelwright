@@ -10,7 +10,9 @@ into one video. Only what you changed gets rendered again.
   the window you choose.
 - **Continuity.** A scene can start fresh, start from the last frame of the
   previous scene, or continue from its tail clip. A tail clip carries motion,
-  light and sound across the cut.
+  light and sound across the cut. The frame or clip is also sent as
+  `<Picture 1>` / `<Video 1>` and named in the prompt, as MiniMax's guide does
+  (a switch on the Cast tab turns this off).
 - **Same character everywhere.** Cast members have anchor pictures, outfits, a
   voice and an optional identity LoRA. The same anchors are sent to every
   scene, so scene 10 matches scene 1. An optional face check flags drift.
@@ -37,12 +39,17 @@ into one video. Only what you changed gets rendered again.
   Beat markers show the tempo, beats and bar starts; scene edges, shot cuts
   and tracks can snap to them. Auto-roll keeps later scenes on the song while
   you change a scene's length.
-- **Merge scenes.** One click, no re-render, and it can be stopped. Cuts,
-  crossfades or dips to black; loudness normalisation; soundtrack tracks (a
-  looping score that ducks too); colour match; subtitles (.srt), chapters, and
-  OpenTimelineIO / FCPXML timelines (with the soundtrack and markers) for
-  Resolve or Premiere. Draft merges (half size, fast), a range of scenes, and
-  audio stems with an EBU R128 loudness report.
+- **Merge scenes.** One click, no re-render, and it can be stopped. Each scene
+  sets how it sits in the cut: a cut or a transition (crossfade, dip through
+  any colour, dissolve, wipe, slide, circle, pixelize, radial, zoom), fades
+  from and to a colour, sound fades, its sound level or mute, colour match to
+  the scene before or a chosen scene, and brightness, contrast and saturation.
+  Loudness normalisation; soundtrack tracks (a looping score that ducks too);
+  subtitles (.srt), chapters, and OpenTimelineIO / FCPXML timelines (with the
+  soundtrack and markers) for Resolve or Premiere. Draft merges (half size,
+  fast), a range of scenes, and audio stems with an EBU R128 loudness report.
+- **A timeline that shows the film.** Rendered scenes show the frame that is
+  at each time, and transitions and fades are marked on the scene blocks.
 - **Prompt tools.** A structured six-section editor with `@P1` / `@Mara` tags
   that are renumbered per pass, a live preview of the exact prompt for each
   pass, and an optional OpenAI-compatible LLM for rewrite, pass splitting and
@@ -110,8 +117,8 @@ node. A wired input replaces the matching Global-tab loader.
    timeline blocks, the Render tab ("Scene 2 of 5") and the node title. A scene
    can render as Draft or Final on its own (Scene tab → Generation → Quality).
 7. **Merge scenes.** The cut, plus any side files you enabled, is written to
-   `output/reelwright/<project>/cuts/`. Transitions default to the Merge card;
-   a scene that starts fresh can choose its own cut, crossfade or dip.
+   `output/reelwright/<project>/cuts/`. Each scene's transition, fades, sound
+   and colour are set on its Scene tab → **In the cut** card.
 
 Everything is stored in the workflow. The project is also autosaved, with
 versions, under `output/reelwright/<project>/`. Each new node gets its own
@@ -131,6 +138,12 @@ H3 places guide frames at any frame of a generation (`MiniMaxH3AddGuide`).
   the new scene. The new scene continues the motion, and the merge crossfades
   inside that overlap.
 - **Last frame:** the previous scene's final frame becomes frame 0.
+- The frame or clip is also sent as a reference: the last frame as
+  `<Picture 1>`, the tail clip as `<Video 1>` (with its sound when an audio
+  slot is free), and after an overlap seam in a long scene the end of the pass
+  before as `<Video 1>`. The prompt says the scene starts from it.
+  **Cast → Continuity rules → Name it in the prompt** turns this off (then the
+  frame or clip only guides the start, as before v0.7.0).
 - Identity always comes from the cast anchors, not from a chain of rendered
   frames. After a set number of chained scenes, a tail continuation falls back
   to last frame only (the re-anchor rule); it is then planned, trimmed and

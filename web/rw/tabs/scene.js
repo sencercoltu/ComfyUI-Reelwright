@@ -1,6 +1,9 @@
 // Scene tab: everything about one scene, plus its overrides of the Global tab.
 
 import { h, icon, button, toggle, segmented, select, number, text, textarea, chip, dot, section, field, meter, keepChips, slider } from "../ui.js";
+import { choiceDialog } from "../ui.js"; // added 2026-11-05 v0.7.0: "Apply to all scenes" asks which scenes
+// added 2026-11-05 v0.7.0: the "In the cut" card (scene.merge)
+import { TRANSITIONS, DIRECTIONS, DIRECTED, mergeOf, ensureMerge, mergeDefaults, joinOf, transitionLabel } from "../cut.js";
 import { rw, viewURL } from "../api.js";
 import { newJob, jobLine } from "../llmjob.js"; // added 2026-11-03 v0.4.2
 import { codeEditor } from "../codeedit.js";
@@ -18,6 +21,7 @@ import {
   shotLengths, overruns, fitLength, lengthenToFit, squeezeToFit, // added 2026-11-03 v0.4.3
   // added 2026-11-03 v0.6.0: visible start ("In"), how a scene really starts, passes and their song part, per-pass budget
   visibleStart, effectiveStart, tailOverlapFrames, planScene, passSoundtrack,
+  soundtrackLocked, // added 2026-11-05 v0.7.0: transitions play as dips while a soundtrack sets the timing
 } from "../model.js";
 
 // added 2026-11-03 v0.6.0: a render step changes nothing on this tab (status changes come with a full render), so
@@ -157,7 +161,7 @@ function startCard(ctx, s) {
         onChange: v => ctx.actions.editScene(s.id, sc => { sc.start.overlap_frames = Number(v); }),
       }), { help: "scene.start.overlap" }),
       startNote(p, s, i), // added 2026-11-03 v0.6.0
-      transitionFields(ctx, s, i), // added 2026-11-02 v0.3.0
+      // [OLD 2026-11-05 v0.6.1->v0.7.0] transitionFields(ctx, s, i), // added 2026-11-02 v0.3.0  (the join moved to the "In the cut" card, scene.merge)
     ],
   });
 }
@@ -177,6 +181,7 @@ function startNote(p, s, i) {
   return null;
 }
 
+/* [OLD 2026-11-05 v0.6.1->v0.7.0] scene.transition with Global -> Merge defaults; replaced by cutCard (scene.merge)
 // added 2026-11-02 v0.3.0: how the cut into this scene looks in the merge (per scene; empty follows Global -> Merge)
 function transitionFields(ctx, s, i) {
   if (i === 0) return null;
@@ -204,6 +209,194 @@ function transitionFields(ctx, s, i) {
       onChange: v => setT(t => { t.audio_fade_frames = v; }) }), { help: "scene.transition.audioFade", dot: tr.audio_fade_frames != null ? "override" : "global",
       reset: tr.audio_fade_frames != null ? () => setT(t => { t.audio_fade_frames = null; }) : null }),
   ];
+}
+[/OLD] */
+
+// added 2026-11-05 v0.7.0: "In the cut": how the merge joins this scene to the one before, fades it in and out, sets
+// its sound and grades its colour (scene.merge, contract B). Every edit is one named undo step; inputs have keys.
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+// a frame count with its length in seconds next to it
+function framesBox({ value, onChange, key, help, min = 0, max = 240 }) {
+  const f = Math.max(0, Math.round(Number(value) || 0));
+  return h("span", { class: "rw-frames" },
+    number({ value: f, min, max, step: 1, width: "62px", unit: "f", key, help, onChange: v => onChange(v === null ? null : Math.round(v)) }),
+    h("span", { class: "rw-dim small mono rw-frames-s", help }, (f / FPS).toFixed(2) + " s"));
+}
+
+function colorBox({ value, onChange, key, help, label }) {
+  return h("input", { type: "color", class: "rw-color sm", value: HEX_COLOR.test(value || "") ? value.toLowerCase() : "#000000", key, help,
+    "aria-label": label, title: label, onChange: e => { if (HEX_COLOR.test(e.target.value)) onChange(e.target.value.toLowerCase()); } });
+}
+
+function cutCard(ctx, s) {
+  const p = ctx.p;
+  const i = sceneIndex(p, s.id);
+  const m = mergeOf(s);
+  const D = mergeDefaults();
+  const join = joinOf(p, i, s);
+  const key = k => `cut-${k}-${s.id}`;
+  const set = (label, fn) => ctx.actions.editScene(s.id, sc => fn(ensureMerge(sc)), { label });
+  // a reset button where the value differs from a new scene's (null keeps the column aligned)
+  const reset = (same, label, fn) => (same ? null : () => set(label, fn));
+  const opt = { resetHelp: "scene.cut.reset" };
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const next = p.scenes[i + 1];
+  const nextContinues = !!next && effectiveStart(p, i + 1) !== "fresh";
+  const changed = !same(m, D);
+
+  const transitionSelect = disabled => {
+    const el = select({ options: TRANSITIONS.map(t => ({ value: t.value, label: t.label })), value: m.transition, key: key("tr"),
+      help: "scene.cut.transition", width: "150px", onChange: v => set("Transition", x => { x.transition = v; }) });
+    if (disabled) { el.classList.add("rw-disabled"); el.querySelectorAll("input, button").forEach(c => { c.disabled = true; }); }
+    return el;
+  };
+
+  // Join: how this scene follows the one before
+  const joinRows = [];
+  if (join.kind === "first") {
+    joinRows.push(field("Transition", transitionSelect(true), { help: "scene.cut.transition" }),
+      h("div", { class: "rw-dim small", help: "scene.cut.first" }, "The first scene: nothing comes before it, so there is no join. Fades, sound and colour below still apply."));
+  } else if (join.kind === "continuation") {
+    joinRows.push(field("Transition", transitionSelect(true), { help: "scene.cut.transition" }),
+      h("div", { class: "rw-note rw-cut-cont", help: "scene.cut.continuation" }, icon(join.mode === "tail" ? "tail" : "link", 12),
+        h("span", null, join.mode === "tail"
+          ? `Joins by its continuation: the ${join.overlap}-frame tail it repeats is crossfaded over ${Math.min(join.crossfade, join.overlap)} f (Global → Long scenes → Crossfade). The transition is not used.`
+          : "Joins by its continuation: it starts on the last frame of the scene before, and that repeated frame is dropped. The transition is not used.")));
+  } else {
+    const t = m.transition;
+    const overlapping = t !== "cut";
+    joinRows.push(field("Transition", transitionSelect(false), { help: "scene.cut.transition",
+      reset: reset(t === D.transition, "Reset transition", x => { x.transition = D.transition; }), ...opt }));
+    if (DIRECTED.has(t)) {
+      joinRows.push(field("Direction", segmented({ small: true, value: m.direction, key: key("dir"), help: "scene.cut.direction",
+        options: DIRECTIONS.map(d => ({ value: d.value, label: d.label, help: "scene.cut.direction" })),
+        onChange: v => set("Transition direction", x => { x.direction = v; }) }), { help: "scene.cut.direction" }));
+    }
+    if (overlapping) {
+      joinRows.push(field("Length", framesBox({ value: m.frames, min: 1, max: 96, key: key("frames"), help: "scene.cut.frames",
+        onChange: v => set("Transition length", x => { x.frames = v ?? D.frames; }) }),
+      { help: "scene.cut.frames", reset: reset(m.frames === D.frames, "Reset transition length", x => { x.frames = D.frames; }), ...opt }));
+    }
+    // the dip colour: a dip, or any transition that plays as a dip under a soundtrack
+    if (t === "dip" || (overlapping && join.asDip)) {
+      joinRows.push(field(t === "dip" ? "Colour" : "Dip colour", colorBox({ value: m.color, key: key("color"), help: "scene.cut.color", label: "Dip colour",
+        onChange: v => set("Dip colour", x => { x.color = v; }) }),
+      { help: "scene.cut.color", reset: reset(m.color === D.color, "Reset dip colour", x => { x.color = D.color; }), ...opt }));
+    }
+    /* [OLD 2026-11-05 v0.7.0 lead review] an overlapping transition showed "Audio crossfade", but the merge crossfades the
+       sound over the whole transition there and only uses audio_frames at a cut or a dip that keeps the timing
+    joinRows.push(field(overlapping ? "Audio crossfade" : "Audio fade", framesBox({ value: m.audio_frames, max: 96, key: key("afr"), help: "scene.cut.audio",
+      onChange: v => set(overlapping ? "Audio crossfade" : "Audio fade", x => { x.audio_frames = v ?? D.audio_frames; }) }),
+    { help: "scene.cut.audio", reset: reset(m.audio_frames === D.audio_frames, "Reset audio fade", x => { x.audio_frames = D.audio_frames; }), ...opt }));
+    [/OLD] */
+    // added 2026-11-05 v0.7.0 lead review: the field only where the merge reads it (a cut, or a dip that keeps the timing)
+    if (overlapping && !join.asDip) {
+      joinRows.push(h("div", { class: "rw-note", help: "scene.cut.audio" }, "The sound crossfades over the whole transition."));
+    } else {
+      joinRows.push(field("Audio fade", framesBox({ value: m.audio_frames, max: 96, key: key("afr"), help: "scene.cut.audio",
+        onChange: v => set("Audio fade", x => { x.audio_frames = v ?? D.audio_frames; }) }),
+      { help: "scene.cut.audio", reset: reset(m.audio_frames === D.audio_frames, "Reset audio fade", x => { x.audio_frames = D.audio_frames; }), ...opt }));
+    }
+    if (overlapping && join.asDip) {
+      joinRows.push(h("div", { class: "rw-note rw-cut-dip", help: "scene.cut.locked" }, icon("music", 12),
+        h("span", null, t === "dip"
+          ? "A soundtrack sets the timing, so the dip plays inside both scenes: nothing overlaps and every scene keeps its place on the song."
+          : `A soundtrack sets the timing, so this ${transitionLabel(m).toLowerCase()} plays as a dip through `,
+        t !== "dip" && h("span", { class: "rw-cut-swatch", style: { background: m.color } }),
+        t !== "dip" && " inside both scenes: nothing overlaps and every scene keeps its place on the song.")));
+    }
+  }
+
+  const fadeRow = (which, label, help, colorHelp, word) => {
+    const f = m[which];
+    return field(label, h("span", { class: "rw-frames" },
+      framesBox({ value: f.frames, key: key(which), help, onChange: v => set(label, x => { x[which].frames = v ?? 0; }) }),
+      h("span", { class: "rw-dim small" }, word),
+      colorBox({ value: f.color, key: key(which + "-c"), help: colorHelp, label: label + " colour",
+        onChange: v => set(label + " colour", x => { x[which].color = v; }) })),
+    { help, reset: reset(same(f, D[which]), "Reset " + label.toLowerCase(), x => { x[which] = structuredClone(D[which]); }), ...opt });
+  };
+  const audioRow = (k, label, help) => field(label, framesBox({ value: m[k], key: key(k), help, onChange: v => set(label, x => { x[k] = v ?? 0; }) }),
+    { help, reset: reset(m[k] === D[k], "Reset " + label.toLowerCase(), x => { x[k] = D[k]; }), ...opt });
+
+  const scenes = p.scenes.filter(x => x.id !== s.id).map(x => ({ value: x.id, label: `${String(sceneIndex(p, x.id) + 1).padStart(2, "0")} · ${x.title}` }));
+  const grade = (k, label, min, max, fmt) => field(label, slider({ value: Number(m[k]), min, max, step: 0.01, key: key(k), help: "scene.cut." + k, format: fmt,
+    onChange: v => set(label, x => { x[k] = Math.round(v * 100) / 100; }) }),
+  { help: "scene.cut." + k, reset: reset(m[k] === D[k], "Reset " + label.toLowerCase(), x => { x[k] = D[k]; }), ...opt });
+  const signed = v => (v > 0 ? "+" : "") + v.toFixed(2);
+
+  const applyAll = async () => {
+    const q = ctx.p, k = sceneIndex(q, s.id), later = q.scenes.length - 1 - k;
+    if (q.scenes.length < 2) return;
+    const v = await choiceDialog(ctx.root, {
+      title: "Apply these cut settings to other scenes?", help: "scene.cut.applyAll",
+      message: `Copies this scene's join, fades, sound and colour settings to other scenes, in one undo step. Scenes that continue the one before keep joining by their continuation.`,
+      cancelValue: null, focus: "all",
+      choices: [
+        { value: null, label: "Cancel", help: "common.cancel" },
+        later > 0 && k > 0 ? { value: "after", label: `Scenes after this one (${later})`, help: "scene.cut.applyAfter" } : null,
+        { value: "all", label: `All scenes (${q.scenes.length - 1} other${q.scenes.length === 2 ? "" : "s"})`, variant: "primary", help: "scene.cut.applyAll" },
+      ].filter(Boolean),
+    });
+    if (!v) return;
+    const src = mergeOf(ctx.p.scenes.find(x => x.id === s.id) || s);
+    let n = 0;
+    ctx.actions.edit(pq => {
+      const from = sceneIndex(pq, s.id);
+      pq.scenes.forEach((sc, j) => {
+        if (sc.id === s.id || (v === "after" && j <= from)) return;
+        const copy = structuredClone(src);
+        if (copy.color_match === "scene" && copy.color_ref === sc.id) copy.color_match = "off"; // nothing to match itself to
+        sc.merge = copy;
+        n++;
+      });
+    }, { label: v === "all" ? "Cut settings → all scenes" : "Cut settings → later scenes" });
+    ctx.actions.toast(`Copied the cut settings to ${n} scene${n === 1 ? "" : "s"}. Ctrl+Z undoes it.`, "ok");
+  };
+
+  return section({
+    title: "In the cut", help: "scene.cut", cls: "rw-cut",
+    actions: [
+      changed && button({ label: "Reset", small: true, variant: "ghost", help: "scene.cut.resetAll", key: key("reset-all"),
+        onClick: () => set("Reset cut settings", x => { for (const k of Object.keys(x)) delete x[k]; Object.assign(x, mergeDefaults()); }) }),
+      p.scenes.length > 1 && button({ label: "Apply to all…", icon: "copy", small: true, help: "scene.cut.applyAll", key: key("apply"), onClick: applyAll }),
+    ],
+    children: [
+      h("div", { class: "rw-subhead", help: "scene.cut.join" }, "Join"),
+      ...joinRows,
+      h("div", { class: "rw-subhead", help: "scene.cut.start" }, "Start"),
+      fadeRow("fade_in", "Fade in", "scene.cut.fadeIn", "scene.cut.fadeInColor", "from"),
+      audioRow("audio_fade_in", "Audio fade in", "scene.cut.audioFadeIn"),
+      m.fade_in.frames > 0 && join.kind === "continuation" && h("div", { class: "rw-note warn", help: "scene.cut.fadeInWarn" }, icon("warn", 12),
+        "This scene continues the one before: a fade in breaks the continuous join."),
+      h("div", { class: "rw-subhead", help: "scene.cut.end" }, "End"),
+      fadeRow("fade_out", "Fade out", "scene.cut.fadeOut", "scene.cut.fadeOutColor", "to"),
+      audioRow("audio_fade_out", "Audio fade out", "scene.cut.audioFadeOut"),
+      m.fade_out.frames > 0 && nextContinues && h("div", { class: "rw-note warn", help: "scene.cut.fadeOutWarn" }, icon("warn", 12),
+        `${next.title} continues from this scene's end, which it takes before the fade: the cut jumps from the faded frame back to the picture.`),
+      h("div", { class: "rw-subhead", help: "scene.cut.sound" }, "Sound"),
+      field("Level", h("span", { class: "rw-row" },
+        number({ value: m.volume_db, min: -60, max: 24, step: 0.5, /* v0.7.0 lead review: max 24 like the project file (was 12) */ width: "70px", unit: "dB", key: key("vol"), help: "scene.cut.volume",
+          onChange: v => set("Scene sound level", x => { x.volume_db = v ?? 0; }) }),
+        toggle({ value: m.mute, label: "Mute", key: key("mute"), help: "scene.cut.mute", onChange: v => set(v ? "Mute scene sound" : "Unmute scene sound", x => { x.mute = v; }) })),
+      { help: "scene.cut.volume", reset: reset(m.volume_db === D.volume_db && m.mute === D.mute, "Reset scene sound", x => { x.volume_db = D.volume_db; x.mute = D.mute; }), ...opt }),
+      h("div", { class: "rw-subhead", help: "scene.cut.colour" }, "Colour"),
+      field("Match", segmented({ small: true, value: m.color_match, key: key("cm"), help: "scene.cut.colorMatch", options: [
+        { value: "off", label: "Off", help: "scene.cut.colorMatch" }, { value: "previous", label: "Previous", help: "scene.cut.colorMatch.previous" },
+        { value: "scene", label: "A scene", help: "scene.cut.colorMatch.scene" }],
+      onChange: v => set("Colour match", x => {
+        x.color_match = v;
+        if (v === "scene" && (!x.color_ref || x.color_ref === s.id)) x.color_ref = ctx.p.scenes.find(y => y.id !== s.id)?.id || "";
+      }) }), { help: "scene.cut.colorMatch", reset: reset(m.color_match === D.color_match, "Reset colour match", x => { x.color_match = D.color_match; x.color_ref = D.color_ref; }), ...opt }),
+      m.color_match === "scene" && field("Reference", select({ options: scenes, value: m.color_ref, key: key("cref"), help: "scene.cut.colorRef", width: "190px",
+        onChange: v => set("Colour match scene", x => { x.color_ref = v; }) }), { help: "scene.cut.colorRef" }),
+      m.color_match === "previous" && i === 0 && h("div", { class: "rw-dim small", help: "scene.cut.colorMatch.previous" }, "The first scene has no scene before it, so it is not matched."),
+      grade("brightness", "Brightness", -1, 1, signed),
+      grade("contrast", "Contrast", 0, 2, v => v.toFixed(2)),
+      grade("saturation", "Saturation", 0, 3, v => v.toFixed(2)),
+    ],
+  });
 }
 
 function overridesCard(ctx, s) {
@@ -871,6 +1064,19 @@ function notesCard(ctx, s) {
   });
 }
 
+// added 2026-11-05 v0.7.0: Render → Merge scenes' "Scene tab → In the cut" brings the card into view once
+export function afterRender(ctx) {
+  if (!ctx.eph.scrollToCut) return;
+  ctx.eph.scrollToCut = false;
+  const card = ctx.root.querySelector(".rw-cut");
+  const box = card?.closest(".rw-cols");
+  if (!card || !box) return;
+  const sc = (ctx.root.getBoundingClientRect().width / (ctx.root.offsetWidth || 1)) || 1;
+  box.scrollTop += (card.getBoundingClientRect().top - box.getBoundingClientRect().top) / sc - 8;
+  card.classList.add("rw-flash");
+  setTimeout(() => card.classList.remove("rw-flash"), 1400);
+}
+
 export function render(ctx) {
   const s = ctx.scene;
   const issues = ctx.planFor(s.id)?.issues || [];
@@ -878,7 +1084,8 @@ export function render(ctx) {
     navigator(ctx),
     issues.length > 0 && h("div", { class: "rw-banner warn", help: "app.issues" }, icon("warn", 13), issues.map(i => i.message).join(" · ")),
     h("div", { class: "rw-cols", dataset: { scroll: "scene-cols" } },
-      h("div", { class: "rw-col narrow" }, durationCard(ctx, s), startCard(ctx, s), overridesCard(ctx, s), notesCard(ctx, s)),
+      // [OLD 2026-11-05 v0.6.1->v0.7.0] h("div", { class: "rw-col narrow" }, durationCard(ctx, s), startCard(ctx, s), overridesCard(ctx, s), notesCard(ctx, s)),
+      h("div", { class: "rw-col narrow" }, durationCard(ctx, s), startCard(ctx, s), cutCard(ctx, s), overridesCard(ctx, s), notesCard(ctx, s)), // added 2026-11-05 v0.7.0: In the cut
       h("div", { class: "rw-col wide" }, promptCard(ctx, s), shotsCard(ctx, s), dialogueCard(ctx, s), previewCard(ctx, s), rewriteCard(ctx, s)),
       h("div", { class: "rw-col mid" }, budgetCard(ctx, s), refsCard(ctx, s), castCard(ctx, s), lorasCard(ctx, s))));
 }

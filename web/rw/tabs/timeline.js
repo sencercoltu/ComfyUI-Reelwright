@@ -3,7 +3,9 @@
 
 // [OLD 2026-11-02 v0.2.2->v0.3.0] import { h, icon, button, toggle, segmented, chip, dot, slider } from "../ui.js";
 import { h, icon, button, toggle, segmented, chip, dot, slider, select } from "../ui.js";
-import { viewURL } from "../api.js";
+// [OLD 2026-11-05 v0.6.1->v0.7.0] import { viewURL } from "../api.js";
+import { rw, viewURL } from "../api.js"; // added 2026-11-05 v0.7.0: rw.filmstrip
+import { joinOf, TRANSITION, DIRECTED, DIRECTIONS, transitionLabel } from "../cut.js"; // added 2026-11-05 v0.7.0: cut marks
 import { highlightHTML } from "../prompttext.js";
 import {
   FPS, sceneStarts, fmtTime, framesOf, nearestGridFrames, estimatePasses, findAsset, findCast,
@@ -1224,6 +1226,12 @@ function sceneBlock(ctx, s, i, start, z, ov = 0) {
     dot(status === "cached" || status === "locked" ? "ok" : status === "stale" ? "warn" : status === "rendering" ? "busy" : "empty", "status." + status));
   const strip = h("div", { class: "rw-scene-strip", style: thumb ? { "background-image": `url("${thumb}")` } : null });
   block.append(head, strip);
+  // added 2026-11-05 v0.7.0: the frame that is at each time, from the starred take's filmstrip (fetched once per video
+  // file; the first frame above stays underneath until it is there, and when it fails), and marks for the join into
+  // the scene and its fades
+  const film = take?.files?.video ? filmstripOf(ctx, take) : null;
+  if (film) filmCells(ctx, strip, film, (start + ov) * z + 1, w, ov, z);
+  cutMarks(ctx, strip, s, i, z, w);
   /* [OLD 2026-11-03 v0.4.3->v0.5.0] the tail hatch sat inside the block; the block now starts after the repeated tail
   if (s.start.mode === "tail" && i > 0) strip.append(h("span", { class: "rw-hatch", style: { width: (s.start.overlap_frames / FPS) * z + "px" }, help: "scene.start.tail" }, "tail"));
   const passes = plan?.passes;
@@ -1277,6 +1285,122 @@ function progressParts(prog) {
     h("div", { class: "rw-scene-prog", help: "timeline.scene.progress" }, h("span", { style: { width: Math.round(Math.min(1, passPart) * 100) + "%" } })),
     h("span", { class: "rw-scene-prog-label mono" }, `${prog.phase} ${prog.pass}/${prog.passes}${prog.steps ? " · " + prog.step + "/" + prog.steps : ""}`),
   ];
+}
+
+// ---- filmstrip and cut marks (added 2026-11-05 v0.7.0) ----
+// The scene strip shows the frame that is at each time: cells of the sprite's tile aspect, each showing the tile
+// nearest the cell's middle time (scene time = where the block starts in the scene + x / zoom). The sprite comes from
+// GET /reelwright/filmstrip for the starred take's video. It is asked for only when a block that needs it is built (the
+// lane window builds the blocks near the view), at most FILM_LIVE at a time, and kept per editor and video file. When
+// the takes change, an entry is forgotten if its take is no longer starred or was rendered again (`created` differs),
+// and a failed one is tried again. Failures are quiet: the strip keeps the take's first frame (today's image).
+const FILM_H = 54; // tile height asked for, in pixels
+const STRIP_H = 44; // height of .rw-scene-strip: a 70 px block, 2 px of border and the 24 px head
+const FILM_LIVE = 3; // filmstrip requests at a time
+const films = new WeakMap(); // ctx -> { map: Map(key -> entry), takes, queue, live, timer }
+const filmKey = take => `${take.files.video}|${take.created ?? ""}`;
+
+function filmState(ctx) {
+  let st = films.get(ctx);
+  if (!st) films.set(ctx, st = { map: new Map(), takes: undefined, queue: [], live: 0, timer: 0 });
+  // takes not read yet (null while a new folder's list is on its way) forget nothing
+  if (ctx.eph.takes && st.takes !== ctx.eph.takes) {
+    st.takes = ctx.eph.takes;
+    const keep = new Set();
+    for (const t of Object.values(st.takes?.scenes || {})) {
+      const x = t?.takes?.find(k => k.id === t.starred);
+      if (x?.files?.video) keep.add(filmKey(x));
+    }
+    for (const [k, e] of st.map) if (!keep.has(k) || e.state === "error") st.map.delete(k);
+    st.queue = st.queue.filter(e => st.map.get(e.key) === e);
+  }
+  return st;
+}
+
+// The filmstrip entry of a take once its sprite has loaded, else null (and it is asked for when it is not yet).
+function filmstripOf(ctx, take) {
+  const st = filmState(ctx);
+  const key = filmKey(take);
+  let e = st.map.get(key);
+  if (!e) {
+    e = { key, file: take.files.video, version: String(take.created ?? ""), state: "queued" };
+    st.map.set(key, e);
+    st.queue.push(e);
+    filmPump(ctx, st);
+  }
+  return e.state === "ok" ? e : null;
+}
+
+function filmPump(ctx, st) {
+  while (st.live < FILM_LIVE && st.queue.length) {
+    const e = st.queue.shift();
+    if (st.map.get(e.key) !== e) continue; // forgotten while it waited
+    st.live++;
+    e.state = "loading";
+    filmLoad(ctx, st, e).finally(() => { st.live--; filmPump(ctx, st); });
+  }
+}
+
+async function filmLoad(ctx, st, e) {
+  try {
+    const r = await rw.filmstrip(e.file, FILM_H);
+    const count = Math.trunc(Number(r?.count)), tw = Number(r?.tile_w), th = Number(r?.tile_h), interval = Number(r?.interval);
+    if (!r?.file || !(count > 0) || !(tw > 0) || !(th > 0) || !(interval > 0)) throw new Error("no filmstrip");
+    const url = viewURL(r.file, "output", e.version);
+    if (!url) throw new Error("no filmstrip url");
+    // the sprite is loaded before the strip uses it, so cells never show up empty
+    await new Promise((ok, fail) => { const img = new Image(); img.onload = ok; img.onerror = fail; img.src = url; });
+    Object.assign(e, { state: "ok", url, count, aspect: tw / th, interval, duration: Number(r.duration) > 0 ? Number(r.duration) : count * interval });
+  } catch {
+    e.state = "error";
+    return;
+  }
+  if (st.map.get(e.key) !== e || st.timer) return;
+  st.timer = setTimeout(() => { // one render for the sprites that arrive together
+    st.timer = 0;
+    if (ctx.root.isConnected && ctx.p.ui.tab === "timeline") ctx.store.notify();
+  }, 40);
+}
+
+// Cells of the filmstrip in a scene's strip; only those near the view (ctx.tl.window) are built.
+function filmCells(ctx, strip, film, blockLeft, w, ov, z) {
+  const cw = Math.max(8, Math.round(STRIP_H * film.aspect));
+  const n = Math.ceil(Math.max(0, w) / cw);
+  const win = ctx.tl?.window;
+  const k0 = win ? Math.max(0, Math.floor((win.from - blockLeft) / cw)) : 0;
+  const k1 = win ? Math.min(n - 1, Math.ceil((win.to - blockLeft) / cw)) : n - 1;
+  const last = film.count - 1;
+  strip.classList.add("film");
+  strip.dataset.help = "timeline.scene.film";
+  strip.style.setProperty("--film", `url("${film.url}")`);
+  strip.style.setProperty("--film-size", `${film.count * 100}% 100%`);
+  for (let k = k0; k <= k1; k++) {
+    const t = ov + ((k + 0.5) * cw) / z; // scene time at the middle of the cell
+    const idx = Math.max(0, Math.min(last, Math.round(t / film.interval)));
+    strip.append(h("span", { class: ["rw-film-cell", t > film.duration + 0.5 / FPS && "past"], dataset: { tile: String(idx) },
+      style: { left: k * cw + "px", width: cw + "px", "background-position": `${last ? (idx / last) * 100 : 0}% 0` } }));
+  }
+}
+
+// Marks on a scene block: the transition into it (a tag and its length at the left edge; under a soundtrack it is a
+// dip) and its fades (a ramp and a gradient towards the fade colour at either edge).
+function cutMarks(ctx, strip, s, i, z, w) {
+  const j = joinOf(ctx.p, i, s);
+  const m = j.m;
+  if (j.kind === "transition") {
+    const dip = j.asDip || m.transition === "dip";
+    const dir = DIRECTED.has(m.transition) ? DIRECTIONS.find(d => d.value === m.direction)?.label || "" : "";
+    const name = j.asDip ? "dip" : (TRANSITION[m.transition]?.short || m.transition) + (dir ? " " + dir : "");
+    const help = j.asDip ? "timeline.scene.transitionDip" : "timeline.scene.transition";
+    strip.append(
+      h("span", { class: ["rw-cut-tr", dip && "dip"], style: { width: Math.min(Math.max(0, w), Math.max(4, (m.frames / FPS) * z)) + "px", "--fc": m.color }, help }),
+      h("span", { class: "rw-cut-tag mono", help, "aria-label": `${transitionLabel(m)}, ${m.frames} frames` }, dip && h("i", { style: { background: m.color } }), `${name} ${m.frames}f`));
+  }
+  for (const [which, cls, help] of [["fade_in", "in", "timeline.scene.fadeIn"], ["fade_out", "out", "timeline.scene.fadeOut"]]) {
+    const f = m[which];
+    if (!(f.frames > 0)) continue;
+    strip.append(h("span", { class: ["rw-cut-fade", cls], style: { width: Math.min(Math.max(0, w), Math.max(5, (f.frames / FPS) * z)) + "px", "--fc": f.color }, help }));
+  }
 }
 
 // added 2026-11-03 v0.6.0: a render step (reelwright.progress) updates the scene's progress bar in place; the editor

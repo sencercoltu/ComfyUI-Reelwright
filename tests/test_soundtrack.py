@@ -152,11 +152,13 @@ def test_cache_key_follows_the_song(harbor):
 
 def test_lint_counts_the_song_and_checks_tracks(harbor, store):
     p = _song(harbor, start=0.0)
-    p["scenes"][2]["transition"] = {"mode": "crossfade", "frames": 12, "audio_fade_frames": None}
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] p["scenes"][2]["transition"] = {"mode": "crossfade", "frames": 12, "audio_fade_frames": None}
+    p["scenes"][2]["merge"].update(transition="crossfade", frames=12)  # added 2026-11-05 v0.7.0: scene.merge
     r = analyze(p, store)
     msgs = [i["message"] for s in r["scenes"].values() for i in s["issues"]] + [i["message"] for i in r["issues"]]
     assert not any("reference audio clips" in m for m in msgs)
-    assert any("dip through black inside the scenes" in m for m in msgs)
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] assert any("dip through black inside the scenes" in m for m in msgs)
+    assert any("crossfade plays as a dip through black inside both scenes" in m for m in msgs)  # v0.7.0: per scene
     p["soundtrack"].append(soundtrack.normalize_track({"asset": "a_front"}))
     p["soundtrack"].append(soundtrack.normalize_track({"asset": "a_song", "in": 200.0}))
     p["soundtrack"].append(soundtrack.normalize_track({"asset": "gone"}))
@@ -244,6 +246,8 @@ def _take(store, r, sid, secs, overlap=0):
 def test_locked_cut_plan_matches_the_timeline(harbor, store, roots):
     p = _song(harbor)
     p["global"]["merge"].update(missing="skip", hard_cut="crossfade", transition_frames=12)
+    for s in p["scenes"]:  # added 2026-11-05 v0.7.0: Global -> Merge's hard cut is read once, into scene.merge
+        s.pop("merge", None)
     r = analyze(p, store)
     _take(store, r, "s_one", 7.0)  # an old take, 1 s shorter than the scene
     _take(store, r, "s_short", 2.5)

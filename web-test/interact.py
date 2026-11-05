@@ -334,14 +334,20 @@ def main():
         page.locator("[data-help='scene.override.quality'] button:has-text('Draft')").first.click()
         page.wait_for_timeout(300)
         check(project(page)["scenes"][fi]["overrides"].get("quality") == "draft", "scene quality override not set")
-        page.locator("[data-help='scene.transition.mode'] button:has-text('Dip to black')").first.click()
+        # v0.7.0: the transition is set on the In the cut card (scene.merge) instead of Starts from (scene.transition)
+        sid = pj["scenes"][fi]["id"]
+        tri = page.locator(f"input[data-key='cut-tr-{sid}']")
+        tri.click()
+        tri.fill("dip")
+        page.wait_for_timeout(120)
+        tri.press("Enter")
         page.wait_for_timeout(300)
-        nf = page.locator("input[data-help='scene.transition.frames']")
+        nf = page.locator(f"input[data-key='cut-frames-{sid}']")
         nf.fill("20")
         nf.press("Tab")
         page.wait_for_timeout(300)
-        tr = project(page)["scenes"][fi]["transition"]
-        check(tr["mode"] == "dip" and tr["frames"] == 20, f"scene transition: {tr}")
+        tr = project(page)["scenes"][fi]["merge"]
+        check(tr["transition"] == "dip" and tr["frames"] == 20, f"scene transition: {tr}")
         page.screenshot(path=str(shots / "v030_scene.png"))
         page.click(".rw-tab:has-text('Timeline')")
         page.wait_for_timeout(300)
@@ -1478,6 +1484,7 @@ def main():
         f2b_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 (F2b): Render, Files, Global, Assets, Cast tabs
         review_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 review: frontend fixes of the second review
         v061_checks(page, check, saved, shots)  # added 2026-11-04 v0.6.1: frontend fixes of the third review
+        v070_checks(page, check, saved, shots)  # added 2026-11-05 v0.7.0: In the cut, Merge card, filmstrip, continuity switch
         browser.close()
     httpd.shutdown()
 
@@ -2776,6 +2783,366 @@ def v061_checks(page, check, saved, shots):
     check(down == 3 and narrowed == 0 and nxt == 0 and text == f"{t0} {first}  @", f"autocomplete highlight: {down} {narrowed} {nxt} {first!r} {text[-20:]!r}")
     page.locator(".rw-root").focus()
     load()
+
+
+# ---- added 2026-11-05 v0.7.0 ----
+def v070_checks(page, check, saved, shots):
+    """v0.7.0: the Scene tab's "In the cut" card edits scene.merge (named undo steps, keys), Apply to all (one undo
+    step), continuing scenes join by their continuation, transitions play as dips under a soundtrack, the Merge card
+    without the moved controls, the timeline's filmstrip (different tiles at different times, cached, lazy, quiet
+    fallback, forgotten on take changes, 300 scenes), cut marks, the Cast tab's "Name the continuation" switch."""
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    labels = lambda: [x["label"] for x in page.evaluate("window.__editor.store.history()") if x["done"]]
+    flags = lambda k: page.evaluate(f"JSON.parse(JSON.stringify(window.__mockFlags.{k}))")
+    merge_of = lambda sid: next(s for s in cur()["scenes"] if s["id"] == sid)["merge"]
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def tab(name):
+        page.click(f".rw-tab:has-text('{name}')")
+        page.wait_for_timeout(300)
+
+    def settle():
+        try:
+            page.wait_for_function("document.querySelectorAll('.rw-toast').length === 0", timeout=9000)
+        except Exception:
+            pass
+        page.wait_for_timeout(300)
+
+    # the demo scenes as the mock defines them (earlier checks changed lengths, starts and cut settings in `saved`)
+    blank_merge = {"transition": "cut", "direction": "left", "frames": 12, "color": "#000000", "audio_frames": 6, "fade_in": {"frames": 0, "color": "#000000"},
+          "fade_out": {"frames": 0, "color": "#000000"}, "audio_fade_in": 0, "audio_fade_out": 0, "volume_db": 0, "mute": False,
+          "color_match": "off", "color_ref": "", "brightness": 0, "contrast": 1, "saturation": 1}
+    demo = {
+        "s_01": (8.0, "fresh", {"fade_in": {"frames": 24, "color": "#000000"}, "audio_fade_in": 12}),
+        "s_02": (10.125, "last_frame", {"volume_db": -3}),
+        "s_03": (8.708, "tail", {"transition": "crossfade", "color_match": "previous"}),
+        "s_04": (14.375, "fresh", {"transition": "dissolve", "frames": 18, "brightness": 0.04, "contrast": 1.1, "saturation": 0.55, "fade_out": {"frames": 12, "color": "#ffffff"}}),
+        "s_05": (12.25, "fresh", {"transition": "dip", "frames": 10, "color": "#ffffff", "color_match": "scene", "color_ref": "s_02"}),
+        "s_06": (7.292, "last_frame", {}),
+        "s_07": (32.0, "fresh", {"transition": "wipe", "direction": "right", "frames": 16, "audio_frames": 12}),
+        "s_08": (2.5, "fresh", {"transition": "crossfade", "frames": 8, "fade_out": {"frames": 24, "color": "#000000"}, "audio_fade_out": 24}),
+    }
+
+    def fresh(**ui):
+        q = json.loads(saved)
+        q["global"]["merge"]["score"] = {"asset": "", "volume_db": -12, "duck": False}
+        q["global"]["continuity"]["reanchor_after"] = 2
+        q["soundtrack"] = []
+        by = {x["id"]: x for x in q["scenes"]}
+        q["scenes"] = [by[k] for k in demo if k in by]
+        for x in q["scenes"]:
+            d, mode, mg = demo[x["id"]]
+            x["duration"], x["start"]["mode"], x["start"]["overlap_frames"] = d, mode, 39
+            x["merge"] = dict(json.loads(json.dumps(blank_merge)), **json.loads(json.dumps(mg)))
+        q["ui"].update(ui)
+        return q
+
+    def num(k, v):  # type into a keyed number field and commit it with Enter
+        loc = page.locator(f"[data-key='{k}']")
+        loc.fill(str(v))
+        loc.press("Enter")
+        page.wait_for_timeout(250)
+
+    def color(k, v):  # a colour picker reports its value on change
+        page.evaluate("([k, v]) => { const el = document.querySelector(`[data-key='${k}']`); el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); }", [k, v])
+        page.wait_for_timeout(250)
+
+    def pick(k, text):  # type to filter a combobox, Enter picks the first match
+        loc = page.locator(f"input[data-key='{k}']")
+        loc.click()
+        loc.fill(text)
+        page.wait_for_timeout(120)
+        loc.press("Enter")
+        page.wait_for_timeout(250)
+
+    page.evaluate("window.__editor.store.setEph({ toasts: [] })")
+    settle()
+
+    # 1. "In the cut" edits scene.merge: every edit is a named undo step, keyed fields keep focus after the re-render
+    load(fresh(tab="scene", selected="s_04"))
+    page.wait_for_selector(".rw-cut")
+    check(page.locator(".rw-cut .rw-card-title").inner_text() == "In the cut" and page.locator("input[data-key='cut-tr-s_04']").input_value() == "Dissolve"
+          and not page.locator("input[data-key='cut-tr-s_04']").is_disabled(), "In the cut card / transition of a fresh scene")
+    m0 = merge_of("s_04")
+    pick("cut-tr-s_04", "wipe")
+    page.locator("[data-key='cut-dir-s_04'] button").nth(1).click()
+    page.wait_for_timeout(250)
+    num("cut-frames-s_04", 20)
+    focus_key = page.evaluate("document.activeElement?.dataset?.key || ''")
+    secs = page.locator("[data-key='cut-frames-s_04']").locator("xpath=ancestor::span[contains(@class,'rw-frames')]").locator(".rw-frames-s").inner_text()
+    # v0.7.0 lead review: on an overlapping transition the sound crossfades over it; the audio fade field is gone there
+    check(page.locator("[data-key='cut-afr-s_04']").count() == 0 and page.locator(".rw-cut .rw-note:has-text('crossfades over the whole transition')").count() == 1,
+          "an overlapping transition still shows the audio fade field")
+    num("cut-fade_in-s_04", 24)
+    color("cut-fade_in-c-s_04", "#ff0000")
+    num("cut-fade_out-s_04", 36)
+    color("cut-fade_out-c-s_04", "#00ff00")
+    num("cut-audio_fade_in-s_04", 6)
+    num("cut-audio_fade_out-s_04", 12)
+    num("cut-vol-s_04", -6)
+    page.locator("[data-key='cut-mute-s_04']").click()
+    page.wait_for_timeout(250)
+    page.locator("[data-key='cut-cm-s_04'] button:has-text('A scene')").click()
+    page.wait_for_timeout(250)
+    pick("cut-cref-s_04", "Storm")
+    page.evaluate("() => { const el = document.querySelector(\"[data-key='cut-saturation-s_04']\"); el.value = '1.4'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }")
+    page.wait_for_timeout(250)
+    m = merge_of("s_04")
+    want = {"transition": "wipe", "direction": "right", "frames": 20, "audio_frames": m0["audio_frames"], "fade_in": {"frames": 24, "color": "#ff0000"},
+            "fade_out": {"frames": 36, "color": "#00ff00"}, "audio_fade_in": 6, "audio_fade_out": 12, "volume_db": -6, "mute": True,
+            "color_match": "scene", "color_ref": "s_05", "saturation": 1.4}
+    bad = {k: (m.get(k), v) for k, v in want.items() if m.get(k) != v}
+    check(not bad, f"In the cut edits: {bad}")
+    check(m["brightness"] == m0["brightness"] and m["contrast"] == m0["contrast"], f"untouched grade changed: {m}")
+    check(focus_key == "cut-frames-s_04" and secs.strip() == "0.83 s", f"frames field focus / seconds: {focus_key!r} {secs!r}")
+    hist = labels()[-14:]
+    need = ["Transition", "Transition direction", "Transition length", "Fade in", "Fade in colour", "Fade out", "Fade out colour",
+            "Audio fade in", "Audio fade out", "Scene sound level", "Mute scene sound", "Colour match", "Colour match scene", "Saturation"]
+    check(hist == need, f"In the cut undo labels: {hist}")
+    page.locator(".rw-root").focus()
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(300)
+    check(merge_of("s_04")["saturation"] == m0["saturation"] and merge_of("s_04")["color_ref"] == "s_05", "Ctrl+Z did not undo only the last cut edit")
+    # per-field reset goes back to a new scene's value
+    page.locator(".rw-cut .rw-field:has(input[data-key='cut-fade_in-s_04']) button[data-help='scene.cut.reset']").click()
+    page.wait_for_timeout(250)
+    check(merge_of("s_04")["fade_in"] == {"frames": 0, "color": "#000000"} and labels()[-1] == "Reset fade in", f"fade in reset: {merge_of('s_04')['fade_in']} {labels()[-1:]}")
+    page.evaluate("document.querySelector('.rw-cut').scrollIntoView()")
+    page.wait_for_timeout(150)
+    page.screenshot(path=str(shots / "v070_scene_cut.png"))
+
+    # 2. Continuing scenes join by their continuation: the type is disabled, no length / direction; fade warnings
+    page.evaluate("window.__editor.actions.select('s_03')")
+    page.wait_for_timeout(300)
+    tr = page.locator("input[data-key='cut-tr-s_03']")
+    note = page.locator(".rw-cut .rw-cut-cont")
+    check(tr.is_disabled() and note.count() == 1 and "tail" in note.inner_text() and "crossfaded" in note.inner_text()
+          and page.locator("[data-key='cut-frames-s_03']").count() == 0 and page.locator("[data-key='cut-dir-s_03']").count() == 0,
+          f"tail start join: disabled={tr.is_disabled()} note={note.all_inner_texts()}")
+    num("cut-fade_in-s_03", 12)
+    check(page.locator("[data-help='scene.cut.fadeInWarn']").count() == 1, "no warning for a fade in on a continuing scene")
+    page.evaluate("window.__editor.actions.select('s_02')")
+    page.wait_for_timeout(300)
+    note = page.locator(".rw-cut .rw-cut-cont")
+    check(page.locator("input[data-key='cut-tr-s_02']").is_disabled() and note.count() == 1 and "last frame" in note.inner_text(), f"last-frame join: {note.all_inner_texts()}")
+    num("cut-fade_out-s_02", 12)
+    check(page.locator("[data-help='scene.cut.fadeOutWarn']").count() == 1, "no warning for a fade out before a continuing scene")
+    page.evaluate("window.__editor.actions.select('s_01')")
+    page.wait_for_timeout(300)
+    check(page.locator("input[data-key='cut-tr-s_01']").is_disabled() and page.locator("[data-help='scene.cut.first']").count() == 1, "first scene: no join")
+
+    # 3. A soundtrack sets the timing: overlapping transitions play as a dip (note, dip colour, timeline tag)
+    p = fresh(tab="scene", selected="s_04")
+    load(p)
+    check(page.locator("[data-help='scene.cut.locked']").count() == 0 and page.locator("[data-key='cut-color-s_04']").count() == 0, "dip note without a soundtrack")
+    tab("Timeline")
+    tag = page.locator(".rw-scene[data-sid='s_04'] .rw-cut-tag")
+    check(tag.count() == 1 and tag.inner_text().startswith("dissolve 18f"), f"transition tag: {tag.all_inner_texts()}")
+    p["soundtrack"] = [{"id": "t_song", "asset": "a_a3", "start": 0, "in": 0, "out": 0, "sync": True, "mix": True, "loop": True}]
+    p["ui"]["tab"] = "scene"
+    load(p)
+    lk = page.locator("[data-help='scene.cut.locked']")
+    check(lk.count() == 1 and "dip through" in lk.inner_text() and page.locator("[data-key='cut-color-s_04']").count() == 1, f"locked dip note: {lk.all_inner_texts()}")
+    tab("Timeline")
+    tag = page.locator(".rw-scene[data-sid='s_04'] .rw-cut-tag")
+    check(tag.count() == 1 and tag.inner_text().startswith("dip 18f") and tag.get_attribute("data-help") == "timeline.scene.transitionDip", f"locked tag: {tag.all_inner_texts()}")
+    # marks: fades at the edges (gradient towards the colour), none on a scene without them
+    fades = page.evaluate("""() => [...document.querySelectorAll('.rw-scene')].map(b => [b.dataset.sid,
+      [...b.querySelectorAll('.rw-cut-fade')].map(f => f.classList.contains('in') ? 'in' : 'out').join(',')])""")
+    fades = dict(fades)
+    check(fades.get("s_01") == "in" and fades.get("s_04") == "out" and fades.get("s_08") == "out" and fades.get("s_06") == "", f"fade marks: {fades}")
+    fc = page.evaluate("[\"s_04\", \"s_08\"].map(id => getComputedStyle(document.querySelector(`.rw-scene[data-sid='${id}'] .rw-cut-fade.out`)).backgroundImage)")
+    check("to left, rgb(255, 255, 255)" in fc[0] and "to left, rgb(0, 0, 0)" in fc[1], f"fade-out gradient towards its colour: {[x[-90:] for x in fc]}")
+
+    # 4. Apply to all: one labelled undo step; scenes after this one, or all; a scene is never matched to itself
+    p = fresh(tab="scene", selected="s_04")
+    p["scenes"][3]["merge"].update({"transition": "slide", "direction": "up", "frames": 14, "color_match": "scene", "color_ref": "s_06", "brightness": 0.2})
+    load(p)
+    before = cur()["scenes"]
+    src = merge_of("s_04")
+    page.locator("[data-key='cut-apply-s_04']").click()
+    page.wait_for_timeout(250)
+    btns = page.locator(".rw-modal button").all_inner_texts()
+    check(page.locator(".rw-modal").count() == 1 and any(b.startswith("Scenes after this one (4)") for b in btns) and any(b.startswith("All scenes (7") for b in btns), f"apply dialog: {btns}")
+    page.locator(".rw-modal button:has-text('Scenes after this one')").click()
+    page.wait_for_timeout(300)
+    after = cur()["scenes"]
+    exp6 = dict(src, color_match="off")
+    ok_after = all(after[i]["merge"] == (exp6 if after[i]["id"] == "s_06" else src) for i in range(4, 8))
+    ok_before = all(after[i]["merge"] == before[i]["merge"] for i in range(0, 4))
+    check(ok_after and ok_before and labels()[-1] == "Cut settings → later scenes", f"apply to later scenes: after={ok_after} before={ok_before} {labels()[-1:]}")
+    page.locator(".rw-root").focus()
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(300)
+    check([s["merge"] for s in cur()["scenes"]] == [s["merge"] for s in before], "one Ctrl+Z did not undo Apply to later scenes")
+    page.locator("[data-key='cut-apply-s_04']").click()
+    page.wait_for_timeout(250)
+    page.locator(".rw-modal button:has-text('All scenes')").click()
+    page.wait_for_timeout(300)
+    after = cur()["scenes"]
+    check(all(s["merge"] == (exp6 if s["id"] == "s_06" else src) for s in after) and labels()[-1] == "Cut settings → all scenes", f"apply to all: {labels()[-1:]}")
+    page.locator("[data-key='cut-apply-s_04']").click()
+    page.wait_for_timeout(250)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(200)
+    check(page.locator(".rw-modal").count() == 0 and labels()[-1] == "Cut settings → all scenes", "Escape in the apply dialog changed something")
+
+    # 5. Render → Merge scenes: the moved controls are gone, one line points to the Scene tab
+    tab("Render")
+    gone = page.evaluate("""() => ['render.merge.hardCut', 'render.merge.transition', 'render.merge.audioFade', 'render.merge.color', 'render.merge.colorRef', 'render.merge.overrides']
+      .filter(id => document.querySelector(`.rw-merge [data-help='${id}']`))""")
+    line = page.locator(".rw-merge [data-help='render.merge.perScene']")
+    check(not gone and line.count() == 1 and "per scene" in line.inner_text(), f"Merge card: still there {gone}, line {line.all_inner_texts()}")
+    page.screenshot(path=str(shots / "v070_merge_card.png"))
+    page.locator(".rw-merge button[data-help='render.merge.perSceneOpen']").click()
+    page.wait_for_timeout(500)
+    r = page.evaluate("""() => { const c = document.querySelector('.rw-cut'), box = c?.closest('.rw-cols');
+      const a = c?.getBoundingClientRect(), b = box?.getBoundingClientRect();
+      return { tab: window.__editor.project.ui.tab, flag: !!window.__editor.eph.scrollToCut, inView: !!c && a.top >= b.top - 2 && a.top < b.bottom - 40 }; }""")
+    check(r["tab"] == "scene" and not r["flag"] and r["inView"], f"Merge card → In the cut: {r}")
+
+    # 6. Filmstrip: each cell shows the tile nearest its middle time; cached, lazy; quiet fallback; forgotten on take changes
+    page.evaluate("window.__mockFlags.filmstrips = []")
+    load(fresh(tab="timeline", zoom=40, selected="s_06"))
+    page.evaluate("document.querySelector('.rw-lanes').scrollLeft = 0")
+    try:
+        page.wait_for_function("document.querySelectorAll(\".rw-scene[data-sid='s_01'] .rw-film-cell\").length >= 3", timeout=6000)
+    except Exception:
+        pass
+    r = page.evaluate("""async () => {
+      const z = window.__editor.project.ui.zoom, strip = document.querySelector(".rw-scene[data-sid='s_01'] .rw-scene-strip");
+      const cells = [...strip.querySelectorAll('.rw-film-cell')];
+      const url = (strip.style.getPropertyValue('--film').match(/url\\("?(.*?)"?\\)$/) || [])[1] || '';
+      const img = new Image(); img.src = url; await img.decode().catch(() => {});
+      const cv = document.createElement('canvas'); cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+      const g = cv.getContext('2d'); g.drawImage(img, 0, 0);
+      const info = await (await window.__host.fetchApi('/reelwright/filmstrip?file=' + encodeURIComponent('reelwright/harbor_lights/scenes/s_01/takes/v1/x.mp4') + '&h=54')).json();
+      window.__mockFlags.filmstrips.pop(); // this probe is not the editor's request
+      const px = i => [...g.getImageData(Math.round((i + 0.5) * info.tile_w), 2, 1, 1).data.slice(0, 3)];
+      return { n: cells.length, tiles: cells.map(c => Number(c.dataset.tile)), expect: cells.map(c => Math.min(info.count - 1, Math.round(((c.offsetLeft + c.offsetWidth / 2) / z) / info.interval))),
+        pos: cells.map(c => c.style.backgroundPosition), w: img.naturalWidth, count: info.count, tw: info.tile_w, bands: cells.map(c => px(Number(c.dataset.tile)).join(',')),
+        help: strip.dataset.help, bg: strip.style.backgroundImage.slice(0, 3) };
+    }""")
+    check(r["n"] >= 3 and r["tiles"] == r["expect"] and len(set(r["tiles"])) == r["n"] and r["tiles"] == sorted(r["tiles"]),
+          f"filmstrip tiles by time: {r['tiles']} expected {r['expect']}")
+    check(r["w"] == r["count"] * r["tw"] and len(set(r["bands"])) == r["n"] and len(set(r["pos"])) == r["n"], f"filmstrip cells show different tiles: {r['bands']} {r['pos']}")
+    check(r["help"] == "timeline.scene.film" and r["bg"] == "url", f"filmstrip strip: {r['help']} {r['bg']}")
+    page.screenshot(path=str(shots / "v070_timeline_film.png"))
+    n0 = len(flags("filmstrips"))
+    for _ in range(3):
+        page.evaluate("window.__editor.store.notify()")
+        page.wait_for_timeout(120)
+    reqs = flags("filmstrips")
+    starred = page.evaluate("Object.values(window.__editor.eph.takes.scenes).map(t => t.takes.find(x => x.id === t.starred)?.files?.video).filter(Boolean)")
+    check(len(reqs) == n0 and len(set(reqs)) == len(reqs) and set(reqs) <= set(starred), f"filmstrip requests (cached, starred only): {reqs}")
+    # a failing filmstrip leaves the take's first frame, quietly; starring another take forgets the old entry
+    star0 = page.evaluate("window.__mockTakes.s_02.starred")
+    page.evaluate("""() => { const T = window.__mockTakes.s_02, base = 'reelwright/harbor_lights/scenes/s_02/takes/v9/';
+      T.takes.push({ id: 'v9', key: 'k9', created: 1793569999, quality: 'final', seconds: 10.13, frames: 243, face: {},
+        files: { video: base + 'harbor_lights_02_v9.mp4', first: base + 'first.png', last: base + 'last.png', tail: base + 'tail.mp4' } });
+      T.starred = 'v9'; window.__mockFlags.filmstripFail = 's_02/takes/v9'; window.__editor.actions.refreshTakes(); }""")
+    page.wait_for_timeout(900)
+    r = page.evaluate("""() => { const s = document.querySelector(".rw-scene[data-sid='s_02'] .rw-scene-strip");
+      return { cells: s.querySelectorAll('.rw-film-cell').length, bg: s.style.backgroundImage.slice(0, 3), film: s.classList.contains('film') }; }""")
+    reqs = flags("filmstrips")
+    check(r == {"cells": 0, "bg": "url", "film": False} and any("s_02/takes/v9/" in f for f in reqs), f"filmstrip fallback: {r} {reqs[-2:]}")
+    v2 = sum(f"s_02/takes/{star0}/" in f for f in reqs)
+    page.evaluate("""s => { const T = window.__mockTakes.s_02; T.takes = T.takes.filter(t => t.id !== 'v9'); T.starred = s;
+      window.__mockFlags.filmstripFail = ''; window.__editor.actions.refreshTakes(); }""", star0)
+    try:
+        page.wait_for_function("document.querySelectorAll(\".rw-scene[data-sid='s_02'] .rw-film-cell\").length > 0", timeout=4000)
+    except Exception:
+        pass
+    v2b = sum(f"s_02/takes/{star0}/" in f for f in flags("filmstrips"))
+    check(v2b == v2 + 1 and page.locator(".rw-scene[data-sid='s_02'] .rw-film-cell").count() > 0, f"filmstrip not asked again after the star changed: {v2} -> {v2b}")
+
+    # 7. 300 scenes with a take each: only the blocks near the view ask for a filmstrip; rendering stays fast
+    big = fresh(tab="timeline", selected="s_p2", playhead=0, zoom=22)
+    tmpl = big["scenes"]
+    big["scenes"] = []
+    for i in range(300):
+        s = json.loads(json.dumps(tmpl[i % len(tmpl)]))
+        s["id"] = f"s_p{i}"
+        s["seed_n"] = i
+        for lst in ("refs", "shots", "dialogue"):
+            for x in s[lst]:
+                x["id"] = f"{x['id']}_{i}"
+        mg = s.get("merge")  # a colour match names a scene of the demo
+        if mg:
+            mg["color_ref"] = ""
+            if mg.get("color_match") == "scene":
+                mg["color_match"] = "off"
+        big["scenes"].append(s)
+    big["scenes"][0]["start"]["mode"] = "fresh"
+    page.evaluate("""n => { const T = window.__mockTakes, base = 'reelwright/harbor_lights/scenes/';
+      for (let i = 0; i < n; i++) T['s_p' + i] = { starred: 'v1', takes: [{ id: 'v1', key: 'k' + i, created: 1793560000 + i, quality: 'final', seconds: 8, frames: 192, face: {},
+        files: { video: `${base}s_p${i}/takes/v1/harbor_lights_p${i}_v1.mp4`, first: `${base}s_p${i}/takes/v1/first.png`, last: `${base}s_p${i}/takes/v1/last.png`, tail: `${base}s_p${i}/takes/v1/tail.mp4` } }] }; }""", 300)
+    page.evaluate("window.__mockFlags.filmstrips = []")
+    load(big)
+    page.wait_for_timeout(1500)
+    settle()
+    try:
+        page.wait_for_function("(() => { const f = window.__mockFlags.filmstrips.length; const c = document.querySelectorAll('.rw-scene-strip.film').length; return f > 0 && c >= Math.min(f, 10); })()", timeout=15000)
+    except Exception:
+        pass
+    page.wait_for_timeout(800)
+    measure = """async () => { const ed = window.__editor, f = () => new Promise(r => requestAnimationFrame(() => r())), ms = [];
+      for (let k = 0; k < 9; k++) {
+        await f(); await f();
+        let t1 = 0; requestAnimationFrame(() => { t1 = performance.now(); });
+        ed.store.notify();
+        const t2 = await new Promise(r => requestAnimationFrame(() => { document.querySelector('.rw-lanes').offsetWidth; r(performance.now()); }));
+        ms.push(t2 - t1);
+      }
+      ms.sort((a, b) => a - b);
+      return { ms: ms[4], blocks: document.querySelectorAll('.rw-scene').length, films: document.querySelectorAll('.rw-scene-strip.film').length,
+        cells: document.querySelectorAll('.rw-film-cell').length, reqs: window.__mockFlags.filmstrips.length }; }"""
+    with_film = page.evaluate(measure)
+    page.screenshot(path=str(shots / "v070_300_scenes_film.png"))
+    page.evaluate("window.__editor.store.setEph({ takes: { scenes: {} } })")
+    page.wait_for_timeout(300)
+    no_film = page.evaluate(measure)
+    print(f"note: a timeline render with 300 scenes took {with_film['ms']:.1f} ms with filmstrips ({with_film['films']} strips, {with_film['cells']} cells,"
+          f" {with_film['reqs']} requests for {with_film['blocks']} blocks) and {no_film['ms']:.1f} ms without takes", flush=True)
+    check(0 < with_film["films"] <= with_film["blocks"] < 300 and with_film["reqs"] <= with_film["blocks"] + 3, f"300 scenes: filmstrips only near the view: {with_film}")
+    check(with_film["ms"] < max(150, no_film["ms"] * 2 + 40), f"300 scenes: render with filmstrips too slow: {with_film} vs {no_film}")
+    # scrolling to the end builds (and asks for) the blocks there
+    page.evaluate("window.__editor.actions.refreshTakes()")
+    page.wait_for_timeout(500)
+    page.evaluate("() => { const el = document.querySelector('.rw-lanes'); el.scrollLeft = el.scrollWidth; }")
+    try:
+        page.wait_for_function("window.__mockFlags.filmstrips.some(f => f.includes('/s_p299/'))", timeout=6000)
+    except Exception:
+        pass
+    check(page.evaluate("window.__mockFlags.filmstrips.some(f => f.includes('/s_p299/'))"), "the last scene's filmstrip was not asked for after scrolling there")
+    page.evaluate("n => { for (let i = 0; i < n; i++) delete window.__mockTakes['s_p' + i]; }", 300)
+
+    # 8. Cast tab: "Name the continuation in the prompt" (global.continuity.name_continuation)
+    load(fresh(tab="cast"))
+    sw = page.locator("[data-key='rules-name-cont']")
+    check(sw.count() == 1 and sw.get_attribute("aria-checked") == "true" and sw.get_attribute("data-help") == "cast.rules.nameContinuation", "continuity switch missing or off")
+    sw.click()
+    page.wait_for_timeout(250)
+    check(cur()["global"]["continuity"].get("name_continuation") is False and labels()[-1] == "Don't name the continuation", f"continuity switch off: {labels()[-1:]}")
+    page.locator("[data-key='rules-name-cont']").click()
+    page.wait_for_timeout(250)
+    check(cur()["global"]["continuity"].get("name_continuation") is True and page.locator("[data-key='rules-name-cont']").get_attribute("aria-checked") == "true", "continuity switch back on")
+
+    # 9. A project from before v0.7.0 (no scene.merge) shows its old cut settings in the card
+    old = fresh(tab="scene", selected="s_05")
+    for s in old["scenes"]:
+        s.pop("merge", None)
+    old["scenes"][4]["transition"] = {"mode": "crossfade", "frames": 20, "audio_fade_frames": 9}
+    load(old)
+    # v0.7.0 lead review: a crossfade shows no audio fade field (the sound crossfades over it); the migrated value is in the project
+    check(page.locator("input[data-key='cut-tr-s_05']").input_value() == "Crossfade" and page.locator("[data-key='cut-frames-s_05']").input_value() == "20"
+          and cur()["scenes"][4]["merge"]["audio_frames"] == 9, "an old project's transition is not shown in In the cut")
+
+    load(json.loads(saved))
+    tab("Timeline")
 
 
 if __name__ == "__main__":

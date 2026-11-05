@@ -594,6 +594,8 @@ export function mountEditor(container, host) {
         if (res?.cancelled) { store.setEph({ merge: { phase: "cancelled", job, ...kind } }); actions.toast("Merge stopped.", "info"); return false; }
         store.setEph({ merge: { phase: "end", job, ...kind, files: res.files, duration: res.duration, loudness: res.loudness || null } });
         actions.toast((kind.draft ? "Draft merged " : "Merged ") + fmtTime(res.duration || 0) + " → " + (res.files?.video || ""), "ok");
+        // added 2026-11-05 v0.7.0 lead review: what the merge could not do as asked (e.g. a colour reference scene with no take)
+        for (const w of (Array.isArray(res.warnings) ? res.warnings : []).slice(0, 3)) actions.toast("Merge: " + w, "warn");
         return true;
       } catch (err) {
         if (destroyed) return false;
@@ -1553,6 +1555,8 @@ export function mountEditor(container, host) {
       for (const sc of p.scenes) { const id = newId("s"); map[sc.id] = id; sc.id = id; }
       p.ui.selected = map[p.ui.selected] || p.scenes[0]?.id || "";
       if (p.global?.merge?.color_ref_scene) p.global.merge.color_ref_scene = map[p.global.merge.color_ref_scene] || "";
+      // added 2026-11-05 v0.7.0: a scene's colour match names another scene by id (scene.merge.color_ref)
+      for (const sc of p.scenes) if (sc.merge?.color_ref) sc.merge.color_ref = map[sc.merge.color_ref] || "";
       store.load(p, { persist: true });
       takesSoon();
       actions.toast(`This node is a copy of another Reelwright node, so it is now a separate project in its own folder “${p.slug}”. Its renders start fresh.`, "warn");

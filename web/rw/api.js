@@ -96,6 +96,9 @@ export const rw = {
   // added 2026-11-03 v0.6.0: the unsaved project may go along, so the excerpt matches what the editor shows
   soundtrackExcerpt: (slug, scene_id, pass, project) => req("POST", "/reelwright/soundtrack/excerpt", project ? { slug, scene_id, pass, project } : { slug, scene_id, pass }),
   storageRepair: slug => req("POST", "/reelwright/storage/repair", { slug }),
+  // added 2026-11-05 v0.7.0: the timeline's filmstrip of a take's video (output-relative): a sprite of one row of
+  // frames every `interval` seconds, {file, interval, count, tile_w, tile_h, duration}; h is the tile height in pixels
+  filmstrip: (file, h = 54) => req("GET", `/reelwright/filmstrip?file=${q(file)}&h=${Math.max(16, Math.round(Number(h) || 54))}`),
   async waveform(file, per_second = 50) {
     const res = await host.fetchApi(`/reelwright/waveform?file=${q(file)}&per_second=${per_second}`, { method: "GET" });
     if (!res.ok) throw new Error(`waveform ${res.status}`);
@@ -105,10 +108,21 @@ export const rw = {
 };
 
 // `rel` is a path relative to ComfyUI's input or output folder.
+/* [OLD 2026-11-05 v0.6.1->v0.7.0] no way to tell the browser that a file at the same path was written again
 export function viewURL(rel, type = "output") {
   if (!rel) return "";
   const i = rel.lastIndexOf("/");
   const subfolder = i >= 0 ? rel.slice(0, i) : "";
   const filename = i >= 0 ? rel.slice(i + 1) : rel;
   return host.apiURL(`/view?filename=${q(filename)}&subfolder=${q(subfolder)}&type=${type}`);
+}
+[/OLD] */
+// added 2026-11-05 v0.7.0: `version` (optional) goes into the query, so a file rewritten at the same path (a filmstrip
+// of a take that was rendered again) is not taken from the browser's cache
+export function viewURL(rel, type = "output", version = "") {
+  if (!rel) return "";
+  const i = rel.lastIndexOf("/");
+  const subfolder = i >= 0 ? rel.slice(0, i) : "";
+  const filename = i >= 0 ? rel.slice(i + 1) : rel;
+  return host.apiURL(`/view?filename=${q(filename)}&subfolder=${q(subfolder)}&type=${type}${version ? "&rwv=" + q(version) : ""}`);
 }

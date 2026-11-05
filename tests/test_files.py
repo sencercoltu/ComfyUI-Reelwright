@@ -294,3 +294,26 @@ def test_scan_survives_a_take_folder_removed_meanwhile(roots, disk, monkeypatch)
     assert "being removed" in leftover["note"] and leftover["del"]
     r = files.delete(roots, [leftover["id"]], current="harbor_lights")
     assert r["errors"] == [] and not os.path.exists(os.path.join(store.scene_dir("s_one"), "takes", ".deleting-v1-0a1b2c3d"))
+
+
+# ---- added 2026-11-05 v0.7.0 ---------------------------------------------------------------------------------------
+
+def test_a_takes_filmstrip_is_a_cache_that_may_go_alone(roots, disk):
+    """The timeline's filmstrip (merge.filmstrip) sits next to the take's video: shown in the take as a cache, and it
+    can be deleted without the take (the take's own files still can't)."""
+    store, _ = disk
+    d = store.take_dir("s_one", "v1")
+    put(os.path.join(d, "harbor_lights_01_harbor_at_dusk_v1.filmstrip_54.jpg"), 40)
+    put(os.path.join(d, "harbor_lights_01_harbor_at_dusk_v1.filmstrip_54.json"), 4)
+    cur = files.scan_project(roots, "harbor_lights", "harbor_lights")
+    base = "o:reelwright/harbor_lights/scenes/s_one/takes/v1/"
+    strip = find(cur, base + "harbor_lights_01_harbor_at_dusk_v1.filmstrip_54.jpg")
+    assert strip["del"] is True and "cache" in strip["flags"] and "filmstrip" in strip["note"]
+    assert find(cur, base + "first.png")["del"] is False
+    take = find(cur, base[:-1])
+    assert take["size"] == 1000 + 5 + 5 + 50 + 40 + 4
+    r = files.delete(roots, [base + "harbor_lights_01_harbor_at_dusk_v1.filmstrip_54.jpg",
+                             base + "harbor_lights_01_harbor_at_dusk_v1.filmstrip_54.json", base + "first.png"],
+                     current="harbor_lights")
+    assert r["removed"] == 2 and [e["id"] for e in r["errors"]] == [base + "first.png"]
+    assert sorted(os.listdir(d)) == ["first.png", "harbor_lights_01_harbor_at_dusk_v1.mp4", "last.png", "tail.mp4"]

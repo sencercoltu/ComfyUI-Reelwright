@@ -241,6 +241,24 @@ def malformed():
          "global": {"merge": {"score": {"asset": "a_old", "volume_db": -6, "duck": False}}}},
         {"scenes": [{}], "camera_presets": [None, {"name": 3}], "markers": [{"t": "2"}, None, {"text": None}]},
         {"scenes": [{}], "camera_presets": "x", "ui": {"selected": "nope", "zoom": "abc", "snap": 0}},
+        # added 2026-11-05 v0.7.0: scene.merge, junk and the migration from scene.transition / Global -> Merge
+        {"scenes": [{"id": "s_a", "merge": 5, "transition": {"mode": "dip", "frames": "7.9"}},
+                    {"id": "s_b", "merge": {"transition": "WIPE", "direction": 3, "frames": "24.7", "color": "#ABCDEF",
+                                            "audio_frames": -3, "fade_in": {"frames": -5, "color": "red"},
+                                            "fade_out": 12, "audio_fade_in": "1e9", "audio_fade_out": None,
+                                            "volume_db": "-80", "mute": 1, "color_match": "scene", "color_ref": 7,
+                                            "brightness": 5, "contrast": -1, "saturation": "2.5", "extra": "kept"}},
+                    {"id": "s_c", "merge": {"transition": "zoom", "direction": "up", "color": "#12345", "fade_in": [],
+                                            "color_match": "previous", "mute": "yes", "volume_db": True,
+                                            "frames": 1e300, "brightness": -0.0, "contrast": "0.5"}},
+                    {"id": "s_d", "merge": None, "transition": "x"},
+                    {"id": "s_e", "merge": [], "transition": {"mode": "crossfade", "frames": -4,
+                                                             "audio_fade_frames": 2.9}}],
+         "global": {"merge": {"hard_cut": "zoom", "transition_frames": "abc", "audio_fade_frames": 4.5,
+                              "color_match": 1, "color_ref_scene": "s_gone"}}},
+        {"scenes": [{"id": "s_a"}, {"id": "s_b", "transition": {"mode": "", "frames": 30}}, {"id": "s_c"}],
+         "global": {"merge": {"hard_cut": "dip", "color_match": True, "color_ref_scene": "s_b"}}},
+        {"scenes": [{"id": "s_a"}, {"id": "s_b"}], "global": {"merge": {"color_match": "yes", "hard_cut": 5}}},
     ]
 
 
@@ -271,8 +289,63 @@ def timing_fixtures():
     many["scenes"][0]["refs"] += [{"id": "r_p{}".format(k), "asset": "a_p{}".format(k)} for k in range(9)]
     many["cast"][1]["pack_sheet"] = False
     many["cast"][1]["anchors"] = ["a_p1", "a_p2"]
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] no scene.merge fixtures
+    # return [harbor_like(), chain(), chain(reanchor=0), tiny, over, mixed, long_cuts, overlap_only, fixed, over_seed,
+    #         random_mode, loop_song, many]
+    # [/OLD]
+    # added 2026-11-05 v0.7.0: a v0.6.1 project migrated to scene.merge, and one with scene.merge set (the fuzz puts
+    # junk into its fields)
+    v061 = chain(durations=(4.0, 4.0, 4.0, 4.0), modes=("fresh", "fresh", "last_frame", "fresh"))
+    v061["global"]["merge"].update(hard_cut="crossfade", transition_frames=12, audio_fade_frames=6, color_match=True,
+                                   color_ref_scene="s_1")
+    v061["scenes"][1]["transition"] = {"mode": "dip", "frames": 18, "audio_fade_frames": 0}
+    merged = chain()
+    for k, s in enumerate(merged["scenes"]):
+        s["merge"] = dict(model.default_merge(), transition=model.MERGE_TRANSITIONS[k % 10], direction="up",
+                          frames=10 + k, color="#ff8800", fade_in={"frames": k, "color": "#00ff00"},
+                          fade_out={"frames": 2 * k, "color": "#0000ff"}, audio_fade_in=k, audio_fade_out=k + 1,
+                          volume_db=-3.5, mute=k == 2, color_match=model.COLOR_MATCH_MODES[k % 3],
+                          color_ref="s_0", brightness=0.1, contrast=1.2, saturation=0.8)
     return [harbor_like(), chain(), chain(reanchor=0), tiny, over, mixed, long_cuts, overlap_only, fixed, over_seed,
-            random_mode, loop_song, many]
+            random_mode, loop_song, many, v061, merged] + continuation_fixtures()  # continuation: v0.7.0 (Agent A)
+
+
+def continuation_fixtures():
+    """added 2026-11-05 v0.7.0: the continuation reference in the budget (model.pass_continuation / sceneBudget):
+    a picture that packs the anchors, one that does not fit, a clip next to three videos, a clip without an audio
+    slot for its sound, a clip from a 1 s scene, overlap seams, and the same projects with the switch off."""
+    p = harbor_like()
+    p["assets"] += [{"id": "a_p{}".format(k), "kind": "image", "file": "x/{}.png".format(k)} for k in range(9)]
+    p["assets"] += [{"id": "a_v{}".format(k), "kind": "video", "file": "x/v{}.mp4".format(k), "duration": 3.0 + k}
+                    for k in range(3)]
+    mara = [{"id": "c_mara"}]
+    p["scenes"] = [
+        {"id": "s_a", "duration": 6.0, "seed_n": 0},
+        {"id": "s_pack", "duration": 5.0, "seed_n": 1, "start": {"mode": "last_frame"}, "cast": mara,
+         "refs": [{"id": "r_a{}".format(k), "asset": "a_p{}".format(k), "role": "reference"} for k in range(7)]},
+        {"id": "s_full", "duration": 5.0, "seed_n": 2, "start": {"mode": "last_frame"}, "cast": mara,
+         "refs": [{"id": "r_b{}".format(k), "asset": "a_p{}".format(k), "role": "reference"} for k in range(9)]},
+        {"id": "s_vid3", "duration": 6.0, "seed_n": 3, "start": {"mode": "tail", "overlap_frames": 39},
+         "refs": [{"id": "r_c{}".format(k), "asset": "a_v{}".format(k), "role": "reference"} for k in range(3)]},
+        {"id": "s_mute", "duration": 6.0, "seed_n": 4, "start": {"mode": "tail", "overlap_frames": 39},
+         "refs": [{"id": "r_d0", "asset": "a_v0", "role": "reference", "soundtrack": True},
+                  {"id": "r_d1", "asset": "a_amb", "role": "reference"},
+                  {"id": "r_d2", "asset": "a_voice2", "role": "reference"}]},
+        {"id": "s_snd", "duration": 6.0, "seed_n": 5, "start": {"mode": "tail", "overlap_frames": 39},
+         "refs": [{"id": "r_e0", "asset": "a_v1", "role": "reference", "soundtrack": True}]},
+        {"id": "s_one", "duration": 1.0, "seed_n": 6},
+        {"id": "s_after1", "duration": 6.0, "seed_n": 7, "start": {"mode": "tail", "overlap_frames": 39}},
+        {"id": "s_long", "duration": 32.0, "seed_n": 8, "start": {"mode": "tail", "overlap_frames": 39}, "cast": mara,
+         "dialogue": [{"id": "d_l", "speaker": "c_mara", "t": 20.0, "text": "x"}]},
+    ]
+    p["soundtrack"] = []
+    p["global"]["continuity"]["reanchor_after"] = 20
+    p["global"]["long"]["seam_mode"] = "overlap"
+    off = copy.deepcopy(p)
+    off["global"]["continuity"]["name_continuation"] = False
+    reanchored = copy.deepcopy(p)
+    reanchored["global"]["continuity"]["reanchor_after"] = 0
+    return [p, off, reanchored]
 
 
 NAMES = ["Harbor Lights — v2", "", "Ömer", "Москва", "日本語", "a" * 100, "  _x_  ", "2024", "Café-au-lait", "x\ty",

@@ -510,3 +510,42 @@ def test_llm_requests_with_one_job_id_keep_their_own_entries(api):
     assert a == {"done": True} and still
     assert stop[1]["cancelled"] is True and b == {"cancelled": True}
     assert left == {} and marks == set()
+
+
+# ---- added 2026-11-05 v0.7.0: the timeline filmstrip -----------------------------------------------------------------
+
+def test_filmstrip_route(api, store, roots):
+    run, _, _ = api
+    d = store.take_dir("s_one", "v1")
+    os.makedirs(d, exist_ok=True)
+    video = ff_clip(os.path.join(d, "harbor_lights_01_harbor_v1.mp4"), 3.0)
+    rel = store.rel_output(video)
+    other = os.path.join(roots.output, "elsewhere.mp4")
+    ff_clip(other, 1.0)
+    with open(os.path.join(d, "notes.txt"), "w") as f:
+        f.write("x")
+
+    async def go(c):
+        out = [await get(c, "/reelwright/filmstrip?file=" + rel),
+               await get(c, "/reelwright/filmstrip?file={}&h=32".format(rel))]
+        mtime = os.path.getmtime(os.path.join(roots.output, out[0][1]["file"]))
+        out.append(await get(c, "/reelwright/filmstrip?file=" + rel))  # reused
+        out.append(mtime == os.path.getmtime(os.path.join(roots.output, out[0][1]["file"])))
+        for bad in ("elsewhere.mp4", "reelwright/../elsewhere.mp4", "reelwright/harbor_lights/../../elsewhere.mp4",
+                    rel + "&h=8", rel + "&h=5.5", rel + "&h=x", rel.replace(".mp4", ".txt"),
+                    "reelwright/harbor_lights/scenes/s_one/takes/v1/notes.txt", ""):
+            out.append(await get(c, "/reelwright/filmstrip?file=" + bad))
+        out.append(await get(c, "/reelwright/filmstrip?file=reelwright/harbor_lights/none.mp4"))
+        return out
+    out = run(go)
+    (s1, a), (s2, b), (s3, again), same = out[:4]
+    assert s1 == 200 and a["file"] == rel[:-4] + ".filmstrip_54.jpg" and a["tile_h"] == 54
+    assert (a["interval"], a["count"], a["tile_w"]) == (0.25, 12, 96) and a["duration"] == pytest.approx(3.0)
+    assert a["url"].startswith("/view?filename=harbor_lights_01_harbor_v1.filmstrip_54.jpg&subfolder=")
+    assert os.path.isfile(os.path.join(roots.output, a["file"]))
+    assert os.path.isfile(os.path.join(roots.output, rel[:-4] + ".filmstrip_54.json"))
+    assert s2 == 200 and b["file"].endswith(".filmstrip_32.jpg") and (b["tile_w"], b["tile_h"]) == (56, 32)
+    assert s3 == 200 and again == a and same
+    for status, body in out[4:-1]:
+        assert status == 400 and body["error"], body
+    assert out[-1][0] == 404

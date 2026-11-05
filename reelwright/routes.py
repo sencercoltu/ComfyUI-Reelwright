@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading  # added 2026-11-05 v0.7.0: filmstrip slots
 import uuid  # added 2026-11-03 v0.6.0
 
 import comfy.samplers
@@ -577,6 +578,41 @@ async def waveform(request):
                                      "Cache-Control": "no-store"})
     except (ValueError, FileNotFoundError, merge.MergeError) as e:
         return web.json_response({"error": str(e)}, status=400)
+
+
+# ---- timeline filmstrips (added 2026-11-05 v0.7.0) ------------------------------
+# A row of small frames of a rendered video, so a scene block shows the frame that is at each time (merge.filmstrip).
+
+_STRIP_SLOTS = threading.BoundedSemaphore(2)  # ffmpeg runs at once for filmstrips (the timeline asks for many)
+
+
+@routes.get("/reelwright/filmstrip")
+@json_route
+async def filmstrip(request):
+    """?file=<output-relative video under reelwright/>&h=<tile height, 16-256, default 54> -> {file (the sprite,
+    output-relative), url, interval, count, tile_w, tile_h, duration}: tile k (from the left, tile_w px wide) shows the
+    video at about k * interval seconds. Made once next to the video and reused while the video is unchanged. 400 for
+    a path outside output/reelwright or a file that is not a video, 404 for a missing file."""
+    rel = _str(request.query, "file", "")
+    h = _int(request.query.get("h", "54"), "h", 16, 256)
+    parts = rel.replace("\\", "/").split("/")
+    if len(parts) < 2 or parts[0] != "reelwright" or any(x in ("", ".", "..") or ":" in x or "\x00" in x
+                                                         for x in parts):
+        raise ValueError("file must be a video under the output folder's reelwright/")
+    path = safe_join(os.path.join(roots().output, "reelwright"), *parts[1:])
+    if os.path.splitext(path)[1].lower() not in media.VIDEO_EXT:
+        raise ValueError("file must be a video")
+    if not os.path.isfile(path):
+        return web.json_response({"error": "missing: " + rel}, status=404)
+
+    def make():
+        with _STRIP_SLOTS:
+            return merge.filmstrip(path, h)
+    out = await asyncio.to_thread(make)
+    sprite = "/".join(parts[:-1] + [os.path.basename(out["path"])])
+    return {"file": sprite, "url": "{}&v={}".format(_view(sprite), out.get("mtime_ns") or out.get("size") or 0),
+            "interval": out["interval"], "count": out["count"], "tile_w": out["tile_w"], "tile_h": out["tile_h"],
+            "duration": out["duration"]}
 
 
 # ---- disk use (added 2026-11-03 v0.4.0) --------------------------------------

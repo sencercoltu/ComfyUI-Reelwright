@@ -211,6 +211,9 @@ class PassRefs:
         self.subject_of_asset = {}
         self.song_number = None  # added 2026-11-03 v0.5.0: <Audio N> of the soundtrack segment
         self.guided = set()  # added 2026-11-03 v0.6.0: ids of the scene refs that guide this pass
+        # added 2026-11-05 v0.7.0: the footage this pass continues from, sent as reference 1 (see continuation_of):
+        # {"kind": "picture"|"video", "source", "frames", "label": "<Picture 1>"|"<Video 1>", "audio_number"} or None
+        self.continuation = None
 
     def number(self):
         for k, img in enumerate(self.images, 1):
@@ -221,7 +224,9 @@ class PassRefs:
             if v["soundtrack"]:
                 audio_n += 1
                 v["audio_number"] = audio_n
-            self.video_of_asset.setdefault(v["asset"], k)
+            # [OLD 2026-11-05 v0.6.1->v0.7.0] self.video_of_asset.setdefault(v["asset"], k)
+            if v.get("asset"):  # added 2026-11-05 v0.7.0: the continuation clip is no asset
+                self.video_of_asset.setdefault(v["asset"], k)
         for a in self.audios:
             audio_n += 1
             # [OLD 2026-11-03 v0.4.3->v0.5.0] self.audio_of_asset.setdefault(a["asset"], audio_n)
@@ -244,14 +249,174 @@ def guided_refs(pass_):
     return {g["ref"] for key, _ in GUIDE_KEYS for g in pass_.get(key) or []}
 
 
+# ---- the continuation as a named reference (added 2026-11-05 v0.7.0) -----------------------------------------------
+# Global -> Continuity -> name_continuation: the footage a pass continues from is also sent to H3 as reference 1 and
+# named in the prompt, as MiniMax's ref-en.txt does for a first-frame picture (2.2) and a continuation video (2.3):
+# the last frame of the scene before (a last-frame start, a re-anchored tail too) is <Picture 1>; the tail clip of the
+# scene before (tail.mp4, its last 124 frames, with its sound when an audio slot is free) or, after an overlap seam,
+# the last 124 frames of the pass before is <Video 1>. Every other picture or video moves up by one. The latent
+# anchoring with MiniMaxH3AddGuide stays as it is. model.pass_continuation decides which passes (model.js the same).
+CONT_WHAT = {"prev_scene_last": "the last frame of the scene before", "prev_scene_tail": "the tail clip of the scene before",
+             "prev_pass_tail": "the end of the pass before"}
+# reference numbers a continuation moves (text written with fixed numbers is left as it is, see build_pass)
+FIXED_NUMBERS = {"picture": re.compile(r"<Picture \d+>"), "video": re.compile(r"<(?:Video|Audio) \d+>")}
+# the editor's own definition of the continuation (a pass prompt edited by hand from a v0.7.0 build has it)
+OWN_DEFINITION = re.compile(r"<Picture 1> is the first frame\b|<Video 1> is the end of (?:the scene before|the "
+                            r"previous part of this scene)")
+CONT_CITE = {"picture": "The shot begins from {label}.",
+             "video": "The shot continues seamlessly from the final frames of {label}."}
+
+
+def continuation_of(p, scene, scene_index, pass_, ctx=None):
+    """What this pass sends as reference 1 for the footage it continues from: None, or
+    {"kind": "picture"|"video", "source": "prev_scene_last"|"prev_scene_tail"|"prev_pass_tail", "frames": n}
+    (frames: of the clip; 1 for the picture). None when Global -> Continuity -> name_continuation is off."""
+    ctx = _ctx(p, ctx)
+    mode = _scene_start_mode(ctx, p, scene_index, scene)
+    kind = _model.pass_continuation(p, scene_index, pass_, mode)
+    if not kind:
+        return None
+    if kind == "picture":
+        return {"kind": "picture", "source": "prev_scene_last", "frames": 1}
+    return {"kind": "video", "source": "prev_pass_tail" if int(pass_["index"]) > 1 else "prev_scene_tail",
+            "frames": _model.continuation_frames(p, scene_index, pass_, mode)}
+
+
+def over_budget(refs):
+    """(pictures, videos, files) of a pass when they are more than H3 takes (9, 3, 12), else None."""
+    n = (len(refs.images), len(refs.videos), refs.file_count)
+    return n if n[0] > spec.MAX_REF_IMAGES or n[1] > spec.MAX_REF_VIDEOS or n[2] > spec.MAX_REF_FILES else None
+
+
+def _cont_before(c):
+    return "the previous part of this scene" if c["source"] == "prev_pass_tail" else "the scene before"
+
+
+def _cont_label(c):
+    return "<Picture 1>" if c["kind"] == "picture" else "<Video 1>"
+
+
+def _labelled(text, label):
+    """Does a line or sentence of text start with this label (a definition or retention line of it)?"""
+    return any(m.group("label") == label for m in LABEL_START.finditer(text or ""))
+
+
+def _cont_definitions(c, shot="[Shot 1]"):
+    """The definition line of the continuation, and of its sound when that is sent."""
+    out = [continuation_definition(c, shot)]
+    if c.get("audio_number"):
+        out.append("<Audio {}> is the synchronized audio track of {}.".format(c["audio_number"], c["label"]))
+    return out
+
+
+def continuation_definition(c, shot="[Shot 1]"):
+    """The subject_definitions line of the continuation (shot None: the text has no [Shot N] lines)."""
+    if c["kind"] == "picture":
+        return "{} is the first frame of {}, the last frame of the scene before.".format(
+            c["label"], shot or "the target video")
+    return "{} is the end of {}; the target video continues from its final frames.".format(c["label"], _cont_before(c))
+
+
+def continuation_retention(c, shot="[Shot 1]"):
+    """The retention_analysis line(s) of the continuation (and of its sound)."""
+    if c["kind"] == "picture":
+        return ["{} ({}first frame): fully_preserved - the target video starts on this frame and continues from "
+                "it.".format(c["label"], shot + " " if shot else "")]
+    out = ["{} (continuation source): fully_preserved - its final frames are kept as they are, and the subjects, "
+           "setting, lighting and motion carry on from them.".format(c["label"])]
+    if c.get("audio_number"):
+        out.append("<Audio {0}>: reference - the target video's sound carries on from <Audio {0}> without copying "
+                   "the original signal.".format(c["audio_number"]))
+    return out
+
+
+def _cite_continuation(lines, c):
+    """detailed_description lines with the continuation cited in [Shot 1] (ref-en.txt 5.3: "the shot begins from
+    <Picture 1>"), unless that shot names it already; a [Shot 1] that "continues seamlessly from the previous moment"
+    says from what. Without a [Shot 1], one is added before the first [Shot N] (or at the end)."""
+    sentence = CONT_CITE[c["kind"]].format(label=c["label"])
+    for k, x in enumerate(lines):
+        m = SHOT_START.match(x)
+        if not m or m.group("label") != "[Shot 1]":
+            continue
+        if c["label"] in x:
+            return lines
+        body = x[m.end("label"):].strip()
+        if c["kind"] == "video" and CONTINUES in body:
+            body = body.replace(CONTINUES, sentence, 1)
+        else:
+            body = (sentence + " " + body).strip()
+        return lines[:k] + [x[:m.end("label")] + " " + body] + lines[k + 1:]
+    first = next((k for k, x in enumerate(lines) if SHOT_START.match(x)), len(lines))
+    return lines[:first] + ["[Shot 1] " + sentence] + lines[first:]
+
+
+def _name_in_written(text, refs):
+    """A prompt written whole (raw mode, a pass edited by hand, a Split answer) with the continuation named: in the
+    six-section form its definition and retention lines go first in their sections and [Shot 1] cites it; any other
+    text gets the definition in front. Parts that name the label already are left as they are."""
+    c = refs.continuation
+    found = list(SECTION_LABEL.finditer(text))
+    labels = {m.group(1) for m in found}
+    if len(labels) < 2 or not labels & {"subject_definitions", "retention_analysis", "detailed_description"}:
+        if _labelled(text, c["label"]):
+            return text
+        text = _strip_task_tags(text).strip()  # place_task_tags puts them back in front
+        pre, chunks = _chunks(text, SHOT_START)
+        shot = "[Shot 1]" if any(label == "[Shot 1]" for label, _ in chunks) else None
+        if shot:
+            text = "\n".join(_cite_continuation(([pre] if pre else []) + [chunk for _, chunk in chunks], c))
+        return (" ".join(_cont_definitions(c, shot)) + "\n" + text).strip()
+    spans = {}
+    for k, m in enumerate(found):
+        spans.setdefault(m.group(1), (m.end(), found[k + 1].start() if k + 1 < len(found) else len(text)))
+    has_shot = "detailed_description" in spans or None
+
+    def section(name, body):
+        core = body.strip()
+        if name == "detailed_description":
+            pre, chunks = _chunks("" if core == "N/A" else core, SHOT_START)
+            return "\n".join(_cite_continuation(([pre] if pre else []) + [chunk for _, chunk in chunks], c))
+        if _labelled(core, c["label"]):
+            return core
+        if name == "subject_definitions":
+            new = _cont_definitions(c, "[Shot 1]" if has_shot else None)
+        else:
+            new = continuation_retention(c, "[Shot 1]" if has_shot else None)
+        return "\n".join(new + ([core] if core and core != "N/A" else []))
+
+    for name in sorted(spans, key=lambda x: spans[x][0], reverse=True):  # from the end, so offsets stay valid
+        if name not in ("subject_definitions", "retention_analysis", "detailed_description"):
+            continue
+        a, b = spans[name]
+        body = text[a:b]
+        lead = body[:len(body) - len(body.lstrip())] or "\n"
+        trail = body[len(body.rstrip()):]
+        text = text[:a] + lead + section(name, body) + trail + text[b:]
+    if "subject_definitions" not in spans:  # it is defined in a section of its own, in front of the others
+        at = found[0].start()
+        text = text[:at] + "subject_definitions:\n{}\n\n".format(
+            "\n".join(_cont_definitions(c, "[Shot 1]" if has_shot else None))) + text[at:]
+    return text
+
+
 # [OLD 2026-11-03 v0.5.1->v0.6.0] def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=()):
 #     idx = project_index(p)
 # [/OLD]
-def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx=None):  # ctx: added 2026-11-03 v0.6.0
+# [OLD 2026-11-05 v0.6.1->v0.7.0] def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx=None):  # ctx: added 2026-11-03 v0.6.0
+def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx=None, continuation=None):
+    """continuation (added 2026-11-05 v0.7.0): continuation_of(...) to send as reference 1, None for none."""
     ctx = _ctx(p, ctx)
     idx = ctx["index"]
     assets, cast = idx["assets"], idx["cast"]
     refs = PassRefs()
+    # added 2026-11-05 v0.7.0: the continuation goes first, so it is <Picture 1> / <Video 1>
+    cont = dict(continuation) if continuation else None
+    if cont and cont["kind"] == "picture":
+        refs.images.append({"assets": [], "cast": None, "ref": None, "source": cont["source"], "continuation": True})
+    if cont and cont["kind"] == "video":
+        refs.videos.append({"asset": None, "soundtrack": False, "ref": None, "source": cont["source"],
+                            "frames": cont["frames"], "continuation": True})
     # added 2026-11-03 v0.6.0: a first/last/keyframe picture or clip named in the text is sent only to the pass it guides
     guided = guided_refs(pass_)
     speaking = {d.get("speaker") for d in pass_["dialogue"]}
@@ -281,7 +446,8 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
         {r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
          (r["role"] == "reference" or (r["id"] in guided and assets[r["asset"]]["code"].upper() in mentioned_codes))} -
         {a for *_, ids in entries for a in ids})
-    auto_pack = unpacked > spec.MAX_REF_IMAGES
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] auto_pack = unpacked > spec.MAX_REF_IMAGES
+    auto_pack = unpacked + (1 if cont and cont["kind"] == "picture" else 0) > spec.MAX_REF_IMAGES  # v0.7.0: + it
 
     # [OLD 2026-11-03 v0.4.0->v0.4.1] for n, entry in enumerate(e for e in cast_entries if e["id"] in cast):
     #     c = cast[entry["id"]]
@@ -348,7 +514,15 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
         elif a["kind"] == "audio" and not any(x["asset"] == a["id"] for x in refs.audios):
             refs.audios.append({"asset": a["id"], "ref": r["id"], "cast": None})
     refs.guided = guided  # added 2026-11-03 v0.6.0
+    # added 2026-11-05 v0.7.0: the continuation clip brings its sound when an audio slot is free
+    if cont and cont["kind"] == "video":
+        refs.videos[0]["soundtrack"] = sum(1 for v in refs.videos if v["soundtrack"]) + len(refs.audios) < \
+            spec.MAX_REF_AUDIOS
     refs.number()
+    if cont:  # added 2026-11-05 v0.7.0
+        first = refs.images[0] if cont["kind"] == "picture" else refs.videos[0]
+        refs.continuation = dict(cont, label="<{} 1>".format("Picture" if cont["kind"] == "picture" else "Video"),
+                                 audio_number=first.get("audio_number") if first.get("soundtrack") else None)
 
     # added 2026-11-02 v0.2.0: reference pictures and content videos become subjects (ref-en.txt 2.1-2.3).
     # Keyframe-category pictures stay standalone <Picture N> composition anchors; camera and
@@ -365,6 +539,8 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
                               "outfit": None, "pictures": [refs.picture_of_asset[a["id"]]], "videos": []})
         refs.subject_of_asset[a["id"]] = refs.subjects[-1]["number"]
     for k, v in enumerate(refs.videos, 1):
+        if v.get("continuation"):  # added 2026-11-05 v0.7.0: no asset, no subject
+            continue
         a = assets[v["asset"]]
         # [OLD 2026-11-03 v0.5.1->v0.6.0] if a.get("category") not in SUBJECT_VIDEO_CATEGORIES or a["id"] in refs.subject_of_asset:  (guide clips are no subjects)
         if v.get("guide") or a.get("category") not in SUBJECT_VIDEO_CATEGORIES or a["id"] in refs.subject_of_asset:
@@ -412,8 +588,16 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
 def task_tags(p, scene, refs, ctx=None):  # ctx: added 2026-11-03 v0.6.0
     assets = (ctx["index"] if ctx is not None else project_index(p))["assets"]
     tags = set()
-    if refs.file_count:
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] if refs.file_count:
+    # added 2026-11-05 v0.7.0: the continuation is a concrete frame or the clip continued, not reference generation
+    # (ref-en.txt 3): keyframe completion for the picture, video continuation (+ audio reference for its sound)
+    cont = refs.continuation
+    if refs.file_count - (1 if cont else 0):
         tags.add("reference generation")
+    if cont:
+        tags.add("keyframe completion" if cont["kind"] == "picture" else "video continuation")
+        if cont.get("audio_number"):
+            tags.add("audio reference")
     if any(g["type"] == "image" for g in refs.guides):
         tags.add("keyframe completion")
     # [OLD 2026-11-03 v0.5.1->v0.6.0] a clip from an asset counted as keyframe completion, which ref-en.txt keeps for pictures
@@ -426,6 +610,8 @@ def task_tags(p, scene, refs, ctx=None):  # ctx: added 2026-11-03 v0.6.0
         tags.add("video continuation")  # the target continues from (or passes through) existing footage
     ref_by_id = {r["id"]: r for r in scene["refs"]}
     for v in refs.videos:
+        if v.get("continuation"):  # added 2026-11-05 v0.7.0: tagged above
+            continue
         a = assets[v["asset"]]
         if a.get("category") == "edit_source":
             tags.add("video editing")
@@ -541,6 +727,9 @@ def resolve_tag(name, braced, p, refs, ctx, scene=None):
         return None, "error", "@{} is not a reference of this scene (add it under References)".format(a["code"])
     low = name.strip().lower()
     if low == "tail" and not braced:
+        # added 2026-11-05 v0.7.0: @tail is the footage this pass continues from; named, it is <Picture 1> / <Video 1>
+        if getattr(refs, "continuation", None):
+            return refs.continuation["label"], None, None
         if scene is not None and _scene_start_mode(ctx, p, idx["scenes"].get(scene["id"], 0), scene) == "fresh":
             return "the end of the previous shot", "warn", "@tail: this scene starts fresh, so there is no previous " \
                                                            "shot to continue"
@@ -960,6 +1149,9 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
     for k, img in enumerate(refs.images, 1):
         if img["cast"] or any(k in s["pictures"] for s in refs.subjects):
             continue
+        if img.get("continuation"):  # added 2026-11-05 v0.7.0: the last frame of the scene before
+            lines.append(continuation_definition(refs.continuation))
+            continue
         a = assets[img["assets"][0]]
         desc = (a.get("description") or "").strip().rstrip(".")
         role, _ = _guide_of_picture(scene, refs, pass_, k)
@@ -968,6 +1160,9 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
         lines.append("<Picture {}> is {}{}.".format(k, what, ", showing " + desc if desc else ""))
     for k, v in enumerate(refs.videos, 1):
         if any(k in s["videos"] for s in refs.subjects):
+            continue
+        if v.get("continuation"):  # added 2026-11-05 v0.7.0: the end of the scene (or pass) before
+            lines.append(continuation_definition(refs.continuation))
             continue
         a = assets[v["asset"]]
         desc = (a.get("description") or "").strip().rstrip(".")
@@ -1022,6 +1217,9 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):  # ctx: added 2026-11-0
     for k, img in enumerate(refs.images, 1):
         if img["cast"] or any(k in s["pictures"] for s in refs.subjects):
             continue
+        if img.get("continuation"):  # added 2026-11-05 v0.7.0
+            lines += continuation_retention(refs.continuation)
+            continue
         a = assets[img["assets"][0]]
         r = ref_by_id.get(img["ref"], {}) if img["ref"] else {}
         _, where = _guide_of_picture(scene, refs, pass_, k)
@@ -1030,6 +1228,9 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):  # ctx: added 2026-11-0
         lines.append("<Picture {}> ({}): {} - {}.".format(k, where or "reference image", ret, _keep_phrase(keep, ret)))
     for k, v in enumerate(refs.videos, 1):
         if any(k in s["videos"] for s in refs.subjects):
+            continue
+        if v.get("continuation"):  # added 2026-11-05 v0.7.0 (its sound's line follows with the other audio)
+            lines.append(continuation_retention(refs.continuation)[0])
             continue
         a = assets[v["asset"]]
         r = ref_by_id.get(v["ref"], {})
@@ -1042,6 +1243,9 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):  # ctx: added 2026-11-0
         keep = _keep(r, a) or DEFAULT_KEEP.get(a.get("category") or "camera", DEFAULT_KEEP["camera"])
         lines.append("<Video {}> ({}): {} - {}.".format(k, what, ret, _keep_phrase(keep, ret)))
     for k, v in enumerate(refs.videos, 1):
+        if v["soundtrack"] and v.get("continuation"):  # added 2026-11-05 v0.7.0: the sound it continues
+            lines += continuation_retention(refs.continuation)[1:]
+            continue
         if v["soundtrack"]:
             r = ref_by_id.get(v["ref"], {})
             ret = r.get("soundtrack_retention") or "reference"
@@ -1180,6 +1384,11 @@ def _auto_summary(refs, pass_):
     if refs.song_number:  # added 2026-11-03 v0.5.0
         text += " The picture is cut to <Audio {}>: mouths, movement and cuts follow its vocals and beat.".format(
             refs.song_number)
+    c = refs.continuation  # added 2026-11-05 v0.7.0: the role of the continuation reference (ref-en.txt 3)
+    if c and c["kind"] == "picture":
+        text += " It starts on {}, the last frame of the scene before.".format(c["label"])
+    elif c:
+        text += " It continues seamlessly from the final frames of {}, the end of {}.".format(c["label"], _cont_before(c))
     return text
 
 
@@ -1367,16 +1576,41 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
     mentioned = set()
     for t in sources:
         mentioned |= mentioned_codes(t)
-    refs = collect_refs(p, scene, scene_index, pass_, len(plan["passes"]), mentioned, ctx=ctx)
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] refs = collect_refs(p, scene, scene_index, pass_, len(plan["passes"]), mentioned, ctx=ctx)
+    # added 2026-11-05 v0.7.0: the footage this pass continues from is reference 1 (continuation_of), unless the text
+    # uses fixed reference numbers that naming it would move, or it does not fit H3's budget even after "auto"
+    # packing: then the pass is built as in v0.6.1 (only anchored) and an issue says why
+    issues = []
+    cont = continuation_of(p, scene, scene_index, pass_, ctx)
+    written_text = "\n".join(t for t in sources if isinstance(t, str))
+    if cont and FIXED_NUMBERS[cont["kind"]].search(written_text) and not OWN_DEFINITION.search(written_text):
+        issues.append({"level": "info", "tag": "", "message": "{} is only anchored, not named {}: the prompt uses fixed "
+                       "reference numbers (<Picture N>, <Video N>, <Audio N>) that naming it would move; write @tags "
+                       "instead (@tail for it)".format(CONT_WHAT[cont["source"]], _cont_label(cont))})
+        cont = None
+    refs = collect_refs(p, scene, scene_index, pass_, len(plan["passes"]), mentioned, ctx=ctx, continuation=cont)
+    over = over_budget(refs) if cont else None
+    if over:
+        refs = collect_refs(p, scene, scene_index, pass_, len(plan["passes"]), mentioned, ctx=ctx)
+        issues.append({"level": "warn", "tag": "", "message": "{} is only anchored, not named {}: with it this pass "
+                       "would send {} pictures, {} videos and {} files (H3 takes up to 9, 3 and 12); pack cast pictures "
+                       "into a sheet or remove a reference to make room".format(
+                           CONT_WHAT[cont["source"]], _cont_label(cont), *over)})
+    elif refs.continuation and refs.continuation["kind"] == "video" and not refs.continuation["audio_number"]:
+        issues.append({"level": "info", "tag": "", "message": "{} is sent as <Video 1> without its sound: the {} audio "
+                       "slots are taken".format(CONT_WHAT[cont["source"]], spec.MAX_REF_AUDIOS)})
     tags = task_tags(p, scene, refs, ctx=ctx)
     tag_line = "[{}]".format(" + ".join(tags)) if tags else ""
-    unknown, issues = [], []
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] unknown, issues = [], []
+    unknown = []
 
     def sub(t):
         return substitute(t, p, refs, unknown, ctx=ctx, scene=scene, issues=issues)
 
     if override.strip() or pr["mode"] == "raw":
         body = sub(override if override.strip() else pr["raw"]).strip()
+        if refs.continuation:  # added 2026-11-05 v0.7.0: defined and cited in the written prompt too
+            body = _name_in_written(body, refs)
         text = place_task_tags(body, tag_line)
     else:
         # [OLD 2026-11-02 v0.1.0->v0.2.0] headings did not follow H3's Ref2VA guide (see writers above)
@@ -1445,6 +1679,15 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
         parts = shot_parts(p, scene, refs, pass_, ids, unknown, ctx=ctx, issues=issues) if auto.get("shots") else []
         desc = _merge([(x["label"], " ".join([x["text"]] + x["dialogue"])) for x in parts],
                       sec["detailed_description"], SHOT_START, _keep_dialogue(parts), pre_first=True)
+        # added 2026-11-05 v0.7.0: the continuation is defined, analysed and cited in [Shot 1], also when those
+        # sections are written by hand (automatic lines already have it)
+        c = refs.continuation
+        if c:
+            desc = _cite_continuation(desc, c)
+            if not any(_labelled(x, c["label"]) for x in subj):
+                subj = _cont_definitions(c) + subj
+            if not any(_labelled(x, c["label"]) for x in ret):
+                ret = continuation_retention(c) + ret
         body = {
             "subject_definitions": "\n".join(subj), "summary": summary, "retention_analysis": "\n".join(ret),
             "detailed_description": "\n".join(desc), "overall_soundscape": sec["overall_soundscape"],
@@ -1462,6 +1705,8 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
         tag_map["@" + idx["assets"][aid]["code"]] = "<Audio {}>".format(k)
     if refs.song_number:  # added 2026-11-03 v0.5.0
         tag_map["@soundtrack"] = "<Audio {}>".format(refs.song_number)
+    if refs.continuation:  # added 2026-11-05 v0.7.0: so the rewriter turns the label back into @tail
+        tag_map["@tail"] = refs.continuation["label"]
     # [OLD 2026-11-02 v0.1.0->v0.2.0] reference subjects have no cast entry
     # for s in refs.subjects:
     #     tag_map["@" + idx["cast"][s["cast"]]["name"]] = "<Subject {}>".format(s["number"])
@@ -1475,9 +1720,17 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
     # [OLD 2026-11-03 v0.5.1->v0.6.0] return {"prompt": text, "tags": tags, "tag_map": tag_map, "unknown": sorted(set(unknown)),
     # issues (added 2026-11-03 v0.6.0): [{"level": "error"|"warn"|"info", "tag", "message"}] about tags that did not
     # resolve to a label and about written shot lines; validate.lint_project reports them
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] no "continuation"
+    # return {"prompt": text, "tags": tags, "tag_map": tag_map, "unknown": sorted(set(unknown)), "issues": issues,
+    #         "images": refs.images, "videos": refs.videos, "audios": refs.audios,
+    #         "guides": refs.guides, "subjects": refs.subjects}
+    # [/OLD]
+    # continuation (added 2026-11-05 v0.7.0): refs.continuation, the reference 1 this pass continues from, or None;
+    # its entry in images / videos has "continuation": True and a "source" (prev_scene_last, prev_scene_tail,
+    # prev_pass_tail) instead of an asset
     return {"prompt": text, "tags": tags, "tag_map": tag_map, "unknown": sorted(set(unknown)), "issues": issues,
             "images": refs.images, "videos": refs.videos, "audios": refs.audios,
-            "guides": refs.guides, "subjects": refs.subjects}
+            "guides": refs.guides, "subjects": refs.subjects, "continuation": refs.continuation}
 
 
 # added 2026-11-03 v0.4.1: clean up what the LLM rewriter returns before it is offered as a proposal.

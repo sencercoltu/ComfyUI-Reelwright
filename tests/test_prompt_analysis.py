@@ -15,15 +15,18 @@ def _build(p, i, n=0):
 def test_reference_numbering_follows_native_order(harbor):
     # v0.6.0: pass 1 (0-14.4 s) gets the cast sheet and the dolly video whose soundtrack takes <Audio 1>; Mara speaks
     # only in pass 2 (her voice comes after the video's sound there) and the 25 s letter keyframe guides pass 3
+    # v0.7.0: the scene starts from the tail of the scene before, which is <Video 1> with its sound <Audio 1>, so
+    # the dolly video is <Video 2> (its sound <Audio 2>); pass 2 follows a cut, so it numbers as before
     b, _ = _build(harbor, 1)
     assert [img["assets"] for img in b["images"]] == [["a_front", "a_side"]]
-    assert b["videos"][0]["audio_number"] == 1
-    assert b["tag_map"]["@V1"] == "<Video 1>"
+    assert b["videos"][0]["continuation"] and b["videos"][0]["audio_number"] == 1
+    assert b["videos"][1]["audio_number"] == 2
+    assert b["tag_map"]["@V1"] == "<Video 2>" and b["tag_map"]["@tail"] == "<Video 1>"
     assert "@A1" not in b["tag_map"] and not any(a.get("cast") for a in b["audios"])
     assert b["tag_map"]["@Mara"] == "<Subject 1>"
     assert "<Subject 1> walks home" in b["prompt"]
     b2, _ = _build(harbor, 1, 1)
-    assert b2["tag_map"]["@A1"] == "<Audio 2>"
+    assert b2["tag_map"]["@A1"] == "<Audio 2>" and "@tail" not in b2["tag_map"]
     b3, _ = _build(harbor, 1, 2)
     assert [img["assets"] for img in b3["images"]] == [["a_front", "a_side"], ["a_letter"]]
 
@@ -73,12 +76,18 @@ def test_raw_mode_and_pass_override(harbor):
     p["scenes"][1]["prompt"].update(mode="raw", raw="@Mara walks. @V1 camera.")
     b, _ = _build(p, 1)
     assert b["prompt"].startswith("[reference generation")
-    assert "<Subject 1> walks. <Video 1> camera." in b["prompt"]
+    # v0.7.0: the tail clip is <Video 1>, defined in front of the written prompt
+    assert "<Subject 1> walks. <Video 2> camera." in b["prompt"]
+    assert "] <Video 1> is the end of the scene before; the target video continues from its final frames." in b["prompt"]
     p["scenes"][1]["prompt"]["pass_prompts"] = {"1": "[video continuation] custom @Mara"}
     b, _ = _build(p, 1)
     # [OLD v0.5.1] assert b["prompt"] == "[video continuation] custom <Subject 1>"
     # v0.6.0: written task tags are replaced by the ones the pass needs, so they are there exactly once
-    assert b["prompt"] == "[reference generation + video continuation + audio reference] custom <Subject 1>"
+    # [OLD v0.6.1] assert b["prompt"] == "[reference generation + video continuation + audio reference] custom <Subject 1>"
+    # v0.7.0: and the tail clip (<Video 1>, its sound <Audio 1>) is defined after them
+    assert b["prompt"] == "[reference generation + video continuation + audio reference] <Video 1> is the end of the " \
+        "scene before; the target video continues from its final frames. <Audio 1> is the synchronized audio track of " \
+        "<Video 1>.\ncustom <Subject 1>"
 
 
 def test_reanchor_rule_drops_the_tail_clip(harbor):
@@ -156,7 +165,9 @@ def test_ref2va_sections_follow_the_guide(harbor):
         assert old not in b["prompt"]
     assert "<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>." in b["prompt"]
     assert "<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - identity and appearance are retained." in b["prompt"]
-    assert "[Shot 1] A wide shot: Mara leaves the pier." in b["prompt"]
+    # v0.7.0: [Shot 1] cites the tail clip it continues from (<Video 1>)
+    assert "[Shot 1] The shot continues seamlessly from the final frames of <Video 1>. A wide shot: Mara leaves the " \
+           "pier." in b["prompt"]
     assert "[Shot 2] At 00:06.000, the shot cuts to a tracking shot: along the seawall." in b["prompt"]
     assert "summary:\n[reference generation + video continuation + audio reference] <Subject 1> walks home" in b["prompt"]
     assert b["prompt"].endswith("overall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A")
@@ -271,7 +282,9 @@ def test_written_shot_replaces_the_automatic_shot_and_keeps_its_dialogue(harbor)
     plan = plan_scene(harbor, s, 1)
     texts = [build_pass(harbor, s, 1, plan, x)["prompt"] for x in plan["passes"]]
     first = _sections(texts[0])["detailed_description"].split("\n")
-    assert first[0] == "Live-action, soft rain light." and first[1].startswith("[Shot 1] A wide shot: <Subject 1> walks")
+    # v0.7.0: the written [Shot 1] cites the tail clip it continues from
+    assert first[0] == "Live-action, soft rain light." and first[1].startswith(
+        "[Shot 1] The shot continues seamlessly from the final frames of <Video 1>. A wide shot: <Subject 1> walks")
     assert sum(x.startswith("[Shot 1]") for x in first) == 1
     # the pass with the spoken line: written [Shot N] lines elsewhere don't drop it
     spoken = [t for t in texts if "Almost home." in t]
@@ -422,7 +435,10 @@ def test_task_tags_once_in_overrides_and_raw(harbor):
     # a raw prompt that starts with [Shot 1] still gets its tags
     s["prompt"].update(mode="raw", raw="[Shot 1] @Mara walks.", pass_prompts={})
     b = build_pass(p, s, 1, plan, plan["passes"][0])
-    assert b["prompt"] == tags + " [Shot 1] <Subject 1> walks."
+    # v0.7.0: the tail clip it continues from is defined in front and cited in [Shot 1]
+    assert b["prompt"] == tags + " <Video 1> is the end of the scene before; the target video continues from its " \
+        "final frames. <Audio 1> is the synchronized audio track of <Video 1>.\n[Shot 1] The shot continues " \
+        "seamlessly from the final frames of <Video 1>. <Subject 1> walks."
 
 
 def test_written_shot_lines_go_to_the_pass_that_holds_the_shot(harbor):
@@ -434,7 +450,9 @@ def test_written_shot_lines_go_to_the_pass_that_holds_the_shot(harbor):
         "[Shot 5] An insert of the key.")
     builds, plan = _passes(p, 1)   # passes: shots 1-2 | shot 3 (from 14.375 s) | shot 4 (from 22 s)
     d1, d2, d3 = (_desc(b["prompt"]).split("\n") for b in builds)
-    assert d1 == ["Live action, rain light.", "[Shot 1] A wide shot: Mara leaves the pier.",
+    # v0.7.0: pass 1's [Shot 1] cites the tail clip of the scene before (passes 2 and 3 follow cuts: no continuation)
+    assert d1 == ["Live action, rain light.", "[Shot 1] The shot continues seamlessly from the final frames of "
+                  "<Video 1>. A wide shot: Mara leaves the pier.",
                   "[Shot 2] At 00:06.000, the shot cuts to a tracking shot: along the seawall."]
     # shot 3 is pass 2's first shot: no cut time, and the line's time is pass time; the spoken line is not repeated
     assert d2 == ["Live action, rain light.", "[Shot 1] A medium shot: rain hammers the seawall. At 00:01.625, "
@@ -444,7 +462,9 @@ def test_written_shot_lines_go_to_the_pass_that_holds_the_shot(harbor):
     # the same without automatic shots
     s["prompt"]["auto"]["shots"] = False
     builds, _ = _passes(p, 1)
-    assert _desc(builds[0]["prompt"]) == "Live action, rain light."
+    # v0.7.0: without automatic shots a [Shot 1] that cites the tail clip is added
+    assert _desc(builds[0]["prompt"]) == "Live action, rain light.\n[Shot 1] The shot continues seamlessly from the " \
+        "final frames of <Video 1>."
     assert _desc(builds[2]["prompt"]) == "Live action, rain light.\n[Shot 1] She opens the door.\n[Shot 2] An insert of the key."
 
 
@@ -459,7 +479,10 @@ def test_written_shot_lines_across_overlap_seams(harbor):
     d1, d2 = _desc(builds[0]["prompt"]).split("\n"), _desc(builds[1]["prompt"]).split("\n")
     assert d1[1:] == ["[Shot 2] At 00:06.000, the shot cuts to a tracking shot along the seawall.",
                       "[Shot 3] At 00:14.375, the shot cuts to rain."]
-    assert d2[0] == "[Shot 1] The shot continues seamlessly from the previous moment. A tracking shot along the seawall."
+    # [OLD v0.6.1] assert d2[0] == "[Shot 1] The shot continues seamlessly from the previous moment. A tracking shot along the seawall."
+    # v0.7.0: the end of pass 1 is <Video 1> of pass 2, so the continuing shot says what it continues from
+    assert d2[0] == "[Shot 1] The shot continues seamlessly from the final frames of <Video 1>. A tracking shot along " \
+        "the seawall."
     assert d2[1].startswith("[Shot 2] At 00:00.917, the shot cuts to rain.")
 
 

@@ -29,6 +29,9 @@ CUT_RE = re.compile(r"^(?P<stem>.+_cut_v(?P<n>\d+)(?:_draft)?(?:_s\d+-\d+)?)"
                     r"(?P<rest>_stems(?:\.partial)?|_loudness\.json|(?:\.partial)?\..+)$")
 STEM_ID_RE = re.compile(r"[A-Za-z0-9_.-]+_cut_v\d+(?:_draft)?(?:_s\d+-\d+)?")  # added 2026-11-03 v0.6.0
 TAKE_PART_RE = re.compile(r"^scenes/[^/]+/takes/[^/]+/(?P<part>.+)$")  # added 2026-11-03 v0.6.0
+# added 2026-11-05 v0.7.0: the timeline's filmstrip of a video (merge.filmstrip: <video>.filmstrip_<h>.jpg / .json, and
+# the .partial files of one being made); a cache, made again when needed, so it may go without its take
+FILMSTRIP_RE = re.compile(r"^[^/]*\.filmstrip_\d+\.[^/]*$")
 PROTECTED = {"project.json": "the project file (delete the whole project instead)",
              "wired.json": "which node inputs are wired; tiny"}
 
@@ -231,6 +234,9 @@ def scan_project(roots, slug, current=None):
                         c["kind"] = "passes"
                         c["note"] = "intermediate pass videos; the take's video is already assembled"
                         c["flags"].append("intermediate")
+                    elif c["kind"] == "file" and FILMSTRIP_RE.match(c["label"]):  # added 2026-11-05 v0.7.0
+                        c["note"] = "the timeline's filmstrip of the take; made again when needed"
+                        c["flags"].append("cache")
                     else:
                         c["del"], c["why"] = False, "part of the take; delete the take"
                 if t is None:
@@ -529,7 +535,9 @@ def delete(roots, ids, current=None):
                     raise ValueError("a scene's take list is kept; delete the scene instead")
                 # added 2026-11-03 v0.6.0: a take's own files go only with the take (its passes/ may go alone)
                 part = TAKE_PART_RE.match(rel) if kind == "output" else None
-                if part and part.group("part").split("/")[0] != "passes":
+                # [OLD 2026-11-05 v0.6.1->v0.7.0] if part and part.group("part").split("/")[0] != "passes":
+                # added 2026-11-05 v0.7.0: a take's filmstrip (a cache) may go alone too
+                if part and part.group("part").split("/")[0] != "passes" and not FILMSTRIP_RE.match(part.group("part")):
                     raise ValueError("part of a take; delete the take")
                 if kind == "output" and rel == "cuts/" + CUT_COUNTER:
                     raise ValueError("the next cut number is kept")

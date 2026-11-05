@@ -471,6 +471,7 @@ export function section({ title, help, actions, children, cls, tint }) {
     children);
 }
 
+/* [OLD 2026-11-05 v0.6.1->v0.7.0] the reset button always said "inherited from the Global tab"
 export function field(label, control, { help, dot: dotState, reset, wide } = {}) {
   return h("div", { class: ["rw-field", wide && "wide"] },
     h("span", { class: "rw-field-label", help }, label),
@@ -478,6 +479,18 @@ export function field(label, control, { help, dot: dotState, reset, wide } = {})
     dotState && dot(dotState),
     reset !== undefined && (reset
       ? button({ icon: "refresh", help: "common.reset", onClick: reset, small: true, variant: "ghost" })
+      : h("span", { class: "rw-reset-ph" })));
+}
+[/OLD] */
+// added 2026-11-05 v0.7.0: resetHelp (the reset button's help id, for values that go back to a default rather than to
+// the Global tab) and cls (an extra class on the row)
+export function field(label, control, { help, dot: dotState, reset, wide, resetHelp, cls } = {}) {
+  return h("div", { class: ["rw-field", wide && "wide", cls] },
+    h("span", { class: "rw-field-label", help }, label),
+    h("span", { class: "rw-field-ctl" }, control),
+    dotState && dot(dotState),
+    reset !== undefined && (reset
+      ? button({ icon: "refresh", help: resetHelp || "common.reset", onClick: reset, small: true, variant: "ghost" })
       : h("span", { class: "rw-reset-ph" })));
 }
 

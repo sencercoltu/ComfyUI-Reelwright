@@ -1,5 +1,110 @@
 # Changelog
 
+## v0.7.0 — 2026-11-05
+
+A continuing scene now names the frame or clip it continues from in its prompt. Each scene sets how it sits in the merged film: its transition, fades, sound level and colour. The timeline shows the frame that is actually at each time.
+
+### What you will notice after updating
+
+- **Continuing scenes render again once.** Their prompt and references change: the frame or clip they continue from is now also sent as `<Picture 1>` or `<Video 1>` (see below).
+  - This affects scenes that start from the last frame or the tail clip of the scene before, and the passes of a long scene that follow an overlap seam. The passes before the first overlap seam come from the pass cache.
+  - Other fresh scenes keep their takes.
+  - A pass prompt written by hand with fixed numbers (`<Picture 2>`, `<Video 1>`) is left as it was and keeps its take.
+  - To keep every take, turn off **Cast tab → Continuity rules → Continuation → Name it in the prompt**. Prompts, references and cache keys are then exactly those of v0.6.1.
+- **Transitions and colour match moved from the Merge card into each scene** (Scene tab → **In the cut**). Old projects are converted when they load and merge exactly as before:
+  - each scene gets the transition, length and audio fade it used: its own "Cut into this scene" setting, or the Merge card's default;
+  - with colour match on, every scene except the reference scene matches the reference scene (the first scene when none was chosen).
+  - One difference: when a range merge leaves the reference scene out, v0.6.1 matched the range to its first scene. v0.7.0 measures the reference scene's own take.
+- **The text encoder can load again in the middle of a run.** With *Encode all prompts first* on, a pass whose continuation reference is made in the same run can't be encoded up front. That is a pass after an overlap seam, or a continuing scene whose scene before renders in this run. These passes are encoded when they render, so the text encoder is loaded again (from disk once per run, then swapped in by ComfyUI for each of these passes). Turning the naming switch above off brings back the v0.6.1 order.
+- When a pass of a long scene names the pass before, the render keeps that pass's last 124 frames in memory (about 1.5 GB at 1344×768) instead of only the overlap (39 frames by default).
+
+### The continuation as a named reference
+
+- **A continuing scene also sends what it continues from as reference 1, and the prompt names it**, as MiniMax's Ref2VA guide does for a first frame or a continued video. It is still anchored with `MiniMaxH3AddGuide`, as before.
+  - Last-frame start (also a re-anchored tail start): the last frame of the scene before is `<Picture 1>`.
+  - Tail start: the tail clip of the scene before is `<Video 1>`. That is its last 124 frames (fewer when the scene is shorter), with its sound as an `<Audio N>` when an audio slot is free.
+  - A pass of a long scene after an overlap seam: the last 124 frames of the pass before, with their sound, are `<Video 1>`.
+  - Every other picture, video and audio number moves up by one. `@tail` in your text becomes `<Picture 1>` or `<Video 1>` in such a pass.
+- **The prompt defines it, keeps it and starts [Shot 1] from it.** A last-frame start, in v0.6.1 (lines left out are marked …):
+
+  ```
+  subject_definitions:
+  <Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>.
+  …
+  retention_analysis:
+  <Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.
+  …
+  detailed_description:
+  [Shot 1] A medium shot: <Subject 1> turns to the sea. <Subject 1> (S1) whispers, <d>[English] There you are.</d>
+  ```
+
+  and in v0.7.0:
+
+  ```
+  subject_definitions:
+  <Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 2>.
+  <Picture 1> is the first frame of [Shot 1], the last frame of the scene before.
+  …
+  retention_analysis:
+  <Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.
+  <Picture 1> ([Shot 1] first frame): fully_preserved - the target video starts on this frame and continues from it.
+  …
+  detailed_description:
+  [Shot 1] The shot begins from <Picture 1>. A medium shot: <Subject 1> turns to the sea. <Subject 1> (S1) whispers, <d>[English] There you are.</d>
+  ```
+
+  The automatic summary adds "It starts on `<Picture 1>`, the last frame of the scene before." A tail start reads `<Video 1> is the end of the scene before; the target video continues from its final frames.` and `[Shot 1] The shot continues seamlessly from the final frames of <Video 1>.` The task tags add *keyframe completion* for the picture and *video continuation* for the clip (plus *audio reference* for its sound), never *reference generation*.
+- **Written prompts get it too.** Sections you write yourself, raw prompts, pass prompts and Split answers get the definition line, the retention line and the [Shot 1] mention where they are missing. Text that uses fixed numbers (`<Picture 2>`, `<Video 1>`) is left as it was: the continuation is then only anchored, and an info issue suggests @tags.
+- **It counts in the reference budget:** one picture, or one video with its seconds and an audio slot for its sound. The budget meters count it.
+  - With *Auto* packing, cast pictures are packed into a sheet first.
+  - A pass that would still send more than 9 pictures, 3 videos or 12 files only anchors the continuation, as before. The scene shows a warning.
+  - When all 3 audio slots are taken, the clip goes without its sound (info).
+- **Switch:** Cast tab → Continuity rules → **Continuation: Name it in the prompt** (on by default). Off: anchored only, exactly as in v0.6.1.
+
+### Each scene sets how it sits in the cut
+
+- **Scene tab → In the cut**, a new card under Starts from. It changes only the merge, never the render, so a change needs only a new merge.
+  - **Join:** how the scene follows the one before when it starts fresh: Cut, Crossfade, Dip to colour, Dissolve, Wipe or Slide (left, right, up or down), Circle open, Pixelize, Radial or Zoom in. Set the length in frames (the seconds are shown) and, for a dip, its colour. A transition takes at most half of either scene.
+  - A continuing scene joins by its continuation, as before, and the card says how: the tail overlap is crossfaded (Global → Long scenes → Crossfade), or the repeated last frame is dropped. Its transition can't be picked. The first scene has no join.
+  - **Audio fade:** at a plain cut, the sound fades out and in over this many frames (6 by default). Across an overlapping transition it crossfades over the whole transition, as before.
+  - **Start** and **End:** fade the picture in from a colour at the scene's first frame, or out to a colour at its last frame, and fade the scene's sound in or out. The scene's length doesn't change.
+  - **Sound:** the level of the scene's own sound (−60 to +12 dB) or **Mute**. It applies before loudness normalisation and before the soundtrack's scene-sound level, and the stems include it.
+  - **Colour:** match **Off**, **Previous** (the scene before it in the cut, after that scene's own match) or **A scene** (that scene's starred take, measured even when a range merge leaves it out). Then **Brightness** (−1 to 1), **Contrast** (0 to 2) and **Saturation** (0 to 3).
+  - **Apply to all…** copies the card to all other scenes, or to the scenes after this one, in one undo step. Scenes that continue the one before keep joining by their continuation.
+  - **Reset** puts the whole card back to a new scene's values, and each field has its own reset. Every change has its own name in the History menu.
+- **With a soundtrack setting the timing, nothing overlaps.** Every transition other than a cut plays as a dip through the scene's dip colour, half inside each scene, so every scene keeps its place on the song. Before, crossfades and dips always went through black. The card says so, and the Issues list has a note for each such scene.
+- **Render tab → Merge scenes** no longer has Hard cuts, Transition, Audio fade, Colour match and the colour reference scene. One line says these are set per scene, with a button that opens the scene's In the cut card.
+- Restoring an autosaved version lists "in the cut" for each scene whose settings it changes.
+
+### Timeline
+
+- **A rendered scene shows the frame that is at each time**, not its first frame over and over.
+  - The server makes a filmstrip of the starred take once: one row of small frames, one every 0.25 s (at most 600, spread over the whole video, for videos over 150 s). It is kept next to the video.
+  - The timeline loads filmstrips only for the scenes near the view, three at a time, and keeps them while the take stays starred.
+  - Until a filmstrip arrives, or when it fails, the strip shows the first frame as before. Scenes without a take keep their storyboard picture.
+- **Marks for the cut.** A fresh scene with a transition shows a small tag at its top left ("dissolve 18f", "wipe → 16f"; a dip also shows its colour) and a band as long as the transition at its left edge. A fade shows a ramp towards its colour at the scene's edge.
+
+### Issues
+
+- New warnings: a fade-out on a scene that the next scene continues from (the next scene starts from the frame before the fade, so the picture jumps back), a fade-in on a continuing scene, and a colour match that names a scene not in the project.
+- New notes: a transition that a soundtrack turns into a dip, one per scene (this replaces the project-wide line); a continuation that is only anchored because the text uses fixed numbers; a tail clip sent without its sound.
+- A tail clip sent as `<Video 1>` that is shorter than 2 s gets the same 2–15 s warning as other reference videos.
+- When a colour reference scene has no finished take, the scene that uses it is not colour matched. The merge answer (`warnings`) and the server log say so.
+
+### Files tab
+
+- A take's filmstrip (`<video>.filmstrip_54.jpg` and `.json`) is listed as a cache, "made again when needed", and can be deleted on its own.
+
+### For developers
+
+- **Project:** each scene has `merge` (`transition`, `direction`, `frames`, `color`, `audio_frames`, `fade_in` / `fade_out` `{frames, color}`, `audio_fade_in`, `audio_fade_out`, `volume_db`, `mute`, `color_match`, `color_ref`, `brightness`, `contrast`, `saturation`). `normalize_project` and `normalizeProject` build it for older scenes from `scene.transition` and Global → Merge, the same way in both (`tests/test_model_parity.py`). `scene.transition` and `global.merge.hard_cut`, `transition_frames`, `audio_fade_frames`, `color_match` and `color_ref_scene` stay in the JSON, but only that migration reads them. New `global.continuity.name_continuation` (default `true`).
+- **Route:** `GET /reelwright/filmstrip?file=<output-relative video>&h=<16–256, default 54>` → `{file, url, interval, count, tile_w, tile_h, duration}`. The `/merge` answer has `warnings` (a list of text).
+- **Disk:** `<video name>.filmstrip_<h>.jpg` and `.json` next to the video, made again when the video's size or mtime changes.
+- **Merge:** `assemble.scene_merge(s, p)` and `assemble.color_match(result, store, segments)`. Segments carry `transition` / `transition_expr`, `vfade_in_color` / `vfade_out_color`, `edge_in` / `edge_out`, `afade_in` / `afade_out`, `volume_db`, `mute` and `eq`. New `merge.xfade_transition`, `merge.match_gain` and `merge.filmstrip`.
+- **Model helpers**, each with a JS twin: `default_merge` / `defaultMerge`, `MERGE_TRANSITIONS`, `MERGE_DIRECTIONS`, `COLOR_MATCH_MODES`, `MERGE_MAX_FRAMES`, `pass_continuation` / `passContinuation`, `continuation_frames` / `continuationFrames`. `scene_media_counts(…, mode=None, continuation=True)` and `sceneBudget(project, scene, pass, continuation = true)` count the continuation and return `continuation` (`"picture"`, `"video"`, `"video_audio"` or `""`).
+- **Prompt and render:** `build_pass` returns `continuation` (`{kind, source, frames, label, audio_number}` or `None`). Its entry in `images` or `videos` has `continuation: true` and a `source` (`prev_scene_last`, `prev_scene_tail` or `prev_pass_tail`) instead of an asset. `tag_map["@tail"]` is set in a pass that names it. `Renderer.encode(scene, sr, n, upstream=None, prev_pass=None)`.
+- **Frontend:** `web/rw/cut.js` (transition list, `mergeOf`, `ensureMerge`, `joinOf`), `rw.filmstrip(file, h)`, and `viewURL(rel, type, version)`.
+
 ## v0.6.1 — 2026-11-04
 
 Fixes from an outside review of v0.6.0. Each claim was checked and reproduced first; the ones that were not bugs are left as they were.

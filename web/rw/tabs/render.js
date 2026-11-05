@@ -414,7 +414,9 @@ export function versionDiff(cur, raw) {
     if (!same(s.cast, o.cast)) bits.push("cast");
     if (!same(s.overrides, o.overrides)) bits.push("overrides");
     if (!!s.lock !== !!o.lock) bits.push(o.lock ? "locked" : "unlocked");
-    if (!same(s.trim, o.trim) || !same(s.transition, o.transition)) bits.push("trim or cut");
+    // [OLD 2026-11-05 v0.6.1->v0.7.0] if (!same(s.trim, o.trim) || !same(s.transition, o.transition)) bits.push("trim or cut");
+    if (!same(s.trim, o.trim)) bits.push("trim"); // added 2026-11-05 v0.7.0: the cut is scene.merge (scene.transition is no longer read)
+    if (!same(s.merge, o.merge)) bits.push("in the cut"); // added 2026-11-05 v0.7.0: join, fades, sound, colour
     if (bits.length) changed.push(`“${clip(s.title, 34)}”: ${bits.join("; ")}`);
   }
   if (changed.length) {
@@ -741,7 +743,7 @@ function mergeCard(ctx) {
   const res = ctx.eph.merge;
   const merging = res?.phase === "start" || res?.phase === "progress";
   // added 2026-11-02 v0.3.0: scenes whose Start card overrides the cut defaults
-  const overrides = p.scenes.filter((s, i) => i > 0 && s.transition && (s.transition.mode || s.transition.frames != null || s.transition.audio_fade_frames != null)).length;
+  // [OLD 2026-11-05 v0.6.1->v0.7.0] const overrides = p.scenes.filter((s, i) => i > 0 && s.transition && (s.transition.mode || s.transition.frames != null || s.transition.audio_fade_frames != null)).length;  (no Global defaults any more)
   const fileLink = (label, rel) => rel && h("a", { class: "rw-file", href: viewURL(rel), target: "_blank", rel: "noopener", help: "render.merge.file" }, icon("download", 12), label, h("span", { class: "mono rw-dim" }, rel.split("/").pop()));
   return section({
     title: "Merge scenes", help: "render.merge", cls: "rw-merge",
@@ -750,19 +752,28 @@ function mergeCard(ctx) {
       field("Use", segmented({ small: true, value: m.use, help: "render.merge.use", options: [{ value: "starred", label: "Starred takes" }, { value: "latest", label: "Latest takes" }], onChange: v => set(x => { x.use = v; }) }), { help: "render.merge.use" }),
       field("Not ready", segmented({ small: true, value: m.missing, help: "render.merge.missing", options: [{ value: "skip", label: "Skip" }, { value: "slate", label: "Slate" }, { value: "block", label: "Block" }], onChange: v => set(x => { x.missing = v; }) }), { help: "render.merge.missing" }),
       // added 2026-11-03 v0.5.0
-      locked && h("div", { class: "rw-dim small", help: "render.merge.locked" }, "A soundtrack sets the timing: scenes not rendered yet merge as slates of their length, and crossfades and dips play as a dip through black inside the scenes."),
+      // [OLD 2026-11-05 v0.6.1->v0.7.0] locked && h("div", { class: "rw-dim small", help: "render.merge.locked" }, "A soundtrack sets the timing: scenes not rendered yet merge as slates of their length, and crossfades and dips play as a dip through black inside the scenes."),
+      // added 2026-11-05 v0.7.0: transitions are per scene now and dip through the scene's own dip colour
+      locked && h("div", { class: "rw-dim small", help: "render.merge.locked" }, "A soundtrack sets the timing: scenes not rendered yet merge as slates of their length, and transitions play as a dip through their colour inside the scenes."),
       h("div", { class: "rw-subhead" }, "Seams"),
+      // added 2026-11-05 v0.7.0: joins, fades, sound level and colour moved to each scene (Scene tab → In the cut)
+      h("div", { class: "rw-row rw-merge-perscene", help: "render.merge.perScene" },
+        h("span", { class: "rw-dim small" }, "Joins, fades, sound and colour are per scene:"),
+        button({ label: "In the cut", icon: "scene", small: true, variant: "link", help: "render.merge.perSceneOpen",
+          onClick: () => { ctx.store.setEph({ scrollToCut: true }); ctx.actions.setTab("scene"); } })),
       /* [OLD 2026-11-02 v0.2.2->v0.3.0] labels did not say that each scene can override these
       field("Hard cuts", segmented({ small: true, value: m.hard_cut, help: "render.merge.hardCut", options: [{ value: "cut", label: "Cut" }, { value: "crossfade", label: "Crossfade" }, { value: "dip", label: "Dip to black" }], onChange: v => set(x => { x.hard_cut = v; }) }), { help: "render.merge.hardCut" }),
       field("Transition", number({ value: m.transition_frames, min: 0, max: 96, unit: "f", help: "render.merge.transition", onChange: v => set(x => { x.transition_frames = v ?? 12; }) }), { help: "render.merge.transition" }),
       field("Audio fade", number({ value: m.audio_fade_frames, min: 0, max: 48, unit: "f", help: "render.merge.audioFade", onChange: v => set(x => { x.audio_fade_frames = v ?? 6; }) }), { help: "render.merge.audioFade" }),
       */
+      /* [OLD 2026-11-05 v0.6.1->v0.7.0] Global defaults of the cut into a fresh scene; moved to each scene (scene.merge)
       // added 2026-11-02 v0.3.0: these are defaults; a scene's Start card can set its own cut
       field("Hard cuts · default", segmented({ small: true, value: m.hard_cut, help: "render.merge.hardCut", options: [{ value: "cut", label: "Cut" }, { value: "crossfade", label: "Crossfade" }, { value: "dip", label: "Dip to black" }], onChange: v => set(x => { x.hard_cut = v; }) }), { help: "render.merge.hardCut" }),
       field("Transition · default", number({ value: m.transition_frames, min: 0, max: 96, unit: "f", help: "render.merge.transition", onChange: v => set(x => { x.transition_frames = v ?? 12; }) }), { help: "render.merge.transition" }),
       field("Audio fade · default", number({ value: m.audio_fade_frames, min: 0, max: 48, unit: "f", help: "render.merge.audioFade", onChange: v => set(x => { x.audio_fade_frames = v ?? 6; }) }), { help: "render.merge.audioFade" }),
       // [OLD 2026-11-03 v0.4.3->v0.5.0] overrides && h("div", { class: "rw-dim small", help: "render.merge.overrides" }, `${overrides} scene${overrides > 1 ? "s" : ""} set their own cut`),
       overrides > 0 && h("div", { class: "rw-dim small", help: "render.merge.overrides" }, `${overrides} scene${overrides > 1 ? "s" : ""} set their own cut`), // 0 was printed as "0"
+      [/OLD] */
       h("div", { class: "rw-subhead" }, "Audio"),
       field("Normalize", h("span", { class: "rw-row" }, toggle({ value: m.normalize, help: "render.merge.normalize", onChange: v => set(x => { x.normalize = v; }) }),
         number({ value: m.loudness, min: -40, max: -5, step: 0.5, unit: "LUFS", help: "render.merge.loudness", onChange: v => set(x => { x.loudness = v ?? -16; }) })), { help: "render.merge.normalize" }),
@@ -777,8 +788,10 @@ function mergeCard(ctx) {
       mixed.length > 0 && field("Scene sound", h("span", { class: "rw-row" }, toggle({ value: m.scene_audio.mix, label: m.scene_audio.mix ? "under the soundtrack" : "off", help: "render.merge.sceneAudio", onChange: v => set(x => { x.scene_audio.mix = v; }) }),
         m.scene_audio.mix && number({ value: m.scene_audio.volume_db, min: -40, max: 6, step: 0.5, unit: "dB", help: "render.merge.sceneLevel", onChange: v => set(x => { x.scene_audio.volume_db = v ?? -12; }) })), { help: "render.merge.sceneAudio" }),
       h("div", { class: "rw-subhead" }, "Picture"),
+      /* [OLD 2026-11-05 v0.6.1->v0.7.0] one colour match for the whole film; each scene chooses its own now (scene.merge.color_match)
       field("Colour match", h("span", { class: "rw-row" }, toggle({ value: m.color_match, help: "render.merge.color", onChange: v => set(x => { x.color_match = v; }) }),
         m.color_match && select({ options: p.scenes.map(s => ({ value: s.id, label: s.title })), value: m.color_ref_scene, placeholder: "first scene", help: "render.merge.colorRef", onChange: v => set(x => { x.color_ref_scene = v; }) })), { help: "render.merge.color" }),
+      [/OLD] */
       field("Codec", h("span", { class: "rw-row" }, segmented({ small: true, value: m.codec, help: "render.merge.codec", options: [{ value: "h264", label: "H.264" }, { value: "h265", label: "H.265" }], onChange: v => set(x => { x.codec = v; }) }),
         number({ value: m.crf, min: 0, max: 51, width: "56px", help: "render.merge.crf", onChange: v => set(x => { x.crf = v ?? 16; }) }), h("span", { class: "rw-dim small" }, "CRF")), { help: "render.merge.codec" }),
       h("div", { class: "rw-subhead" }, "Extras"),

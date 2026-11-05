@@ -820,3 +820,27 @@
 .rw-budget-pass { display: flex; align-items: center; gap: 8px; color: var(--text2); }
 .rw-budget-pass > b { min-width: 48px; font-weight: 500; color: var(--text); }
 .rw-budget-pass.over { color: var(--warn); }
+
+/* added 2026-11-05 v0.7.0: Scene tab "In the cut" (scene.merge), the Merge card's pointer to it, the timeline's
+   filmstrip cells and the marks for a transition into a scene and its fades */
+.rw-cut .rw-field-label { width: 96px; }
+.rw-frames { display: inline-flex; align-items: center; gap: 5px; flex-wrap: nowrap; white-space: nowrap; }
+.rw-frames-s { min-width: 38px; }
+.rw-color.sm { width: 32px; height: 24px; padding: 1px 2px; cursor: pointer; flex: none; }
+.rw-select.rw-disabled { opacity: 0.5; pointer-events: none; }
+.rw-cut .rw-range { width: 112px; }
+.rw-cut-swatch { display: inline-block; width: 10px; height: 10px; margin: 0 3px; border-radius: 2px; border: 1px solid rgba(255, 255, 255, 0.45); vertical-align: -1px; }
+.rw-card.rw-flash { animation: rw-flash 1.4s ease-out; }
+@keyframes rw-flash { 0%, 35% { box-shadow: 0 0 0 2px var(--accent); } 100% { box-shadow: 0 0 0 2px transparent; } }
+.rw-merge-perscene { gap: 6px; align-items: center; flex-wrap: wrap; }
+.rw-film-cell { position: absolute; top: 0; bottom: 0; background-image: var(--film); background-size: var(--film-size); background-repeat: no-repeat; pointer-events: none; box-shadow: inset -1px 0 0 rgba(11, 12, 15, 0.6); }
+.rw-film-cell.past { opacity: 0.3; filter: grayscale(1); }
+.rw-cut-tr { position: absolute; left: 0; top: 0; bottom: 0; z-index: 1; border-right: 1px dashed rgba(255, 255, 255, 0.55);
+  background: linear-gradient(to top left, transparent calc(50% - 0.8px), rgba(255, 255, 255, 0.85) 50%, transparent calc(50% + 0.8px)),
+    linear-gradient(to top right, transparent calc(50% - 0.8px), rgba(255, 255, 255, 0.85) 50%, transparent calc(50% + 0.8px)), rgba(255, 107, 74, 0.22); }
+.rw-cut-tr.dip { background: linear-gradient(to right, var(--fc, #000), transparent); }
+.rw-cut-tag { position: absolute; left: 3px; top: 2px; z-index: 2; display: inline-flex; align-items: center; gap: 3px; height: 13px; padding: 0 4px; border-radius: 3px; font-size: 9px; line-height: 13px; background: rgba(11, 12, 15, 0.85); color: var(--text); white-space: nowrap; }
+.rw-cut-tag i { width: 7px; height: 7px; border-radius: 2px; border: 1px solid rgba(255, 255, 255, 0.55); }
+.rw-cut-fade { position: absolute; top: 0; bottom: 0; z-index: 1; }
+.rw-cut-fade.in { left: 0; background: linear-gradient(to top left, transparent calc(50% - 0.75px), rgba(255, 255, 255, 0.8) 50%, transparent calc(50% + 0.75px)), linear-gradient(to right, var(--fc, #000), transparent); }
+.rw-cut-fade.out { right: 0; background: linear-gradient(to top right, transparent calc(50% - 0.75px), rgba(255, 255, 255, 0.8) 50%, transparent calc(50% + 0.75px)), linear-gradient(to left, var(--fc, #000), transparent); }

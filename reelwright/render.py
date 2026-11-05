@@ -381,16 +381,28 @@ class Renderer:
         return merge.render_segment(pieces, song["length"], os.path.join(self.store.dir, "soundtrack"),
                                     cache.file_digest)
 
-    def encode(self, scene, sr, n):
+    # [OLD 2026-11-05 v0.6.1->v0.7.0] def encode(self, scene, sr, n):
+    def encode(self, scene, sr, n, upstream=None, prev_pass=None):
+        """upstream, prev_pass (added 2026-11-05 v0.7.0): the take the scene continues from and (frames, audio) of the
+        pass before, for the continuation reference (see _continuation_ref); found when not given."""
         b = sr["builds"][n]
         x = sr["plan"]["passes"][n]
         st = sr["settings"]
         images = {}
         for k, img in enumerate(b["images"]):
+            if img.get("continuation"):  # added 2026-11-05 v0.7.0: <Picture 1>, the last frame of the scene before
+                images["ref_image_{}".format(k)] = self._continuation_ref(sr, n, img, upstream, prev_pass)[0]
+                continue
             paths = [self._asset_path(a) for a in img["assets"]]
             images["ref_image_{}".format(k)] = media.make_sheet(paths) if len(paths) > 1 else media.load_image(paths[0])
         videos, video_audios = {}, {}
         for k, v in enumerate(b["videos"]):
+            if v.get("continuation"):  # added 2026-11-05 v0.7.0: <Video 1>, the clip this pass continues from
+                frames, audio = self._continuation_ref(sr, n, v, upstream, prev_pass)
+                videos["ref_video_{}".format(k)] = frames
+                if v["soundtrack"] and audio is not None:
+                    video_audios["ref_video_audio_{}".format(k)] = audio
+                continue
             # [OLD 2026-11-03 v0.5.1->v0.6.0] frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS)
             frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS,
                                              max_frames=REF_MAX_FRAMES)  # only the first 15 s is decoded
@@ -460,6 +472,64 @@ class Renderer:
                                "clip. Render that take's scene again, or use a shorter tail overlap or a last-frame "
                                "start.".format(take.get("id"), image.shape[0], frames))
         return image[-frames:], audio
+
+    # ---- the continuation as a named reference (added 2026-11-05 v0.7.0) -----------------------------------------
+    def _upstream_tail_clip(self, take):
+        """The tail clip a tail start sends as <Video 1>, with its sound: the take's tail.mp4 (the last 124 frames of
+        the scene, fewer when the scene is shorter). A take from before v0.6.0 kept 60 frames there, so the last 124
+        frames of its video are used when they are more."""
+        best = None
+        for which in ("tail", "video"):
+            rel = (take.get("files") or {}).get(which)
+            try:
+                path = self.store.output_path(rel) if rel else None
+            except ValueError:
+                path = None
+            if not path or not os.path.isfile(path):
+                continue
+            image, audio = media.load_video(path, last_frames=TAIL_FRAMES)
+            if best is None or image.shape[0] > best[0].shape[0]:
+                best = (image, audio)
+            if image.shape[0] >= TAIL_FRAMES:
+                break
+        if best is None:
+            raise RuntimeError("take {} has no tail clip or video to continue from".format(take.get("id")))
+        return best
+
+    def _continuation_ref(self, sr, n, ref, upstream=None, prev_pass=None):
+        """(image or frames, audio) of the continuation reference `ref` of pass n (an entry of the build's images or
+        videos with "continuation"): the last frame of the take the scene continues from (last.png, as its guide),
+        that take's tail clip (_upstream_tail_clip), or the last 124 frames of the pass before with their sound."""
+        source = ref.get("source")
+        if source == "prev_scene_last":
+            take = upstream or self._upstream_take(sr["index"])
+            return media.load_image(self.store.output_path(take["files"]["last"])), None
+        if source == "prev_scene_tail":
+            return self._upstream_tail_clip(upstream or self._upstream_take(sr["index"]))
+        if source == "prev_pass_tail":
+            if not prev_pass:
+                raise RuntimeError("pass {} continues from the pass before, which has not been rendered".format(n + 1))
+            frames, aud = prev_pass
+            count = min(TAIL_FRAMES, int(frames.shape[0]))
+            audio = None
+            if aud is not None:
+                dur = aud["waveform"].shape[-1] / aud["sample_rate"]
+                audio = media.slice_audio(aud, max(0.0, dur - count / spec.FPS), dur)
+            return frames[-count:], audio
+        raise ValueError("unknown continuation source {!r}".format(source))
+
+    def _names_continuation(self, sid, n, sources=("prev_scene_last", "prev_scene_tail", "prev_pass_tail")):
+        """Does pass n of scene sid send a continuation reference from one of these sources?"""
+        b = self.result["scenes"][sid]["builds"][n]
+        return any(x.get("continuation") and x.get("source") in sources for x in b["images"] + b["videos"])
+
+    def _late_encode(self, sid, n):
+        """Pass n needs footage made in this run for its references, so encode-first leaves it for render time: the
+        end of the pass before, or the last frame / tail clip of a scene rendered earlier in this run."""
+        if self._names_continuation(sid, n, ("prev_pass_tail",)):
+            return True
+        return self._names_continuation(sid, n, ("prev_scene_last", "prev_scene_tail")) and \
+            self.prev_id(sid) in self.target_set
 
     def _guide_role(self, sr, n, g):
         """added 2026-11-03 v0.6.0: first_frame | last_frame | keyframe for an asset guide (the prompt module may say
@@ -857,6 +927,10 @@ class Renderer:
                 for n in range(count):
                     if hits[n]:
                         continue
+                    # added 2026-11-05 v0.7.0: a pass whose continuation reference is made in this run is encoded
+                    # when it is rendered
+                    if self._late_encode(sid, n):
+                        continue
                     mm.throw_exception_if_processing_interrupted()
                     self.progress(sid, n + 1, count, "encode")
                     encoded[(sid, n)] = self.encode(scene, sr, n)
@@ -1095,7 +1169,8 @@ class Renderer:
             positive, latent = encoded[(sid, n)] if keep_encoded else encoded.pop((sid, n))
         else:
             self.progress(sid, n + 1, n_pass, "encode")
-            positive, latent = self.encode(scene, sr, n)
+            # [OLD 2026-11-05 v0.6.1->v0.7.0] positive, latent = self.encode(scene, sr, n)
+            positive, latent = self.encode(scene, sr, n, upstream, prev_pass)  # v0.7.0: for the continuation ref
         positive = self.guide(scene, sr, n, positive, latent, prev_pass, upstream)
         model = self.models.model(st)
         last_sent = [0.0]
@@ -1329,8 +1404,14 @@ class Renderer:
                         media.slice_audio(kept_audio, max(0, k - TAIL_FRAMES) / spec.FPS, k / spec.FPS)
                         if kept_audio is not None else None)
             nxt = plan["passes"][n + 1] if n + 1 < n_pass else None
-            prev_pass = (frames[-nxt["overlap_frames"]:].clone(), audio) \
-                if nxt and nxt["seam_before"] == "overlap" else None
+            # [OLD 2026-11-05 v0.6.1->v0.7.0] only the overlap was kept
+            # prev_pass = (frames[-nxt["overlap_frames"]:].clone(), audio) \
+            #     if nxt and nxt["seam_before"] == "overlap" else None
+            # [/OLD]
+            # added 2026-11-05 v0.7.0: the last 124 frames when the next pass sends them as <Video 1>
+            keep = 0 if not nxt else max(nxt["overlap_frames"], TAIL_FRAMES) \
+                if self._names_continuation(sid, n + 1, ("prev_pass_tail",)) else nxt["overlap_frames"]
+            prev_pass = (frames[-keep:].clone(), audio) if nxt and nxt["seam_before"] == "overlap" else None
             del frames, audio, kept, kept_audio
             _free(self.memory["policy"])
 

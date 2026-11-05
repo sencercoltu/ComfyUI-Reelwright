@@ -15,8 +15,12 @@ const queued = [];
 // added 2026-11-03 v0.6.0 (F2b): plan ({scene_id: plan fields}), estimate (top-level plan estimate), filesBusy (a
 // reason: /storage/delete refuses everything with it, as the server does while a render or merge runs), merges (the
 // body of each /merge request), versionEdits (a function (project, name) that changes what /version returns)
+// [OLD 2026-11-05 v0.6.1->v0.7.0] export const mockFlags = { slugConflict: "", mergeBusy: false, mergeMs: 0, autosaveFail: false, autosaves: [], queueMs: 0,
+// [OLD 2026-11-05 v0.6.1->v0.7.0]   plan: {}, estimate: null, filesBusy: "", merges: [], versionEdits: null };
+// added 2026-11-05 v0.7.0: filmstrips (the file of each /filmstrip request), filmstripFail (a substring of the video
+// paths whose filmstrip answers 404, or true for all), sprites (how many filmstrip sprites were drawn)
 export const mockFlags = { slugConflict: "", mergeBusy: false, mergeMs: 0, autosaveFail: false, autosaves: [], queueMs: 0,
-  plan: {}, estimate: null, filesBusy: "", merges: [], versionEdits: null };
+  plan: {}, estimate: null, filesBusy: "", merges: [], versionEdits: null, filmstrips: [], filmstripFail: "", sprites: 0 };
 if (typeof window !== "undefined") window.__mockFlags = mockFlags;
 const mergeJobs = {};
 
@@ -108,6 +112,41 @@ function makeArt() {
 const SCENE_ART = { s_01: "harbor", s_02: "pier", s_03: "letter", s_04: "lighthouse", s_05: "storm", s_06: "lights", s_07: "walk", s_08: "door" };
 const FILE_ART = { "mara.png": "mara", "mara_profile.png": "mara_profile", "mara_full.png": "mara_full", "keeper.png": "keeper", "harbor.jpg": "harbor", "letter.png": "letter", "lighthouse_1962.jpg": "lighthouse", "storm_sky.jpg": "storm" };
 
+// added 2026-11-05 v0.7.0: the filmstrip of a take (GET /reelwright/filmstrip, as reelwright/routes.py answers it) and
+// its sprite. Tile k is the scene's picture with a coloured band on top (hue k * 47°), a dot that moves across the
+// tiles and the tile number, so the harness can tell the tiles apart. `dir` is the take folder (output-relative).
+function filmInfo(dir, h) {
+  const m = /scenes\/([^/]+)\/takes\/([^/]+)$/.exec(dir || "");
+  const tk = m && takes[m[1]]?.takes?.find(t => t.id === m[2]);
+  const duration = Number(tk?.seconds) > 0 ? Number(tk.seconds) : 8;
+  const interval = duration <= 150 ? 0.25 : duration / 600;
+  const count = Math.max(1, Math.ceil(duration / interval - 1e-9));
+  return { file: `${dir}/filmstrip_${h}.jpg`, interval, count, tile_w: Math.round(h * 16 / 9), tile_h: h, duration, scene: m ? m[1] : "" };
+}
+function filmSprite(dir, h) {
+  const k = `film:${dir}:${h}`;
+  if (art[k]) return art[k];
+  const f = filmInfo(dir, h);
+  const paint = PAINT[SCENE_ART[f.scene]];
+  const c = document.createElement("canvas");
+  c.width = f.count * f.tile_w; c.height = f.tile_h;
+  const g = c.getContext("2d");
+  for (let i = 0; i < f.count; i++) {
+    g.save();
+    g.translate(i * f.tile_w, 0);
+    g.beginPath(); g.rect(0, 0, f.tile_w, f.tile_h); g.clip();
+    if (paint) paint(g, f.tile_w, f.tile_h); else { g.fillStyle = "#2b303b"; g.fillRect(0, 0, f.tile_w, f.tile_h); }
+    g.fillStyle = `hsl(${(i * 47) % 360}, 85%, 55%)`;
+    g.fillRect(0, 0, f.tile_w, 6);
+    g.beginPath(); g.arc(6 + (f.tile_w - 12) * (i / Math.max(1, f.count - 1)), f.tile_h * 0.55, 4, 0, 7); g.fill();
+    g.fillStyle = "rgba(11, 12, 15, 0.75)"; g.fillRect(f.tile_w - 24, f.tile_h - 15, 22, 13);
+    g.fillStyle = "#fff"; g.font = "bold 10px sans-serif"; g.textAlign = "right"; g.fillText(String(i), f.tile_w - 4, f.tile_h - 5);
+    g.restore();
+  }
+  mockFlags.sprites++;
+  return (art[k] = c.toDataURL("image/jpeg", 0.85));
+}
+
 // ---------- Demo project ----------
 
 function demoProject() {
@@ -119,6 +158,10 @@ function demoProject() {
     prompt: { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections: sections(sec), raw: "", pass_prompts: {} },
     overrides: {}, lock: false, notes: "", ...rest,
   });
+  // added 2026-11-05 v0.7.0: scene.merge (In the cut), complete; the demo scenes get varied values below
+  const merge = (o = {}) => ({ transition: "cut", direction: "left", frames: 12, color: "#000000", audio_frames: 6,
+    fade_in: { frames: 0, color: "#000000" }, fade_out: { frames: 0, color: "#000000" }, audio_fade_in: 0, audio_fade_out: 0,
+    volume_db: 0, mute: false, color_match: "off", color_ref: "", brightness: 0, contrast: 1, saturation: 1, ...o });
   const p = {
     schema: 1, id: "p_harbor", name: "Harbor Lights", slug: SLUG,
     global: {
@@ -165,29 +208,29 @@ function demoProject() {
       { id: "k_5", name: "Rack focus", text: "rack focus from foreground to background" }, { id: "k_6", name: "Macro", text: "macro close-up, shallow depth of field" },
     ],
     scenes: [
-      scene("s_01", "Harbor at dusk", 8.0, "fresh", { cast: [{ id: "c_harbor", outfit: "" }], refs: [{ id: "r_1", asset: "a_v1", role: "reference", time: 0, retention: "", keep: [], soundtrack: false }, { id: "r_2", asset: "a_a1", role: "reference", time: 0, retention: "", keep: [], soundtrack: false }],
+      scene("s_01", "Harbor at dusk", 8.0, "fresh", { merge: merge({ fade_in: { frames: 24, color: "#000000" }, audio_fade_in: 12 }), cast: [{ id: "c_harbor", outfit: "" }], refs: [{ id: "r_1", asset: "a_v1", role: "reference", time: 0, retention: "", keep: [], soundtrack: false }, { id: "r_2", asset: "a_a1", role: "reference", time: 0, retention: "", keep: [], soundtrack: false }],
         shots: [{ id: "h_1", t: 0, camera: "Wide · slow push-in", text: "The harbor at dusk, boats rocking, the first lamps flicker on." }], sections: { summary: "Establishing shot of the harbor at dusk.", overall_soundscape: "Gulls, rigging creaks, water lapping." } }),
-      scene("s_02", "Mara on the pier", 10.125, "last_frame", { cast: [{ id: "c_mara", outfit: "o_navy" }, { id: "c_harbor", outfit: "" }], refs: [{ id: "r_3", asset: "a_a1", role: "reference", time: 0, retention: "", keep: [], soundtrack: false }],
+      scene("s_02", "Mara on the pier", 10.125, "last_frame", { merge: merge({ volume_db: -3 }), cast: [{ id: "c_mara", outfit: "o_navy" }, { id: "c_harbor", outfit: "" }], refs: [{ id: "r_3", asset: "a_a1", role: "reference", time: 0, retention: "", keep: [], soundtrack: false }],
         shots: [{ id: "h_2", t: 0, camera: "Medium · static", text: "@Mara walks to the end of the pier and looks out to sea." }],
         dialogue: [{ id: "d_1", speaker: "c_mara", t: 3.5, language: "English", delivery: "calls out", text: "Is anyone still out there?" }], sections: { summary: "Mara waits at the end of the pier." } }),
-      scene("s_03", "The letter", 8.708, "tail", { cast: [{ id: "c_mara", outfit: "o_navy" }, { id: "c_letter", outfit: "" }], refs: [{ id: "r_4", asset: "a_p3", role: "keyframe", time: 3.0, retention: "", keep: [], soundtrack: false }],
+      scene("s_03", "The letter", 8.708, "tail", { merge: merge({ transition: "crossfade", color_match: "previous" }), cast: [{ id: "c_mara", outfit: "o_navy" }, { id: "c_letter", outfit: "" }], refs: [{ id: "r_4", asset: "a_p3", role: "keyframe", time: 3.0, retention: "", keep: [], soundtrack: false }],
         shots: [{ id: "h_3", t: 0, camera: "Macro · static", text: "Her hands unfold @P3 by candlelight; the paper trembles." }, { id: "h_4", t: 5.0, camera: "Close-up · rack focus", text: "Cut to @Mara's face, rack focus from the candle to her eyes." }],
         dialogue: [{ id: "d_2", speaker: "c_mara", t: 5.2, language: "English", delivery: "whispers", text: "He promised he'd come back." }],
         sections: { summary: "Continuing @tail, Mara opens the letter at the kitchen table.", overall_soundscape: "Kitchen room tone, paper rustle, candle flicker, a far harbor bell.", non_diegetic_music: "N/A" },
         overrides: { seed: 551203, loras: { mode: "add", items: [{ id: "l_candle", name: "candlelight_interiors.safetensors", strength: 0.7, enabled: true }], strengths: { l_grain: 0.35 } } } }),
-      scene("s_04", "Flashback: the lighthouse, 1962", 14.375, "fresh", { refs: [{ id: "r_5", asset: "a_p4", role: "first_frame", time: 0, retention: "", keep: [], soundtrack: false }, { id: "r_6", asset: "a_a3", role: "reference", time: 0, retention: "", keep: [], soundtrack: false }],
+      scene("s_04", "Flashback: the lighthouse, 1962", 14.375, "fresh", { merge: merge({ transition: "dissolve", frames: 18, brightness: 0.04, contrast: 1.1, saturation: 0.55, fade_out: { frames: 12, color: "#ffffff" } }), refs: [{ id: "r_5", asset: "a_p4", role: "first_frame", time: 0, retention: "", keep: [], soundtrack: false }, { id: "r_6", asset: "a_a3", role: "reference", time: 0, retention: "", keep: [], soundtrack: false }],
         shots: [{ id: "h_5", t: 0, camera: "Wide · slow crane up", text: "The lighthouse in 1962, sepia light sweeping the rocks." }], sections: { summary: "A memory of the lighthouse.", non_diegetic_music: "Music box melody, slow, slightly detuned." },
         overrides: { steps: 28, loras: { mode: "add", items: [{ id: "l_vint", name: "vintage_1960s.safetensors", strength: 0.85, enabled: true }], strengths: {} } } }),
-      scene("s_05", "Storm rolls in", 12.25, "fresh", { cast: [{ id: "c_mara", outfit: "o_oil" }, { id: "c_keeper", outfit: "" }],
+      scene("s_05", "Storm rolls in", 12.25, "fresh", { merge: merge({ transition: "dip", frames: 10, color: "#ffffff", color_match: "scene", color_ref: "s_02" }), cast: [{ id: "c_mara", outfit: "o_oil" }, { id: "c_keeper", outfit: "" }],
         refs: [{ id: "r_7", asset: "a_p5", role: "reference", time: 0, retention: "", keep: [], soundtrack: false }, { id: "r_8", asset: "a_v2", role: "reference", time: 0, retention: "", keep: [], soundtrack: false }, { id: "r_9", asset: "a_a4", role: "reference", time: 0, retention: "", keep: [], soundtrack: false }],
         shots: [{ id: "h_6", t: 0, camera: "Handheld · pan right", text: "Waves crash over the pier as the storm arrives." }, { id: "h_7", t: 5.5, camera: "Medium · handheld", text: "@{The Keeper} waves @Mara toward the door." }],
         dialogue: [{ id: "d_3", speaker: "c_keeper", t: 6.0, language: "English", delivery: "shouts", text: "Get inside — the storm's turning!" }], sections: { summary: "The storm hits the harbor." },
         overrides: { loras: { mode: "add", items: [{ id: "l_storm", name: "storm_fx.safetensors", strength: 0.7, enabled: true }], strengths: {} } } }),
       scene("s_06", "Lights come on", 7.292, "last_frame", { cast: [{ id: "c_mara", outfit: "o_oil" }], shots: [{ id: "h_8", t: 0, camera: "Wide · locked-off", text: "One by one the harbor windows light up." }], sections: { summary: "Calm after the storm." } }),
-      scene("s_07", "The long walk home", 32.0, "fresh", { cast: [{ id: "c_mara", outfit: "o_navy" }],
+      scene("s_07", "The long walk home", 32.0, "fresh", { merge: merge({ transition: "wipe", direction: "right", frames: 16, audio_frames: 12 }), cast: [{ id: "c_mara", outfit: "o_navy" }],
         shots: [{ id: "h_9", t: 0, camera: "Wide", text: "@Mara leaves the pier." }, { id: "h_10", t: 6.0, camera: "Tracking", text: "Along the seawall." }, { id: "h_11", t: 14.375, camera: "Medium", text: "The rain starts." }, { id: "h_12", t: 22.0, camera: "Wide · one take", text: "She reaches the door." }],
         sections: { summary: "Mara walks home along the seawall as the rain begins." } }),
-      scene("s_08", "Insert: hand on the door", 2.5, "fresh", { trim: { keep: "custom", in: 1.208 }, shots: [{ id: "h_13", t: 0, camera: "Macro", text: "Her hand grips the brass handle." }], sections: { summary: "Close insert of the door handle." } }),
+      scene("s_08", "Insert: hand on the door", 2.5, "fresh", { merge: merge({ transition: "crossfade", frames: 8, fade_out: { frames: 24, color: "#000000" }, audio_fade_out: 24 }), trim: { keep: "custom", in: 1.208 }, shots: [{ id: "h_13", t: 0, camera: "Macro", text: "Her hand grips the brass handle." }], sections: { summary: "Close insert of the door handle." } }),
     ],
     markers: [{ id: "m_1", t: 12.0, text: "music swell", color: "amber" }, { id: "m_2", t: 41.2, text: "storm peak", color: "coral" }],
     ui: { tab: "timeline", selected: "s_03", zoom: 13, playhead: 21.375, snap: true, ripple: true },
@@ -198,6 +241,7 @@ function demoProject() {
 // ---------- Render state ----------
 
 const takes = {};
+if (typeof window !== "undefined") window.__mockTakes = takes; // added 2026-11-05 v0.7.0: tests add takes (300-scene filmstrips)
 // added 2026-11-02 v0.2.0: titles for the per-take file names (render.py: slug_NN_title_take.mp4)
 const SCENE_TITLES = { s_01: "Harbor at dusk", s_02: "Mara on the pier", s_03: "The letter", s_04: "Flashback: the lighthouse, 1962", s_05: "Storm rolls in", s_06: "Lights come on", s_07: "The long walk home", s_08: "Insert: hand on the door" };
 const status = { s_01: "cached", s_02: "cached", s_03: "stale", s_04: "cached", s_05: "cached", s_06: "cached", s_07: "pending", s_08: "pending" };
@@ -484,7 +528,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-03 v0.5.0->v0.5.1] case "/reelwright/info": return json({ version: "0.5.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // [OLD 2026-11-03 v0.5.1->v0.6.0] case "/reelwright/info": return json({ version: "0.5.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // [OLD 2026-11-04 v0.6.0->v0.6.1] case "/reelwright/info": return json({ version: "0.6.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    case "/reelwright/info": return json({ version: "0.6.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-05 v0.6.1->v0.7.0] case "/reelwright/info": return json({ version: "0.6.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.7.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -571,6 +616,18 @@ async function route(path, opts = {}) {
       return json(storage.remove(body.ids || [], body.current));
     // added 2026-11-03 v0.6.0 (S): Files repair, beat markers, the soundtrack excerpt of one pass
     case "/reelwright/storage/repair": return json({ ok: true, repaired: ["s_03"], takes_found: 14, added: 1, dropped: 0, project: "ok" });
+    // added 2026-11-05 v0.7.0 (C): the timeline's filmstrip (routes.py: 400 without a file, 404 for a missing one)
+    case "/reelwright/filmstrip": {
+      const file = url.searchParams.get("file") || "";
+      const h = Math.max(16, Math.min(256, Number(url.searchParams.get("h")) || 54));
+      mockFlags.filmstrips.push(file);
+      if (!file || !/\.(mp4|webm|mov)$/.test(file)) return json({ error: "file: an output video" }, 400);
+      const fail = mockFlags.filmstripFail;
+      if (fail === true || (fail && file.includes(fail))) return json({ error: "missing: " + file }, 404);
+      const info = filmInfo(file.slice(0, file.lastIndexOf("/")), h);
+      delete info.scene;
+      return json(info);
+    }
     case "/reelwright/beats": {
       const file = url.searchParams.get("file") || "";
       if (!file) return json({ error: "missing: " }, 400);
@@ -653,6 +710,9 @@ export function createMockHost() {
       const file = u.searchParams.get("filename") || "";
       const sub = u.searchParams.get("subfolder") || "";
       if (/\.(mp4|wav|webm)$/.test(file)) return "";
+      // added 2026-11-05 v0.7.0: a take's filmstrip sprite (numbered tiles)
+      const fm = /^filmstrip_(\d+)\.jpg$/.exec(file);
+      if (fm && /\/takes\/[^/]+$/.test(sub)) return filmSprite(sub, Number(fm[1]));
       // added 2026-11-03 v0.4.1: text files come back as text so the Files preview shows real content
       if (/\.(srt|json|otio|fcpxml|txt|log)$/.test(file)) return "data:text/plain;charset=utf-8," + encodeURIComponent(
         file.endsWith(".srt") ? "1\n00:00:01,000 --> 00:00:03,500\nMara: You came back.\n" : `{"file": ${JSON.stringify(file)}}\n`);
