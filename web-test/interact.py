@@ -1493,6 +1493,7 @@ def main():
         v070_checks(page, check, saved, shots)  # added 2026-11-05 v0.7.0: In the cut, Merge card, filmstrip, continuity switch
         v080_checks(page, check, saved, shots)  # added 2026-11-05 v0.8.0: pass tabs, Write prompts, rows, follow, seams, drift
         v090_checks(page, check, saved, shots)  # added 2026-11-06 v0.9.0: Timeline panels, captions, volume; Scene lists; asset groups
+        v0100_checks(page, check, saved, shots)  # added 2026-11-06 v0.10.0: speech-timed captions, tooltips, folds, seam fixes, rewriter per pass, copy, import/export, voices
         browser.close()
     httpd.shutdown()
 
@@ -3543,10 +3544,12 @@ def v080_checks(page, check, saved, shots):
     t7 = page.locator(".rw-takes").nth(1).inner_text()
     check("P3" in t7 and "9.8" in t7 and "picture-only seams · latent hand-off" in t7 and "guide fp16" in page.locator(".rw-takes").first.inner_text(),
           f"drift numbers per pass and the take's seam settings: {t7[:200]!r}")
-    tip = page.locator(".rw-takes").nth(1).locator(".rw-drift-pass").nth(1).get_attribute("title") or ""
+    # [OLD 2026-11-06 v0.9.0->v0.10.0] tip = page.locator(".rw-takes").nth(1).locator(".rw-drift-pass").nth(1).get_attribute("title") or ""
+    tip = page.locator(".rw-takes").nth(1).locator(".rw-drift-pass").nth(1).get_attribute("data-detail") or ""  # added 2026-11-06 v0.10.0: the editor's tooltip
     check("pixels hand-off (the passes differ in size)" in tip and "b -2.5" in tip, f"drift tooltip: {tip}")
     trow_led = page.evaluate("""() => [...document.querySelectorAll('.rw-trow')].map(r => r.querySelector("[data-help='render.table.drift']")?.className || '').filter(Boolean)""")
-    check(trow_led == ["rw-led ok", "rw-led warn"], f"the table shows the starred take's worst drift: {trow_led}")
+    # [OLD 2026-11-06 v0.9.0->v0.10.0] check(trow_led == ["rw-led ok", "rw-led warn"], f"the table shows the starred take's worst drift: {trow_led}")
+    check(trow_led == ["rw-led ok rw-led-hit", "rw-led warn rw-led-hit"], f"the table shows the starred take's worst drift: {trow_led}")  # added 2026-11-06 v0.10.0: a larger hover area
     page.screenshot(path=str(shots / "v080_drift.png"))
     audit("Render tab, drift")
     page.evaluate("delete window.__mockTakes.s_07; if (window.__keep03) window.__mockTakes.s_03 = window.__keep03; window.__editor.actions.refreshTakes()")
@@ -3723,6 +3726,8 @@ def v090_checks(page, check, saved, shots):
       for (const s of p.scenes) for (const d of s.dialogue) if (d.text.trim() && d.t >= 2 && d.t < s.duration - 1.5) return { sid: s.id, t: st[s.id] + d.t, text: d.text.trim(), name: (p.cast.find(c => c.id === d.speaker) || {}).name || '' };
       return null; }""")
     check(line is not None, "the demo has a spoken line to caption")
+    # added 2026-11-06 v0.10.0: these checks are about planned times; v0100_checks covers captions timed to the speech
+    page.evaluate("window.__editor.store.update(p => { p.global.merge.subtitle_timing = 'planned'; }, { history: false })")
     set_ph = "t => window.__editor.store.update(p => { p.ui.playhead = t; }, { history: false, plan: false })"
     page.evaluate(set_ph, line["t"] - 0.6)
     page.wait_for_timeout(250)
@@ -3755,6 +3760,7 @@ def v090_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
     check(cap().startswith(line["text"][:20]), f"a caption without a speaker: {cap()!r}")
     page.screenshot(path=str(shots / "v090_caption.png"))
+    page.evaluate("window.__editor.store.update(p => { p.global.merge.subtitle_timing = 'speech'; }, { history: false })")  # added 2026-11-06 v0.10.0
 
     # 3. The monitor's volume: mute, and the slider (no undo step, the merge does not read it)
     n0 = len(labels())
@@ -3891,6 +3897,299 @@ def v090_checks(page, check, saved, shots):
         audit("Files split")
     except Exception as err:  # noqa: BLE001
         check(False, f"Files tab preview: {err}")
+
+    load(json.loads(saved))
+    tab("Timeline")
+
+
+def v0100_checks(page, check, saved, shots):
+    """v0.10.0: captions timed to the speech in a take (and the Planned times switch), dialogue and camera bars with
+    their full text in the tooltip, the tab headers, foldable Shots / Dialogue / What H3 receives cards, the seam
+    note's quick fixes and Fix lines at seams, the rewriter on pass tabs only, right-click Copy text and Issues → Copy
+    all, the Passes light's tooltip, project export / copy / import, and the Cast tab's voice fields."""
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    labels = lambda: [x["label"] for x in page.evaluate("window.__editor.store.history()") if x["done"]]
+    scene_of = lambda sid: next(x for x in cur()["scenes"] if x["id"] == sid)
+    flags = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__mockFlags))")
+    undo = lambda: (page.evaluate("window.__editor.store.undo()"), page.wait_for_timeout(250))
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def tab(name):
+        page.click(f".rw-tab:has-text('{name}')")
+        page.wait_for_timeout(300)
+
+    def demo(**ui):
+        q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+        q["soundtrack"] = []
+        q["global"]["merge"]["score"] = {"asset": "", "volume_db": -12, "duck": False}
+        q["ui"].update(ui)
+        return q
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    def tip_of(sel):
+        page.mouse.move(5, 5)
+        page.wait_for_timeout(150)
+        page.hover(sel)
+        page.wait_for_timeout(650)
+        return page.evaluate("(() => { const t = document.querySelector('.rw-tip.on'); return t ? { detail: t.querySelector('.rw-tip-detail')?.textContent || '', all: t.textContent } : null; })()")
+
+    page.evaluate("window.__editor.store.setEph({ toasts: [], promptTabs: {}, rewrite: null, projImport: false, projImportText: '' })")
+    # the clipboard: navigator.clipboard.writeText is recorded (the page is a secure context: 127.0.0.1)
+    page.evaluate("() => { window.__copied = []; if (navigator.clipboard) navigator.clipboard.writeText = t => { window.__copied.push(t); return Promise.resolve(); }; }")
+    copied = lambda: page.evaluate("window.__copied.slice()")
+
+    # 1. Tab headers stand out: the open tab has the accent border, the others a visible border and background
+    load(demo(tab="timeline", selected="s_02"))
+    st = page.evaluate("""(() => { const g = e => getComputedStyle(e); const on = document.querySelector('.rw-tab.on'), off = document.querySelector('.rw-tab:not(.on)'), bar = document.querySelector('.rw-tabbar');
+      return { on: g(on).borderTopColor, onBg: g(on).backgroundColor, off: g(off).borderTopColor, offBg: g(off).backgroundColor, bar: g(bar).backgroundImage }; })()""")
+    check("255, 107, 74" in st["on"] and st["off"] not in ("rgba(0, 0, 0, 0)", "transparent") and st["offBg"] != "rgba(0, 0, 0, 0)" and "gradient" in st["bar"], f"tab headers: {st}")
+
+    # 2. Captions follow the speech the take holds (the mock hears every line 0.6 s late); Planned times as before
+    line = page.evaluate("""async () => { const m = await import('/web/rw/model.js'); const p = window.__editor.project; const st = m.sceneStarts(p).starts;
+      const s = p.scenes.find(x => x.id === 's_02'); const d = s.dialogue[0]; return { t: st[s.id] + d.t, text: d.text.trim() }; }""")
+    set_ph = "t => window.__editor.store.update(p => { p.ui.playhead = t; }, { history: false, plan: false })"
+    cap = lambda: page.evaluate("(() => { const c = document.querySelector('.rw-mon-cap'); return c && c.style.display !== 'none' ? c.textContent : ''; })()")
+    n_calls = len(flags()["speechCalls"])
+    page.evaluate(set_ph, line["t"] + 0.3)
+    page.wait_for_timeout(700)
+    early = cap()
+    calls = flags()["speechCalls"]
+    page.evaluate(set_ph, line["t"] + 0.9)
+    page.wait_for_timeout(300)
+    late = cap()
+    # the editor asks once per take and line set, so an earlier check may have asked already
+    check(any("s_02" in c for c in calls) and line["text"][:15] not in early and line["text"][:15] in late,
+          f"captions follow the speech: at +0.3 s {early!r}, at +0.9 s {late!r}, calls {calls[n_calls:]} ({len(calls)} in all)")
+    page.screenshot(path=str(shots / "v0100_caption_speech.png"))
+    tab("Render")
+    seg = page.locator("[data-key='merge-sub-timing']")
+    check(seg.count() == 1 and "Follow the speech" in seg.inner_text(), "Render → Merge has Subtitle times")
+    seg.locator("button:has-text('Planned times')").click()
+    page.wait_for_timeout(250)
+    check(cur()["global"]["merge"]["subtitle_timing"] == "planned" and labels()[-1] != "", f"Planned times stored: {cur()['global']['merge'].get('subtitle_timing')}")
+    tab("Timeline")
+    page.evaluate(set_ph, line["t"] + 0.3)
+    page.wait_for_timeout(300)
+    check(line["text"][:15] in cap(), f"Planned times: the caption at the line's own time ({cap()!r})")
+    undo()
+
+    # 3. Dialogue and camera bars: the whole text in the tooltip, and as data-copy for right-click
+    dlg = page.locator(".rw-dlg").first
+    det = dlg.get_attribute("data-detail") or ""
+    words = dlg.get_attribute("data-copy") or ""
+    t = tip_of(".rw-dlg >> nth=0")
+    check(words and words in det and t and words in t["detail"] and "“" in t["detail"], f"dialogue tooltip: {det!r} / {t}")
+    cam = page.locator(".rw-cam").first
+    cdet = cam.get_attribute("data-detail") or ""
+    t = tip_of(".rw-cam >> nth=0")
+    check(cdet.startswith("Shot ") and t and t["detail"] == cdet, f"camera tooltip: {cdet!r} / {t}")
+    page.screenshot(path=str(shots / "v0100_tooltip.png"))
+    page.mouse.move(5, 5)
+
+    # 4. Shots, Dialogue and What H3 receives fold to their heads (project.ui.collapsed, no undo step)
+    load(demo(tab="scene", selected="s_03"))
+    n0 = len(labels())
+    card = lambda key: page.locator(f".rw-card:has([data-key='{key}'])")
+    for key, cid, summ in (("fold-shots", "shots", "2 shots"), ("fold-dialogue", "dialogue", "1 line"), ("fold-h3", "h3", "")):
+        page.click(f"[data-key='{key}']")
+        page.wait_for_timeout(250)
+        c = card(key)
+        folded = c.count() == 1 and "folded" in (c.get_attribute("class") or "")
+        check(folded and cur()["ui"].get("collapsed", {}).get(cid) is True and (not summ or summ in c.inner_text()) and c.locator(".rw-rows, pre").count() == 0,
+              f"{cid} folds: {c.get_attribute('class') if c.count() else None} {cur()['ui'].get('collapsed')} {c.inner_text()[:60] if c.count() else ''!r}")
+    page.screenshot(path=str(shots / "v0100_folded.png"))
+    page.click(".rw-card.folded .rw-card-title:has-text('Shots')")
+    page.wait_for_timeout(250)
+    check("shots" not in cur()["ui"].get("collapsed", {}) and card("fold-shots").locator(".rw-shot-row").count() == 2, "a click on the title opens it again")
+    page.click("[data-key='fold-dialogue']")
+    page.click("[data-key='fold-h3']")
+    page.wait_for_timeout(250)
+    check(cur()["ui"].get("collapsed", {}) == {} and len(labels()) == n0, f"all open again, no undo steps ({cur()['ui'].get('collapsed')})")
+    audit("Folding cards")
+
+    # 5. A line past a seam: Start after the seam / End before the seam / Fix lines at seams (s_07: d_4 crosses 22 s)
+    load(demo(tab="scene", selected="s_07"))
+    fx = page.evaluate("""async () => { const m = await import('/web/rw/model.js'); const ps = await import('/web/rw/passes.js'); const p = window.__editor.project;
+      const s = p.scenes.find(x => x.id === 's_07'); const plan = ps.passLayout(p, s); const d = s.dialogue.find(x => x.id === 'd_4');
+      const f = ps.seamFixes(plan, s, d); return { earlier: f.earlier, later: f.later, best: ps.seamFixTime(f, d.t), t: d.t }; }""")
+    check(fx["earlier"] is not None and fx["later"] is not None and fx["earlier"] < fx["t"] < 22.0 < fx["later"], f"seam fixes: {fx}")
+    note = page.locator(".rw-dlg-row:has([data-key='dlg-seam-later-d_4']) .rw-seam-note")
+    check(note.count() == 1 and "Start after the seam" in note.inner_text() and "End before the seam" in note.inner_text(), "the seam note has its two fixes")
+    page.click("[data-key='dlg-seam-later-d_4']")
+    page.wait_for_timeout(300)
+    d4 = next(x for x in scene_of("s_07")["dialogue"] if x["id"] == "d_4")
+    check(abs(d4["t"] - fx["later"]) < 1e-6 and labels()[-1] == "Line after the seam" and page.locator("[data-key='dlg-seam-later-d_4']").count() == 0,
+          f"Start after the seam: t {d4['t']} (want {fx['later']}), {labels()[-1]!r}")
+    undo()
+    page.click("[data-key='dlg-seam-earlier-d_4']")
+    page.wait_for_timeout(300)
+    d4 = next(x for x in scene_of("s_07")["dialogue"] if x["id"] == "d_4")
+    check(abs(d4["t"] - fx["earlier"]) < 1e-6 and labels()[-1] == "Line before the seam", f"End before the seam: t {d4['t']} (want {fx['earlier']})")
+    undo()
+    fix = page.locator("[data-key='dlg-seamfix-s_07']")
+    check(fix.count() == 1 and "Fix 1 at seams" in fix.inner_text(), "the Dialogue card offers Fix 1 at seams")
+    fix.click()
+    page.wait_for_timeout(300)
+    d4 = next(x for x in scene_of("s_07")["dialogue"] if x["id"] == "d_4")
+    check(abs(d4["t"] - fx["best"]) < 1e-6 and labels()[-1] == "Move 1 line off the seams" and page.locator("[data-key='dlg-seamfix-s_07']").count() == 0,
+          f"Fix lines at seams: t {d4['t']} (want {fx['best']}) {labels()[-1]!r}")
+    undo()
+    # a line longer than the room before the seam: End before the seam is off and says why
+    page.evaluate("""() => window.__editor.store.update(p => { const s = p.scenes.find(x => x.id === 's_07'); const d = s.dialogue.find(x => x.id === 'd_4'); d.duration = 9; d.t = 20.0; }, { label: 'long line' })""")
+    page.wait_for_timeout(300)
+    eb = page.locator("[data-key='dlg-seam-earlier-d_4']")
+    check(eb.count() == 1 and eb.is_disabled() and "longer than the room" in (eb.get_attribute("data-detail") or ""), f"End before the seam off: {eb.get_attribute('data-detail') if eb.count() else None}")
+    page.screenshot(path=str(shots / "v0100_seam_fixes.png"))
+    undo()
+    audit("Seam fixes")
+
+    # 6. The rewriter: hidden on Whole scene of a scene with passes, on a pass tab it rewrites that pass
+    rew = page.locator(".rw-card-title:has-text('Prompt rewriter')")
+    check(rew.count() == 0, "Whole scene of a 3-pass scene: no rewriter")
+    page.click("[data-key='ptab-s_07-2']")
+    page.wait_for_timeout(300)
+    check(rew.count() == 1 and rew.inner_text().strip() == "Prompt rewriter · pass 2", f"pass 2: the rewriter for pass 2 ({rew.all_inner_texts()})")
+    page.fill("[data-key='rewrite-instr']", "Make the rain heavier.")
+    page.evaluate("window.__mockFlags.passesMs = 0")
+    page.click("[data-key='rewrite-run-s_07']")
+    page.wait_for_selector(".rw-diff", timeout=5000)
+    call = flags()["passCalls"][-1]
+    check(call["scene_id"] == "s_07" and call["passes"] == [2] and call["instruction"] == "Make the rain heavier.", f"one pass with the instruction: {call}")
+    page.click("button[data-help='scene.rewrite.accept']")
+    page.wait_for_timeout(300)
+    pp = scene_of("s_07")["prompt"]["passes"]
+    check(labels()[-1] == "Rewrite pass 2" and pp[1]["sections"]["summary"].startswith("Pass 2 of The long walk home") and pp[0]["sections"]["summary"].startswith("Mara leaves the pier"),
+          f"accepted into pass 2 only: {labels()[-1]!r} {[x['sections']['summary'][:30] for x in pp]}")
+    page.screenshot(path=str(shots / "v0100_rewriter_pass.png"))
+    undo()
+    page.click("[data-key='ptab-s_07-scene']")
+    page.wait_for_timeout(250)
+    load(demo(tab="scene", selected="s_03"))
+    check(rew.count() == 1 and rew.inner_text().strip() == "Prompt rewriter", "a single-pass scene keeps the rewriter")
+    audit("Rewriter per pass")
+
+    # 7. Copy text: Issues → Copy all, right-click an issue, right-click a note; the copy button of What H3 receives
+    page.evaluate("window.__editor.store.setEph({ issuesOpen: true })")
+    page.wait_for_timeout(300)
+    n_iss = page.locator(".rw-issue").count()
+    if n_iss:
+        page.click("[data-key='issues-copy']")
+        page.wait_for_timeout(200)
+        got = copied()[-1] if copied() else ""
+        check(len(got.split("\n")) == n_iss and got.startswith("["), f"Copy all: {n_iss} issues -> {got[:80]!r}")
+        msg = page.locator(".rw-issue").first.get_attribute("data-copy")
+        page.locator(".rw-issue").first.click(button="right")
+        page.wait_for_timeout(200)
+        item = page.locator(".rw-ctx .rw-ctx-item:has-text('Copy text')")
+        check(item.count() == 1, "right-click an issue: Copy text")
+        item.click()
+        page.wait_for_timeout(200)
+        check(copied()[-1] == msg, f"the issue copied: {copied()[-1][:60]!r}")
+    else:
+        check(False, "the demo has issues to copy")
+    page.evaluate("window.__editor.store.setEph({ issuesOpen: false })")
+    page.wait_for_timeout(200)
+    page.locator(".rw-h3-copy button, [data-help='scene.preview.copy']").first.click()
+    page.wait_for_timeout(200)
+    pr = page.evaluate("window.__editor.eph.plan?.scenes?.s_03?.prompts?.[0] || ''")
+    check(copied()[-1] == pr and pr, "What H3 receives: Copy prompt")
+    page.locator(".rw-card:has([data-key='fold-h3']) pre").first.click(button="right")
+    page.wait_for_timeout(200)
+    menu = page.locator(".rw-ctx-copy")
+    check(menu.count() == 1 and menu.locator(".rw-ctx-item:has-text('Copy text')").count() == 1, "right-click text with no menu of its own: Copy text")
+    page.screenshot(path=str(shots / "v0100_copy_menu.png"))
+    page.keyboard.press("Escape")
+    toasts = page.evaluate("window.__editor.eph.toasts.map(t => t.message)")
+    check(any(x.startswith("Copied the") for x in toasts), f"a toast says it was copied: {toasts}")
+    audit("Copy text")
+
+    # 8. Render → Scenes and takes: the Passes light says what its colour means
+    tab("Render")
+    led = page.locator(".rw-led-hit")
+    check(led.count() >= 1 and "Green: close to the footage" in (led.first.get_attribute("data-detail") or "") and "P1:" in (led.first.get_attribute("data-detail") or ""),
+          f"Passes light: {led.first.get_attribute('data-detail') if led.count() else None}")
+    t = tip_of(".rw-led-hit >> nth=0")
+    check(t and "Drift of the starred take" in t["detail"] and "Amber" in t["all"], f"its tooltip: {t}")
+    page.mouse.move(5, 5)
+
+    # 9. Global → Project: Export (a .json download), Copy JSON, Import (pasted, a file) with a confirmation, undo
+    tab("Global")
+    p0 = cur()
+    with page.expect_download() as dl:
+        page.click("[data-key='proj-export']")
+    check(dl.value.suggested_filename == f"{p0['slug']}.reelwright.json", f"Export file: {dl.value.suggested_filename}")
+    page.click("[data-key='proj-copy']")
+    page.wait_for_timeout(200)
+    j = json.loads(copied()[-1])
+    check(j["name"] == p0["name"] and len(j["scenes"]) == len(p0["scenes"]), "Copy JSON holds the project")
+    page.click("[data-key='proj-import']")
+    page.wait_for_timeout(200)
+    page.fill("[data-key='proj-import-text']", "{oops")
+    page.click("[data-key='proj-import-go']")
+    page.wait_for_timeout(200)
+    check(any("not JSON" in x for x in page.evaluate("window.__editor.eph.toasts.map(t => t.message)")) and cur()["name"] == p0["name"], "bad JSON: a toast, nothing changes")
+    other = dict(j, name="Harbor Lights (copy)", slug="harbor_copy", scenes=j["scenes"][:2])
+    page.fill("[data-key='proj-import-text']", json.dumps({"project": other}))
+    page.click("[data-key='proj-import-go']")
+    page.wait_for_selector(".rw-modal", timeout=3000)
+    mt = page.inner_text(".rw-modal")
+    check("2 scenes" in mt and "harbor_copy" in mt and p0["slug"] in mt, f"the import asks first: {mt[:200]!r}")
+    page.screenshot(path=str(shots / "v0100_import_confirm.png"))
+    page.click(f".rw-modal button:has-text('Keep {p0['slug']}')")
+    page.wait_for_timeout(400)
+    q = cur()
+    check(q["name"] == "Harbor Lights (copy)" and q["slug"] == p0["slug"] and q["project_id"] == p0["project_id"] and len(q["scenes"]) == 2
+          and labels()[-1].startswith("Import project") and not page.evaluate("window.__editor.eph.projImport"),
+          f"imported into this folder: {q['name']} {q['slug']} {len(q['scenes'])} {labels()[-1]!r}")
+    undo()
+    check(cur()["name"] == p0["name"] and len(cur()["scenes"]) == len(p0["scenes"]), "Ctrl+Z brings the project back")
+    page.click("[data-key='proj-import']")
+    page.wait_for_timeout(200)
+    page.set_input_files("input.rw-hidden-file", files=[{"name": "other.reelwright.json", "mimeType": "application/json", "buffer": json.dumps(other).encode()}])
+    page.wait_for_selector(".rw-modal", timeout=3000)
+    page.click(".rw-modal button:has-text('Use harbor_copy')")
+    page.wait_for_timeout(400)
+    check(cur()["slug"] == "harbor_copy" and cur()["name"] == "Harbor Lights (copy)", f"a file, with its own folder: {cur()['slug']}")
+    undo()
+    audit("Project import/export")
+
+    # 10. Cast: voice description, Describe voices, and a voice cut from a take (Mara speaks in s_02 and s_03)
+    load(demo(tab="cast"))
+    page.evaluate("window.__editor.store.setEph({ selectedCast: 'c_mara' })")
+    page.wait_for_timeout(250)
+    page.fill("[data-key='cast-voice-desc-c_mara']", "a husky low voice")
+    page.keyboard.press("Tab")
+    page.wait_for_timeout(250)
+    check(next(c for c in cur()["cast"] if c["id"] == "c_mara")["voice_desc"] == "a husky low voice", "voice description stored")
+    page.click("[data-key='rules-describe-voices']")
+    page.wait_for_timeout(250)
+    check(cur()["global"]["continuity"]["describe_voices"] is False and page.locator("text=Describe voices is off").count() >= 1, "Describe voices off, with a note on the field")
+    page.click("[data-key='rules-describe-voices']")
+    page.wait_for_timeout(200)
+    n_a = len(cur()["assets"])
+    page.click("[data-key='cast-voice-take-c_mara']")
+    page.wait_for_selector(".rw-modal", timeout=3000)
+    check("Mara on the pier" in page.inner_text(".rw-modal") and "The letter" in page.inner_text(".rw-modal"), "the scenes with Mara's lines are offered")
+    page.click(".rw-modal button:has-text('Mara on the pier')")
+    page.wait_for_timeout(500)
+    q = cur()
+    vc = flags()["voiceCuts"][-1] if flags()["voiceCuts"] else {}
+    mara = next(c for c in q["cast"] if c["id"] == "c_mara")
+    new = q["assets"][-1]
+    check(len(q["assets"]) == n_a + 1 and mara["voice"] == new["id"] and new["category"] == "voice" and new["kind"] == "audio"
+          and vc.get("scene_id") == "s_02" and vc.get("take_id") == "v2" and labels()[-1] == "Mara's voice from a take",
+          f"voice from a take: {vc} {new.get('file')} {labels()[-1]!r}")
+    page.screenshot(path=str(shots / "v0100_voice.png"))
+    undo()
+    check(next(c for c in cur()["cast"] if c["id"] == "c_mara")["voice"] == "a_a2" and len(cur()["assets"]) == n_a, "undo puts the old voice back")
+    audit("Cast voices")
 
     load(json.loads(saved))
     tab("Timeline")

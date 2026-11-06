@@ -3,6 +3,8 @@
 
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, confirmInline, chip } from "../ui.js";  (the inline bar vanished on re-render)
 import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, chip, confirmDialog } from "../ui.js";
+import { choiceDialog } from "../ui.js"; // added 2026-11-06 v0.10.0: Voice from a take asks which scene
+import { dialogueSeconds, sceneIndex } from "../model.js"; // added 2026-11-06 v0.10.0
 import { rw, viewURL } from "../api.js";
 // [OLD 2026-11-02 v0.3.3->v0.3.4] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes } from "../model.js";
 // [OLD 2026-11-03 v0.4.0->v0.4.1] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription } from "../model.js";
@@ -26,10 +28,53 @@ function addEntry(ctx, kind) {
       id, kind, name: kind === "character" ? "New character" : kind === "location" ? "New location" : "New prop",
       // [OLD 2026-11-03 v0.4.0->v0.4.1] speaker: kind === "character" ? nextSpeaker(p) : "", description: "", anchors: [], pack_sheet: true,
       speaker: kind === "character" ? nextSpeaker(p) : "", description: "", anchors: [], pack_sheet: "auto", // auto: added 2026-11-03 v0.4.1
-      outfits: [], default_outfit: "", voice: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 },
+      // [OLD 2026-11-06 v0.9.0->v0.10.0] outfits: [], default_outfit: "", voice: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 },
+      outfits: [], default_outfit: "", voice: "", voice_desc: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 }, // added 2026-11-06 v0.10.0: voice_desc
     });
   });
   ctx.store.setEph({ selectedCast: id });
+}
+
+// added 2026-11-06 v0.10.0: Voice from a take. The scenes whose starred take has lines of this character are offered;
+// the server times them to the speech in the take, cuts them (up to 15 s) into a WAV in the project's input folder, and
+// it becomes the character's voice reference (one undo step with the new asset).
+async function voiceFromTake(ctx, c) {
+  const p = ctx.p;
+  const cands = p.scenes.map(s => ({ s, take: ctx.starredTake(s.id), lines: s.dialogue.filter(d => d.speaker === c.id && (d.text || "").trim()) }))
+    .filter(x => x.take?.files?.video && x.lines.length);
+  if (!cands.length) {
+    ctx.actions.toast(`No rendered scene has lines of ${c.name} yet: render a scene where ${c.name} speaks first.`, "warn");
+    return;
+  }
+  const secs = x => x.lines.reduce((n, d) => n + dialogueSeconds(d), 0);
+  const pick = cands.length === 1 ? cands[0].s.id : await choiceDialog(ctx.root, {
+    title: `${c.name}'s voice from a take`, help: "cast.voiceFromTake",
+    message: `Cut ${c.name}'s lines from a scene's starred take (2–15 s) and use them as the voice reference. Pick the scene where ${c.name} sounds best and says the most.`,
+    choices: cands.slice(0, 8).sort((a, b) => secs(b) - secs(a)).map(x => ({
+      value: x.s.id, label: `${String(sceneIndex(p, x.s.id) + 1).padStart(2, "0")} ${x.s.title} · ${x.lines.length} line${x.lines.length === 1 ? "" : "s"}, about ${secs(x).toFixed(1)} s`, help: "cast.voiceFromTake" })),
+    cancelValue: null,
+  });
+  const x = cands.find(q => q.s.id === pick);
+  if (!x) return;
+  ctx.store.setEph({ voiceCut: c.id });
+  try {
+    const res = await rw.voiceFromTake(p.slug, x.s.id, x.take.id, c.id, x.lines.map(d => ({ id: d.id, t: d.t, duration: dialogueSeconds(d) })));
+    const a = res.asset;
+    const id = newId("a");
+    ctx.actions.edit(q => {
+      q.assets.push({ id, code: "", kind: "audio", name: `${c.name} voice (scene ${String(sceneIndex(q, x.s.id) + 1).padStart(2, "0")})`, file: a.file,
+        duration: a.duration || 0, width: 0, height: 0, category: "voice", defaults: { role: "reference", retention: "reference", keep: [], soundtrack: false },
+        notes: `Cut from take ${x.take.id} of ${x.s.title}.`, description: "", group: "", tags: [] });
+      assignCodes(q.assets);
+      const m = findCast(q, c.id);
+      if (m) m.voice = id;
+    }, { label: `${c.name}'s voice from a take` });
+    ctx.actions.toast(`${c.name}'s voice reference: ${res.seconds.toFixed(1)} s from ${res.used.length} line${res.used.length === 1 ? "" : "s"} of ${x.s.title}. Ctrl+Z undoes it.`, "ok");
+  } catch (err) {
+    ctx.actions.toast(`Couldn't cut the voice: ${err.message}`, "error");
+  } finally {
+    ctx.store.setEph({ voiceCut: null });
+  }
 }
 
 function list(ctx, sel) {
@@ -207,7 +252,19 @@ function profileCard(ctx, c) {
               : "Describe the main object: what it is, shape, material, colour and condition.",
           apply: (t, mode) => edit(x => { x.description = mode === "append" && x.description ? x.description.replace(/[.\s]*$/, "") + "; " + t : t; }),
         })),
-      c.kind === "character" && field("Voice", select({ options: audio, value: c.voice, placeholder: "no voice reference", help: "cast.voice", onChange: v => edit(x => { x.voice = v; }) }), { help: "cast.voice" }),
+      // [OLD 2026-11-06 v0.9.0->v0.10.0] c.kind === "character" && field("Voice", select({ options: audio, value: c.voice, placeholder: "no voice reference", help: "cast.voice", onChange: v => edit(x => { x.voice = v; }) }), { help: "cast.voice" }),
+      // added 2026-11-06 v0.10.0: the voice reference can be cut from a rendered take; the voice description goes into
+      // every pass at the character's first line
+      c.kind === "character" && field("Voice", h("span", { class: "rw-row" },
+        select({ options: audio, value: c.voice, placeholder: "no voice reference", help: "cast.voice", key: "cast-voice-" + c.id, onChange: v => edit(x => { x.voice = v; }) }),
+        button({ label: ctx.eph.voiceCut === c.id ? "Cutting…" : "From a take…", icon: "audio", small: true, help: "cast.voiceFromTake", key: "cast-voice-take-" + c.id,
+          disabled: ctx.eph.voiceCut === c.id, onClick: () => voiceFromTake(ctx, c) })), { help: "cast.voice" }),
+      c.kind === "character" && h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.voiceDesc" }, "Voice description"),
+        h("div", { class: "grow", style: { display: "flex", "flex-direction": "column", gap: "4px", "min-width": "0" } },
+          textarea({ value: c.voice_desc || "", rows: 2, key: "cast-voice-desc-" + c.id, help: "cast.voiceDesc", placeholder: "a deep, warm male voice, slow and measured",
+            onChange: v => edit(x => { x.voice_desc = v.trim(); }) }),
+          p.global.continuity.describe_voices === false && (c.voice_desc || "").trim()
+            ? h("div", { class: "rw-dim small", help: "cast.rules.describeVoices" }, "Not written into the prompts: Describe voices is off in the continuity rules below.") : null)),
       /* [OLD 2026-11-02 v0.1.0->v0.2.0] language is now typed or picked (free combobox)
       c.kind === "character" && field("Language", select({ options: STABLE_LANGUAGES, value: c.language, help: "cast.language", onChange: v => edit(x => { x.language = v; }) }), { help: "cast.language" }),
       [/OLD] */
@@ -323,6 +380,10 @@ function rulesCard(ctx) {
       field("Continuation", toggle({ value: g.name_continuation !== false, label: "Name it in the prompt", key: "rules-name-cont", help: "cast.rules.nameContinuation",
         onChange: v => ctx.actions.edit(q => { q.global.continuity.name_continuation = v; }, { label: v ? "Name the continuation" : "Don't name the continuation" }) }),
       { help: "cast.rules.nameContinuation" }),
+      // added 2026-11-06 v0.10.0: each character's voice description at their first line in every pass
+      field("Voices", toggle({ value: g.describe_voices !== false, label: "Describe them in every pass", key: "rules-describe-voices", help: "cast.rules.describeVoices",
+        onChange: v => ctx.actions.edit(q => { q.global.continuity.describe_voices = v; }, { label: v ? "Describe voices" : "Don't describe voices" }) }),
+      { help: "cast.rules.describeVoices" }),
       field("Face check", toggle({ value: g.face_check, help: "cast.rules.faceCheck", onChange: v => set(c => { c.face_check = v; }) }), { help: "cast.rules.faceCheck" }),
       field("Threshold", slider({ value: g.face_threshold, min: 0.5, max: 0.99, step: 0.01, help: "cast.rules.threshold", format: v => v.toFixed(2), onChange: v => set(c => { c.face_threshold = v; }) }), { help: "cast.rules.threshold" }),
       field("On drift", segmented({ small: true, value: g.on_drift, help: "cast.rules.onDrift", options: [

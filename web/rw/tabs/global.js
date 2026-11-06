@@ -13,6 +13,10 @@ import {
 } from "../model.js";
 import { VERSION } from "../version.js";
 import { runWrite, stopWrite } from "../passes.js"; // added 2026-11-05 v0.8.0: Write prompts after an import
+// added 2026-11-06 v0.10.0: project export and import (Project card)
+import { choiceDialog, copyWithToast } from "../ui.js";
+import { normalizeProject } from "../model.js";
+import { withProjectId } from "../store.js";
 
 const DTYPES = ["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"];
 
@@ -115,8 +119,98 @@ function projectCard(ctx) {
       }, { label: "Rename project" }) }), { help: "global.project.name" }),
       field("Folder", text({ value: p.slug, key: "proj-slug", mono: true, help: "global.project.slug", onChange: v => ctx.actions.edit(q => { q.slug = slugify(v); }, { label: "Change folder" }) }), { help: "global.project.slug" }),
       h("div", { class: "rw-dim small mono", help: "global.project.slug" }, `output/reelwright/${p.slug}/ · input/reelwright/${p.slug}/`),
+      projectIO(ctx), // added 2026-11-06 v0.10.0
     ],
   });
+}
+
+// added 2026-11-06 v0.10.0: the project as a .json file or as text on the clipboard (to keep, to share, to paste
+// somewhere), and a project read back from a file or pasted JSON. An import replaces the project in this node; Ctrl+Z
+// brings the current one back. Pictures, sounds and renders are files in ComfyUI's input and output folders: the JSON
+// names them but does not carry them.
+export function projectText(p) {
+  return JSON.stringify(p, null, 2);
+}
+export function exportName(p) {
+  return `${p.slug || "project"}.reelwright.json`;
+}
+function downloadText(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const a = h("a", { href: url, download: name, style: { display: "none" } });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+// {project} or {error}: a project object, or one inside {project: …} (a saved version, a bundle's project file)
+export function parseProjectText(text) {
+  let j;
+  try { j = JSON.parse(String(text || "").trim()); } catch (err) { return { error: "That is not JSON: " + err.message }; }
+  if (j && typeof j === "object" && !Array.isArray(j) && !Array.isArray(j.scenes) && j.project && typeof j.project === "object") j = j.project;
+  if (!j || typeof j !== "object" || Array.isArray(j) || !Array.isArray(j.scenes)) return { error: "That is not a Reelwright project: it has no list of scenes." };
+  return { project: j };
+}
+export async function importProject(ctx, text, source = "Pasted JSON") {
+  const { project, error } = parseProjectText(text);
+  if (error) { ctx.actions.toast(error, "error"); return false; }
+  let q;
+  try { q = normalizeProject(withProjectId(structuredClone(project))); } catch (err) { ctx.actions.toast("Could not read the project: " + err.message, "error"); return false; }
+  const cur = ctx.p;
+  const n = (x, one, many = one + "s") => `${x} ${x === 1 ? one : many}`;
+  const same = q.slug === cur.slug;
+  const message = `${source}: “${q.name}”, ${n(q.scenes.length, "scene")}, ${n(q.cast.length, "cast entry", "cast entries")}, ${n(q.assets.length, "asset")}.\n\n`
+    + `It replaces the whole project in this node. Ctrl+Z brings “${cur.name}” back.`
+    + (same ? "" : `\n\nIts folder is ${q.slug}; this node's is ${cur.slug}. Keep this node's folder to stay with the files and renders here, or use the imported folder to pick up what was rendered for it on this ComfyUI.`)
+    + (q.assets.length ? "\n\nAssets are files in ComfyUI's input folder: copy them too when the project comes from another machine." : "");
+  const choice = await choiceDialog(ctx.root, {
+    title: `Import “${q.name}”?`, message, help: "global.project.import", cancelValue: "cancel", focus: "keep",
+    choices: same
+      ? [{ value: "cancel", label: "Cancel" }, { value: "keep", label: "Replace this project", variant: "primary", help: "global.project.import.keep" }]
+      : [{ value: "cancel", label: "Cancel" }, { value: "theirs", label: `Use ${q.slug}`, help: "global.project.import.theirs" },
+        { value: "keep", label: `Keep ${cur.slug}`, variant: "primary", help: "global.project.import.keep" }],
+  });
+  if (choice !== "keep" && choice !== "theirs") return false;
+  if (choice === "keep") { q.slug = cur.slug; q.project_id = cur.project_id; }
+  ctx.store.replaceProject(q, { label: `Import project “${q.name}”` });
+  ctx.store.setEph({ projImport: false, projImportText: "" });
+  ctx.actions.toast(`Imported “${q.name}” (${n(q.scenes.length, "scene")}). Ctrl+Z brings the previous project back.`, "ok");
+  return true;
+}
+function projectIO(ctx) {
+  const p = ctx.p;
+  const open = !!ctx.eph.projImport;
+  const file = h("input", { type: "file", accept: ".json,application/json", class: "rw-hidden-file", key: "proj-import-file", tabindex: "-1", "aria-hidden": "true",
+    onChange: async e => {
+      const f = e.target.files?.[0];
+      e.target.value = "";
+      if (!f) return;
+      let t;
+      try { t = await f.text(); } catch (err) { ctx.actions.toast("Could not read " + f.name + ": " + err.message, "error"); return; }
+      await importProject(ctx, t, f.name);
+    } });
+  return h("div", { class: "rw-io" },
+    h("div", { class: "rw-io-row" },
+      button({ label: "Export", icon: "download", small: true, help: "global.project.export", key: "proj-export", onClick: () => {
+        downloadText(exportName(p), projectText(ctx.p));
+        ctx.actions.toast(`Saved ${exportName(p)} to your downloads.`, "ok");
+      } }),
+      button({ label: "Copy JSON", icon: "copy", small: true, help: "global.project.copy", key: "proj-copy",
+        onClick: e => copyWithToast(projectText(ctx.p), e.currentTarget || e.target, "project as JSON") }),
+      button({ label: open ? "Close import" : "Import…", icon: open ? "close" : "upload", small: true, variant: open ? "ghost" : "default", help: "global.project.import", key: "proj-import",
+        onClick: () => ctx.store.setEph({ projImport: !open }) }),
+      file),
+    open && h("div", { class: "rw-io-panel" },
+      h("textarea", { class: "rw-input rw-io-paste", key: "proj-import-text", placeholder: "Paste a project's JSON here, or choose a file.", spellcheck: "false", help: "global.project.importText",
+        value: ctx.eph.projImportText || "", onInput: e => { ctx.eph.projImportText = e.target.value; } }),
+      h("div", { class: "rw-io-row" },
+        button({ label: "Choose file…", icon: "file", small: true, help: "global.project.importFile", key: "proj-import-choose", onClick: () => file.click() }),
+        h("span", { class: "rw-flex" }),
+        button({ label: "Import pasted JSON", icon: "upload", small: true, variant: "primary", help: "global.project.importPasted", key: "proj-import-go",
+          onClick: () => {
+            const t = ctx.eph.projImportText || "";
+            if (!t.trim()) { ctx.actions.toast("Paste a project's JSON first.", "warn"); return; }
+            importProject(ctx, t);
+          } }))));
 }
 
 function modelsCard(ctx) {
@@ -535,7 +629,9 @@ function scriptCard(ctx) {
         const kind = c.kind || "character";
         p.cast.push({ id, kind, name: c.name || "Unnamed", speaker: kind === "character" ? c.speaker || "S" + (++sn) : "", description: c.description || "",
           // [OLD 2026-11-03 v0.4.0->v0.4.1] anchors: [], pack_sheet: true, outfits: [], ...
-          anchors: [], pack_sheet: "auto", outfits: [], default_outfit: "", voice: "", language: c.language || p.global.defaults.language, lora: { name: "", strength: 0.8 } });
+          // [OLD 2026-11-06 v0.9.0->v0.10.0] anchors: [], pack_sheet: "auto", outfits: [], default_outfit: "", voice: "", language: c.language || p.global.defaults.language, lora: { name: "", strength: 0.8 } });
+          // added 2026-11-06 v0.10.0: voice_desc (Script import asks how each speaking character sounds)
+          anchors: [], pack_sheet: "auto", outfits: [], default_outfit: "", voice: "", voice_desc: kind === "character" ? c.voice_desc || "" : "", language: c.language || p.global.defaults.language, lora: { name: "", strength: 0.8 } });
       }
       for (const s of draft.scenes.filter(x => x._on)) {
         const sc = defaultScene(p, { title: s.title || "Imported scene", duration: Number(s.duration) > 0 ? Number(s.duration) : p.global.defaults.duration });
@@ -580,7 +676,9 @@ function scriptCard(ctx) {
         const kind = c.kind || "character";
         p.cast.push({ id, kind, name: c.name || "Unnamed", speaker: kind === "character" ? c.speaker || "S" + (++sn) : "", description: c.description || "",
           // [OLD 2026-11-03 v0.4.0->v0.4.1] anchors: [], pack_sheet: true, outfits: [], ...
-          anchors: [], pack_sheet: "auto", outfits: [], default_outfit: "", voice: "", language: c.language || p.global.defaults.language, lora: { name: "", strength: 0.8 } });
+          // [OLD 2026-11-06 v0.9.0->v0.10.0] anchors: [], pack_sheet: "auto", outfits: [], default_outfit: "", voice: "", language: c.language || p.global.defaults.language, lora: { name: "", strength: 0.8 } });
+          // added 2026-11-06 v0.10.0: voice_desc (Script import asks how each speaking character sounds)
+          anchors: [], pack_sheet: "auto", outfits: [], default_outfit: "", voice: "", voice_desc: kind === "character" ? c.voice_desc || "" : "", language: c.language || p.global.defaults.language, lora: { name: "", strength: 0.8 } });
       }
       const made = pickedScenes.map(s => {
         const sc = defaultScene(p, { title: s.title || "Imported scene", duration: Number(s.duration) > 0 ? Number(s.duration) : p.global.defaults.duration });
@@ -734,7 +832,8 @@ function addCast(draft, list) {
     const key = (c.name || "").trim().toLowerCase();
     if (!key) continue;
     const had = draft.cast.find(x => (x.name || "").trim().toLowerCase() === key);
-    if (had) { if (!had.description && c.description) had.description = c.description; continue; }
+    // [OLD 2026-11-06 v0.9.0->v0.10.0] if (had) { if (!had.description && c.description) had.description = c.description; continue; }
+    if (had) { if (!had.description && c.description) had.description = c.description; if (!had.voice_desc && c.voice_desc) had.voice_desc = c.voice_desc; continue; } // added 2026-11-06 v0.10.0: voice_desc
     draft.cast.push({ ...c, speaker: "", _on: true });
   }
 }

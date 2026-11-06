@@ -14,6 +14,7 @@ export const START_MODES = ["fresh", "last_frame", "tail"];
 // added 2026-11-05 v0.8.0: Global -> Long scenes -> hand-off and pass cache (model.py LONG_HANDOFF / LONG_PASS_CACHE)
 export const LONG_HANDOFF = ["pixels", "latent"];
 export const LONG_PASS_CACHE = ["near_lossless", "lossless"];
+export const SUBTITLE_TIMING = ["speech", "planned"]; // added 2026-11-06 v0.10.0: global.merge.subtitle_timing
 export const ASPECTS = { "21:9": [21, 9], "16:9": [16, 9], "4:3": [4, 3], "1:1": [1, 1], "3:4": [3, 4], "9:16": [9, 16] };
 export const ASSET_CATEGORIES = {
   image: ["subject", "location", "prop", "style", "keyframe"],
@@ -242,7 +243,9 @@ function defaultGlobal() {
     // [OLD 2026-11-05 v0.6.1->v0.7.0] continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag" },
     // added 2026-11-05 v0.7.0: name_continuation: the frame or clip a continuing scene (or a pass after an overlap seam)
     // starts from is also sent as <Picture 1> / <Video 1> and named in the prompt (false: anchored only, as v0.6.1)
-    continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag", name_continuation: true },
+    // [OLD 2026-11-06 v0.9.0->v0.10.0] continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag", name_continuation: true },
+    // added 2026-11-06 v0.10.0: describe_voices: a speaker's voice description (cast voice_desc) goes into every pass
+    continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag", name_continuation: true, describe_voices: true },
     /* [OLD 2026-11-02 v0.1.0->v0.2.0] no switch for sending MiniMax's prompt guides
     llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va" },
     [/OLD] */
@@ -258,7 +261,9 @@ function defaultGlobal() {
       loudness: -16.0, normalize: true, score: { asset: "", volume_db: -12.0, duck: true }, // v0.5.0: score moves to p.soundtrack on load
       scene_audio: { mix: false, volume_db: -12.0 }, // added 2026-11-03 v0.5.0: the scenes' own sound under a soundtrack
       color_match: false, color_ref_scene: "", codec: "h264", crf: 16,
-      subtitles: true, chapters: true, otio: true, fcpxml: true, bundle: false, auto_after_render: true },
+      // [OLD 2026-11-06 v0.9.0->v0.10.0] subtitles: true, chapters: true, otio: true, fcpxml: true, bundle: false, auto_after_render: true },
+      // added 2026-11-06 v0.10.0: subtitle_timing "speech" (timed to each take's speech) or "planned"
+      subtitles: true, subtitle_timing: "speech", chapters: true, otio: true, fcpxml: true, bundle: false, auto_after_render: true },
   };
 }
 
@@ -391,6 +396,7 @@ export function normalizeGlobal(g, p = null) {
   // added 2026-11-05 v0.8.0: the long-scene continuity choices (model.py normalize_global the same)
   if (!LONG_HANDOFF.includes(out.long.handoff)) out.long.handoff = "pixels";
   if (!LONG_PASS_CACHE.includes(out.long.pass_cache)) out.long.pass_cache = "near_lossless";
+  if (!SUBTITLE_TIMING.includes(out.merge.subtitle_timing)) out.merge.subtitle_timing = "speech"; // added 2026-11-06 v0.10.0
   out.loras = objects(out.loras);
   for (const l of out.loras) normLora(l);
   // a profile saved in another project may name a score asset or colour scene this project lacks
@@ -701,7 +707,8 @@ export function assetTags(v) {
 function normCast(c, lang) {
   c.id = text(c.id) || newId("c");
   c.kind = CAST_KINDS.includes(c.kind) ? c.kind : "character";
-  for (const k of ["name", "speaker", "description", "default_outfit", "voice"]) textField(c, k, "");
+  // [OLD 2026-11-06 v0.9.0->v0.10.0] for (const k of ["name", "speaker", "description", "default_outfit", "voice"]) textField(c, k, "");
+  for (const k of ["name", "speaker", "description", "default_outfit", "voice", "voice_desc"]) textField(c, k, ""); // added 2026-11-06 v0.10.0: voice_desc
   textField(c, "language", lang);
   c.anchors = texts(c.anchors);
   // v0.4.1: true (one sheet), false (separate pictures) or "auto" (see prompt.py)

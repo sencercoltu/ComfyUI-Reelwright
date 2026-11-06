@@ -277,6 +277,13 @@ def malformed():
                     {"kind": "video", "group": "g_set_2", "tags": "x"}, {"kind": "audio", "group": "g_gone"},
                     {"kind": "image", "group": 7, "tags": [True, False]}, {"kind": "image", "group": None}]},
         {"scenes": [{}], "asset_groups": "x", "assets": [{"kind": "image", "group": "g_a", "tags": None}]},
+        # added 2026-11-06 v0.10.0: voice descriptions, Describe voices, subtitle timing, junk and valid
+        {"scenes": [{}], "cast": [{"kind": "character", "name": "Nar", "voice_desc": "  a deep voice  "},
+                                  {"kind": "character", "name": "Tom", "voice_desc": 5}, {"kind": "prop", "name": "Box", "voice_desc": None},
+                                  {"kind": "character", "name": "Ada", "voice_desc": ["x"]}],
+         "global": {"continuity": {"describe_voices": False}, "merge": {"subtitle_timing": "planned"}}},
+        {"scenes": [{}], "global": {"continuity": {"describe_voices": "no"}, "merge": {"subtitle_timing": "loud"}}},
+        {"scenes": [{}], "global": {"continuity": {"describe_voices": None}, "merge": {"subtitle_timing": None}}},
     ]
 
 

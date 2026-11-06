@@ -18,6 +18,7 @@ from . import cache, jobs  # added 2026-11-03 v0.6.0
 from . import merge, spec
 # [OLD 2026-11-03 v0.4.3->v0.5.0] from .model import project_index
 from . import soundtrack  # added 2026-11-03 v0.5.0
+from . import model  # added 2026-11-06 v0.10.0: dialogue_seconds (speech_timed)
 from .model import project_index, scene_starts
 
 log = logging.getLogger("reelwright")  # added 2026-11-05 v0.7.0
@@ -632,6 +633,36 @@ def merge_project(result, store, progress=None, options=None, job_id=None):
         raise merge.MergeBusy("another merge of this project is running; wait for it or cancel it") from e
 
 
+# added 2026-11-06 v0.10.0: subtitles that follow the speech of the takes
+def speech_timed(entries):
+    """Copies of the merge entries whose dialogue lines are timed to the speech found in their take (speech.align):
+    t = where the line's speech starts, duration = how long it lasts, in the take's time (= the scene's). A take whose
+    sound can't be read, or that has no clear speech, keeps the planned times. Lines are matched within the part of the
+    take that is in the cut (src_in .. src_out)."""
+    from . import speech
+    ff = merge.ffmpeg_bin()
+    out = []
+    for e in entries:
+        lines = [d for d in e.get("dialogue") or [] if str(d.get("text") or "").strip()]
+        if not lines or not e.get("path") or not ff:
+            out.append(e)
+            continue
+        try:
+            asked = [{"id": str(i), "t": float(d["t"]), "duration": model.dialogue_seconds(d)} for i, d in enumerate(lines)]
+            timed = speech.timed_lines(e["path"], ff, asked, e["src_in"], e["src_out"])
+        except (OSError, speech.SpeechError, ValueError) as err:
+            log.warning("Reelwright: speech timing of %s skipped: %s", e.get("path"), err)
+            out.append(e)
+            continue
+        by_id = {x["id"]: x for x in timed}
+        new_lines = []
+        for i, d in enumerate(lines):
+            x = by_id.get(str(i))
+            new_lines.append(dict(d, t=max(e["src_in"], x["t"]), duration=max(0.3, x["end"] - x["t"])) if x else d)
+        out.append(dict(e, dialogue=new_lines))
+    return out
+
+
 def merge_with_job(result, store, job, progress=None, options=None):
     """merge_project's work, for a caller that already holds the project's "merge" job (jobs.exclusive), e.g. the
     /merge route, which registers it before autosaving and analysing so Cancel works from the start."""
@@ -755,7 +786,10 @@ def merge_with_job(result, store, job, progress=None, options=None):
         if m["subtitles"]:
             files["srt"] = base + ".srt"
             made.append(files["srt"])
-            merge.write_srt(real, files["srt"])
+            # [OLD 2026-11-06 v0.9.0->v0.10.0] merge.write_srt(real, files["srt"])
+            # added 2026-11-06 v0.10.0: lines timed to the speech in each take (H3 decides when inside a shot a line
+            # is spoken); "planned" keeps the timeline's times
+            merge.write_srt(speech_timed(real) if m.get("subtitle_timing", "speech") == "speech" else real, files["srt"])
         if m["otio"]:
             files["otio"] = base + ".otio"
             made.append(files["otio"])

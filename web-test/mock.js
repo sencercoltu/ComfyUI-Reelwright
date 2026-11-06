@@ -27,7 +27,11 @@ const queued = [];
 // scene id whose /llm/passes fails)
 export const mockFlags = { slugConflict: "", mergeBusy: false, mergeMs: 0, autosaveFail: false, autosaves: [], queueMs: 0,
   plan: {}, estimate: null, filesBusy: "", merges: [], versionEdits: null, filmstrips: [], filmstripFail: "", sprites: 0,
-  passCalls: [], passesMs: 0, passesFail: "" };
+  passCalls: [], passesMs: 0, passesFail: "",
+  // [OLD 2026-11-06 v0.10.0] voiceCuts added below
+  // speechCalls: [], speechShift: 0.6 }; // added 2026-11-06 v0.10.0: /speech requests and how late the mock hears the lines
+  // [/OLD]
+  speechCalls: [], speechShift: 0.6, voiceCuts: [] }; // added 2026-11-06 v0.10.0: /speech requests, how late the mock hears the lines, /voice_from_take bodies
 if (typeof window !== "undefined") window.__mockFlags = mockFlags;
 const mergeJobs = {};
 
@@ -602,7 +606,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-05 v0.6.1->v0.7.0] case "/reelwright/info": return json({ version: "0.6.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-06 v0.7.0->v0.8.0] case "/reelwright/info": return json({ version: "0.7.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-06 v0.8.0->v0.9.0] case "/reelwright/info": return json({ version: "0.8.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    case "/reelwright/info": return json({ version: "0.9.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-06 v0.9.0->v0.10.0] case "/reelwright/info": return json({ version: "0.9.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.10.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -689,6 +694,27 @@ async function route(path, opts = {}) {
       return json(storage.remove(body.ids || [], body.current));
     // added 2026-11-03 v0.6.0 (S): Files repair, beat markers, the soundtrack excerpt of one pass
     case "/reelwright/storage/repair": return json({ ok: true, repaired: ["s_03"], takes_found: 14, added: 1, dropped: 0, project: "ok" });
+    // added 2026-11-06 v0.10.0: lines timed to a take's speech (routes.py speech_timing); the mock hears every line
+    // speechShift seconds late and as long as asked
+    case "/reelwright/speech": {
+      if (!body?.file || !Array.isArray(body.lines)) return json({ error: "file and lines" }, 400);
+      mockFlags.speechCalls.push(body.file);
+      const sh = mockFlags.speechShift;
+      const lines = body.lines.map(x => ({ id: x.id, t: x.t + sh, end: x.t + sh + (x.duration || 1.2), matched: true, planned: x.t }));
+      return json({ lines, segments: lines.map(x => [x.t, x.end]) });
+    }
+    // added 2026-11-06 v0.10.0: a voice sample cut from a take (routes.py voice_from_take): 400 under 2 s of lines
+    case "/reelwright/voice_from_take": {
+      if (!body?.slug || !body.scene_id || !body.take_id || !body.cast_id || !Array.isArray(body.lines) || !body.lines.length)
+        return json({ error: "slug, scene_id, take_id, cast_id and lines" }, 400);
+      mockFlags.voiceCuts.push(body);
+      let total = 0;
+      const used = [];
+      for (const x of body.lines) { if (total >= 15) break; total = Math.min(15, total + (used.length ? 0.25 : 0) + (x.duration || 1.2) + 0.2); used.push(x.id); }
+      if (total < 2) return json({ error: `the lines give ${total.toFixed(1)} s of speech; a voice reference needs at least 2 s (render a scene where the character says more)` }, 400);
+      const file = `reelwright/${body.slug}/voice_${body.cast_id}_${body.scene_id}_${body.take_id}.wav`;
+      return json({ asset: { file, kind: "audio", duration: +total.toFixed(3), name: "voice from take", category: "voice" }, used, seconds: +total.toFixed(3) });
+    }
     // added 2026-11-05 v0.7.0 (C): the timeline's filmstrip (routes.py: 400 without a file, 404 for a missing one)
     case "/reelwright/filmstrip": {
       const file = url.searchParams.get("file") || "";
@@ -748,7 +774,8 @@ async function route(path, opts = {}) {
     case "/reelwright/llm/passes": {
       const p = body.project, i = p.scenes.findIndex(x => x.id === body.scene_id), s = p.scenes[i];
       if (!s) return json({ error: "Unknown scene " + body.scene_id }, 400);
-      mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job });
+      // [OLD 2026-11-06 v0.9.0->v0.10.0] mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job });
+      mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job, instruction: body.instruction || "" }); // added 2026-11-06 v0.10.0: the rewriter on a pass tab sends one
       if (mockFlags.passesFail === body.scene_id) return json({ error: "No answer from http://llm.local:30000/v1 for 120 s. (tried 3 times)", reason: "stall" }, 502);
       const plan = modelPlanScene(p, s, i).passes;
       const want = Array.isArray(body.passes) && body.passes.length ? body.passes.filter(k => k >= 1 && k <= plan.length) : plan.map(x => x.index);

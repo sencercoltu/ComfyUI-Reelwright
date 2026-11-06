@@ -1276,7 +1276,12 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):  # ctx: added 2026-11-0
 # [OLD 2026-11-03 v0.5.1->v0.6.0] def _dialogue_sentence(p, refs, d, ids):
 #     cast = project_index(p)["cast"]
 # [/OLD]
-def _dialogue_sentence(p, refs, d, ids, ctx=None):  # ctx: added 2026-11-03 v0.6.0
+# [OLD 2026-11-06 v0.9.0->v0.10.0] def _dialogue_sentence(p, refs, d, ids, ctx=None):  # ctx: added 2026-11-03 v0.6.0
+# added 2026-11-06 v0.10.0: voiced (a set of the cast ids already heard in this pass): at a speaker's first line in the
+# pass their voice description (cast voice_desc) is written, when Global -> Continuity -> describe_voices is on, so
+# every pass tells H3 the same voice (base-en.txt 4.4: "When a speaker first appears, provide ... gender, pitch,
+# timbre, speaking rate, or accent"); without it H3 picked a new voice in every pass
+def _dialogue_sentence(p, refs, d, ids, ctx=None, voiced=None):
     cast = (_index(p, ctx))["cast"]
     sub_of_cast = {s["cast"]: s["number"] for s in refs.subjects if s["cast"]}
     sid = ids.get(d.get("speaker") or "", "S?")
@@ -1292,9 +1297,36 @@ def _dialogue_sentence(p, refs, d, ids, ctx=None):  # ctx: added 2026-11-03 v0.6
         line += "."
     lang = d.get("language") or "English"
     verb = (d.get("delivery") or "").strip() or "says"
+    # added 2026-11-06 v0.10.0: "<Subject 1> (S1), with a deep, warm male voice, says, <d>...</d>"
+    if c and voiced is not None:
+        voice = voice_phrase(p, c) if c["id"] not in voiced else ""
+        voiced.add(c["id"])
+        if voice:
+            who = "{}, {},".format(who, voice)
     if "voiceover" in verb.lower().replace("-", "").replace(" ", ""):
         return "{} says in an off-screen voiceover: <d>[{}] {}</d> while their lips remain completely closed.".format(who, lang, line)
     return "{} {}, <d>[{}] {}</d>".format(who, verb, lang, line)
+
+
+# added 2026-11-06 v0.10.0
+VOICE_LEAD = ("a ", "an ", "the ", "his ", "her ", "their ", "its ")
+
+
+def voice_phrase(p, c):
+    """'with a deep, warm male voice' from cast member c's voice_desc ("" when it is empty or Global -> Continuity ->
+    describe_voices is off). A description without an article gets one; one that starts with "with" or "in" is
+    kept as it is."""
+    if not c or not p["global"]["continuity"].get("describe_voices", True):
+        return ""
+    v = " ".join(str(c.get("voice_desc") or "").split()).rstrip(" .,;")
+    if not v:
+        return ""
+    v = v[0].lower() + v[1:]
+    if v.startswith(("with ", "in ")):
+        return v
+    if not v.startswith(VOICE_LEAD):
+        v = ("an " if v[0] in "aeiou" else "a ") + v
+    return "with " + v
 
 
 CAMERA_NOUNS = ("shot", "close-up", "closeup", "pov", "angle", "view", "insert", "two-shot", "cutaway")
@@ -1358,6 +1390,7 @@ def shot_descriptions(p, scene, refs, pass_, ids, unknown, ctx=None):  # ctx: ad
 # [OLD 2026-11-03 v0.5.1->v0.6.0] def shot_parts(p, scene, refs, pass_, ids, unknown):
 def shot_parts(p, scene, refs, pass_, ids, unknown, ctx=None, issues=None):  # ctx, issues: added 2026-11-03 v0.6.0
     shots = pass_["shots"] or [{"number": 1, "continuing": False, "t": 0.0, "camera": "", "text": ""}]
+    voiced = set()  # added 2026-11-06 v0.10.0: speakers heard so far in this pass (their voice is described once)
     # [OLD 2026-11-03 v0.5.1->v0.6.0] sub = lambda t: substitute(t, p, refs, unknown).strip()
     sub = lambda t: substitute(t, p, refs, unknown, ctx=ctx, scene=scene, issues=issues).strip()
     out = []
@@ -1397,7 +1430,8 @@ def shot_parts(p, scene, refs, pass_, ids, unknown, ctx=None, issues=None):  # c
                 continue
             # [OLD 2026-11-03 v0.4.0->v0.4.1] parts.append(_dialogue_sentence(p, refs, d, ids))
             # [OLD 2026-11-03 v0.5.1->v0.6.0] spoken.append(_dialogue_sentence(p, refs, d, ids))
-            spoken.append(_dialogue_sentence(p, refs, d, ids, ctx))
+            # [OLD 2026-11-06 v0.9.0->v0.10.0] spoken.append(_dialogue_sentence(p, refs, d, ids, ctx))
+            spoken.append(_dialogue_sentence(p, refs, d, ids, ctx, voiced))  # added 2026-11-06 v0.10.0: voiced
         # [OLD 2026-11-03 v0.4.0->v0.4.1] out.append(" ".join(parts))
         out.append({"label": "[Shot {}]".format(n), "text": " ".join(parts), "dialogue": spoken})
     return out

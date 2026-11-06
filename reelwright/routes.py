@@ -28,6 +28,7 @@ from .analysis import analyze, plan_response
 from .model import cast_description, normalize_project, project_index
 # [OLD 2026-11-03 v0.5.1->v0.6.0] from .storage import ProjectStore, Roots, check_id, check_slug, read_json, safe_join
 from . import beats, cache, jobs  # added 2026-11-03 v0.6.0
+from . import spec  # added 2026-11-06 v0.10.0: /reelwright/speech
 from .storage import ID_RE, ProjectStore, Roots, SlugConflict, check_id, check_slug, read_json, safe_join
 
 log = logging.getLogger("reelwright")
@@ -613,6 +614,57 @@ async def filmstrip(request):
     return {"file": sprite, "url": "{}&v={}".format(_view(sprite), out.get("mtime_ns") or out.get("size") or 0),
             "interval": out["interval"], "count": out["count"], "tile_w": out["tile_w"], "tile_h": out["tile_h"],
             "duration": out["duration"]}
+
+
+# ---- speech timing (added 2026-11-06 v0.10.0) -------------------------------
+# The Timeline monitor's captions follow the speech H3 made, the same way the merge's subtitles do (speech.py).
+
+def _output_video(rel):
+    """The path of an output-relative video under reelwright/ (the filmstrip route's checks)."""
+    parts = str(rel or "").replace("\\", "/").split("/")
+    if len(parts) < 2 or parts[0] != "reelwright" or any(x in ("", ".", "..") or ":" in x or "\x00" in x for x in parts):
+        raise ValueError("file must be a video under the output folder's reelwright/")
+    path = safe_join(os.path.join(roots().output, "reelwright"), *parts[1:])
+    if os.path.splitext(path)[1].lower() not in media.VIDEO_EXT:
+        raise ValueError("file must be a video")
+    return path
+
+
+@routes.post("/reelwright/speech")
+@json_route
+async def speech_timing(request):
+    """{file: <output-relative take video>, lines: [{id, t, duration}] (seconds in the take), start?, end?} ->
+    {lines: [{id, t, end, matched, planned}], segments: [[start, end]]}: the lines timed to the speech found in the
+    take (speech.align). No speech found: every line keeps its time and length. 404 for a missing file."""
+    from . import speech
+    b = await body_of(request)
+    path = _output_video(_str(b, "file"))
+    if not os.path.isfile(path):
+        return web.json_response({"error": "missing: " + _str(b, "file")}, status=404)
+    raw = b.get("lines")
+    if not isinstance(raw, list) or len(raw) > 500:
+        raise ValueError("lines must be a list of at most 500 lines")
+    lines = []
+    for x in raw:
+        if not isinstance(x, dict):
+            raise ValueError("every line must be an object")
+        lines.append({"id": str(x.get("id", "")), "t": float(spec.num(x.get("t"), 0.0)),
+                      "duration": float(spec.num(x.get("duration"), 1.2))})
+    start = float(spec.num(b.get("start"), 0.0))
+    end = spec.num(b.get("end"), None)
+    ff = merge.ffmpeg_bin()
+    if not ff:
+        raise ValueError("ffmpeg is not installed")
+
+    def run():
+        with _STRIP_SLOTS:
+            segs = speech.take_segments(path, ff)
+            return segs, speech.timed_lines(path, ff, lines, start, None if end is None else float(end))
+    try:
+        segs, timed = await asyncio.to_thread(run)
+    except speech.SpeechError as e:
+        raise ValueError(str(e))
+    return {"lines": timed, "segments": [list(x) for x in segs]}
 
 
 # ---- disk use (added 2026-11-03 v0.4.0) --------------------------------------
@@ -1215,6 +1267,83 @@ async def promote_frame(request):
         raise ValueError("the frame can't be read as a picture: {}".format(_message(e)[:300])) from e
     return {"asset": dict(info, file=os.path.relpath(dst, store.roots.input).replace(os.sep, "/"),
                           name="{} frame".format(which), category="subject")}
+
+
+# added 2026-11-06 v0.10.0: a character's rendered lines as their voice reference (Cast tab -> Voice from a take)
+VOICE_MIN, VOICE_MAX = 2.0, 15.0  # H3's audio references: 2-15 s
+
+
+@routes.post("/reelwright/voice_from_take")
+@json_route
+async def voice_from_take(request):
+    """{slug, scene_id, take_id, cast_id, lines: [{id, t, duration}] (the character's lines in the scene, scene time)}
+    -> {asset: {file, kind: "audio", duration, name, category: "voice"}, used: [line ids], seconds}. Each line is timed
+    to the speech in the take (speech.py) and its span cut from the take's sound; the spans are joined with 0.25 s of
+    silence, up to 15 s, into input/reelwright/<project>/voice_<cast>_<scene>_<take>.wav. 400 when the lines give less
+    than 2 s of speech."""
+    from . import speech
+    b = await body_of(request)
+    store = slug_store(b.get("slug"))
+    take = _take(store, b.get("scene_id"), b.get("take_id"))
+    cast_id = check_id(_str(b, "cast_id"))
+    raw = b.get("lines")
+    if not isinstance(raw, list) or not raw or len(raw) > 200:
+        raise ValueError("lines must be a list of 1-200 lines")
+    lines = []
+    for x in raw:
+        if not isinstance(x, dict):
+            raise ValueError("every line must be an object")
+        lines.append({"id": str(x.get("id", "")), "t": max(0.0, _num(x.get("t") or 0, "t")),
+                      "duration": max(0.3, _num(x.get("duration") or 1.2, "duration"))})
+    ff = merge.ffmpeg_bin()
+    if not ff:
+        raise ValueError("ffmpeg is needed to cut the voice from the take")
+    video = store.output_path(take["files"]["video"])
+    os.makedirs(store.input_dir, exist_ok=True)
+    name = "voice_{}_{}_{}.wav".format(cast_id, check_id(b["scene_id"]), check_id(take["id"]))
+    dst = safe_join(store.input_dir, name)
+
+    def make():
+        import numpy as np
+        timed = speech.timed_lines(video, ff, lines)
+        y = speech.decode(video, ff)
+        gap = np.zeros(int(0.25 * speech.RATE), dtype=np.float32)
+        parts, used, total = [], [], 0.0
+        for x in sorted(timed, key=lambda q: q["t"]):
+            a, e = max(0.0, x["t"] - 0.08), x["end"] + 0.12
+            seg = y[int(a * speech.RATE):int(e * speech.RATE)]
+            if not len(seg):
+                continue
+            room = VOICE_MAX - total - (0.25 if parts else 0)
+            if room < 0.5:
+                break
+            seg = seg[:int(room * speech.RATE)]
+            if parts:
+                parts.append(gap)
+                total += 0.25
+            parts.append(seg)
+            total += len(seg) / speech.RATE
+            used.append(x["id"])
+        if total < VOICE_MIN:
+            raise ValueError("the lines give {:.1f} s of speech; a voice reference needs at least {:.0f} s (render a "
+                             "scene where the character says more)".format(total, VOICE_MIN))
+        out = np.concatenate(parts)
+        peak = float(np.max(np.abs(out))) or 1.0
+        pcm = (np.clip(out / max(peak, 1e-6) * 0.89, -1, 1) * 32767).astype("<i2")
+        import wave
+        with wave.open(dst, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(speech.RATE)
+            w.writeframes(pcm.tobytes())
+        return used, total
+    try:
+        used, total = await asyncio.to_thread(make)
+    except speech.SpeechError as e:
+        raise ValueError(str(e))
+    return {"asset": {"file": os.path.relpath(dst, store.roots.input).replace(os.sep, "/"), "kind": "audio",
+                      "duration": round(total, 3), "name": "voice from take", "category": "voice"},
+            "used": used, "seconds": round(total, 3)}
 
 
 @routes.post("/reelwright/cast/export")

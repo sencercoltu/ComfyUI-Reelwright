@@ -1041,7 +1041,11 @@ position in the frame, environment and lighting, action, camera movement (type, 
 350-500 English words in detailed_description; when the pass is dense with dialogue, fit every spoken line first.
 - Every spoken line of the pass appears exactly once, word for word, in the shot where it is spoken, after its \
 speaker and speaker ID, for example: @Mara (S1) mutters, <d>[English] Almost home.</d> Speaker IDs (S1), (S2) follow \
-the order in which voices are first heard in this pass. Write no other spoken words.
+the order in which voices are first heard in this pass. Write no other spoken words: never a line of the pass before \
+or after, and never a line twice.
+- When the request lists Voices, describe each speaker's voice at their first spoken line in this pass with those \
+words, for example: @Mara (S1), with a husky low voice, mutters, <d>[English] Almost home.</d> The same voice in \
+every pass keeps H3 from changing it.
 - A pass that starts at an overlap seam continues the same shot: its [Shot 1] carries on seamlessly from the final \
 frames of the pass before (@tail), without restarting the action or introducing the setting again.
 - overall_soundscape: the ambience and physical sounds of this pass, no dialogue. non_diegetic_music: the score only \
@@ -1266,6 +1270,23 @@ def _scene_tokens(p, scene, tag_map=None):
     return keys
 
 
+# added 2026-11-06 v0.10.0
+def pass_voices(p, x):
+    """One line per cast member who speaks in pass x and has a voice description: "@Mara: with a husky low voice"
+    (prompt.voice_phrase; nothing when Global -> Continuity -> describe_voices is off)."""
+    cast = {c["id"]: c for c in p["cast"]}
+    out, seen = [], set()
+    for d in x.get("dialogue") or []:
+        c = cast.get(d.get("speaker"))
+        if not c or c["id"] in seen:
+            continue
+        seen.add(c["id"])
+        v = _prompt.voice_phrase(p, c)
+        if v:
+            out.append("{}: {}".format(_speaker(p, d), v))
+    return out
+
+
 def pass_request(p, scene, plan, builds, k, written=None, stored=None, instruction=""):
     """The user message that asks for pass k (1-based) of a scene: the scene and cast (scene_context), the whole-scene
     note, this pass's range, shots and spoken lines in pass and scene time, the references it sends, the pass before
@@ -1303,6 +1324,11 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
     shot_lines, spoken = _pass_lines(p, scene, x, k - 1 if k > 1 else 0)
     parts.append(head + "\nIts shots:\n" + ("\n".join(shot_lines) or "(no shots on the timeline: write it as one shot)") +
                  "\nIts spoken lines:\n" + ("\n".join(spoken) or "(none)"))
+    # added 2026-11-06 v0.10.0: how each speaker of this pass sounds (cast voice_desc), to describe at their first line
+    voices = pass_voices(p, x)
+    if voices:
+        parts.append("Voices (describe each at the speaker's first line in this pass, in these words, so the voice "
+                     "stays the same in every pass):\n" + "\n".join(voices))
 
     sent, not_sent = _pass_refs(p, scene, b, k)
     guides = pass_guides(p, scene, x)
@@ -1339,8 +1365,12 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
         block.append("Its last shot: " + (last or "(none)"))
         if px["dialogue"]:
             d = px["dialogue"][-1]
-            block.append("Its last spoken line: {} <d>[{}] {}</d>".format(_speaker(p, d), d.get("language") or "English",
-                                                                         _clean_line(d.get("text"))))
+            # [OLD 2026-11-06 v0.9.0->v0.10.0] block.append("Its last spoken line: {} <d>[{}] {}</d>".format(_speaker(p, d), d.get("language") or "English",
+            # [OLD 2026-11-06 v0.9.0->v0.10.0]                                                              _clean_line(d.get("text"))))
+            # added 2026-11-06 v0.10.0: written as plain words, marked as already spoken (answers copied it, and H3
+            # said it again)
+            block.append('Its last spoken line (already spoken in pass {}; never write it again): {}: "{}"'.format(
+                k - 1, _speaker(p, d), _clean_line(d.get("text"))))
         parts.append("\n".join(block))
     if k < n:
         nx = plan["passes"][k]
@@ -1475,6 +1505,51 @@ def _core(line):
     return " ".join(str(line or "").split()).rstrip(" .!?…\"'").lower()
 
 
+# added 2026-11-06 v0.10.0: the sentence around a spoken line, to take it out of a description
+_SENTENCE_STOP = re.compile(r"[.!?…](?=\s)|\n|\]\s")
+
+
+def drop_foreign_lines(text, belongs):
+    """(text, removed, twice): text without the spoken lines (<d>…</d>) whose words (_core) `belongs` rejects, and
+    without a second copy of a line. Each is removed with its sentence: from the end of the sentence before (or the
+    [Shot N] label, or a line break) to the end of the line, plus a short tail that only finishes the sentence (", her
+    voice breaking." / " while their lips remain completely closed.")."""
+    text = text or ""
+    spans = list(DIALOGUE_RE.finditer(text))
+    if not spans:
+        return text, [], []
+    removed, twice, seen, cuts = [], [], set(), []
+    for m in spans:
+        body = " ".join(re.sub(r"^\s*\[[^\]]*\]\s*", "", m.group(0)[3:-4]).split())
+        c = _core(body)
+        if not c:
+            continue
+        if not belongs(c):
+            removed.append(body)
+        elif c in seen:
+            twice.append(body)
+        else:
+            seen.add(c)
+            continue
+        # the sentence starts after the last stop before the line (never inside an earlier line)
+        before = text[:m.start()]
+        floor = max([x.end() for x in spans if x.end() <= m.start()] + [0])
+        start = floor
+        for s in _SENTENCE_STOP.finditer(before, floor):
+            start = s.end()
+        end = m.end()
+        # only a tail that goes on with the same sentence: a stop right after the line, or a clause that starts with a
+        # comma, a dash or a lower-case word (" while their lips…"); "Rain falls." is the next sentence and stays
+        tail = re.match(r"\s*[.!?]|(?:\s*[,;:\u2014\u2013-]|\s+(?=[a-z]))[^<.!?\n]{0,120}[.!?]", text[end:])
+        if tail:
+            end += tail.end()
+        cuts.append((start, end))
+    for a, b in reversed(cuts):
+        left, right = text[:a].rstrip(" "), text[b:].lstrip(" ")
+        text = left + (" " if left and right and not left.endswith("\n") and not right.startswith("\n") else "") + right
+    return text.strip(), removed, twice
+
+
 def tidy_pass(sections, x, build, auto, k=1, known=None, guides=()):
     """(six sections as text, warnings) of one pass's answer, ready to store as scene.prompt.passes[k-1].sections:
     - a whole six-section prompt inside one key is split into its sections; a value's own label is dropped;
@@ -1567,11 +1642,24 @@ def tidy_pass(sections, x, build, auto, k=1, known=None, guides=()):
     missing = [t for t in lines if _core(t) and not any(_core(t) in s for s in said)]
     if missing:
         warnings.append("spoken lines missing or changed: " + " | ".join('"{}"'.format(t) for t in missing))
-    extra = [s for s in _spoken(out["detailed_description"])
-             if _core(s) and not any(_core(t) in _core(s) or _core(s) in _core(t) for t in lines)]
+    # [OLD 2026-11-06 v0.9.0->v0.10.0] kept in the text with a warning, so H3 said them: a line of the pass before
+    # written again, or a line written twice, was heard twice
+    # extra = [s for s in _spoken(out["detailed_description"])
+    #          if _core(s) and not any(_core(t) in _core(s) or _core(s) in _core(t) for t in lines)]
+    # if extra:
+    #     warnings.append("spoken lines that are not this pass's (H3 would say them): " +
+    #                     " | ".join('"{}"'.format(t) for t in extra))
+    # [/OLD]
+    # added 2026-11-06 v0.10.0: a spoken line that is not one of this pass's, and a second copy of one that is, are
+    # taken out of the text with their sentence ("Mara (S1) says, <d>…</d>"); the warning says which
+    own = [_core(t) for t in lines if _core(t)]
+    out["detailed_description"], extra, twice = drop_foreign_lines(
+        out["detailed_description"], lambda c: any(t in c or c in t for t in own))
     if extra:
-        warnings.append("spoken lines that are not this pass's (H3 would say them): " +
+        warnings.append("removed spoken lines that are not this pass's (H3 would have said them): " +
                         " | ".join('"{}"'.format(t) for t in extra))
+    if twice:
+        warnings.append("removed a second copy of: " + " | ".join('"{}"'.format(t) for t in twice))
     known = set(known or ()) | {_prompt.name_key(key[1:]) for key in (build.get("tag_map") or {}) if key.startswith("@")}
     unknown = []
     for v in out.values():
@@ -1755,6 +1843,13 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
         "Each scene's \"summary\" is a note on the whole scene in 2-4 sentences: setting, time of day and mood, who is "
         "in it, and what happens from its start to its end. \"soundscape\" is the scene's ambience and physical "
         "sounds; \"music\" is the score only the audience hears, or empty.")
+    # added 2026-11-06 v0.10.0: every speaking character (a narrator too) gets a voice description, written into every
+    # pass so H3 keeps the voice (it picked a new one in each pass, a narrator turned from male to female)
+    lines.append(
+        "Give every character who speaks (a narrator or an off-screen voice too) a \"voice\" in their cast entry: one "
+        "short phrase on how the voice sounds, with gender, age, pitch, timbre, pace and accent where the script implies "
+        "them, for example \"a deep, warm male voice, slow and measured\". Add a narrator who speaks to the cast as a "
+        "character, and use that name as the speaker of their lines.")
     lines.append(("Script part:\n" if parts > 1 else "Script:\n") + text)
     user = "\n\n".join(lines)
     icfg = import_cfg(cfg)
@@ -1962,10 +2057,17 @@ def coerce_script(data):
         if kind not in CAST_KINDS:
             warn("Cast {} ({}): kind {!r} is not character, location or prop, so it is a character".format(n, name, kind))
             kind = "character"
+        # [OLD 2026-11-06 v0.9.0->v0.10.0] cast.append({"name": name, "kind": kind,
+        # [OLD 2026-11-06 v0.9.0->v0.10.0]              "description": text(c.get("description"), "Cast " + name, "description"),
+        # [OLD 2026-11-06 v0.9.0->v0.10.0]              "speaker": _prompt.as_text(c.get("speaker")).strip(),
+        # [OLD 2026-11-06 v0.9.0->v0.10.0]              "language": _prompt.as_text(c.get("language")).strip()})
+        # added 2026-11-06 v0.10.0: voice (how a speaking character sounds) -> the cast member's voice_desc
+        voice = next((c[x] for x in ("voice", "voice_desc", "voice_description") if c.get(x) is not None), "")
         cast.append({"name": name, "kind": kind,
                      "description": text(c.get("description"), "Cast " + name, "description"),
                      "speaker": _prompt.as_text(c.get("speaker")).strip(),
-                     "language": _prompt.as_text(c.get("language")).strip()})
+                     "language": _prompt.as_text(c.get("language")).strip(),
+                     "voice_desc": text(voice, "Cast " + name, "voice") if kind == "character" else ""})
     return scenes, cast, warnings
 
 

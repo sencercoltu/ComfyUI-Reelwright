@@ -318,8 +318,11 @@ def test_script_part_prompt_settings_and_cut_answer():
     first, err = run_app(go, handler, retries=2, import_thinking="off", import_max_tokens=12000, include_guides=True)
     # v0.6.0: the answer comes back in the editor's shapes (coerce_script)
     assert first["scenes"] == [{"title": "One", "cast": [], "shots": [], "dialogue": []}] and first["attempts"] == 1
-    assert first["cast"] == [{"name": "Bren", "kind": "character", "description": "", "speaker": "", "language": ""}]
+    # [OLD 2026-11-06 v0.9.0->v0.10.0] assert first["cast"] == [{"name": "Bren", "kind": "character", "description": "", "speaker": "", "language": ""}]
+    assert first["cast"] == [{"name": "Bren", "kind": "character", "description": "", "speaker": "", "language": "",
+                              "voice_desc": ""}]  # added 2026-11-06 v0.10.0: voice_desc
     user = seen[0]["messages"][1]["content"]
+    assert 'Give every character who speaks (a narrator or an off-screen voice too) a "voice"' in user  # v0.10.0
     assert "part 1 of 2" in user and "A song video." in user and "Script part:\n| 01 | crypt |" in user
     assert "Ada (character), Valindra (character)" in user and user.count("Ada") == 1
     assert seen[0]["max_tokens"] == 12000 and seen[0]["chat_template_kwargs"] == {"enable_thinking": False}
@@ -631,7 +634,10 @@ def test_write_passes_one_request_per_pass(harbor):
     assert "Not sent with this pass (the editor writes them as words): @P3" in u2
     assert "Instruction: make it rain harder" in u2 and "2 [Shot N] lines (about 212 words per shot, 350-500" in u2
     assert "Leave subject_definitions empty" in u2 and "What H3 receives for this pass now" in u2
-    assert "The pass after" not in u3 and "Its last spoken line: @Mara <d>[English] Almost home.</d>" in u3
+    # [OLD 2026-11-06 v0.9.0->v0.10.0] assert "The pass after" not in u3 and "Its last spoken line: @Mara <d>[English] Almost home.</d>" in u3
+    # added 2026-11-06 v0.10.0: the last line of the pass before is plain words, marked as already spoken
+    assert "The pass after" not in u3 and \
+        'Its last spoken line (already spoken in pass 2; never write it again): @Mara: "Almost home."' in u3
     assert ("Frame guides of this pass (sent as pictures when the text names them):\n@P3 is the keyframe at 00:03.000 in "
             "the pass (scene 00:25.000), in [Shot 1]: name it in that shot, for example \"the shot's keyframe corresponds "
             "to @P3\"") in u3
@@ -815,13 +821,26 @@ def test_tidy_pass_checks_the_answer(harbor):
     out, warns = llm.tidy_pass(secs, x, b, {"subjects": False, "retention": True, "shots": True}, 2,
                                llm._scene_tokens(p, scene))
     assert out["summary"] == "" and out["subject_definitions"] == "@Mara is the woman." and out["retention_analysis"] == ""
-    assert out["detailed_description"] == desc  # three lines for two shots: kept as written
+    # [OLD 2026-11-06 v0.9.0->v0.10.0] a spoken line that is not the pass's stayed in the text (H3 said it)
+    # assert out["detailed_description"] == desc  # three lines for two shots: kept as written
+    # added 2026-11-06 v0.10.0: three lines for two shots are kept as written, but "Hello there." (not this pass's)
+    # leaves with its sentence
+    assert out["detailed_description"] == desc.replace(" @Bob (S1) says, <d>[English] Hello there.</d>", "")
     assert out["overall_soundscape"] == "summary:\nRain on <Audio 7>."  # another section's label: kept as written
     for bit in ("<Audio 7> left as written", "the answer has 3 [Shot N] lines for the pass's 2 shots",
                 'spoken lines missing or changed: "Almost home."',
-                "spoken lines that are not this pass's (H3 would say them): \"Hello there.\"",
-                "references the scene does not have: @Bob", "the detailed description has "):
+                # [OLD 2026-11-06 v0.9.0->v0.10.0] "spoken lines that are not this pass's (H3 would say them): \"Hello there.\"",
+                # [OLD 2026-11-06 v0.9.0->v0.10.0] "references the scene does not have: @Bob",  (@Bob left with the line)
+                "removed spoken lines that are not this pass's (H3 would have said them): \"Hello there.\"",
+                "the detailed description has "):
         assert any(bit in w for w in warns), (bit, warns)
+    # added 2026-11-06 v0.10.0: a line of the pass written twice keeps its first copy
+    two = ("[Shot 1] Rain. @Mara (S1) mutters, <d>[English] Almost home.</d> She smiles.\n[Shot 2] At 00:03.625, the "
+           "shot cuts to a close-up. @Mara (S1) repeats, <d>[English] Almost home!</d> while her lips tremble.")
+    out, warns = llm.tidy_pass({"detailed_description": two}, x, b, {"subjects": True, "retention": True, "shots": True}, 2)
+    assert out["detailed_description"].count("Almost home") == 1 and "She smiles." in out["detailed_description"]
+    assert out["detailed_description"].endswith("the shot cuts to a close-up.") and "lips" not in out["detailed_description"]
+    assert any(w.startswith('removed a second copy of: "Almost home!"') for w in warns), warns
     # the whole prompt in one key is split into its sections
     whole = {"detailed_description": "summary:\nShe walks.\n\ndetailed_description:\n[Shot 1] Rain.\n[Shot 2] Close."}
     out, _ = llm.tidy_pass(whole, x, b, {"subjects": True, "retention": True, "shots": True}, 2)

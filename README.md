@@ -21,6 +21,8 @@ into one video. Only what you changed gets rendered again.
 - **Same character everywhere.** Cast members have anchor pictures, outfits, a
   voice and an optional identity LoRA. The same anchors are sent to every
   scene, so scene 10 matches scene 1. An optional face check flags drift.
+  A voice description is written into every pass, and a voice sample can be
+  cut from a rendered take, so a narrator keeps one voice from pass to pass.
 - **Global settings with per-scene overrides** (models, VAEs, LoRA stack, seed,
   steps, size). Hollow dot = follows Global; coral dot = overridden.
 - **Incremental rendering.** Each scene has a cache key built from everything
@@ -50,8 +52,9 @@ into one video. Only what you changed gets rendered again.
   from and to a colour, sound fades, its sound level or mute, colour match to
   the scene before or a chosen scene, and brightness, contrast and saturation.
   Loudness normalisation; soundtrack tracks (a looping score that ducks too);
-  subtitles (.srt), chapters, and OpenTimelineIO / FCPXML timelines (with the
-  soundtrack and markers) for Resolve or Premiere. Draft merges (half size,
+  subtitles (.srt, timed to the speech heard in each take), chapters, and
+  OpenTimelineIO / FCPXML timelines (with the soundtrack and markers) for
+  Resolve or Premiere. Draft merges (half size,
   fast), a range of scenes, and audio stems with an EBU R128 loudness report.
 - **A timeline that shows the film.** Rendered scenes show the frame that is
   at each time, and transitions and fades are marked on the scene blocks.
@@ -62,13 +65,15 @@ into one video. Only what you changed gets rendered again.
   script import and **Write prompts** (a full prompt for every pass, one
   request per pass). The LLM runs only when you click.
 - **Shots, dialogue and camera.** Shot and dialogue rows show start, end and
-  length, and warn when a line runs past a pass seam. The camera picker has
+  length, and warn when a line runs past a pass seam, with one-click fixes. The camera picker has
   the 20 camera moves of MiniMax's H3 guide, with amplitude, speed and a
   framing.
 - **Undo with names.** The History menu lists every edit by name; click one to
   go back to it. Undo never changes the view.
 - **Help everywhere.** Hover any control for a tooltip; press **?** on any
-  section for the longer explanation.
+  section for the longer explanation. Right-click any text to copy it.
+- **Export and import.** Save a project as a .json file or copy it as text, and
+  import one back (Global tab → Project).
 
 ## Install
 
@@ -117,7 +122,7 @@ node. A wired input replaces the matching Global-tab loader.
    in **groups** (each with a description) and give them **tags** to keep a
    large project tidy; pickers show an asset's group before its name.
 3. **Cast tab:** create your characters, give each anchor pictures, a
-   description and a voice.
+   description, a voice and a voice description.
 4. **Timeline:** the monitor (top left), the selected scene's summary
    (top right) and the lanes (below); drag the bars between them to resize.
    - add scenes and drag their right edge to set the length;

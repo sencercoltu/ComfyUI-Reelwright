@@ -112,6 +112,31 @@ export function lineSeam(plan, s, d) {
   return null;
 }
 
+// added 2026-11-06 v0.10.0: where a line that runs past its seam could start instead (the seam note's quick fixes and
+// the Dialogue card's "Fix lines at seams"; the seams themselves stay where they are). null when the line fits:
+// {seam (lineSeam), earlier: a start in its own pass that ends 0.1 s before the seam or the scene's end (null when the
+// line is longer than the room), later: one frame after the seam, where the next pass has it (null for a line past
+// the scene's end, or when it would run past the end from there)}. Times are on whole frames, in scene seconds.
+export function seamFixes(plan, s, d) {
+  const seam = lineSeam(plan, s, d);
+  if (!seam) return null;
+  const secs = dialogueSecs(d);
+  const owner = (plan?.passes || []).find(ps => ps.dialogue?.some(x => x.id === d.id));
+  const from = !owner || owner.index === 1 ? 0 : owner.start + (owner.overlap_frames || 0) / FPS;
+  const ms = t => Math.round(t * 1000) / 1000;
+  const e = Math.floor((seam.t - 0.1 - secs) * FPS + 1e-6) / FPS;
+  const earlier = e >= from - 1e-6 && e < d.t - 1e-6 ? ms(Math.max(e, from)) : null;
+  const l = (Math.round(seam.t * FPS) + 1) / FPS;
+  const later = seam.kind === "seam" && l + secs <= s.duration + 1e-6 ? ms(l) : null;
+  return { seam, earlier, later };
+}
+
+// added 2026-11-06 v0.10.0: the smaller of the two moves (Fix lines at seams), null when neither is possible
+export function seamFixTime(fx, t) {
+  const c = [fx?.earlier, fx?.later].filter(x => x !== null && x !== undefined);
+  return c.length ? c.reduce((a, b) => (Math.abs(b - t) < Math.abs(a - t) ? b : a)) : null;
+}
+
 // The seams inside a shot (a cut seam at its start is where it begins, so it does not count).
 export function shotSeams(plan, start, end) {
   return seamsOf(plan).filter(x => x.t > start + 0.5 / FPS && x.t < end - 0.5 / FPS);

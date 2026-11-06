@@ -546,4 +546,31 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                         issues.append(_issue("info", "{}: {} has no description and none of its anchor pictures has "
                                                      "one, so its subject line is only the name (Cast tab or Assets "
                                                      "tab: Describe with LLM)".format(name, c["name"]), sid))
+    issues += _voice_issues(p, plans, assets)  # added 2026-11-06 v0.10.0
     return issues
+
+
+# added 2026-11-06 v0.10.0: H3 picks a voice for every generation; a character heard in more than one pass needs a
+# voice reference or a voice description that every pass gets, or the voice can change (a narrator from male to female)
+def _voice_issues(p, plans, assets):
+    describe = p["global"]["continuity"].get("describe_voices", True)
+    heard = {}  # cast id -> number of passes with a line of theirs
+    for s in p["scenes"]:
+        plan = plans.get(s["id"])
+        if not plan:
+            continue
+        for x in plan["passes"]:
+            for cid in {d.get("speaker") for d in x["dialogue"] if str(d.get("text") or "").strip()}:
+                heard[cid] = heard.get(cid, 0) + 1
+    out = []
+    for c in p["cast"]:
+        n = heard.get(c["id"], 0)
+        if n < 2 or c["kind"] != "character" or (c.get("voice") and c["voice"] in assets):
+            continue
+        if describe and str(c.get("voice_desc") or "").strip():
+            continue
+        out.append(_issue("warn", "{} speaks in {} passes with no voice reference{}, so H3 may give them another voice "
+                                  "in each pass: describe the voice or cut one from a take (Cast tab)".format(
+                                      c["name"] or "A character", n,
+                                      " and no voice description" if describe else " (and Describe voices is off)")))
+    return out

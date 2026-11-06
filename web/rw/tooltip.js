@@ -82,11 +82,22 @@ export function installTooltips(root) {
     head.addEventListener("pointercancel", up);
   }
 
+  /* [OLD 2026-11-06 v0.9.0->v0.10.0] help text only
   function show(target) {
     const id = target.dataset.help;
     const entry = HELP[id];
     if (!entry) return;
     tip.textContent = entry.tip;
+    tip.classList.add("on");
+  [/OLD] */
+  // added 2026-11-06 v0.10.0: an element's data-detail (a spoken line or camera phrase in full, why a button is off)
+  // is shown first, the help text under it
+  function show(target) {
+    const id = target.dataset.help;
+    const entry = HELP[id];
+    const detail = target.dataset.detail;
+    if (!entry && !detail) return;
+    tip.replaceChildren(detail ? h("div", { class: "rw-tip-detail" }, detail) : "", entry ? h("div", { class: detail ? "rw-tip-help" : null }, entry.tip) : "");
     tip.classList.add("on");
     // [OLD 2026-11-02 v0.1.0->v0.2.0] place(tip, target);
     place(tip, target, target.classList.contains("rw-q") ? "right" : "below");
@@ -124,14 +135,16 @@ export function installTooltips(root) {
   }
 
   root.addEventListener("pointerover", e => {
-    const t = e.target.closest?.("[data-help]");
+    // [OLD 2026-11-06 v0.9.0->v0.10.0] const t = e.target.closest?.("[data-help]");
+    const t = e.target.closest?.("[data-help], [data-detail]"); // added 2026-11-06 v0.10.0
     if (!t || !root.contains(t) || t === current) return;
     clearTimeout(timer);
     tip.classList.remove("on");
     timer = setTimeout(() => show(t), DELAY);
   });
   root.addEventListener("pointerout", e => {
-    const t = e.target.closest?.("[data-help]");
+    // [OLD 2026-11-06 v0.9.0->v0.10.0] const t = e.target.closest?.("[data-help]");
+    const t = e.target.closest?.("[data-help], [data-detail]"); // added 2026-11-06 v0.10.0
     if (t && !t.contains(e.relatedTarget)) hide();
   });
   root.addEventListener("pointerdown", e => {

@@ -21,6 +21,8 @@ export function h(tag, props, ...children) {
       else if (k === "menu") el.__rwMenu = v;
       else if (k === "wheel") el.__rwWheel = v;
       else if (k === "key") el.dataset.key = v;
+      // added 2026-11-06 v0.10.0: text the tooltip shows above the help text (a spoken line in full, why a button is off)
+      else if (k === "detail") el.dataset.detail = v;
       else if (k === "dataset") Object.assign(el.dataset, v);
       // [OLD 2026-11-03 v0.6.0 review] else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
       // added 2026-11-03 v0.6.0 review: a field with an onInput handler stores (or shows) what is typed as it is typed;
@@ -184,10 +186,16 @@ export function focusGuard(root, keys) {
   };
 }
 
+/* [OLD 2026-11-06 v0.9.0->v0.10.0] no detail: buttons now take one (why a quick fix is disabled, where it moves a line)
 export function button({ label, icon: ic, help, onClick, variant = "default", small = false, disabled = false, ariaLabel, key, extra }) {
   return h("button", {
     type: "button", class: ["rw-btn", "rw-btn-" + variant, small && "rw-btn-sm", !label && "rw-btn-icon"],
     help, key, disabled, "aria-label": ariaLabel || (!label ? help : undefined),
+[/OLD] */
+export function button({ label, icon: ic, help, onClick, variant = "default", small = false, disabled = false, ariaLabel, key, extra, detail }) { // added 2026-11-06 v0.10.0: detail
+  return h("button", {
+    type: "button", class: ["rw-btn", "rw-btn-" + variant, small && "rw-btn-sm", !label && "rw-btn-icon"],
+    help, key, disabled, "aria-label": ariaLabel || (!label ? help : undefined), detail,
     onClick: e => { e.stopPropagation(); if (!disabled) onClick?.(e); },
   }, ic && icon(ic, small ? 12 : 14), label && h("span", null, label), extra);
 }
@@ -473,6 +481,7 @@ export function helpButton(id) {
   return h("button", { type: "button", class: "rw-q", "aria-label": "Help", dataset: { more: id }, help: id }, "?");
 }
 
+/* [OLD 2026-11-06 v0.9.0->v0.10.0] cards could not be collapsed
 export function section({ title, help, actions, children, cls, tint }) {
   return h("section", { class: ["rw-card", cls, tint && "rw-card-" + tint] },
     h("div", { class: "rw-card-head" },
@@ -481,6 +490,29 @@ export function section({ title, help, actions, children, cls, tint }) {
       h("span", { class: "rw-flex" }),
       actions),
     children);
+}
+[/OLD] */
+// added 2026-11-06 v0.10.0: collapse: {ctx, id, summary?} makes the card collapsible: a chevron before the title (and
+// a click on the title) folds it to its head, which then shows `summary` instead of the actions. The state is kept
+// per card id in project.ui.collapsed (no undo step), so a folded card stays folded in every scene.
+export function section({ title, help, actions, children, cls, tint, collapse }) {
+  const folded = !!(collapse && collapse.ctx.p.ui?.collapsed?.[collapse.id]);
+  const flip = collapse && (e => {
+    e?.stopPropagation?.();
+    collapse.ctx.store.update(q => {
+      const c = q.ui.collapsed && typeof q.ui.collapsed === "object" ? q.ui.collapsed : (q.ui.collapsed = {});
+      if (c[collapse.id]) delete c[collapse.id]; else c[collapse.id] = true;
+    }, { history: false, plan: false, autosave: false });
+  });
+  return h("section", { class: ["rw-card", cls, tint && "rw-card-" + tint, collapse && "foldable", folded && "folded"] },
+    h("div", { class: "rw-card-head" },
+      collapse && h("button", { type: "button", class: "rw-fold", help: folded ? "common.expand" : "common.collapse", key: "fold-" + collapse.id,
+        "aria-expanded": folded ? "false" : "true", onClick: flip }, icon(folded ? "chevRight" : "chevDown", 13)),
+      h("span", { class: ["rw-card-title", collapse && "clickable"], onClick: flip || undefined }, title),
+      help && helpButton(help),
+      h("span", { class: "rw-flex" }),
+      folded ? (collapse.summary ? h("span", { class: "rw-dim small rw-fold-sum" }, collapse.summary) : null) : actions),
+    folded ? null : children);
 }
 
 /* [OLD 2026-11-05 v0.6.1->v0.7.0] the reset button always said "inherited from the Global tab"
@@ -790,4 +822,83 @@ export function resizableList({ height, min = 90, max = 2000, scroll, help, onRe
 export function uiNum(p, key, dflt, lo = -Infinity, hi = Infinity) {
   const v = p?.ui?.[key];
   return typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt;
+}
+
+// added 2026-11-06 v0.10.0: a picture or video that survives re-renders. A tab is rebuilt from scratch on every
+// render; a new <img> with the same address shows nothing until it is decoded again (a <video> goes black, and a
+// picture the server makes, like the anchor sheet, is fetched again), so they blinked while a render ran. kept()
+// hands back the same element for the same slot and address; `make()` builds it the first time. The slot must be
+// unique in the tab (an element can be in one place only), e.g. "ref-" + ref id. The oldest entries are forgotten
+// past KEPT_MAX.
+const KEPT_MAX = 800;
+export function kept(ctx, slot, src, make) {
+  const map = ctx.keptMedia || (ctx.keptMedia = new Map());
+  const key = slot + "|" + src;
+  let el = map.get(key);
+  if (el) map.delete(key); // most recently used last
+  else el = make();
+  map.set(key, el);
+  if (map.size > KEPT_MAX) map.delete(map.keys().next().value);
+  return el;
+}
+
+// added 2026-11-06 v0.10.0: copying text. ComfyUI's canvas takes the mouse, so text in the editor often can't be
+// selected; a right-click offers Copy text (editor.js) and some cards have a copy button. navigator.clipboard works
+// only on a secure page (https or localhost); ComfyUI on a LAN address is plain http, so a hidden text field and
+// execCommand("copy") are the fallback there. Resolves true when the text was copied.
+export async function copyText(text, root) {
+  const str = String(text ?? "");
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(str); return true; }
+  } catch { /* fall back below */ }
+  const prev = document.activeElement;
+  const ta = h("textarea", { class: "rw-copy-buf", readonly: true, "aria-hidden": "true", tabindex: "-1" });
+  ta.value = str;
+  (root || document.body).appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  ta.remove();
+  if (prev && prev.isConnected) prev.focus?.({ preventScroll: true });
+  return ok;
+}
+
+// copy, then a toast on the editor the element is in (root.__rwToast, set by editor.js)
+export async function copyWithToast(text, from, what = "text") {
+  const root = from?.closest?.(".rw-root") || null;
+  const ok = await copyText(text, root);
+  root?.__rwToast?.(ok ? `Copied the ${what}.` : "Could not copy: the browser refused. Select the text and press Ctrl+C.", ok ? "ok" : "warn");
+  return ok;
+}
+
+// a small button that copies text(): a string or a function giving one
+export function copyButton({ text, help = "common.copy", key, label, what = "text", small = true }) {
+  return button({ icon: "copy", label, small, variant: "ghost", help, key,
+    onClick: e => copyWithToast(typeof text === "function" ? text() : text, e.currentTarget || e.target, what) });
+}
+
+// The right-click Copy items for a point in the editor: the selection, and the text of what was clicked: an element's
+// data-copy, else its data-detail (a spoken line in full), else the text of the nearest row, note or field.
+const COPY_BLOCKS = "[data-copy], [data-detail], .rw-issue, .rw-note, .rw-seam-note, .rw-empty, .rw-toast, .rw-field-ctl, "
+  + ".rw-list-row, .rw-shot-row, .rw-dlg-row, .rw-ctx-head, pre, p, li, td, th, .rw-card-title, .rw-chip, .rw-field-label";
+export function copyMenuItems(target, root, { explicitOnly = false } = {}) {
+  if (!(target instanceof Element)) return [];
+  const items = [];
+  const sel = window.getSelection?.();
+  const selText = sel && !sel.isCollapsed && root.contains(sel.anchorNode) ? String(sel).trim() : "";
+  if (selText) items.push({ label: "Copy selection", icon: "copy", help: "common.copySelection", onClick: () => copyWithToast(selText, root, "selection") });
+  const tagged = target.closest("[data-copy], [data-detail]");
+  let txt = "";
+  if (tagged && root.contains(tagged)) txt = tagged.dataset.copy ?? tagged.dataset.detail ?? "";
+  else if (!explicitOnly) {
+    const block = target.closest(COPY_BLOCKS);
+    const el = block && root.contains(block) ? block : target;
+    txt = (el.innerText ?? el.textContent ?? "").replace(/\n{3,}/g, "\n\n").trim();
+  }
+  if (txt && txt !== selText) {
+    const short = txt.replace(/\s+/g, " ");
+    items.push({ label: "Copy text", icon: "copy", help: "common.copyText", hint: short.length > 28 ? short.slice(0, 27) + "…" : short,
+      onClick: () => copyWithToast(txt, root) });
+  }
+  return items;
 }

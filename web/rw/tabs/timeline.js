@@ -279,7 +279,8 @@ function monitorOf(ctx) {
     const idx = sceneIndex(ctx.p, scene.id) + 1;
     const bl = `${String(idx).padStart(2, "0")} · f ${Math.min(framesOf(local), framesOf(scene.duration))} / ${framesOf(scene.duration)}`;
     if (badgeBL.textContent !== bl) badgeBL.textContent = bl;
-    const line = ctx.p.ui.captions === false ? null : captionAt(ctx.p, scene, local);
+    // [OLD 2026-11-06 v0.9.0->v0.10.0] const line = ctx.p.ui.captions === false ? null : captionAt(ctx.p, scene, local);
+    const line = ctx.p.ui.captions === false ? null : captionAt(ctx.p, scene, local, speechOf(ctx, scene)); // added 2026-11-06 v0.10.0: timed to the speech
     const key = line ? `${scene.id}|${line.id}|${line.speaker}|${line.text}` : "";
     if (key === m.capKey) return;
     m.capKey = key;
@@ -292,13 +293,51 @@ function monitorOf(ctx) {
   return m;
 }
 
+// added 2026-11-06 v0.10.0: the lines of a scene timed to the speech of its starred take (POST /reelwright/speech, the
+// same timing as the merge's subtitles), cached per take and lines; null while it loads, without a take or speech, or
+// when Render -> Merge -> Subtitles is set to the planned times. When the answer comes, the captions use it.
+const speechCache = new WeakMap(); // ctx -> Map(key -> {state, byId})
+function speechOf(ctx, scene) {
+  if (ctx.p.global.merge?.subtitle_timing === "planned") return null;
+  const take = ctx.starredTake(scene.id);
+  const file = take?.files?.video;
+  if (!file) return null;
+  const lines = scene.dialogue.filter(d => cueText(d)).map(d => ({ id: d.id, t: d.t, duration: dialogueSeconds(d) }));
+  if (!lines.length) return null;
+  const map = speechCache.get(ctx) || new Map();
+  speechCache.set(ctx, map);
+  const key = `${file}|${take.created ?? ""}|${JSON.stringify(lines)}`;
+  let e = map.get(key);
+  if (!e) {
+    e = { state: "loading", byId: null };
+    map.set(key, e);
+    if (map.size > 200) map.delete(map.keys().next().value);
+    rw.speech(file, lines).then(r => {
+      e.state = "ok";
+      e.byId = new Map((r.lines || []).map(x => [x.id, x]));
+      const m = ctx.monitor;
+      if (m && m.sceneId === scene.id) { m.capKey = null; const st = sceneStarts(ctx.p).starts[scene.id] ?? 0; m.overlay(scene, ctx.p.ui.playhead - st); }
+    }).catch(() => { e.state = "error"; });
+  }
+  return e.state === "ok" ? e.byId : null;
+}
+
 // added 2026-11-06 v0.9.0: a dialogue line as a caption, the way merge.py's subtitle_cues times the .srt: from its time
 // for its own length (Scene tab), or for its reading time (0.6 s + 0.07 s a character, at least 1.2 s); never past the
 // next line's start or the scene's end. Empty lines are not captions.
 function cueText(d) {
   return String(d.text || "").replace(/\r\n?/g, "\n").split("\n").map(x => x.trim()).filter(Boolean).join("\n");
 }
-function captionAt(p, scene, local) {
+// added 2026-11-06 v0.10.0: with `timed` (speechOf: line id -> {t, end} in the take), a line is shown while its speech
+// lasts; lines the take's speech did not match keep their planned time
+function captionAt(p, scene, local, timed = null) {
+  if (timed) {
+    for (const d of scene.dialogue) {
+      const x = timed.get(d.id);
+      if (x && cueText(d) && x.t <= local && local < x.end) return d;
+    }
+    return null;
+  }
   const lines = scene.dialogue.filter(d => cueText(d)).slice().sort((a, b) => a.t - b.t);
   for (let i = lines.length - 1; i >= 0; i--) {
     const d = lines[i];
@@ -777,7 +816,8 @@ function nowAt(ctx, scene, local) {
   const k = plan && plan.passes.length > 1 ? Math.max(0, plan.passes.findIndex((ps, i) => local < ps.end || i === plan.passes.length - 1)) : -1;
   let shot = null, n = 0;
   for (let i = 0; i < s.shots.length; i++) if (s.shots[i].t <= local + 1e-6) { shot = s.shots[i]; n = i + 1; }
-  const line = captionAt(p, s, local);
+  // [OLD 2026-11-06 v0.9.0->v0.10.0] const line = captionAt(p, s, local);
+  const line = captionAt(p, s, local, speechOf(ctx, s)); // added 2026-11-06 v0.10.0: timed to the speech
   const key = [k, shot?.id, shot?.text, shot?.camera, line?.id, line?.text].join("|");
   if (key === tl.nowKey) return;
   tl.nowKey = key;
@@ -1050,6 +1090,12 @@ function renderLanes(ctx) {
     /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now
     }, h("b", { class: "mono" }, (it.d.language || "").slice(0, 2).toUpperCase()), ` ${c?.name || "?"} (${c?.speaker || "S?"}) “${it.d.text}”`));
     [/OLD] */
+    /* [OLD 2026-11-06 v0.9.0->v0.10.0] a cut-off line had no way to read it in full
+    }, h("b", { class: "mono" }, (it.d.language || "").slice(0, 2).toUpperCase()), ` ${c?.name || "?"} “${it.d.text}”`));
+    [/OLD] */
+    // added 2026-11-06 v0.10.0: the whole line, who says it, how and when, in the tooltip (and right-click → Copy text)
+      detail: `${c?.name || "?"}${it.d.delivery ? ` (${it.d.delivery})` : ""}: “${String(it.d.text || "").trim()}”\n${it.s.title} · ${fmtTime(it.d.t)}${it.d.language ? " · " + it.d.language : ""}`,
+      dataset: { copy: String(it.d.text || "").trim() },
     }, h("b", { class: "mono" }, (it.d.language || "").slice(0, 2).toUpperCase()), ` ${c?.name || "?"} “${it.d.text}”`));
   });
 
@@ -1112,7 +1158,11 @@ function renderLanes(ctx) {
       // added 2026-11-05 v0.8.0: framing · move (the preset's name for a preset's words) · amplitude and speed
       const word = camNames.get(sh.camera) || sh.camera || "";
       const label = [sh.framing && sh.framing[0].toUpperCase() + sh.framing.slice(1), word, [sh.camera_amp, sh.camera_speed].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
-      cam.append(h("span", { class: "rw-cam", style: { left: x00 + from * z + 3 + "px", "max-width": Math.max(24, (end - from) * z - 6) + "px" }, help: "timeline.lane.camera", title: label, onClick: selectScene(s.id) }, label));
+      // [OLD 2026-11-06 v0.9.0->v0.10.0] cam.append(h("span", { class: "rw-cam", style: { left: x00 + from * z + 3 + "px", "max-width": Math.max(24, (end - from) * z - 6) + "px" }, help: "timeline.lane.camera", title: label, onClick: selectScene(s.id) }, label));
+      // added 2026-11-06 v0.10.0: the whole camera direction in the tooltip: the label, the words H3 gets and the shot
+      const camDetail = [`Shot ${k + 1}: ${label}`, sh.camera && sh.camera !== word ? `“${sh.camera}”` : "", sh.text ? sh.text.trim() : "", `${s.title} · ${fmtTime(sh.t)}–${fmtTime(end)}`].filter(Boolean).join("\n");
+      cam.append(h("span", { class: "rw-cam", style: { left: x00 + from * z + 3 + "px", "max-width": Math.max(24, (end - from) * z - 6) + "px" }, help: "timeline.lane.camera", detail: camDetail,
+        dataset: { copy: [label, sh.camera && sh.camera !== word ? sh.camera : ""].filter(Boolean).join(" · ") }, onClick: selectScene(s.id) }, label));
     });
     const own = effectiveLoras(p, s).filter(l => l.source !== "global");
     if (own.length) {
@@ -1714,7 +1764,10 @@ function shotTick(ctx, s, sh, z, ov = 0) {
 [/OLD] */
 // added 2026-11-03 v0.6.0
 function shotTick(ctx, s, sh, z, ov = 0) {
-  const tick = h("span", { class: "rw-shot-tick", style: { left: (sh.t - ov) * z + "px" }, help: "timeline.scene.shot", title: sh.camera || sh.text, dataset: { shot: sh.id } });
+  // [OLD 2026-11-06 v0.9.0->v0.10.0] const tick = h("span", { class: "rw-shot-tick", style: { left: (sh.t - ov) * z + "px" }, help: "timeline.scene.shot", title: sh.camera || sh.text, dataset: { shot: sh.id } });
+  // added 2026-11-06 v0.10.0: the shot's camera and text in full in the tooltip
+  const tick = h("span", { class: "rw-shot-tick", style: { left: (sh.t - ov) * z + "px" }, help: "timeline.scene.shot", dataset: { shot: sh.id },
+    detail: [`${fmtTime(sh.t)}${sh.camera ? " · " + sh.camera : ""}${sh.framing ? " · " + sh.framing : ""}`, (sh.text || "").trim()].filter(Boolean).join("\n") });
   tick.addEventListener("pointerdown", e => {
     if (e.button !== 0) return;
     e.stopPropagation();

@@ -25,6 +25,7 @@ TRANSITIONS = ("cut", "crossfade", "dip")  # added 2026-11-02 v0.3.0: per-scene 
 # for the deprecated scene.transition (read once, by the migration in _norm_merge)
 MERGE_TRANSITIONS = ("cut", "crossfade", "dip", "wipe", "slide", "circle", "dissolve", "pixelize", "radial", "zoom")
 MERGE_DIRECTIONS = ("left", "right", "up", "down")
+SUBTITLE_TIMING = ("speech", "planned")  # added 2026-11-06 v0.10.0: global.merge.subtitle_timing
 COLOR_MATCH_MODES = ("off", "previous", "scene")
 MERGE_MAX_FRAMES = 14400  # frame counts in scene.merge: 0 .. 600 s
 COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")  # "#rrggbb" (fullmatch)
@@ -155,8 +156,12 @@ def default_global():
         # added 2026-11-05 v0.7.0: name_continuation: the frame or clip a continuing scene (or a pass after an overlap
         # seam) starts from is also sent as reference <Picture 1> / <Video 1> and named in the prompt; False: it is
         # only anchored (MiniMaxH3AddGuide), as in v0.6.1 (see pass_continuation)
+        # [OLD 2026-11-06 v0.9.0->v0.10.0] "continuity": {"reanchor_after": 2, "face_check": False, "face_threshold": 0.8, "on_drift": "flag",
+        # [OLD 2026-11-06 v0.9.0->v0.10.0]                "name_continuation": True},
+        # added 2026-11-06 v0.10.0: describe_voices: a speaker's voice description (cast voice_desc) is written at
+        # their first line in every pass (prompt._dialogue_sentence), so H3 keeps the voice from pass to pass
         "continuity": {"reanchor_after": 2, "face_check": False, "face_threshold": 0.8, "on_drift": "flag",
-                       "name_continuation": True},
+                       "name_continuation": True, "describe_voices": True},
         # [OLD 2026-11-02 v0.1.0->v0.2.0] no switch for sending MiniMax's prompt guides
         # "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va"},
         # [/OLD]
@@ -187,7 +192,11 @@ def default_global():
                   # added 2026-11-03 v0.5.0: the scenes' own sound under a soundtrack (off: only the soundtrack plays)
                   "scene_audio": {"mix": False, "volume_db": -12.0},
                   "color_match": False, "color_ref_scene": "", "codec": "h264", "crf": 16,
-                  "subtitles": True, "chapters": True, "otio": True, "fcpxml": True, "bundle": False,
+                  # [OLD 2026-11-06 v0.9.0->v0.10.0] "subtitles": True, "chapters": True, "otio": True, "fcpxml": True, "bundle": False,
+                  # added 2026-11-06 v0.10.0: subtitle_timing "speech" (lines timed to the speech found in each take,
+                  # speech.py) or "planned" (the timeline's times, as before)
+                  "subtitles": True, "subtitle_timing": "speech", "chapters": True, "otio": True, "fcpxml": True,
+                  "bundle": False,
                   "auto_after_render": True},
     }
 
@@ -556,6 +565,9 @@ def normalize_global(g):
         lg["handoff"] = "pixels"
     if lg["pass_cache"] not in LONG_PASS_CACHE:
         lg["pass_cache"] = "near_lossless"
+    # added 2026-11-06 v0.10.0 (model.js the same)
+    if g["merge"]["subtitle_timing"] not in SUBTITLE_TIMING:
+        g["merge"]["subtitle_timing"] = "speech"
     g["loras"] = _objects(g["loras"])
     for l in g["loras"]:
         _norm_lora(l)
@@ -617,7 +629,9 @@ def asset_tags(v):
 def _norm_cast(c, lang):
     c["id"] = spec.text(c.get("id")) or new_id("c")
     c["kind"] = c["kind"] if c.get("kind") in CAST_KINDS else "character"
-    for k in ("name", "speaker", "description", "default_outfit", "voice"):
+    # [OLD 2026-11-06 v0.9.0->v0.10.0] for k in ("name", "speaker", "description", "default_outfit", "voice"):
+    # added 2026-11-06 v0.10.0: voice_desc: how the voice sounds ("a deep, warm male voice, slow and measured")
+    for k in ("name", "speaker", "description", "default_outfit", "voice", "voice_desc"):
         _text_field(c, k, "")
     _text_field(c, "language", lang)
     c["anchors"] = _texts(c.get("anchors"))

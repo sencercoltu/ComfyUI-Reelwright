@@ -144,13 +144,17 @@
 .rw-led.ok { background: var(--ok); } .rw-led.warn { background: var(--warn); } .rw-led.error { background: var(--err); }
 
 /* ---- Frame ---- */
+/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
 .rw-tabbar { display: flex; align-items: center; gap: 3px; height: 46px; padding: 0 10px; border-bottom: 1px solid var(--line2); flex: none; background: #181a20; }
+[/OLD] */
 .rw-brand { display: flex; align-items: center; gap: 6px; padding: 0 10px 0 4px; color: var(--accent); }
 .rw-brand b { color: var(--text); font-size: 13px; }
 .rw-brand .mono { font-size: 10px; }
+/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
 .rw-tab { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 8px; border: 0; background: transparent; color: var(--text3); cursor: pointer; white-space: nowrap; }
 .rw-tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.03); }
 .rw-tab.on { background: #262a33; color: var(--text); font-weight: 600; }
+[/OLD] */
 .rw-tab-count { color: var(--dim); font-size: 11px; font-weight: 500; }
 .rw-tab-count.warn { color: var(--warn); }
 .rw-tab-count.accent { color: var(--accent-text); }
@@ -470,8 +474,10 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-psec-head .rw-toggle { transform: scale(0.85); }
 .rw-list-row.shot .rw-input, .rw-list-row.dlg .rw-input { height: 28px; }
 .rw-pass-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
 .rw-pass-tab { height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); cursor: pointer; font-size: 11px; color: var(--text3); }
 .rw-pass-tab.on { border-color: var(--vid); color: var(--text); background: rgba(167, 139, 250, 0.1); }
+[/OLD] */
 .rw-diff { display: flex; flex-direction: column; gap: 6px; background: #111317; border: 1px solid #262a33; border-radius: 8px; padding: 8px 10px; }
 .rw-diff-sec { display: flex; flex-direction: column; gap: 2px; }
 .rw-diff-line { font: 11px/1.6 var(--mono); padding: 0 6px; border-radius: 3px; white-space: pre-wrap; word-break: break-word; }
@@ -897,12 +903,16 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 
 /* added 2026-11-05 v0.8.0: Scene tab Prompt card with a tab per pass, shot and dialogue rows (start, end, length,
    camera picker, growing text), pass-seam notes, "Write prompts" progress; Global long-scene continuity; Render drift */
+/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
 .rw-ptabs { display: flex; gap: 4px; flex-wrap: wrap; padding-bottom: 2px; border-bottom: 1px solid var(--line2); }
 .rw-ptab { position: relative; display: inline-flex; align-items: center; gap: 0; height: 28px; padding: 0 10px; border-radius: 7px 7px 0 0; border: 1px solid transparent; border-bottom: 0; background: transparent; color: var(--text3); cursor: pointer; font-size: 11.5px; margin-bottom: -3px; }
+[/OLD] */
 .rw-ptab b { font-weight: 600; }
 .rw-ptab .mono { font-size: 10.5px; color: var(--dim); }
+/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
 .rw-ptab:hover { color: var(--text); background: var(--panel2); }
 .rw-ptab.on { color: var(--text); background: var(--panel2); border-color: var(--line); box-shadow: inset 0 2px 0 var(--vid); }
+[/OLD] */
 .rw-ptab.on .mono { color: var(--text3); }
 .rw-ptab.moved .mono { color: var(--warn); }
 .rw-ptab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vid); margin-left: 6px; flex: none; }
@@ -939,7 +949,9 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-drift-pass { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--text3); }
 .rw-drift-pass b { font-weight: 600; color: var(--text2); }
 .rw-follow { height: 24px; }
+/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
 .rw-seam-note { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #fde68a; }
+[/OLD] */
 .rw-dlg-row.seam { border-color: rgba(251, 191, 36, 0.35); }
 .rw-take-long { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rw-take .rw-take-file { flex: 0 1 auto; min-width: 60px; }
@@ -973,3 +985,40 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-asset-tags { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; overflow: hidden; max-height: 20px; }
 .rw-asset-grp { font-weight: 500; }
 .rw-combo-pre { color: var(--text3); }
+
+/* added 2026-11-06 v0.10.0: tab headers that stand out (the top bar, the Prompt card's pass tabs), foldable cards,
+   copy menus and buttons, the tooltip's detail line, seam quick fixes, the project import/export row, the Passes dot */
+.rw-tabbar { display: flex; align-items: center; gap: 4px; height: 48px; padding: 0 10px; flex: none;
+  background: linear-gradient(#23262f, #1a1c22); border-bottom: 2px solid #343946; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45); }
+.rw-tab { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #323743;
+  background: #1c1f26; color: #c3c8d3; cursor: pointer; white-space: nowrap; font-weight: 500; }
+.rw-tab:hover { color: #fff; background: #262a33; border-color: #454b59; }
+.rw-tab.on { background: rgba(255, 107, 74, 0.16); border-color: rgba(255, 107, 74, 0.7); color: #fff; font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
+.rw-tab.on svg { color: var(--accent); }
+.rw-ptabs { display: flex; gap: 4px; flex-wrap: wrap; padding: 4px 4px 0; border-radius: 8px 8px 0 0; background: #101217; border-bottom: 2px solid rgba(167, 139, 250, 0.55); }
+.rw-ptab { position: relative; display: inline-flex; align-items: center; gap: 0; height: 28px; padding: 0 11px; border-radius: 7px 7px 0 0; border: 1px solid #2c303a; border-bottom: 0;
+  background: #1a1d24; color: #b8bdc9; cursor: pointer; font-size: 11.5px; }
+.rw-ptab:hover { color: #fff; background: #242832; }
+.rw-ptab.on { color: #fff; background: rgba(167, 139, 250, 0.2); border-color: rgba(167, 139, 250, 0.7); box-shadow: inset 0 2px 0 var(--vid); }
+.rw-pass-tab { height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid #323743; background: #1c1f26; cursor: pointer; font-size: 11px; color: #c3c8d3; }
+.rw-pass-tab.on { border-color: var(--vid); color: #fff; background: rgba(167, 139, 250, 0.2); }
+.rw-fold { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin: 0 -2px 0 -4px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text3); cursor: pointer; flex: none; }
+.rw-fold:hover { background: var(--raise); color: var(--text); }
+.rw-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rw-card-title.clickable { cursor: pointer; }
+.rw-card.folded { padding-top: 8px; padding-bottom: 8px; }
+.rw-fold-sum { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+.rw-copy-buf { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; }
+.rw-tip-detail { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rw-tip-help { margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(0, 0, 0, 0.14); color: #3b404c; }
+.rw-seam-note { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #fde68a; flex-wrap: wrap; }
+.rw-seam-note .rw-btn-sm { height: 22px; padding: 0 7px; font-size: 10.5px; color: #fde68a; border-color: rgba(251, 191, 36, 0.35); }
+.rw-seam-note .rw-btn-sm:hover:not(:disabled) { background: rgba(251, 191, 36, 0.12); }
+.rw-note, .rw-seam-note, .rw-issue span, .rw-prev-text, .rw-pre { user-select: text; }
+.rw-io-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.rw-io-paste { width: 100%; min-height: 120px; font-family: var(--mono); font-size: 11px; }
+.rw-h3-copy { display: flex; justify-content: flex-end; margin-bottom: -2px; }
+.rw-led.rw-led-hit { box-sizing: content-box; padding: 4px; margin-top: -4px; margin-bottom: -4px; margin-right: -4px; background-clip: content-box; cursor: help; }
+.rw-io { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line2); }
+.rw-io-panel { display: flex; flex-direction: column; gap: 6px; }
+.rw-hidden-file { display: none; }

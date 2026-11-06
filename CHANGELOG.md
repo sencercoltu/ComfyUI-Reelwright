@@ -1,5 +1,95 @@
 # Changelog
 
+## v0.10.0 — 2026-11-06
+
+Spoken lines stay in their own pass and are said once. A narrator or character keeps one voice from pass to pass. Subtitles and the monitor's captions follow the speech heard in each take. A project can be exported and imported as JSON. Tooltips show cut-off lines and camera text in full, cards fold away, and any text can be copied with a right-click.
+
+### What you will notice after updating
+
+- **Most scenes don't render again.** A prompt changes only for characters you give a voice description (Cast tab). Script import now asks the LLM for each speaking character's voice and fills it in, so scenes from a new import carry it.
+- **Subtitles move to where the line is actually heard.** H3 is told when each shot starts, but not when each line is spoken inside a shot. The merge's .srt and the monitor's captions now follow the speech found in the take. Render → Merge → Subtitle times → Planned times gives the old timing.
+- **Lines past a seam now come with quick fixes.** The seams stay where they are; you choose which lines to move.
+- **The Prompt rewriter works on one pass.** In a scene of several passes it is hidden on Whole scene; open a pass tab to rewrite that pass.
+
+### Lines past a seam, repeats and voices (Script import, Write prompts)
+
+- **Repeated and foreign lines are removed.** When Write prompts gets a spoken line that belongs to another pass, or the same line twice, the line and its sentence are taken out, with a warning. (H3 would say every `<d>` line it is given, so such a line was heard twice.) The request also marks the previous pass's last line as already spoken.
+- **Seam quick fixes (Scene tab, Dialogue):** the note under a line that runs past a pass seam has two buttons.
+  - **Start after the seam** moves the line just past the seam, so the next pass says all of it.
+  - **End before the seam** moves it earlier so it ends just before the seam, when its pass has room. When there is no room the button is off, and its tooltip says why.
+  - **Fix N at seams** in the card's head moves every such line, each the smaller way, as one undo step. A line past the scene's end gets *End before the scene's end*.
+- **Voice description (Cast tab):** how a character sounds, for example *a deep, warm male voice, slow and measured*. It is written at the character's first line in every pass, as H3's guide asks when a speaker first appears ("…, with a deep, warm male voice, slow and measured, says …"). Each pass is a separate render and H3 does not remember the voice it chose before, so without it the voice could change between passes.
+  - Script import fills it in when the LLM gives one (narrators included).
+  - Write prompts lists the voices and asks the LLM to describe each one at the speaker's first line.
+  - **Continuity rules → Voices: Describe them in every pass** turns it off for the whole project.
+- **Voice from a take (Cast tab, Voice → From a take…):** cuts the character's lines out of a scene's starred take, found by listening to it (up to 15 s, at least 2 s). They are saved as a WAV in the project's input folder and become the character's voice reference, sent as audio in every scene they speak in. One undo step; the audio asset stays in the Assets tab.
+- **Issues** warns about a character heard in two or more passes with no voice reference and no voice description.
+
+### Subtitles and captions timed to the speech
+
+- The merge listens to each take and finds where speech starts and stops: the level in the speech band, with held tones and hum left out. Each line, in its order, is moved to the nearest start of speech within 4 s. A subtitle stays up while that speech goes on, up to the next line. A line with no speech near it keeps its planned time.
+- The Timeline monitor's captions use the same timing (asked once per take and kept).
+- **Render → Merge → Subtitle times:** Follow the speech (new default) or Planned times.
+
+### Timeline
+
+- **Full text on hover:** dialogue bars show the whole line, who says it and how, and when. Camera bars show the full camera direction, the words H3 gets and the shot's text. Shot marks show their camera and text.
+- **Right-click a bar → Copy text** copies the line or the camera words.
+
+### Scene tab
+
+- **Shots, Dialogue and What H3 receives fold** to their title (the arrow, or a click on the title). A folded card shows a count (*2 shots*, *3 lines · 1 past a seam*). Folded cards stay folded in every scene (`ui.collapsed`, no undo step).
+- **Prompt rewriter per pass:** on a pass tab it rewrites that pass's own sections, with your instruction. It uses Write prompts' request for that pass, so it sees the pass's shots and lines and the passes around it. You accept, edit or discard the diff. It is hidden on Whole scene of a scene with several passes; scenes of one pass and raw prompts keep it as before.
+- **Copy prompt** on each pass in What H3 receives.
+
+### Copying text
+
+- Text in the editor often can't be selected, because ComfyUI's canvas takes the mouse. **Right-click → Copy text** now works almost anywhere: an issue, a note, a row, a prompt preview, a field label. With text selected you get **Copy selection** too. Text fields keep the browser's own menu.
+- **Issues → Copy all** copies every issue, one per line.
+- ComfyUI on a LAN address is plain http, where the browser's clipboard API is off; Reelwright falls back to the older copy command there.
+
+### Global tab → Project
+
+- **Export** downloads the whole project as `<folder>.reelwright.json`.
+- **Copy JSON** puts the same text on the clipboard.
+- **Import…** reads a .json file or pasted JSON: an Export, a saved version, or a bundle's project file. You see what it holds and confirm first.
+  - It replaces the project in this node; Ctrl+Z brings the previous one back.
+  - When its folder differs from this node's, choose: keep this node's folder, or use the imported one (and the renders made for it on this ComfyUI).
+  - Pictures, sounds and renders are files in ComfyUI's input and output folders: the JSON names them but does not carry them.
+
+### Render tab
+
+- **The Passes light explains itself:** hover it for what the colour means and each continuing pass's numbers. Green: close to the footage it continues. Amber: worth a look. Red: likely visible at the seam. Each pass in a take's row does the same.
+
+### Look and feel
+
+- **Tab headers stand out:** the tab bar has its own background, every tab a visible border, and the open tab the accent colour. The Prompt card's pass tabs are set off the same way.
+- **Less flicker during renders:** other tabs no longer redraw on every sampling step. Pictures in the Scene and Assets tabs (reference thumbnails, the cast's pictures and anchor sheets, asset cards) are kept between redraws instead of being loaded again.
+
+### For developers
+
+- **Project data** (model.py and model.js, `tests/test_model_parity.py`):
+  - cast `voice_desc` (text);
+  - `global.continuity.describe_voices` (default true);
+  - `global.merge.subtitle_timing`: `"speech"` (default) or `"planned"` (`SUBTITLE_TIMING`);
+  - `ui.collapsed` (`{shots|dialogue|h3: true}`).
+- **Backend:**
+  - New `reelwright/speech.py` (numpy; ffmpeg decodes to 16 kHz mono): `segments`, `align` (in-order dynamic programming, WINDOW 4 s, MISS 2.5), `take_segments` (cached by path, size and mtime) and `timed_lines`.
+  - `assemble.speech_timed` feeds the .srt.
+  - Routes: `POST /reelwright/speech` (`{file, lines, start?, end?}` → `{lines, segments}`) and `POST /reelwright/voice_from_take` (`{slug, scene_id, take_id, cast_id, lines}` → `{asset, used, seconds}`).
+  - `prompt.voice_phrase` and `_dialogue_sentence(…, voiced)`; `llm.drop_foreign_lines` (used by `tidy_pass`) and `llm.pass_voices`; `validate._voice_issues`.
+- **Frontend:**
+  - `ui.kept(ctx, slot, src, make)` keeps media elements between renders.
+  - `section({collapse: {ctx, id, summary}})`.
+  - The `detail` prop / `data-detail` is shown first in the tooltip; `data-copy` is the text for Copy text.
+  - `copyText`, `copyWithToast`, `copyButton`, `copyMenuItems`; `button({detail})`.
+  - `passes.seamFixes` / `seamFixTime`; `global.parseProjectText` / `importProject`.
+  - `root.__rwToast`.
+- **Tests:**
+  - `tests/test_speech.py`, `tests/test_voices.py`; updated `test_llm.py`.
+  - `web-test/interact.py` runs a new `v0100_checks()`.
+  - The mock has `/reelwright/speech` (lines heard `speechShift` s late) and `/reelwright/voice_from_take`.
+
 ## v0.9.0 — 2026-11-06
 
 The Timeline tab is three panels you can resize, without the asset bin. Captions in the monitor follow the film again, and the monitor has a volume control. In the Scene tab a pass tab shows only that pass. Shot and dialogue lists scroll in boxes you can resize. Assets can be put in groups with a description and given tags.

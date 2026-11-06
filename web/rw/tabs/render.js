@@ -373,9 +373,26 @@ function driftView(tk) {
     const rgb = Array.isArray(d.rgb_shift) ? ` (r ${d.rgb_shift.map(x => (x > 0 ? "+" : "") + Number(x).toFixed(1)).join(" g ").replace(/ g ([^ ]+)$/, " b $1")})` : "";
     const title = `Pass ${d.pass ?? "?"}${from[d.source] ? ", continuing " + from[d.source] : ""}: anchor ${f(a, 1)} · colour ${f(c, 1)}${rgb} · sharpness ${f(s, 2)}`
       + (d.handoff ? ` · ${d.handoff} hand-off${d.handoff_reason ? " (" + d.handoff_reason + ")" : ""}` : "") + (d.pass_cache ? " · from the pass cache" : "");
-    return h("span", { class: "rw-drift-pass", title },
+    // [OLD 2026-11-06 v0.9.0->v0.10.0] return h("span", { class: "rw-drift-pass", title },
+    return h("span", { class: "rw-drift-pass", detail: title + "\n" + DRIFT_WORDS[driftLevel(d) || "ok"] }, // added 2026-11-06 v0.10.0: the editor's tooltip
       h("span", { class: ["rw-led", driftLevel(d)] }), h("b", null, `P${d.pass ?? "?"}`), `${f(a, 1)} · ${f(c, 1)} · ${f(s, 2)}`);
   }));
+}
+// added 2026-11-06 v0.10.0: what a drift light means (the Passes column's light and each pass in a take's row)
+const DRIFT_WORDS = {
+  ok: "Green: it stayed close to the footage it continues.",
+  warn: "Amber: it drifted enough to be worth a look (identity, colour or sharpness moved).",
+  error: "Red: it drifted enough to be likely visible at the seam.",
+};
+function driftSummary(tk) {
+  const list = driftOf(tk);
+  if (!list.length) return "";
+  const f = (v, n) => (v === null ? "–" : v.toFixed(n));
+  const worst = driftWorst(tk);
+  const head = { ok: "Every continuing pass stayed close to the footage it continues.", warn: "At least one continuing pass drifted enough to be worth a look.", error: "At least one continuing pass drifted enough to be likely visible." }[worst] || "";
+  return [`Drift of the starred take (the worst pass sets the colour): ${head}`,
+    ...list.map(d => `P${d.pass ?? "?"}: ${{ ok: "green", warn: "amber", error: "red" }[driftLevel(d)] || "–"} · anchor ${f(driftNumber(d.anchor_diff), 1)} · colour ${f(driftNumber(d.color_shift), 1)} · sharpness ${f(driftNumber(d.sharpness), 2)}`),
+    "Green: close to the footage. Amber: worth a look. Red: likely visible."].join("\n");
 }
 // added 2026-11-05 v0.8.0: the long-scene settings a take was made with (take.long), where they differ from the defaults
 function longView(tk) {
@@ -624,7 +641,11 @@ function takesTable(ctx) {
       // added 2026-11-05 v0.8.0: a light for the worst drift of the starred take's continuing passes
       h("span", { class: "rw-dim small", help: kept ? "render.table.cachedPasses" : "render.table.passes" }, nPass ? `${nPass} pass${nPass > 1 ? "es" : ""}` : "",
         kept ? h("span", { class: "rw-c-aud" }, ` · ${kept} kept`) : null,
+        /* [OLD 2026-11-06 v0.9.0->v0.10.0] the light had only the help text
         (lv => lv ? h("span", { class: ["rw-led", lv], help: "render.table.drift", style: { "margin-left": "6px", "vertical-align": "1px" } }) : null)(driftWorst(ctx.starredTake(s.id)))),
+        [/OLD] */
+        // added 2026-11-06 v0.10.0: hovering the light says what its colour means and gives each pass's numbers
+        (lv => lv ? h("span", { class: ["rw-led", lv, "rw-led-hit"], help: "render.table.drift", detail: driftSummary(ctx.starredTake(s.id)), style: { "margin-left": "6px", "vertical-align": "1px" } }) : null)(driftWorst(ctx.starredTake(s.id)))),
       h("span", { class: "mono", style: { "text-align": "right" } }, s.duration.toFixed(2) + " s")));
     if (plan?.upstream_changed && !busy) rows.push(upstreamNote(ctx, s, plan));
     if (canDiff && openDiff[s.id]) rows.push(promptDiffView(plan));
@@ -866,6 +887,11 @@ function mergeCard(ctx) {
         toggle({ value: m.fcpxml, label: "Timeline .fcpxml", help: "render.merge.fcpxml", onChange: v => set(x => { x.fcpxml = v; }) }),
         toggle({ value: m.bundle, label: "Project bundle .zip", help: "render.merge.bundle", onChange: v => set(x => { x.bundle = v; }) }),
         toggle({ value: m.auto_after_render, label: "Merge after each render", help: "render.merge.auto", onChange: v => set(x => { x.auto_after_render = v; }) })),
+      // added 2026-11-06 v0.10.0: when a subtitle (and a caption in the Timeline monitor) shows: where the take's speech
+      // is, or the timeline's planned time
+      m.subtitles && field("Subtitle times", segmented({ small: true, value: m.subtitle_timing || "speech", help: "render.merge.subtitleTiming", key: "merge-sub-timing",
+        options: [{ value: "speech", label: "Follow the speech", help: "render.merge.subtitleTiming" }, { value: "planned", label: "Planned times", help: "render.merge.subtitleTiming" }],
+        onChange: v => set(x => { x.subtitle_timing = v; }) }), { help: "render.merge.subtitleTiming" }),
       // added 2026-11-03 v0.6.0: options of the next merge: draft (half size, fast), a range of scenes, audio stems with a
       // loudness report. They are not saved in the project.
       h("div", { class: "rw-subhead" }, "This merge"),

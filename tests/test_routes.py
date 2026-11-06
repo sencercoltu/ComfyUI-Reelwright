@@ -641,3 +641,62 @@ def test_llm_passes_route(api, harbor):
     for status, body in out[3:]:
         assert status == 400 and body["error"], (status, body)
     assert "not in this scene" in out[5][1]["error"] and "raw text" in out[8][1]["error"]
+
+
+# ---- added 2026-11-06 v0.10.0: speech timing and a voice cut from a take ---------------------------------------------
+
+def speech_take(path, seconds, bursts):
+    """An mp4 whose sound is syllable-like bursts (4 Hz, speech-band tones) at (start, end) over a quiet floor."""
+    import wave
+    np = pytest.importorskip("numpy")
+    from reelwright import merge, speech
+    rate = speech.RATE
+    t = np.arange(int(seconds * rate)) / rate
+    y = 0.003 * np.random.default_rng(3).standard_normal(len(t))
+    for a, b in bursts:
+        m = (t >= a) & (t < b)
+        tt = t[m] - a
+        y[m] += 0.08 * (0.5 + 0.5 * np.sin(2 * np.pi * 4 * tt)) ** 2 * sum(np.sin(2 * np.pi * f * tt) for f in (500, 900, 1400, 2300))
+    wav = path + ".wav"
+    with wave.open(wav, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes((np.clip(y, -1, 1) * 32767).astype("<i2").tobytes())
+    subprocess.run([merge.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    "color=c=black:s=64x64:r=24:d={}".format(seconds), "-i", wav, "-shortest", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", path], check=True)
+    os.remove(wav)
+    return path
+
+
+def test_speech_and_voice_from_take_routes(api, store, roots):
+    run, _, _ = api
+    d = store.take_dir("s_one", "v1")
+    os.makedirs(d, exist_ok=True)
+    video = speech_take(os.path.join(d, "harbor_lights_01_harbor_v1.mp4"), 8.0, [(1.5, 3.1), (4.4, 6.2)])
+    rel = store.rel_output(video)
+    store.add_take("s_one", {"id": "v1", "created": 5, "files": {"video": rel}})
+    lines = [{"id": "d1", "t": 1.0, "duration": 1.5}, {"id": "d2", "t": 3.8, "duration": 1.6}]
+
+    async def go(c):
+        return [await post(c, "/reelwright/speech", {"file": rel, "lines": lines}),
+                await post(c, "/reelwright/speech", {"file": "reelwright/harbor_lights/none.mp4", "lines": lines}),
+                await post(c, "/reelwright/speech", {"file": "../elsewhere.mp4", "lines": lines}),
+                await post(c, "/reelwright/speech", {"file": rel, "lines": "d1"}),
+                await post(c, "/reelwright/voice_from_take", {"slug": "harbor_lights", "scene_id": "s_one", "take_id": "v1",
+                                                              "cast_id": "c_mara", "lines": lines}),
+                await post(c, "/reelwright/voice_from_take", {"slug": "harbor_lights", "scene_id": "s_one", "take_id": "v1",
+                                                              "cast_id": "c_mara", "lines": [{"id": "d1", "t": 7.5, "duration": 0.3}]}),
+                await post(c, "/reelwright/voice_from_take", {"slug": "harbor_lights", "scene_id": "s_one", "take_id": "v9",
+                                                              "cast_id": "c_mara", "lines": lines})]
+    (s1, timed), (s2, _), (s3, _), (s4, _), (s5, voice), (s6, short), (s7, _) = run(go)
+    assert s1 == 200 and [round(x["t"], 1) for x in timed["lines"]] == [1.5, 4.4] and all(x["matched"] for x in timed["lines"])
+    assert len(timed["segments"]) == 2
+    assert s2 == 404 and s3 == 400 and s4 == 400
+    assert s5 == 200 and voice["used"] == ["d1", "d2"] and 2.0 <= voice["seconds"] <= 15.0
+    a = voice["asset"]
+    assert a["kind"] == "audio" and a["category"] == "voice" and a["file"] == "reelwright/harbor_lights/voice_c_mara_s_one_v1.wav"
+    assert os.path.isfile(os.path.join(roots.input, a["file"]))
+    assert s6 == 400 and "at least 2" in short["error"]
+    assert s7 == 400

@@ -3,6 +3,7 @@
 
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips, confirmInline } from "../ui.js";  (confirmInline is no longer used; deletes go through editor.deleteAsset and its dialog)
 import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips } from "../ui.js";
+import { kept } from "../ui.js"; // added 2026-11-06 v0.10.0: pictures that survive re-renders
 import { rw, viewURL } from "../api.js";
 import { assetMenu } from "./timeline.js"; // added 2026-11-02 v0.3.0
 import {
@@ -195,6 +196,8 @@ function tagRow(ctx, active) {
 }
 
 function assetCard(ctx, a, { showGroup = false } = {}) {
+  // added 2026-11-06 v0.10.0: the card's picture or video is the same element across renders (a video went black)
+  const pic = kept(ctx, "acard-" + a.id, a.kind + "|" + a.file, () => thumb(a));
   const p = ctx.p;
   const uses = assetUsage(p, a.id).length + assetCastUse(p, a.id).length;
   const group = showGroup ? assetGroupName(p, a) : "";
@@ -204,7 +207,8 @@ function assetCard(ctx, a, { showGroup = false } = {}) {
     onDragstart: e => { e.dataTransfer.setData("application/x-rw-asset", a.id); e.dataTransfer.effectAllowed = "copyMove"; },
     onClick: () => ctx.store.setEph({ selectedAsset: a.id }),
     menu: () => { ctx.store.setEph({ selectedAsset: a.id }); return assetMenu(ctx, a); },
-  }, thumb(a),
+  // [OLD 2026-11-06 v0.9.0->v0.10.0] }, thumb(a),
+  }, pic,
   h("span", { class: "rw-asset-meta" },
     h("span", { class: "rw-row" }, h("b", { class: "mono rw-c-" + KIND_CLASS[a.kind] }, a.code),
       h("b", { class: "rw-ellipsis" }, group ? h("span", { class: "rw-dim rw-asset-grp" }, group + " · ") : null, a.name || a.file.split("/").pop())),

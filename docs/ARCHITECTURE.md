@@ -79,7 +79,8 @@ lives on disk.
               "pass_cache": "near_lossless" },  // v0.8.0: near_lossless (H.264 CRF 4) | lossless (RGB qp 0 + FLAC)
     "memory": { "policy": "free_cache", "encode_first": true, "group_by_lora": true },  // keep | free_cache | unload_all
     "continuity": { "reanchor_after": 2, "face_check": false, "face_threshold": 0.8, "on_drift": "flag", // flag | retake
-                    "name_continuation": true },  // v0.7.0: send the frame / clip a pass continues from as <Picture 1> / <Video 1>
+                    "name_continuation": true,    // v0.7.0: send the frame / clip a pass continues from as <Picture 1> / <Video 1>
+                    "describe_voices": true },    // v0.10.0: write each character's voice_desc at their first line in every pass
     "llm": { "base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
              "include_guides": true,                      // v0.2.0: send MiniMax's guides when downloaded
              "thinking": "auto",                          // v0.3.2: auto | off (chat_template_kwargs enable_thinking=false)
@@ -95,6 +96,7 @@ lives on disk.
                "color_match": false, "color_ref_scene": "",          // v0.7.0: deprecated (read only by the scene.merge migration)
                "codec": "h264", "crf": 16,
                "subtitles": true, "chapters": true, "otio": true, "fcpxml": true, "bundle": false,
+               "subtitle_timing": "speech",                           // v0.10.0: speech (follow the speech in each take) | planned
                "auto_after_render": true }
   },
   "assets": [
@@ -118,6 +120,7 @@ lives on disk.
       "outfits": [ { "id": "o_1", "name": "Navy pea coat", "retention": "fully_preserved", "keep": ["face","hair","coat"], "assets": [] } ],
       "default_outfit": "o_1",
       "voice": "a_7", "language": "English",
+      "voice_desc": "a deep, warm male voice, slow and measured",  // v0.10.0: written at the first line in every pass ("" = nothing)
       "lora": { "name": "", "strength": 0.8 } }
   ],
   "camera_presets": [ { "id": "k_1", "name": "Push In", "text": "the camera pushes in" } ],  // v0.8.0: H3's 20 moves (DEFAULT_CAMERA)
@@ -179,7 +182,8 @@ lives on disk.
           "beats": true, "beatSnap": false, "autoRoll": true, // v0.6.0, set by the toolbar; missing = these defaults
           // v0.9.0, layout and monitor (kept as they are; the editor clamps them; missing = the defaults):
           "tl_top": 340, "tl_mon": 0.42, "files_prev": 380, "shots_h": 380, "lines_h": 300,
-          "captions": true, "mon_volume": 1, "mon_muted": false }
+          "captions": true, "mon_volume": 1, "mon_muted": false,
+          "collapsed": { "shots": true } }                  // v0.10.0: folded Scene-tab cards (shots | dialogue | h3)
 }
 ```
 
@@ -326,6 +330,8 @@ after a letter, digit, `_` or `@` starts no tag, so e-mail addresses are text.
 | GET | `/reelwright/beats?file=<input-relative path>` | – | v0.6.0, `beats.cached`: `{bpm, beats:[s], downbeats:[s], duration, file}`; `bpm` 0 and empty lists for silence or under 2 s; 400 without the file or ffmpeg. Cached in memory and in `user/reelwright/cache/beats/<content digest>.json` |
 | POST | `/reelwright/soundtrack/excerpt` | `{slug, scene_id, pass (1-based), project?}` | v0.6.0, `assemble.pass_song`: the WAV H3 gets as the soundtrack for that pass, made with the calls a render makes (the same file under `soundtrack/`): `{url: "/view?…&type=output", file, start, length, codes[], marker, pieces:[{asset, src_in, src_out, at}]}`, or `{url: null, file: null, reason}` when the pass gets no song. Without `project` the saved `project.json` is used |
 | GET | `/reelwright/filmstrip?file=<output-relative video>&h=` | – | v0.7.0, `merge.filmstrip`: `{file, url, interval, count, tile_w, tile_h, duration}`. One JPEG row of `count` tiles, each `tile_w` × `tile_h` (`h` 16–256, default 54; the video's aspect, even width); tile k is about the frame at k × `interval` s (ffmpeg `fps`). `interval` is 0.25 s up to 150 s of video, else duration / 600; when the row would pass 65,500 px (the widest JPEG ffmpeg writes) there are fewer tiles, further apart. `file` is the sprite, output-relative (`<video name>.filmstrip_<h>.jpg` next to the video, with a `.json` of the layout); `url` is its `/view` URL plus `&v=<video mtime_ns>`. Made once and reused while the video's size and mtime are unchanged; written through a temporary file under a per-sprite lock; at most 2 filmstrip ffmpeg runs at a time (a `threading.BoundedSemaphore`). 400: `file` not under `output/reelwright/`, not a video extension, a bad `h`, or a file ffmpeg can't read; 404: no such file |
+| POST | `/reelwright/speech` | `{file (output-relative video), lines: [{id, t, duration}], start?, end?}` | v0.10.0, `speech.timed_lines`: `{lines: [{id, t, end, matched, planned}], segments: [[start, end]]}` in file seconds; the take's segments are cached by path, size and mtime |
+| POST | `/reelwright/voice_from_take` | `{slug, scene_id, take_id, cast_id, lines: [{id, t, duration}]}` | v0.10.0: the lines timed to the take's speech, cut (−0.08/+0.12 s), joined with 0.25 s gaps (≤ 15 s), peak-normalised into `input/reelwright/<slug>/voice_<cast>_<scene>_<take>.wav`: `{asset: {file, kind: "audio", duration, name, category: "voice"}, used: [line ids], seconds}`; 400 under 2 s |
 
 Errors (v0.6.0): a body that is not a JSON object, or a field of the wrong type, answers 400 with the reason.
 `SlugConflict` and `MergeBusy` answer 409, LLM failures 502 `{error, reason}`.
@@ -710,3 +716,24 @@ Editor (`web/rw/editor.js`):
 - Assets tab (`tabs/assets.js`): `grid` → `tagRow`, `groupsView` / `kindsView`, `groupSection` (drop target for `application/x-rw-asset`), `assetCard`; `addGroup` (exported; the asset menu uses it), `moveGroup`, `deleteGroup`, `pickGroup`. model.js `assetGroupName` feeds every asset picker's `pre` and `tagCandidates`' labels; `assetTags` / `model.asset_tags` clean tags; `normAssetGroups` / `_norm_asset_groups` normalise both.
 - Files tab (`tabs/files.js`): `filesMain(ctx, tree, pane)` puts a `splitter` (sign −1) between the tree and the preview.
 - Harness: the demo project has three groups and some tags; `web-test/interact.py` `v090_checks()`.
+
+### Speech timing, voices, seam fixes, copy and import (v0.10.0)
+
+- `reelwright/speech.py` (numpy, imported when needed): `decode(path, ffmpeg, start, length)` (mono float32 at 16 kHz), `segments(y)` (speech-band level 300–3400 Hz every 10 ms in 25 ms Hann windows; voiced = above the 15th percentile + max(6 dB, 40 % of the way to the 97th) with most of the energy in the band; a 5-frame vote, gaps under 0.25 s closed, runs under 0.2 s dropped, runs over 1.5 s whose level hardly moves dropped; no segments when the take's loud and quiet parts are < 8 dB apart), `align(lines, segs, end)` (in-order dynamic programming: a match costs how far it moves the line, at most `WINDOW` 4 s; an unmatched line costs `MISS` 2.5 and keeps its time; a line ends where its speech ends, later segments within 0.7 s join it, before the next line), `take_segments` (cache) and `timed_lines`.
+- `assemble.speech_timed(entries)`: the cut's entries with each line's `t` / `duration` from the take's speech (a take that can't be read keeps the planned times); the merge writes the .srt from it when `merge.subtitle_timing` is `"speech"`.
+- Prompts: `prompt.voice_phrase(p, c)` ("with a …", empty when `describe_voices` is off or the description is empty); `shot_parts` keeps a `voiced` set per pass, so `_dialogue_sentence` writes it at the speaker's first line only. `llm.pass_voices(p, pass)` lists them in the Write prompts request; `PASS_RULES` asks for them at the first line and forbids other passes' lines and repeats; `llm.drop_foreign_lines(text, belongs)` removes them (with the sentence) in `tidy_pass`. `llm.coerce_script` reads a cast entry's `voice` / `voice_desc` / `voice_description` (characters only). `validate._voice_issues` warns about a character heard in ≥ 2 passes with nothing that fixes the voice.
+- Editor:
+  - `ui.kept(ctx, slot, src, make)` returns the same element for the same slot and source while it stays in `ctx.keptMedia` (≤ 800), so a redraw does not reload a picture.
+  - Tabs without `onProgress` redraw on a phase, pass or take change only.
+  - `section({collapse: {ctx, id, summary}})` (state in `ui.collapsed`).
+  - `h(…, {detail})` sets `data-detail`, which the tooltip shows above the help text; `data-copy` is what Copy text copies.
+  - `ui.copyText` (clipboard API on a secure page, else a hidden textarea and `execCommand("copy")`), `copyWithToast` (`root.__rwToast`), `copyButton`, `copyMenuItems(target, root, {explicitOnly})`; `editor.js`'s context-menu guard adds them to an element's own menu (explicit text only) or shows them alone.
+- Scene tab:
+  - `passes.seamFixes(plan, s, d)` → `{seam, earlier, later}` (frame times) and `seamFixTime` (the smaller move); `seamNote`, `fixSeamLines`.
+  - `rewriteCard` on a pass tab calls `rw.llmPasses(project, scene_id, [k], job, instruction)` and accepts with `applyWritten`.
+  - `render` leaves the rewriter out on Whole scene of a structured scene with several passes.
+- Cast tab: `voiceFromTake(ctx, c)` (a `choiceDialog` of the scenes whose starred take has the character's lines) → `rw.voiceFromTake` → one undo step that adds the audio asset and sets `voice`; the Voice description field; Continuity rules → Voices.
+- Timeline: `speechOf(ctx, scene)` asks `/reelwright/speech` once per take and line set (a `WeakMap` per editor) and redraws the caption when it answers; `captionAt(p, scene, local, timed)`.
+- Global → Project: `projectIO` (Export: a Blob download; Copy JSON; Import: `parseProjectText` accepts a project or `{project}`, `importProject` normalises it, asks with `choiceDialog` and calls `store.replaceProject`, keeping this node's `slug` and `project_id` unless *Use <folder>* is chosen).
+- Render tab: the Passes light and each take's pass lights carry `data-detail` (`driftSummary`, `DRIFT_WORDS`).
+- Harness: `web-test/mock.js` serves `/reelwright/speech` (lines heard `speechShift` s late; `speechCalls`) and `/reelwright/voice_from_take` (`voiceCuts`), and records the instruction of `/llm/passes`; `web-test/interact.py` `v0100_checks()`.

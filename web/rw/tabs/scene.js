@@ -3,6 +3,9 @@
 import { h, icon, button, toggle, segmented, select, number, text, textarea, chip, dot, section, field, meter, keepChips, slider } from "../ui.js";
 import { choiceDialog } from "../ui.js"; // added 2026-11-05 v0.7.0: "Apply to all scenes" asks which scenes
 import { resizableList, uiNum } from "../ui.js"; // added 2026-11-06 v0.9.0: shot and dialogue lists scroll in a box you can resize
+import { kept } from "../ui.js"; // added 2026-11-06 v0.10.0: pictures that survive re-renders
+import { copyButton } from "../ui.js"; // added 2026-11-06 v0.10.0: copy a pass prompt
+import { seamFixes, seamFixTime } from "../passes.js"; // added 2026-11-06 v0.10.0: quick fixes for lines past a seam
 // added 2026-11-05 v0.7.0: the "In the cut" card (scene.merge)
 import { TRANSITIONS, DIRECTIONS, DIRECTED, mergeOf, ensureMerge, mergeDefaults, joinOf, transitionLabel } from "../cut.js";
 import { rw, viewURL } from "../api.js";
@@ -13,6 +16,7 @@ import {
   passLayout, passTextsOf, adoptLayout, setPassSection, dialogueSecs, lineSeam, shotSeams, cameraOptions, framingOptions,
   runWrite, stopWrite, stillMove,
 } from "../passes.js";
+import { applyWritten } from "../passes.js"; // added 2026-11-06 v0.10.0: the rewriter on a pass tab
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { sceneMenu } from "./timeline.js"; // added 2026-11-02 v0.2.2
 import { sceneMenu, setSceneDuration, autoRollOn } from "./timeline.js"; // added 2026-11-02 v0.2.2; v0.6.0: auto-roll
 import { beatTimes } from "./soundtrack.js"; // added 2026-11-03 v0.6.0: shot times on the beat
@@ -827,6 +831,7 @@ function shotsCard(ctx, s) {
   const proposed = new Map((beatPlan || []).map(m => [m.id, m]));
   return section({
     title: "Shots", help: "scene.shots",
+    collapse: { ctx, id: "shots", summary: `${s.shots.length} shot${s.shots.length === 1 ? "" : "s"}` }, // added 2026-11-06 v0.10.0
     actions: [
       songs && s.shots.length > 0 && button({ label: "On the beat", icon: "music", small: true, help: "scene.shots.beat",
         onClick: () => ctx.store.setEph({ beatShots: ctx.eph.beatShots === s.id ? null : s.id }) }),
@@ -1026,9 +1031,18 @@ function dialogueCard(ctx, s) {
   const p = ctx.p;
   const speakers = p.cast.filter(c => c.kind === "character");
   const plan = passLayout(p, s);
+  // added 2026-11-06 v0.10.0: the lines past a seam that a move can fix (Fix lines at seams)
+  const fixable = s.dialogue.filter(d => seamFixTime(seamFixes(plan, s, d), d.t) !== null).length;
+  const crossing = s.dialogue.filter(d => lineSeam(plan, s, d)).length;
   return section({
     title: "Dialogue", help: "scene.dialogue",
+    collapse: { ctx, id: "dialogue", summary: `${s.dialogue.length} line${s.dialogue.length === 1 ? "" : "s"}${crossing ? ` · ${crossing} past a seam` : ""}` }, // added 2026-11-06 v0.10.0
+    /* [OLD 2026-11-06 v0.9.0->v0.10.0] one action; v0.10.0 adds Fix lines at seams before it
     actions: button({ label: "Line", icon: "plus", small: true, help: "scene.dialogue.add", key: `dlg-add-${s.id}`, onClick: () => {
+    [/OLD] */
+    actions: [fixable ? button({ label: `Fix ${fixable} at seams`, icon: "wand", small: true, variant: "ghost", help: "scene.dialogue.seamFixAll", key: `dlg-seamfix-${s.id}`,
+      onClick: () => fixSeamLines(ctx, s) }) : null,
+    button({ label: "Line", icon: "plus", small: true, help: "scene.dialogue.add", key: `dlg-add-${s.id}`, onClick: () => {
       const ov = (visibleStart(p, s.id) ?? 0) - (sceneStarts(p).starts[s.id] ?? 0);
       ctx.actions.editScene(s.id, sc => {
         const sp = sc.cast.find(c => findCast(p, c.id)?.kind === "character")?.id || speakers[0]?.id || "";
@@ -1036,7 +1050,7 @@ function dialogueCard(ctx, s) {
         sc.dialogue.push({ id: newId("d"), speaker: sp, t: Math.round(t * FPS) / FPS, language: findCast(p, sp)?.language || p.global.defaults.language, delivery: "says", text: "" });
         sc.dialogue.sort((a, b) => a.t - b.t);
       }, { label: "Add line" });
-    } }),
+    } })],
     children: [
       !speakers.length && h("div", { class: "rw-note", help: "scene.dialogue.noCast" }, "Add a character in the Cast tab to give lines a speaker and a voice."),
       s.dialogue.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.dialogue" }, "No spoken lines.")
@@ -1075,9 +1089,41 @@ function dialogueRow(ctx, s, d, { plan, prefix = "" }) {
       minRows: 1, maxHeight: 160, cls: "sans",
       onInput: v => ctx.actions.editScene(s.id, sc => { const x = sc.dialogue.find(q => q.id === d.id); if (x) x.text = v; }, { coalesce: key("text"), render: false, label: "Line text" }),
       onChange: () => ctx.store.notify() }),
+    /* [OLD 2026-11-06 v0.9.0->v0.10.0] the note only warned; v0.10.0 adds quick fixes (the seams stay where they are)
     seam && h("div", { class: "rw-seam-note", help: "scene.dialogue.seam" }, icon("warn", 11),
       seam.kind === "end" ? `Runs to ${fmtTime(seam.end)}, past the scene's end (${fmtTime(seam.t)}): the end of the line is cut off.`
         : `Runs to ${fmtTime(seam.end)}, past the seam at ${fmtTime(seam.t)} where pass ${seam.pass} takes over: the end of the line is cut off.`));
+    [/OLD] */
+    seam && seamNote(ctx, s, d, plan, seam, key, edit)); // added 2026-11-06 v0.10.0
+}
+
+// added 2026-11-06 v0.10.0: the seam note with its quick fixes: start the line just after the seam (the next pass says
+// it) or move it earlier so it ends before the seam (or the scene's end). Buttons that can't help are disabled and say why.
+function seamNote(ctx, s, d, plan, seam, key, edit) {
+  const fx = seamFixes(plan, s, d) || { earlier: null, later: null };
+  const move = (t, lbl) => edit((x, sc) => { x.t = t; sc.dialogue.sort((a, b) => a.t - b.t); }, lbl);
+  const secs = dialogueSecs(d);
+  return h("div", { class: "rw-seam-note", help: "scene.dialogue.seam" }, icon("warn", 11),
+    h("span", { class: "grow" }, seam.kind === "end" ? `Runs to ${fmtTime(seam.end)}, past the scene's end (${fmtTime(seam.t)}): the end of the line is cut off.`
+      : `Runs to ${fmtTime(seam.end)}, past the seam at ${fmtTime(seam.t)} where pass ${seam.pass} takes over: the end of the line is cut off.`),
+    seam.kind === "seam" && button({ label: "Start after the seam", small: true, variant: "ghost", key: key("seam-later"), help: "scene.dialogue.seamLater",
+      disabled: fx.later === null, detail: fx.later === null ? `From the seam the line (${secs.toFixed(1)} s) would run past the scene's end.` : `Starts at ${fmtTime(fx.later)}, in pass ${seam.pass}.`,
+      onClick: () => move(fx.later, "Line after the seam") }),
+    button({ label: seam.kind === "end" ? "End before the scene's end" : "End before the seam", small: true, variant: "ghost", key: key("seam-earlier"), help: "scene.dialogue.seamEarlier",
+      disabled: fx.earlier === null, detail: fx.earlier === null ? `The line (${secs.toFixed(1)} s) is longer than the room before ${seam.kind === "end" ? "the end" : "the seam"} in its pass: shorten it, or start it after the seam.` : `Starts at ${fmtTime(fx.earlier)} and ends just before ${fmtTime(seam.t)}.`,
+      onClick: () => move(fx.earlier, "Line before the seam") }));
+}
+
+// added 2026-11-06 v0.10.0: every line of the scene that runs past a seam, moved the smaller way (one undo step)
+function fixSeamLines(ctx, s) {
+  const plan = passLayout(ctx.p, s);
+  const moves = new Map();
+  for (const d of s.dialogue) { const t = seamFixTime(seamFixes(plan, s, d), d.t); if (t !== null) moves.set(d.id, t); }
+  if (!moves.size) return;
+  ctx.actions.editScene(s.id, sc => {
+    for (const x of sc.dialogue) if (moves.has(x.id)) x.t = moves.get(x.id);
+    sc.dialogue.sort((a, b) => a.t - b.t);
+  }, { label: `Move ${moves.size} line${moves.size === 1 ? "" : "s"} off the seams` });
 }
 
 function previewCard(ctx, s) {
@@ -1094,6 +1140,7 @@ function previewCard(ctx, s) {
   const shownPasses = !prompts.length ? [0] : tab >= 0 ? [Math.min(tab, prompts.length - 1)] : prompts.map((_, i) => i);
   return section({
     title: "What H3 receives", help: "scene.preview",
+    collapse: { ctx, id: "h3", summary: prompts.length > 1 ? `${prompts.length} passes` : "" }, // added 2026-11-06 v0.10.0
     actions: [
       /* [OLD 2026-11-03 v0.4.1->v0.4.2] no busy state, no progress, no way to stop
       long && button({ label: "Split with LLM", icon: "wand", small: true, help: "scene.preview.splitLlm", onClick: async () => {
@@ -1150,7 +1197,12 @@ function previewCard(ctx, s) {
           shownPasses.length > 1 || (prompts.length > 1 && tab >= 0) ? h("div", { class: "rw-h3-pass-head", help: "scene.preview.pass" },
             h("b", null, `Pass ${i + 1} of ${prompts.length}`),
             ps && h("span", { class: "mono rw-dim small" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)} · ${ps.gen_frames} f${ps.seam_before && ps.seam_before !== "none" ? " · " + ps.seam_before : ""}`),
-            own && h("span", { class: "rw-c-accent small", help: "scene.preview.override" }, " ● edited by hand")) : null,
+            own && h("span", { class: "rw-c-accent small", help: "scene.preview.override" }, " ● edited by hand"),
+            // added 2026-11-06 v0.10.0: copy this pass's prompt
+            h("span", { class: "rw-flex" }), prompts[i] && copyButton({ text: () => prompts[i], key: `h3copy-${s.id}-${i + 1}`, help: "scene.preview.copy", what: "prompt" })) : null,
+          // added 2026-11-06 v0.10.0: a single prompt (no pass head) gets its copy button here
+          !(shownPasses.length > 1 || (prompts.length > 1 && tab >= 0)) && prompts[i] ? h("div", { class: "rw-h3-copy" },
+            copyButton({ label: "Copy prompt", text: () => prompts[i], key: `h3copy-${s.id}-${i + 1}`, help: "scene.preview.copy", what: "prompt" })) : null,
           long && own
             ? codeEditor({ value: overrides[String(i + 1)], help: "scene.preview.override", minRows: 6, maxHeight: 300, key: `pass-${s.id}-${i + 1}`, candidates: tagCandidates(ctx.p),
               onInput: v => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts[String(i + 1)] = v; }, { coalesce: `pass-${s.id}-${i + 1}`, render: false }),
@@ -1218,7 +1270,14 @@ function excerptRow(ctx, s, open) {
 }
 
 function rewriteCard(ctx, s) {
-  const rwState = ctx.eph.rewrite?.scene_id === s.id ? ctx.eph.rewrite : null;
+  // added 2026-11-06 v0.10.0: on a pass tab the rewriter rewrites that pass's own sections (Write prompts' request for
+  // one pass, with the instruction); a proposal made for another pass or tab is not shown
+  const plan = passLayout(ctx.p, s);
+  const tab = promptTabOf(ctx, s, plan);
+  const passK = s.prompt.mode !== "raw" && plan.passes.length > 1 && tab >= 0 ? tab : -1;
+  const pt = passK >= 0 ? passTextsOf(ctx.p, s, plan) : null;
+  // [OLD 2026-11-06 v0.9.0->v0.10.0] const rwState = ctx.eph.rewrite?.scene_id === s.id ? ctx.eph.rewrite : null;
+  const rwState = ctx.eph.rewrite?.scene_id === s.id && (ctx.eph.rewrite.pass ?? -1) === passK ? ctx.eph.rewrite : null; // added 2026-11-06 v0.10.0
   const instr = h("input", { class: "rw-input grow", key: "rewrite-instr", placeholder: "Optional instruction, e.g. make shot 2 more intimate", help: "scene.rewrite.instruction", value: ctx.eph.rewriteInstr || "",
     onInput: e => { ctx.eph.rewriteInstr = e.target.value; } });
   const llm = ctx.p.global.llm;
@@ -1234,6 +1293,7 @@ function rewriteCard(ctx, s) {
     }
   };
   [/OLD] */
+  /* [OLD 2026-11-06 v0.9.0->v0.10.0] whole-scene sections only
   const run = async () => {
     const job = newJob("rewrite");
     ctx.store.setEph({ rewrite: { scene_id: s.id, busy: true, job } });
@@ -1262,6 +1322,50 @@ function rewriteCard(ctx, s) {
     const prop = rwState.proposal;
     const pairs = prop.raw !== undefined && prop.raw !== null ? [["raw", s.prompt.raw, prop.raw]]
       : SECTION_KEYS.filter(k => prop.sections?.[k] !== undefined && prop.sections[k] !== s.prompt.sections[k]).map(k => [k, s.prompt.sections[k], prop.sections[k]]);
+  [/OLD] */
+  // added 2026-11-06 v0.10.0: a pass tab sends the pass (POST /reelwright/llm/passes for that one pass)
+  const run = async () => {
+    const job = newJob("rewrite");
+    ctx.store.setEph({ rewrite: { scene_id: s.id, pass: passK, busy: true, job } });
+    try {
+      let res;
+      if (passK >= 0) {
+        const r = await rw.llmPasses(ctx.p, s.id, [passK + 1], job, ctx.eph.rewriteInstr || "Improve clarity and visual precision, following the guide.");
+        const got = (r.passes || []).find(x => Number(x.index) === passK + 1);
+        if (r.cancelled && !got) { ctx.store.setEph({ rewrite: null }); ctx.actions.toast("Rewrite stopped.", "warn"); return; }
+        if (!got) throw new Error(r.reason || r.error || "the LLM wrote nothing for this pass");
+        res = { pass: got, sections: { ...got.sections }, warnings: r.warnings || [] };
+      } else {
+        res = await rw.rewrite(ctx.p, s.id, ctx.eph.rewriteInstr || "", job);
+        if (res.cancelled) { ctx.store.setEph({ rewrite: null }); ctx.actions.toast("Rewrite stopped.", "warn"); return; }
+      }
+      ctx.store.setEph({ rewrite: { scene_id: s.id, pass: passK, proposal: res, warnings: res.warnings || [], editing: false } });
+    } catch (err) {
+      ctx.store.setEph({ rewrite: null });
+      ctx.actions.toast("Rewrite failed: " + err.message, "error");
+    } finally {
+      delete ctx.store.eph.llmJobs[job];
+    }
+  };
+  const accept = () => {
+    const prop = rwState.proposal;
+    if (prop.pass) {
+      ctx.actions.editScene(s.id, (sc, q) => { applyWritten(sc, q, { passes: [{ ...prop.pass, sections: prop.sections }] }); }, { label: `Rewrite pass ${passK + 1}` });
+    } else {
+      ctx.actions.editScene(s.id, sc => {
+        if (prop.raw !== undefined && prop.raw !== null) { sc.prompt.raw = prop.raw; sc.prompt.mode = "raw"; }
+        if (prop.sections) for (const k of SECTION_KEYS) if (prop.sections[k] !== undefined) sc.prompt.sections[k] = prop.sections[k];
+      }, { label: "Rewrite" });
+    }
+    ctx.store.setEph({ rewrite: null });
+    ctx.actions.toast("Rewrite applied. Undo with Ctrl+Z.", "ok");
+  };
+  let diffView = null;
+  if (rwState?.proposal) {
+    const prop = rwState.proposal;
+    const cur = prop.pass && pt ? pt.texts[passK] : s.prompt.sections; // added 2026-11-06 v0.10.0: a pass's own texts
+    const pairs = prop.raw !== undefined && prop.raw !== null ? [["raw", s.prompt.raw, prop.raw]]
+      : SECTION_KEYS.filter(k => prop.sections?.[k] !== undefined && prop.sections[k] !== (cur[k] || "")).map(k => [k, cur[k] || "", prop.sections[k]]);
     diffView = h("div", { class: "rw-diff", help: "scene.rewrite.diff" },
       h("div", { class: "rw-dim small mono" }, `PREVIEW · ${pairs.length} section${pairs.length === 1 ? "" : "s"} changed`),
       rwState.warnings.map(w => h("div", { class: "rw-note warn" }, icon("warn", 12), w)),
@@ -1278,15 +1382,20 @@ function rewriteCard(ctx, s) {
         button({ label: "Accept", small: true, variant: "solid", help: "scene.rewrite.accept", onClick: accept })));
   }
   return section({
-    title: "Prompt rewriter", help: "scene.rewrite", tint: "dlg",
+    // [OLD 2026-11-06 v0.9.0->v0.10.0] title: "Prompt rewriter", help: "scene.rewrite", tint: "dlg",
+    title: passK >= 0 ? `Prompt rewriter · pass ${passK + 1}` : "Prompt rewriter", help: "scene.rewrite", tint: "dlg", // added 2026-11-06 v0.10.0
     actions: h("span", { class: "mono rw-dim small", help: "global.llm" }, llm.model ? `${llm.model}` : "set up in Global → LLM"),
     children: [
       h("div", { class: "rw-row" }, instr,
-        button({ label: rwState?.busy ? "Rewriting…" : "Rewrite", icon: "wand", variant: "pink", help: "scene.rewrite.run", disabled: !!rwState?.busy, onClick: run })),
+        button({ label: rwState?.busy ? "Rewriting…" : "Rewrite", icon: "wand", variant: "pink", help: "scene.rewrite.run", key: `rewrite-run-${s.id}`, disabled: !!rwState?.busy, onClick: run })),
       rwState?.busy && llmBusyRow(ctx, rwState.job, "scene.rewrite.stop"), // added 2026-11-03 v0.4.2
       h("div", { class: "rw-dim small" }, "Runs only when you press Rewrite, never during a render. Tags and <d>…</d> lines are kept as written."),
+      /* [OLD 2026-11-06 v0.9.0->v0.10.0] on Whole scene of a multi-pass scene; the card is now only on a pass tab there
       // added 2026-11-05 v0.8.0: what Rewrite changes in a scene of several passes (Write prompts writes the passes)
       passLayout(ctx.p, s).passes.length > 1 && h("div", { class: "rw-dim small", help: "scene.rewrite.passes" }, "This scene has several passes: Rewrite changes the scene note and the shared sections. Write prompts (Prompt card) writes each pass's own sections."),
+      [/OLD] */
+      // added 2026-11-06 v0.10.0
+      passK >= 0 && h("div", { class: "rw-dim small", help: "scene.rewrite.passes" }, `Rewrites pass ${passK + 1}'s own sections (${fmtTime(plan.passes[passK].start)}–${fmtTime(plan.passes[passK].end)}), with its shots and spoken lines. Other passes and the Whole scene texts stay as they are.`),
       diffView,
     ],
   });
@@ -1352,7 +1461,9 @@ function refsCard(ctx, s) {
         const overridden = (r.retention && r.retention !== a.defaults.retention) || r.role !== a.defaults.role;
         const roles = a.kind === "image" ? ROLES : ["reference"];
         return h("div", { class: ["rw-ref", overridden && "over"] },
-          a.kind === "image" ? h("img", { class: "rw-ref-thumb", src: viewURL(a.file, "input"), alt: "" }) : h("span", { class: "rw-ref-thumb rw-bg-" + kc + "-soft" }, icon(a.kind, 16)),
+          // [OLD 2026-11-06 v0.9.0->v0.10.0] a.kind === "image" ? h("img", { class: "rw-ref-thumb", src: viewURL(a.file, "input"), alt: "" }) : h("span", { class: "rw-ref-thumb rw-bg-" + kc + "-soft" }, icon(a.kind, 16)),
+          // added 2026-11-06 v0.10.0: the same <img> across renders (it blinked while a render ran)
+          a.kind === "image" ? kept(ctx, "ref-" + r.id, viewURL(a.file, "input"), () => h("img", { class: "rw-ref-thumb", src: viewURL(a.file, "input"), alt: "" })) : h("span", { class: "rw-ref-thumb rw-bg-" + kc + "-soft" }, icon(a.kind, 16)),
           h("div", { class: "rw-ref-body" },
             h("div", { class: "rw-row" }, h("b", { class: "mono rw-c-" + kc }, a.code), h("b", { class: "rw-ellipsis" }, a.name || a.file.split("/").pop()),
               overridden && dot("override", "scene.refs.overridden"), h("span", { class: "rw-flex" }),
@@ -1400,8 +1511,12 @@ function castCard(ctx, s) {
         const packed = castPacks(p, s, c);
         return h("div", { class: "rw-list-row" },
           // [OLD 2026-11-03 v0.4.0->v0.4.1] anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
-          packed ? h("img", { class: "rw-avatar sheet", src: ctx.host.apiURL(sheetURL(p, c, 96)), alt: "", help: "scene.cast.sheet" })
-            : anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
+          // [OLD 2026-11-06 v0.9.0->v0.10.0] packed ? h("img", { class: "rw-avatar sheet", src: ctx.host.apiURL(sheetURL(p, c, 96)), alt: "", help: "scene.cast.sheet" })
+          // [OLD 2026-11-06 v0.9.0->v0.10.0]   : anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
+          // added 2026-11-06 v0.10.0: the same <img> across renders; the sheet is made by the server (not cached), so a
+          // new <img> fetched and drew it again on every render and it blinked while a render ran
+          packed ? kept(ctx, "castsheet-" + c.id, sheetURL(p, c, 96), () => h("img", { class: "rw-avatar sheet", src: ctx.host.apiURL(sheetURL(p, c, 96)), alt: "", help: "scene.cast.sheet" }))
+            : anchor ? kept(ctx, "castav-" + c.id, viewURL(anchor.file, "input"), () => h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" })) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
           /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are assigned per clip now
           h("div", { class: "grow" }, h("b", null, c.name), h("div", { class: "rw-dim small" }, `${c.kind}${c.speaker ? " · " + c.speaker : ""} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`)),
           [/OLD] */
@@ -1514,7 +1629,11 @@ export function render(ctx) {
       // [OLD 2026-11-06 v0.8.0->v0.9.0] h("div", { class: "rw-col wide" }, promptCard(ctx, s), shotsCard(ctx, s), dialogueCard(ctx, s), previewCard(ctx, s), rewriteCard(ctx, s)),
       // added 2026-11-06 v0.9.0: on a pass tab the pass's own shots and dialogue are in the Prompt card, so the whole
       // scene's cards are hidden
-      h("div", { class: "rw-col wide" }, promptCard(ctx, s), wholeScene && shotsCard(ctx, s), wholeScene && dialogueCard(ctx, s), previewCard(ctx, s), rewriteCard(ctx, s)),
+      // [OLD 2026-11-06 v0.9.0->v0.10.0] h("div", { class: "rw-col wide" }, promptCard(ctx, s), wholeScene && shotsCard(ctx, s), wholeScene && dialogueCard(ctx, s), previewCard(ctx, s), rewriteCard(ctx, s)),
+      // added 2026-11-06 v0.10.0: the rewriter works on one pass: hidden on Whole scene of a scene with several passes
+      // (structured), shown on a pass tab (it rewrites that pass) and in single-pass or raw scenes
+      h("div", { class: "rw-col wide" }, promptCard(ctx, s), wholeScene && shotsCard(ctx, s), wholeScene && dialogueCard(ctx, s), previewCard(ctx, s),
+        !(wholeScene && s.prompt.mode !== "raw" && passLayout(ctx.p, s).passes.length > 1) && rewriteCard(ctx, s)),
       h("div", { class: "rw-col mid" }, budgetCard(ctx, s), refsCard(ctx, s), castCard(ctx, s), lorasCard(ctx, s))));
 }
 

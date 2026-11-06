@@ -18,6 +18,7 @@ import { h, icon, button, comboState, contextMenu } from "./ui.js";
 [/OLD] */
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { h, icon, button, comboState, contextMenu, confirmDialog } from "./ui.js";
 import { h, icon, button, comboState, contextMenu, confirmDialog, choiceDialog, focusGuard, isTextField } from "./ui.js";
+import { copyMenuItems, copyButton } from "./ui.js"; // added 2026-11-06 v0.10.0: right-click Copy text, Issues → Copy all
 import { VERSION } from "./version.js";
 import {
   normalizeProject, defaultScene, newId, sceneIndex, sceneStarts, assembledDuration, fmtTime,
@@ -128,9 +129,23 @@ function installEventGuards() {
     e.stopPropagation();
     const el = find(e, root, "__rwMenu");
     const items = el ? el.__rwMenu(e) : null;
+    /* [OLD 2026-11-06 v0.9.0->v0.10.0] no way to copy text the canvas would not let you select
     if (items && items.length) { e.preventDefault(); contextMenu(root, e.clientX, e.clientY, items); return; }
     // text fields keep the browser's menu (copy, paste, spelling); elsewhere there is nothing to offer
     if (!e.target.closest("input, textarea, [contenteditable]")) e.preventDefault();
+    [/OLD] */
+    // added 2026-11-06 v0.10.0: Copy text. An element's own menu gets it when the element carries text to copy (a
+    // spoken line, a camera phrase); elsewhere it is the menu. Text fields keep the browser's menu (copy, paste, spelling).
+    if (items && items.length) {
+      e.preventDefault();
+      const copy = copyMenuItems(e.target, root, { explicitOnly: true });
+      contextMenu(root, e.clientX, e.clientY, copy.length ? [...items, { sep: true }, ...copy] : items);
+      return;
+    }
+    if (e.target.closest("input, textarea, [contenteditable]")) return;
+    e.preventDefault();
+    const copy = copyMenuItems(e.target, root);
+    if (copy.length) contextMenu(root, e.clientX, e.clientY, copy, { cls: "rw-ctx-copy" });
   }, true);
   window.addEventListener("wheel", e => {
     const root = rootOf(e);
@@ -693,6 +708,7 @@ export function mountEditor(container, host) {
       actions.toggleIssues(false);
     },
   };
+  root.__rwToast = (message, kind) => actions.toast(message, kind); // added 2026-11-06 v0.10.0: ui.js copyWithToast
 
   // added 2026-11-03 v0.6.0: allIssues() runs sceneBudget for every scene; remember it per project version and plan
   let issuesMemo = { v: -1, plan: null, list: [] };
@@ -806,6 +822,9 @@ export function mountEditor(container, host) {
       h("div", { class: "rw-drawer-head" }, h("b", null, "Issues"), h("span", { class: "rw-dim" }, `${issues.length}`),
         h("button", { type: "button", class: "rw-q", dataset: { more: "app.issues" }, help: "app.issues", "aria-label": "Help" }, "?"),
         h("span", { class: "rw-flex" }),
+        // added 2026-11-06 v0.10.0: every issue as text, one per line (with its scene)
+        issues.length ? copyButton({ label: "Copy all", help: "app.issues.copy", key: "issues-copy", what: "issues",
+          text: () => allIssues().map(i => `[${i.level}] ${i.message}`).join("\n") }) : null,
         button({ icon: "close", help: "common.close", variant: "ghost", onClick: () => actions.toggleIssues(false) })),
       overrun.length ? h("div", { class: "rw-drawer-fix" },
         h("span", { class: "small grow" }, `${overrun.length} scene${overrun.length === 1 ? " has" : "s have"} shots or lines after the end.`),
@@ -815,8 +834,14 @@ export function mountEditor(container, host) {
           actions.toast(`Lengthened ${ids.size} scene${ids.size === 1 ? "" : "s"} to fit their shots. Ctrl+Z undoes it.`, "ok");
           root.focus?.({ preventScroll: true });
         } })) : null,
+      /* [OLD 2026-11-06 v0.9.0->v0.10.0] no copy text on an issue
       issues.length ? h("div", { class: "rw-issue-list", dataset: { scroll: "issues" } }, issues.map(i => h("button", {
         type: "button", class: ["rw-issue", i.level], help: "app.issueItem", onClick: () => actions.gotoIssue(i),
+      }, icon(i.level === "info" ? "info" : "warn", 13), h("span", null, i.message)))) : h("div", { class: "rw-empty" }, "No issues. Every scene fits H3's limits."));
+      [/OLD] */
+      // added 2026-11-06 v0.10.0: right-click an issue for Copy text (data-copy)
+      issues.length ? h("div", { class: "rw-issue-list", dataset: { scroll: "issues" } }, issues.map(i => h("button", {
+        type: "button", class: ["rw-issue", i.level], help: "app.issueItem", onClick: () => actions.gotoIssue(i), dataset: { copy: i.message },
       }, icon(i.level === "info" ? "info" : "warn", 13), h("span", null, i.message)))) : h("div", { class: "rw-empty" }, "No issues. Every scene fits H3's limits."));
   }
 
@@ -1152,8 +1177,12 @@ export function mountEditor(container, host) {
       if (changed) { lastProgressRender.at = Date.now(); store.notify(); } else footerSoon();
       return;
     }
-    const now = Date.now();
-    if (now - lastProgressRender.at > 250 || d.phase !== "sample") { lastProgressRender.at = now; store.notify(); }
+    // [OLD 2026-11-06 v0.9.0->v0.10.0] const now = Date.now();
+    // [OLD 2026-11-06 v0.9.0->v0.10.0] if (now - lastProgressRender.at > 250 || d.phase !== "sample") { lastProgressRender.at = now; store.notify(); }
+    // added 2026-11-06 v0.10.0: the other tabs (Assets, Cast, Files, Global) show nothing that changes with a sampler
+    // step, only statuses, which change with a scene's phase or pass: they are rebuilt then, and the footer follows
+    // the steps. They were rebuilt four times a second while a render ran, and their pictures blinked.
+    if (changed) { lastProgressRender.at = Date.now(); store.notify(); } else footerSoon();
   });
   // added 2026-11-03 v0.4.2: progress of LLM requests (Import, Rewrite, Split), at most four redraws a second
   const lastLlmRender = { at: 0 };

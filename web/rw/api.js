@@ -76,6 +76,8 @@ export const rw = {
   llmPasses: (project, scene_id, passes, job, instruction = "") => req("POST", "/reelwright/llm/passes",
     instruction ? { project, scene_id, passes: passes || null, instruction, job } : { project, scene_id, passes: passes || null, job }),
   promoteFrame: (slug, scene_id, take_id, which, t) => req("POST", "/reelwright/promote_frame", { slug, scene_id, take_id, which, t }),
+  // added 2026-11-06 v0.10.0: a character's lines cut from a take into a voice reference WAV {asset, used, seconds}
+  voiceFromTake: (slug, scene_id, take_id, cast_id, lines) => req("POST", "/reelwright/voice_from_take", { slug, scene_id, take_id, cast_id, lines }),
   castExport: (project, cast_id) => req("POST", "/reelwright/cast/export", { project, cast_id }),
   continuityCheck: (project, scene_id) => req("POST", "/reelwright/continuity/check", { project, scene_id }),
   // added 2026-11-02 v0.2.0: official H3 guides, vision descriptions, ComfyUI input/output browser
@@ -103,6 +105,9 @@ export const rw = {
   // added 2026-11-05 v0.7.0: the timeline's filmstrip of a take's video (output-relative): a sprite of one row of
   // frames every `interval` seconds, {file, interval, count, tile_w, tile_h, duration}; h is the tile height in pixels
   filmstrip: (file, h = 54) => req("GET", `/reelwright/filmstrip?file=${q(file)}&h=${Math.max(16, Math.round(Number(h) || 54))}`),
+  // added 2026-11-06 v0.10.0: spoken lines timed to the speech in a take (output-relative video):
+  // lines [{id, t, duration}] -> {lines: [{id, t, end, matched, planned}], segments}
+  speech: (file, lines, start, end) => req("POST", "/reelwright/speech", { file, lines, ...(start !== undefined ? { start } : {}), ...(end !== undefined ? { end } : {}) }),
   async waveform(file, per_second = 50) {
     const res = await host.fetchApi(`/reelwright/waveform?file=${q(file)}&per_second=${per_second}`, { method: "GET" });
     if (!res.ok) throw new Error(`waveform ${res.status}`);
