@@ -1,8 +1,14 @@
-// Timeline tab: asset bin, monitor with transport, quick inspector, and the
-// multi-lane timeline (scenes, pictures, video, audio, dialogue, camera, LoRAs).
+// [OLD 2026-11-06 v0.8.0->v0.9.0] the asset bin is gone (the Assets tab has all of it)
+// // Timeline tab: asset bin, monitor with transport, quick inspector, and the
+// // multi-lane timeline (scenes, pictures, video, audio, dialogue, camera, LoRAs).
+// [/OLD]
+// Timeline tab (v0.9.0): three panels with bars between them to resize: the monitor with its transport (top left), the
+// scene inspector and summary (top right), and the multi-lane timeline (scenes, pictures, video, audio, dialogue,
+// camera, LoRAs) below.
 
 // [OLD 2026-11-02 v0.2.2->v0.3.0] import { h, icon, button, toggle, segmented, chip, dot, slider } from "../ui.js";
-import { h, icon, button, toggle, segmented, chip, dot, slider, select } from "../ui.js";
+// [OLD 2026-11-06 v0.8.0->v0.9.0] import { h, icon, button, toggle, segmented, chip, dot, slider, select } from "../ui.js";
+import { h, icon, button, toggle, segmented, chip, dot, slider, select, splitter, uiNum, rootScale } from "../ui.js"; // added 2026-11-06 v0.9.0: panel bars
 // [OLD 2026-11-05 v0.6.1->v0.7.0] import { viewURL } from "../api.js";
 import { rw, viewURL } from "../api.js"; // added 2026-11-05 v0.7.0: rw.filmstrip
 import { joinOf, TRANSITION, DIRECTED, DIRECTIONS, transitionLabel } from "../cut.js"; // added 2026-11-05 v0.7.0: cut marks
@@ -16,12 +22,16 @@ import {
   // added 2026-11-03 v0.6.0: visible starts (Next/Prev/Loop), the real overlap of a continuing scene, locked timing
   sceneAt, sceneOverlapAt, tailOverlapFrames, soundtrackLocked,
   effectiveStart, MAX_SCENE_SECONDS, // added 2026-11-03 v0.6.0 review: rollLengths
+  dialogueSeconds, SECTION_KEYS, // added 2026-11-06 v0.9.0: captions and the inspector's summary
 } from "../model.js";
-import { uploadFiles } from "./assets.js";
+import { passLayout, passTextsOf } from "../passes.js"; // added 2026-11-06 v0.9.0: the pass at the playhead
+// [OLD 2026-11-06 v0.8.0->v0.9.0] import { uploadFiles } from "./assets.js";  (only the asset bin used it)
+import { addGroup } from "./assets.js"; // added 2026-11-06 v0.9.0: the asset menu's "New group"
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { trackLanes, trackInspector, syncAudio, stopAudio, sceneVolume } from "./soundtrack.js"; // added 2026-11-03 v0.5.0
 import {
   trackLanes, trackInspector, syncAudio, stopAudio, sceneVolume, // added 2026-11-03 v0.5.0
   deleteTrack, nearestBeat, showBeats, beatSnapOn, // added 2026-11-03 v0.6.0
+  monitorGain, // added 2026-11-06 v0.9.0: the monitor's volume and mute
 } from "./soundtrack.js";
 
 const HEAD_W = 150;
@@ -217,8 +227,14 @@ function monitorOf(ctx) {
   const badgeTR = h("span", { class: "rw-mon-badge tr mono", help: "timeline.monitor.format" });
   const badgeBL = h("span", { class: "rw-mon-badge bl mono" });
   const badgeBR = h("span", { class: "rw-mon-badge br" });
-  const el = h("div", { class: "rw-mon", help: "timeline.monitor" }, video, img, empty, h("div", { class: "rw-mon-safe" }), badgeTL, badgeTR, badgeBL, badgeBR);
-  const m = ctx.monitor = { el, video, img, empty, badgeTL, badgeTR, badgeBL, badgeBR, sceneId: null, src: "" };
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] const el = h("div", { class: "rw-mon", help: "timeline.monitor" }, video, img, empty, h("div", { class: "rw-mon-safe" }), badgeTL, badgeTR, badgeBL, badgeBR);
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] const m = ctx.monitor = { el, video, img, empty, badgeTL, badgeTR, badgeBL, badgeBR, sceneId: null, src: "" };
+  // added 2026-11-06 v0.9.0: the spoken line is a caption at the bottom (it was the bottom-right badge), timed like the
+  // merge's .srt, and it follows the playhead while the film plays (m.overlay, called on every frame)
+  const caption = h("div", { class: "rw-mon-cap", help: "timeline.monitor.caption" });
+  badgeBR.style.display = "none";
+  const el = h("div", { class: "rw-mon", help: "timeline.monitor" }, video, img, empty, h("div", { class: "rw-mon-safe" }), badgeTL, badgeTR, badgeBL, badgeBR, caption);
+  const m = ctx.monitor = { el, video, img, empty, badgeTL, badgeTR, badgeBL, badgeBR, caption, capKey: null, sceneId: null, src: "" };
 
   m.show = (scene, local) => {
     const take = ctx.starredTake(scene.id);
@@ -245,6 +261,8 @@ function monitorOf(ctx) {
     badgeTL.dataset.help = src ? "timeline.monitor.take" : "timeline.monitor.storyboard";
     const g = ctx.p.global.output;
     badgeTR.textContent = `${g.width}×${g.height} · 24 fps`;
+    /* [OLD 2026-11-06 v0.8.0->v0.9.0] set only when the monitor's scene was shown again (render, seek, a new scene), so
+       the line and the frame count stood still while the film played; the line was shown for 3.5 s whatever its length
     const idx = sceneIndex(ctx.p, scene.id) + 1;
     badgeBL.textContent = `${String(idx).padStart(2, "0")} · f ${Math.min(framesOf(local), framesOf(scene.duration))} / ${framesOf(scene.duration)}`;
     const line = scene.dialogue.find(d => local >= d.t && local < d.t + 3.5);
@@ -252,8 +270,48 @@ function monitorOf(ctx) {
     // [OLD 2026-11-02 v0.1.0->v0.2.0] badgeBR.textContent = line ? `${sp?.name || "?"} (${sp?.speaker || "S?"}): “${line.text}”` : "";  (speaker IDs are per clip now)
     badgeBR.textContent = line ? `${sp?.name || "?"}: “${line.text}”` : "";
     badgeBR.style.display = line ? "" : "none";
+    [/OLD] */
+    m.overlay(scene, local); // added 2026-11-06 v0.9.0
+  };
+  // added 2026-11-06 v0.9.0: the frame count and the caption at `local` (scene time). Cheap: the DOM is touched only
+  // when the text changes. Off with the transport's CC button (ui.captions).
+  m.overlay = (scene, local) => {
+    const idx = sceneIndex(ctx.p, scene.id) + 1;
+    const bl = `${String(idx).padStart(2, "0")} · f ${Math.min(framesOf(local), framesOf(scene.duration))} / ${framesOf(scene.duration)}`;
+    if (badgeBL.textContent !== bl) badgeBL.textContent = bl;
+    const line = ctx.p.ui.captions === false ? null : captionAt(ctx.p, scene, local);
+    const key = line ? `${scene.id}|${line.id}|${line.speaker}|${line.text}` : "";
+    if (key === m.capKey) return;
+    m.capKey = key;
+    if (!line) { caption.replaceChildren(); caption.style.display = "none"; return; }
+    const sp = findCast(ctx.p, line.speaker);
+    // (replaceChildren writes null as the word "null": only real nodes go in)
+    caption.replaceChildren(...[sp?.name ? h("b", null, sp.name + ": ") : null, cueText(line)].filter(x => x !== null));
+    caption.style.display = "";
   };
   return m;
+}
+
+// added 2026-11-06 v0.9.0: a dialogue line as a caption, the way merge.py's subtitle_cues times the .srt: from its time
+// for its own length (Scene tab), or for its reading time (0.6 s + 0.07 s a character, at least 1.2 s); never past the
+// next line's start or the scene's end. Empty lines are not captions.
+function cueText(d) {
+  return String(d.text || "").replace(/\r\n?/g, "\n").split("\n").map(x => x.trim()).filter(Boolean).join("\n");
+}
+function captionAt(p, scene, local) {
+  const lines = scene.dialogue.filter(d => cueText(d)).slice().sort((a, b) => a.t - b.t);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const d = lines[i];
+    if (d.t > local) continue;
+    const name = findCast(p, d.speaker)?.name || "";
+    const chars = (name ? name.length + 2 : 0) + cueText(d).length; // the .srt cue is "Name: text"
+    const dur = typeof d.duration === "number" && d.duration > 0 ? Math.max(0.3, d.duration) : Math.max(1.2, 0.6 + 0.07 * chars);
+    let end = d.t + dur;
+    if (i + 1 < lines.length) end = Math.min(end, lines[i + 1].t - 0.05);
+    end = Math.max(Math.min(end, scene.duration), d.t + 0.3);
+    return local < end ? d : null;
+  }
+  return null;
 }
 
 function setPlayhead(ctx, t, { seekVideo = true } = {}) {
@@ -272,7 +330,9 @@ function setPlayhead(ctx, t, { seekVideo = true } = {}) {
   const s = sceneAt(ctx.p, t);
   const local = t - sceneStarts(ctx.p).starts[s.id];
   const m = monitorOf(ctx);
-  if (seekVideo) m.show(s, local);
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] if (seekVideo) m.show(s, local);
+  if (seekVideo) m.show(s, local); else m.overlay(s, local); // added 2026-11-06 v0.9.0: the caption and frame count follow
+  nowAt(ctx, s, local); // added 2026-11-06 v0.9.0: the inspector's "at the playhead" line
   return { scene: s, local };
 }
 
@@ -356,7 +416,8 @@ function startPlayback(ctx) {
   const m = monitorOf(ctx);
   let last = performance.now();
   let current = setPlayhead(ctx, ctx.p.ui.playhead);
-  m.video.volume = sceneVolume(ctx.p); // the scene level under the soundtrack
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] m.video.volume = sceneVolume(ctx.p); // the scene level under the soundtrack
+  applyVolume(ctx); // added 2026-11-06 v0.9.0: the scene level under the soundtrack, times the monitor's volume
   if (m.src) { m.video.currentTime = current.local; m.video.play().catch(() => {}); }
   syncAudio(ctx, ctx.p.ui.playhead, true);
   const loop = now => {
@@ -383,7 +444,8 @@ function startPlayback(ctx) {
       if (m.src) { m.video.currentTime = current.local; m.video.play().catch(() => {}); }
     }
     // soundtrack tracks follow the playhead; the take plays at the scene level
-    m.video.volume = sceneVolume(ctx.p);
+    // [OLD 2026-11-06 v0.8.0->v0.9.0] m.video.volume = sceneVolume(ctx.p);
+    applyVolume(ctx); // added 2026-11-06 v0.9.0: times the monitor's volume
     syncAudio(ctx, t, true, jump);
     followPlayhead(ctx, t); // added 2026-11-05 v0.8.0
     pl.raf = requestAnimationFrame(loop);
@@ -392,6 +454,13 @@ function startPlayback(ctx) {
   Object.assign(pl, { follow: true, sl: null, prevPx: null });
   pl.raf = requestAnimationFrame(loop);
   ctx.render();
+}
+
+// added 2026-11-06 v0.9.0: the take's volume in the monitor: the scene level under the soundtrack times the monitor's own
+// volume (transport); the tracks get the monitor's volume in syncAudio
+function applyVolume(ctx) {
+  const m = ctx.monitor;
+  if (m) m.video.volume = Math.max(0, Math.min(1, sceneVolume(ctx.p) * monitorGain(ctx.p)));
 }
 
 // added 2026-11-05 v0.8.0: while the film plays, the lanes scroll so the playhead stays in the middle of the view
@@ -542,44 +611,45 @@ function addMarker(ctx) {
 }
 
 // ---- Asset bin ----
-
-function renderBin(ctx) {
-  const p = ctx.p;
-  const groups = [["image", "Pictures", "pic"], ["video", "Videos", "vid"], ["audio", "Audio", "aud"]];
-  const fileInput = h("input", {
-    type: "file", multiple: true, accept: "image/*,video/*,audio/*", style: { display: "none" },
-    onChange: e => uploadFiles(ctx, [...e.target.files]),
-  });
-  return h("div", { class: "rw-bin rw-panel" },
-    h("div", { class: "rw-panel-head" }, h("b", null, "Asset bin"), h("span", { class: "mono rw-dim" }, p.assets.length),
-      h("button", { type: "button", class: "rw-q", dataset: { more: "timeline.bin" }, help: "timeline.bin", "aria-label": "Help" }, "?"),
-      h("span", { class: "rw-flex" }),
-      button({ icon: "upload", help: "timeline.bin.upload", small: true, onClick: () => fileInput.click() }), fileInput),
-    h("div", { class: "rw-bin-list", dataset: { scroll: "bin" } },
-      p.assets.length === 0 && h("div", { class: "rw-empty sm", help: "timeline.bin" }, "Drop images, video or audio here, then drag them onto a scene."),
-      groups.map(([kind, label, cls]) => {
-        const items = p.assets.filter(a => a.kind === kind);
-        if (!items.length) return null;
-        return h("div", { class: "rw-bin-group" },
-          h("div", { class: "rw-bin-label rw-c-" + cls }, icon(kind, 12), label, h("span", { class: "mono rw-dim" }, items.length)),
-          items.map(a => h("div", {
-            class: ["rw-bin-item", ctx.eph.selectedAsset === a.id && "on"], draggable: "true", help: "timeline.bin.item",
-            onDragstart: e => { e.dataTransfer.setData("application/x-rw-asset", a.id); e.dataTransfer.effectAllowed = "copy"; },
-            onClick: () => ctx.store.setEph({ selectedAsset: a.id }),
-            onDblclick: () => { ctx.store.setEph({ selectedAsset: a.id }); ctx.actions.setTab("assets"); },
-            menu: () => assetMenu(ctx, a), // added 2026-11-02 v0.3.0
-          },
-          kind === "image" ? h("img", { class: "rw-bin-thumb", src: viewURL(a.file, "input"), alt: "", loading: "lazy" }) : h("span", { class: "rw-bin-thumb rw-bg-" + cls + "-soft" }, icon(kind, 12)),
-          h("b", { class: "mono rw-c-" + cls }, a.code), h("span", { class: "rw-ellipsis" }, a.name || a.file.split("/").pop()),
-          a.duration ? h("span", { class: "mono rw-dim" }, a.duration.toFixed(1) + "s") : null)));
-      })),
-    h("div", {
-      class: "rw-bin-drop", help: "timeline.bin.upload",
-      onDragover: e => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.currentTarget.classList.add("over"); } },
-      onDragleave: e => e.currentTarget.classList.remove("over"),
-      onDrop: e => { e.preventDefault(); e.currentTarget.classList.remove("over"); uploadFiles(ctx, [...e.dataTransfer.files]); },
-    }, icon("upload", 12), "Drop files to upload"));
-}
+// [OLD 2026-11-06 v0.8.0->v0.9.0] the asset bin was removed from the Timeline tab (the Assets tab has all of it)
+// function renderBin(ctx) {
+//   const p = ctx.p;
+//   const groups = [["image", "Pictures", "pic"], ["video", "Videos", "vid"], ["audio", "Audio", "aud"]];
+//   const fileInput = h("input", {
+//     type: "file", multiple: true, accept: "image/*,video/*,audio/*", style: { display: "none" },
+//     onChange: e => uploadFiles(ctx, [...e.target.files]),
+//   });
+//   return h("div", { class: "rw-bin rw-panel" },
+//     h("div", { class: "rw-panel-head" }, h("b", null, "Asset bin"), h("span", { class: "mono rw-dim" }, p.assets.length),
+//       h("button", { type: "button", class: "rw-q", dataset: { more: "timeline.bin" }, help: "timeline.bin", "aria-label": "Help" }, "?"),
+//       h("span", { class: "rw-flex" }),
+//       button({ icon: "upload", help: "timeline.bin.upload", small: true, onClick: () => fileInput.click() }), fileInput),
+//     h("div", { class: "rw-bin-list", dataset: { scroll: "bin" } },
+//       p.assets.length === 0 && h("div", { class: "rw-empty sm", help: "timeline.bin" }, "Drop images, video or audio here, then drag them onto a scene."),
+//       groups.map(([kind, label, cls]) => {
+//         const items = p.assets.filter(a => a.kind === kind);
+//         if (!items.length) return null;
+//         return h("div", { class: "rw-bin-group" },
+//           h("div", { class: "rw-bin-label rw-c-" + cls }, icon(kind, 12), label, h("span", { class: "mono rw-dim" }, items.length)),
+//           items.map(a => h("div", {
+//             class: ["rw-bin-item", ctx.eph.selectedAsset === a.id && "on"], draggable: "true", help: "timeline.bin.item",
+//             onDragstart: e => { e.dataTransfer.setData("application/x-rw-asset", a.id); e.dataTransfer.effectAllowed = "copy"; },
+//             onClick: () => ctx.store.setEph({ selectedAsset: a.id }),
+//             onDblclick: () => { ctx.store.setEph({ selectedAsset: a.id }); ctx.actions.setTab("assets"); },
+//             menu: () => assetMenu(ctx, a), // added 2026-11-02 v0.3.0
+//           },
+//           kind === "image" ? h("img", { class: "rw-bin-thumb", src: viewURL(a.file, "input"), alt: "", loading: "lazy" }) : h("span", { class: "rw-bin-thumb rw-bg-" + cls + "-soft" }, icon(kind, 12)),
+//           h("b", { class: "mono rw-c-" + cls }, a.code), h("span", { class: "rw-ellipsis" }, a.name || a.file.split("/").pop()),
+//           a.duration ? h("span", { class: "mono rw-dim" }, a.duration.toFixed(1) + "s") : null)));
+//       })),
+//     h("div", {
+//       class: "rw-bin-drop", help: "timeline.bin.upload",
+//       onDragover: e => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.currentTarget.classList.add("over"); } },
+//       onDragleave: e => e.currentTarget.classList.remove("over"),
+//       onDrop: e => { e.preventDefault(); e.currentTarget.classList.remove("over"); uploadFiles(ctx, [...e.dataTransfer.files]); },
+//     }, icon("upload", 12), "Drop files to upload"));
+// }
+// [/OLD]
 
 // ---- Inspector ----
 
@@ -655,6 +725,7 @@ function renderInspector(ctx) {
           ctx.actions.editScene(s.id, sc => { sc.start.mode = v; });
         },
       })),
+    summaryBlock(ctx, s), // added 2026-11-06 v0.9.0: the scene's summary and what is on screen at the playhead
     h("div", { class: "rw-chips" }, refChips(ctx, s)),
     h("pre", { class: "rw-prompt-preview mono", help: "timeline.inspector.prompt", html: prompt ? highlightHTML(prompt) : "" },
       prompt ? null : h("span", { class: "rw-dim" }, ctx.eph.backend === "online" ? "The prompt preview appears once the scene has a prompt." : "Prompt preview needs the Reelwright backend (start ComfyUI with the node installed).")),
@@ -663,6 +734,65 @@ function renderInspector(ctx) {
       button({ label: "New take", icon: "refresh", help: "timeline.inspector.take", onClick: () => ctx.actions.run("take", [s.id]) }),
       h("span", { class: "rw-flex" }),
       toggle({ value: s.lock, label: "Lock take", help: "scene.lock", onChange: v => ctx.actions.editScene(s.id, sc => { sc.lock = v; }) })));
+}
+
+// added 2026-11-06 v0.9.0: the inspector's summary: the scene's summary (in a scene of several passes, the whole-scene
+// note), then the pass, shot and spoken line at the playhead, which follow the playhead while the film plays (nowAt)
+function summaryBlock(ctx, s) {
+  const p = ctx.p;
+  const plan = passLayout(p, s);
+  const multi = plan.passes.length > 1;
+  const raw = s.prompt.mode === "raw";
+  const txt = (raw ? s.prompt.raw : s.prompt.sections.summary || "").trim();
+  const now = h("div", { class: "rw-insp-now", help: "timeline.inspector.now" });
+  ctx.tl = ctx.tl || {};
+  Object.assign(ctx.tl, { now, nowScene: s.id, nowPlan: plan, nowTexts: multi ? passTextsOf(p, s, plan).texts : null, nowKey: null });
+  const { starts } = sceneStarts(p);
+  nowAt(ctx, sceneAt(p, p.ui.playhead), p.ui.playhead - (starts[sceneAt(p, p.ui.playhead).id] ?? 0));
+  return h("div", { class: "rw-insp-sum" },
+    h("div", { class: "rw-insp-label", help: multi && !raw ? "scene.prompt.sceneNote" : "timeline.inspector.summary" },
+      raw ? "Raw prompt" : multi ? `Scene note · ${plan.passes.length} passes` : "Summary"),
+    txt ? h("div", { class: "rw-insp-text", help: "timeline.inspector.summary" }, txt)
+      : h("div", { class: "rw-insp-text rw-dim", help: "timeline.inspector.summary" }, raw ? "No raw prompt yet." : "No summary yet: write one in the Scene tab, or let Write prompts do it."),
+    now);
+}
+
+// added 2026-11-06 v0.9.0: fill the inspector's "at the playhead" line (called by setPlayhead on every frame while
+// playing, so the DOM is touched only when what it shows changes)
+function nowAt(ctx, scene, local) {
+  const tl = ctx.tl;
+  const el = tl?.now;
+  if (!el || !el.isConnected && tl.nowKey !== null) return;
+  const p = ctx.p;
+  const s = p.scenes.find(x => x.id === tl.nowScene);
+  if (!s) return;
+  if (scene.id !== s.id) {
+    const key = "other|" + scene.id;
+    if (key === tl.nowKey) return;
+    tl.nowKey = key;
+    el.replaceChildren(h("span", { class: "rw-dim" }, `The playhead is in scene ${String(sceneIndex(p, scene.id) + 1).padStart(2, "0")} · ${scene.title}.`));
+    return;
+  }
+  const plan = tl.nowPlan;
+  const k = plan && plan.passes.length > 1 ? Math.max(0, plan.passes.findIndex((ps, i) => local < ps.end || i === plan.passes.length - 1)) : -1;
+  let shot = null, n = 0;
+  for (let i = 0; i < s.shots.length; i++) if (s.shots[i].t <= local + 1e-6) { shot = s.shots[i]; n = i + 1; }
+  const line = captionAt(p, s, local);
+  const key = [k, shot?.id, shot?.text, shot?.camera, line?.id, line?.text].join("|");
+  if (key === tl.nowKey) return;
+  tl.nowKey = key;
+  const clip = (x, len) => { x = String(x || "").replace(/\s+/g, " ").trim(); return x.length > len ? x.slice(0, len - 1).trimEnd() + "…" : x; };
+  const rows = [];
+  if (k >= 0) {
+    const ps = plan.passes[k];
+    const own = tl.nowTexts?.[k]?.summary?.trim();
+    rows.push(h("div", null, h("b", null, `Pass ${k + 1} of ${plan.passes.length}`), h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)}`),
+      own ? h("span", null, " · " + clip(own, 160)) : h("span", { class: "rw-dim" }, " · summary made from its shots")));
+  }
+  if (shot) rows.push(h("div", null, h("b", null, `Shot ${n}`), shot.camera ? h("span", { class: "rw-dim" }, ` · ${clip(shot.camera, 40)}`) : null, shot.text ? " · " + clip(shot.text, 180) : ""));
+  if (line) rows.push(h("div", null, h("b", null, (findCast(p, line.speaker)?.name || "Line") + ": "), "“" + clip(line.text, 180) + "”"));
+  if (!rows.length) rows.push(h("span", { class: "rw-dim" }, "Nothing written for this moment yet."));
+  el.replaceChildren(h("div", { class: "rw-insp-label" }, "At the playhead"), ...rows);
 }
 
 function refChips(ctx, s) {
@@ -689,7 +819,8 @@ function refChips(ctx, s) {
   }
   // added 2026-11-03 v0.5.0: the part of the soundtrack each pass covers
   if (sceneHasSong(p, s)) out.push(chip({ code: "SONG", label: "soundtrack · lips and cuts follow it", kind: "aud", help: "timeline.chip.song" }));
-  if (!out.length) out.push(h("span", { class: "rw-dim", help: "timeline.chip.none" }, "No references yet: drag assets from the bin onto the scene."));
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] if (!out.length) out.push(h("span", { class: "rw-dim", help: "timeline.chip.none" }, "No references yet: drag assets from the bin onto the scene."));
+  if (!out.length) out.push(h("span", { class: "rw-dim", help: "timeline.chip.none" }, "No references yet: add them in the Scene tab.")); // added 2026-11-06 v0.9.0: no asset bin
   return out;
 }
 
@@ -750,7 +881,31 @@ function renderTransport(ctx) {
     ctx.eph.playing && ctx.play && ctx.play.follow === false && button({ label: "Follow", icon: "eye", small: true, variant: "accent-ghost", key: "tl-follow",
       help: "timeline.follow", extra: null, onClick: () => resumeFollow(ctx) }),
     h("span", { class: "rw-flex" }),
+    // added 2026-11-06 v0.9.0: captions on/off, and the monitor's volume (the merge never reads either)
+    button({ label: "CC", small: true, variant: p.ui.captions === false ? "ghost" : "accent-ghost", key: "tl-cc", help: "timeline.captions",
+      onClick: () => { ctx.store.update(q => { q.ui.captions = q.ui.captions === false; }, { history: false, plan: false, autosave: false }); } }),
+    volumeControl(ctx),
     h("span", { class: "rw-dim", help: "timeline.transport.cut" }, "cut " + fmtTime(assembledDuration(p))));
+}
+
+// added 2026-11-06 v0.9.0: mute button and volume slider of the monitor (ui.mon_muted, ui.mon_volume 0–1). Dragging the
+// slider changes the sound at once without redrawing the tab (a redraw would take the slider from under the pointer).
+function volumeControl(ctx) {
+  const p = ctx.p;
+  const muted = p.ui.mon_muted === true;
+  const vol = uiNum(p, "mon_volume", 1, 0, 1);
+  const set = (fn, render) => {
+    ctx.store.update(fn, { history: false, plan: false, autosave: false, render });
+    applyVolume(ctx);
+    if (ctx.eph.playing) syncAudio(ctx, ctx.p.ui.playhead, true);
+  };
+  return h("span", { class: "rw-vol", help: "timeline.volume" },
+    button({ icon: muted || vol === 0 ? "mute" : "speaker", small: true, variant: "ghost", key: "tl-mute", help: "timeline.volume.mute",
+      ariaLabel: muted ? "Unmute" : "Mute",
+      onClick: () => set(q => { q.ui.mon_muted = !muted; if (muted && !(uiNum(q, "mon_volume", 1, 0, 1) > 0)) q.ui.mon_volume = 0.5; }, true) }),
+    slider({ value: Math.round((muted ? 0 : vol) * 100), min: 0, max: 100, step: 1, key: "tl-volume", help: "timeline.volume", format: v => v + "%",
+      onInput: v => set(q => { q.ui.mon_volume = v / 100; q.ui.mon_muted = false; }, false),
+      onChange: v => set(q => { q.ui.mon_volume = v / 100; q.ui.mon_muted = false; }, true) }));
 }
 
 // ---- Timeline lanes ----
@@ -1194,6 +1349,14 @@ export function assetMenu(ctx, a) {
       ctx.actions.editScene(s.id, sc => { sc.refs.push({ id: newId("r"), asset: a.id, role: a.defaults.role, time: 0, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack }); });
       ctx.actions.toast(`Added ${a.code} to ${s.title}.`, "ok");
     } },
+    // added 2026-11-06 v0.9.0: move it to a group (the first 12), out of its group, or into a new one
+    { sep: true },
+    { head: "Move to group" },
+    ...ctx.p.asset_groups.slice(0, 12).map(g => ({ label: g.name.trim() || "Unnamed group", icon: "folder", help: "assets.group.pick", disabled: a.group === g.id,
+      onClick: () => ctx.actions.edit(q => { const x = q.assets.find(y => y.id === a.id); if (x) x.group = g.id; }, { label: `Move ${a.code} to ${g.name || "a group"}` }) })),
+    a.group && { label: "No group", icon: "close", help: "assets.group.pick",
+      onClick: () => ctx.actions.edit(q => { const x = q.assets.find(y => y.id === a.id); if (x) x.group = ""; }, { label: `Take ${a.code} out of its group` }) },
+    { label: "New group…", icon: "plus", help: "assets.group.add", onClick: () => { const id = addGroup(ctx, "New group", a.id); ctx.store.setEph({ editGroup: id, selectedAsset: a.id }); ctx.actions.setTab("assets"); } },
     { sep: true },
     { label: "Delete asset", icon: "trash", help: "assets.delete", danger: true, onClick: () => ctx.actions.deleteAsset(a.id) },
   ];
@@ -1738,6 +1901,7 @@ export function render(ctx) {
   const s = sceneAt(p, p.ui.playhead);
   const m = monitorOf(ctx);
   m.show(s, p.ui.playhead - starts[s.id]);
+  /* [OLD 2026-11-06 v0.8.0->v0.9.0] asset bin | monitor | inspector at fixed sizes
   return h("div", { class: "rw-tl" },
     profileBanner(ctx), // added 2026-11-02 v0.3.0
     h("div", { class: "rw-tl-top" },
@@ -1745,4 +1909,37 @@ export function render(ctx) {
       h("div", { class: "rw-mon-col" }, m.el, renderTransport(ctx)),
       renderInspector(ctx)),
     h("div", { class: "rw-tl-main rw-panel" }, renderToolbar(ctx), renderLanes(ctx)));
+  [/OLD] */
+  // added 2026-11-06 v0.9.0: three panels. The bar between the monitor and the inspector sets the monitor's share of
+  // the width (ui.tl_mon, 0.15–0.85); the bar under them sets their height (ui.tl_top, px). Double-click a bar to
+  // reset it. Sizes are kept in the project like the zoom (no undo step).
+  const monCol = h("div", { class: "rw-mon-col rw-panel", style: { width: (uiNum(p, "tl_mon", MON_SHARE, 0.15, 0.85) * 100).toFixed(2) + "%" } }, m.el, renderTransport(ctx));
+  const top = h("div", { class: "rw-tl-top", style: { height: Math.round(uiNum(p, "tl_top", TOP_H, TOP_MIN, 4000)) + "px" } });
+  // a redraw while dragging (a render's progress, an autosave) puts new panels on screen: the bars work on those
+  const live = (el, sel) => (el.isConnected ? el : ctx.root.querySelector(sel)) || el;
+  let topW = 1, tlH = 0; // measured when a drag starts
+  const share = px => Math.max(0.15, Math.min(0.85, px / Math.max(1, topW)));
+  const keep = (k, v) => ctx.store.update(q => { if (v === null) delete q.ui[k]; else q.ui[k] = v; }, { history: false, plan: false, autosave: false });
+  top.append(monCol,
+    splitter({ dir: "x", help: "timeline.split.monitor", key: "tl-split-mon",
+      onStart: () => { const mc = live(monCol, ".rw-mon-col"); topW = live(top, ".rw-tl-top").clientWidth; return mc.getBoundingClientRect().width / rootScale(mc); },
+      onMove: px => { live(monCol, ".rw-mon-col").style.width = (share(px) * 100).toFixed(2) + "%"; },
+      onEnd: px => keep("tl_mon", Math.round(share(px) * 1000) / 1000),
+      onReset: () => keep("tl_mon", null) }),
+    renderInspector(ctx));
+  const tlEl = h("div", { class: "rw-tl" });
+  const topPx = px => Math.max(TOP_MIN, Math.min(Math.max(TOP_MIN, tlH - 190), px));
+  const banner = profileBanner(ctx); // added 2026-11-02 v0.3.0
+  if (banner) tlEl.append(banner);
+  tlEl.append(
+    top,
+    splitter({ dir: "y", help: "timeline.split.height", key: "tl-split-top",
+      onStart: () => { const tp = live(top, ".rw-tl-top"); tlH = live(tlEl, ".rw-tl").clientHeight; return tp.getBoundingClientRect().height / rootScale(tp); },
+      onMove: px => { live(top, ".rw-tl-top").style.height = topPx(px) + "px"; },
+      onEnd: px => keep("tl_top", Math.round(topPx(px))),
+      onReset: () => keep("tl_top", null) }),
+    h("div", { class: "rw-tl-main rw-panel" }, renderToolbar(ctx), renderLanes(ctx)));
+  return tlEl;
 }
+// added 2026-11-06 v0.9.0: default panel sizes (ui.tl_top in px, ui.tl_mon as a share of the width)
+const TOP_H = 340, TOP_MIN = 170, MON_SHARE = 0.42;

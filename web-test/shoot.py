@@ -86,7 +86,9 @@ def main():
         page.wait_for_timeout(400)
         page.screenshot(path=str(SHOTS / "scene_pass.png"))
         audit("Scene pass tab")
-        page.evaluate("() => { const c = document.querySelector('.rw-scene-tab .rw-cols'); const card = [...document.querySelectorAll('.rw-card')].find(x => x.querySelector('.rw-card-title')?.textContent === 'Shots'); c.scrollTop += card.getBoundingClientRect().top - c.getBoundingClientRect().top - 8; }")
+        # [OLD 2026-11-06 v0.8.0->v0.9.0] scrolled to the whole scene's Shots card, which a pass tab hides now
+        # page.evaluate("() => { const c = document.querySelector('.rw-scene-tab .rw-cols'); const card = [...document.querySelectorAll('.rw-card')].find(x => x.querySelector('.rw-card-title')?.textContent === 'Shots'); c.scrollTop += card.getBoundingClientRect().top - c.getBoundingClientRect().top - 8; }")
+        page.evaluate("() => { const c = document.querySelector('.rw-scene-tab .rw-cols'); const sub = [...document.querySelectorAll('.rw-subhead')].find(x => x.textContent.startsWith('Shots in this pass')); c.scrollTop += sub.getBoundingClientRect().top - c.getBoundingClientRect().top - 8; }")
         page.wait_for_timeout(300)
         page.screenshot(path=str(SHOTS / "scene_rows.png"))
         audit("Scene rows")

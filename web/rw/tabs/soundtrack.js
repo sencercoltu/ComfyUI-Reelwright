@@ -17,6 +17,7 @@ import {
   AUDIO_RETENTION, sceneHasSong,
   planScene, passSoundtrack, // added 2026-11-03 v0.6.0: the "what goes stale" preview while a synced track is dragged
 } from "../model.js";
+import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
 
 const WAVE_H = 30;
 // [OLD 2026-11-03 v0.5.1->v0.6.0] const TILE = 4096; // canvas tiles: browsers refuse very wide canvases
@@ -286,9 +287,11 @@ export function addTrack(ctx, assetId, start = 0) {
 function addMenu(ctx, e, start) {
   const audio = ctx.p.assets.filter(a => a.kind === "audio");
   const items = audio.length
-    ? audio.map(a => ({ label: `${a.code} · ${a.name || a.file.split("/").pop()}${a.duration ? " · " + fmtTime(a.duration, false) : ""}`, icon: "audio",
+    // [OLD 2026-11-06 v0.8.0->v0.9.0] ? audio.map(a => ({ label: `${a.code} · ${a.name || a.file.split("/").pop()}${a.duration ? " · " + fmtTime(a.duration, false) : ""}`, icon: "audio",
+    ? audio.map(a => ({ label: `${assetGroupName(ctx.p, a) ? assetGroupName(ctx.p, a) + " · " : ""}${a.code} · ${a.name || a.file.split("/").pop()}${a.duration ? " · " + fmtTime(a.duration, false) : ""}`, icon: "audio", // added 2026-11-06 v0.9.0: group first
       help: "timeline.track.add", onClick: () => addTrack(ctx, a.id, start) }))
-    : [{ label: "Upload an audio file to the Asset bin first", icon: "upload", help: "timeline.track.add", disabled: true }];
+    // [OLD 2026-11-06 v0.8.0->v0.9.0] : [{ label: "Upload an audio file to the Asset bin first", icon: "upload", help: "timeline.track.add", disabled: true }];
+    : [{ label: "Upload an audio file in the Assets tab first", icon: "upload", help: "timeline.track.add", disabled: true }];  // added 2026-11-06 v0.9.0: no asset bin
   contextMenu(ctx.root, e.clientX, e.clientY, items);
 }
 
@@ -660,7 +663,8 @@ export function trackInspector(ctx, t, helpers) {
   const len = trackLength(t, a);
   // [OLD 2026-11-03 v0.5.1->v0.6.0] const set = fn => editTrack(ctx, t.id, fn);
   const set = (fn, label = "Edit track") => editTrack(ctx, t.id, fn, label);
-  const audio = p.assets.filter(x => x.kind === "audio").map(x => ({ value: x.id, label: `${x.code} · ${x.name || x.file.split("/").pop()}` }));
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] const audio = p.assets.filter(x => x.kind === "audio").map(x => ({ value: x.id, label: `${x.code} · ${x.name || x.file.split("/").pop()}` }));
+  const audio = p.assets.filter(x => x.kind === "audio").map(x => ({ value: x.id, label: `${x.code} · ${x.name || x.file.split("/").pop()}`, pre: assetGroupName(p, x) })); // added 2026-11-06 v0.9.0: group first
   const scenes = t.sync ? p.scenes.filter(s => sceneHasSong(p, s)).length : 0;
   // added 2026-11-03 v0.6.0: the tempo and the beat grid of the file
   const bt = a?.file ? beatsOf(ctx, a.file) : null;
@@ -745,7 +749,8 @@ export function syncAudio(ctx, time, playing, jump = false) {
       let gain = dbGain(t.volume_db);
       if (t.fade_in > 0) gain *= Math.min(1, played / t.fade_in);
       if (t.fade_out > 0) gain *= Math.min(1, Math.max(0, end - played) / t.fade_out);
-      pl.el.volume = Math.max(0, Math.min(1, gain));
+      // [OLD 2026-11-06 v0.8.0->v0.9.0] pl.el.volume = Math.max(0, Math.min(1, gain));
+      pl.el.volume = Math.max(0, Math.min(1, gain * monitorGain(p))); // added 2026-11-06 v0.9.0: the monitor's volume and mute
       const want = t.in + local;
       const now = performance.now();
       // [OLD 2026-11-03 v0.5.1->v0.6.0] if (Math.abs(pl.el.currentTime - want) > 0.2 && now - pl.seekAt > 500) {
@@ -778,6 +783,14 @@ export function audioState(ctx) {
 export function stopAudio(ctx) {
   if (!ctx?.audioPlayers) return;
   for (const pl of ctx.audioPlayers.values()) pl.el.pause();
+}
+
+// added 2026-11-06 v0.9.0: the monitor's own volume (Timeline transport): 0 when muted, else ui.mon_volume (0–1, 1 by
+// default). It scales the take and every soundtrack track the monitor plays; the merge never reads it.
+export function monitorGain(p) {
+  if (p?.ui?.mon_muted === true) return 0;
+  const v = p?.ui?.mon_volume;
+  return typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
 }
 
 // The take's own sound while tracks play: the Merge card's scene level, or silent when scene sound is off.

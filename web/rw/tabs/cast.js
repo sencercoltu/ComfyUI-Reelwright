@@ -7,6 +7,7 @@ import { rw, viewURL } from "../api.js";
 // [OLD 2026-11-02 v0.3.3->v0.3.4] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes } from "../model.js";
 // [OLD 2026-11-03 v0.4.0->v0.4.1] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription } from "../model.js";
 import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription, sheetGrid, anchorPixels, sheetURL, castPacks } from "../model.js";
+import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
 import { describeBox } from "./assets.js"; // added 2026-11-02 v0.2.0: describe from anchors
 
 const KINDS = [["character", "Characters"], ["location", "Locations"], ["prop", "Props"]];
@@ -58,7 +59,8 @@ function anchorsCard(ctx, c) {
   const p = ctx.p;
   // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); });  (no History menu name)
   const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label: `Edit ${c.name}` }); // added 2026-11-03 v0.6.0: History menu name
-  const images = p.assets.filter(a => a.kind === "image" && !c.anchors.includes(a.id)).map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] const images = p.assets.filter(a => a.kind === "image" && !c.anchors.includes(a.id)).map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
+  const images = p.assets.filter(a => a.kind === "image" && !c.anchors.includes(a.id)).map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) })); // added 2026-11-06 v0.9.0: group first
   const scenesWithTakes = p.scenes.filter(s => ctx.starredTake(s.id)).map(s => ({ value: s.id, label: s.title }));
   const promote = async which => {
     const sid = ctx.eph.promoteScene || scenesWithTakes[0]?.value;
@@ -80,8 +82,11 @@ function anchorsCard(ctx, c) {
       // joins the assets, as an anchor only while the member exists
       let anchored = false;
       ctx.actions.edit(q => {
+        // [OLD 2026-11-06 v0.8.0->v0.9.0] q.assets.push({ id: a.id || newId("a"), code: "", kind: "image", name: a.name || `${c.name} frame`, file: a.file, duration: 0, width: a.width || 0, height: a.height || 0,
+        // [OLD 2026-11-06 v0.8.0->v0.9.0]   category: "subject", defaults: { role: "reference", retention: "fully_preserved", keep: [], soundtrack: false }, notes: "" });
         q.assets.push({ id: a.id || newId("a"), code: "", kind: "image", name: a.name || `${c.name} frame`, file: a.file, duration: 0, width: a.width || 0, height: a.height || 0,
-          category: "subject", defaults: { role: "reference", retention: "fully_preserved", keep: [], soundtrack: false }, notes: "" });
+          category: "subject", defaults: { role: "reference", retention: "fully_preserved", keep: [], soundtrack: false }, notes: "",
+          description: "", group: "", tags: [] }); // added 2026-11-06 v0.9.0: every field an asset has after normalising
         assignCodes(q.assets);
         const x = findCast(q, c.id);
         if (x) { x.anchors.push(q.assets[q.assets.length - 1].id); anchored = true; }
@@ -151,7 +156,8 @@ function profileCard(ctx, c) {
   const p = ctx.p;
   // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); });  (no History menu name)
   const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label: `Edit ${c.name}` }); // added 2026-11-03 v0.6.0: History menu name
-  const audio = p.assets.filter(a => a.kind === "audio").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] const audio = p.assets.filter(a => a.kind === "audio").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
+  const audio = p.assets.filter(a => a.kind === "audio").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) })); // added 2026-11-06 v0.9.0: group first
   const loras = ctx.eph.models?.loras || [];
   return section({
     title: c.kind === "character" ? "Character" : c.kind === "location" ? "Location" : "Prop", help: "cast.profile",

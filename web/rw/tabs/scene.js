@@ -2,6 +2,7 @@
 
 import { h, icon, button, toggle, segmented, select, number, text, textarea, chip, dot, section, field, meter, keepChips, slider } from "../ui.js";
 import { choiceDialog } from "../ui.js"; // added 2026-11-05 v0.7.0: "Apply to all scenes" asks which scenes
+import { resizableList, uiNum } from "../ui.js"; // added 2026-11-06 v0.9.0: shot and dialogue lists scroll in a box you can resize
 // added 2026-11-05 v0.7.0: the "In the cut" card (scene.merge)
 import { TRANSITIONS, DIRECTIONS, DIRECTED, mergeOf, ensureMerge, mergeDefaults, joinOf, transitionLabel } from "../cut.js";
 import { rw, viewURL } from "../api.js";
@@ -28,6 +29,7 @@ import {
   visibleStart, effectiveStart, tailOverlapFrames, planScene, passSoundtrack,
   soundtrackLocked, // added 2026-11-05 v0.7.0: transitions play as dips while a soundtrack sets the timing
 } from "../model.js";
+import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
 
 // added 2026-11-03 v0.6.0: a render step changes nothing on this tab (status changes come with a full render), so
 // progress events no longer rebuild it
@@ -531,7 +533,8 @@ function promptCard(ctx, s) {
   const busy = !!run?.running;
   const mine = busy && run.items[run.at]?.sid === s.id;
   const write = passes => runWrite(ctx, [{ sid: s.id, passes }], { origin: "scene" }).then(r => writeToast(ctx, r));
-  const tab = multi ? Math.max(-1, Math.min(plan.passes.length - 1, ctx.eph.promptTabs?.[s.id] ?? -1)) : -1;
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] const tab = multi ? Math.max(-1, Math.min(plan.passes.length - 1, ctx.eph.promptTabs?.[s.id] ?? -1)) : -1;
+  const tab = multi ? promptTabOf(ctx, s, plan, true) : -1; // added 2026-11-06 v0.9.0: one rule for every card
   const setTab = k => ctx.store.setEph({ promptTabs: { ...(ctx.eph.promptTabs || {}), [s.id]: k },
     ...(k >= 0 ? { openPasses: { ...ctx.eph.openPasses, [s.id]: k } } : {}) });
 
@@ -571,7 +574,8 @@ function promptCard(ctx, s) {
         tasks.length ? tasks.map((t, i) => [i > 0 && h("span", { class: "rw-dim mono" }, "+"), chip({ label: t, kind: "accent", help: "scene.prompt.tasks" })]) : h("span", { class: "rw-dim small" }, "plain text-to-video (no references)"),
         h("span", { class: "rw-dim small" }, "· derived from references and start")),
       tags.errors.length > 0 && h("div", { class: "rw-note err", help: "scene.prompt.unknownCode" }, icon("warn", 12),
-        `${list(tags.errors)} ${tags.errors.length > 1 ? "match" : "matches"} no asset of this project. Check the code (the Asset bin lists them: @P1, @V1, @A1 …).`),
+        // [OLD 2026-11-06 v0.8.0->v0.9.0] `${list(tags.errors)} ${tags.errors.length > 1 ? "match" : "matches"} no asset of this project. Check the code (the Asset bin lists them: @P1, @V1, @A1 …).`),
+        `${list(tags.errors)} ${tags.errors.length > 1 ? "match" : "matches"} no asset of this project. Check the code (the Assets tab lists them: @P1, @V1, @A1 …).`),
       tags.warns.length > 0 && h("div", { class: "rw-note warn", help: "scene.prompt.unknown" }, icon("warn", 12),
         `${list(tags.warns)}: not a cast member, asset or @soundtrack, so H3 gets ${tags.warns.length > 1 ? "them" : "it"} as plain text. Write @@ for a literal @.`),
       tags.notInScene.length > 0 && h("div", { class: "rw-note warn", help: "scene.prompt.notInScene" }, icon("warn", 12),
@@ -579,6 +583,26 @@ function promptCard(ctx, s) {
       mine && writeRow(ctx, run, plan),
       body,
     ],
+  });
+}
+
+// added 2026-11-06 v0.9.0: the Prompt card's tab (-1 = Whole scene, k = pass k + 1). The Shots and Dialogue cards show
+// only on Whole scene (a pass tab has its own rows), and What H3 receives shows the tab's pass, or every pass in turn on
+// Whole scene. Single-pass scenes and raw prompts have no tabs (-1); `anyMode` gives the stored tab in raw mode too.
+export function promptTabOf(ctx, s, plan = passLayout(ctx.p, s), anyMode = false) {
+  if (plan.passes.length < 2 || (!anyMode && s.prompt.mode === "raw")) return -1;
+  return Math.max(-1, Math.min(plan.passes.length - 1, ctx.eph.promptTabs?.[s.id] ?? -1));
+}
+
+// added 2026-11-06 v0.9.0: rows in a box that scrolls, with a grip under it to set its height (ui.shots_h for shot lists,
+// ui.lines_h for dialogue, shared by the scene's cards and the pass tabs; double-click the grip for the default)
+const LIST_H = { shots: ["shots_h", 380], lines: ["lines_h", 300] };
+function rowsBox(ctx, kind, scroll, rows) {
+  const [k, dflt] = LIST_H[kind];
+  return resizableList({
+    height: uiNum(ctx.p, k, dflt, 90, 2000), scroll, help: "scene.list.resize",
+    onResize: v => ctx.store.update(q => { if (v === null) delete q.ui[k]; else q.ui[k] = v; }, { history: false, plan: false, autosave: false }),
+    children: h("div", { class: "rw-rows" }, rows),
   });
 }
 
@@ -657,9 +681,11 @@ function passPane(ctx, s, plan, pt, k, { cands, write, busy }) {
       } })),
     SECTION_KEYS.map(passSection),
     h("div", { class: "rw-subhead", help: "scene.prompt.passShots" }, `Shots in this pass (${ps.shots.length})`),
-    ps.shots.length ? h("div", { class: "rw-rows" }, shotRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passShots" }, "No shots: this pass is one continuous take."),
+    // [OLD 2026-11-06 v0.8.0->v0.9.0] ps.shots.length ? h("div", { class: "rw-rows" }, shotRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passShots" }, "No shots: this pass is one continuous take."),
+    ps.shots.length ? rowsBox(ctx, "shots", `pshots-${s.id}-${n}`, shotRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passShots" }, "No shots: this pass is one continuous take."), // added 2026-11-06 v0.9.0
     h("div", { class: "rw-subhead", help: "scene.prompt.passLines" }, `Dialogue in this pass (${ps.dialogue.length})`),
-    ps.dialogue.length ? h("div", { class: "rw-rows" }, lineRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passLines" }, "No spoken lines start in this pass."));
+    // [OLD 2026-11-06 v0.8.0->v0.9.0] ps.dialogue.length ? h("div", { class: "rw-rows" }, lineRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passLines" }, "No spoken lines start in this pass."));
+    ps.dialogue.length ? rowsBox(ctx, "lines", `plines-${s.id}-${n}`, lineRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passLines" }, "No spoken lines start in this pass.")); // added 2026-11-06 v0.9.0
 }
 
 // added 2026-11-05 v0.8.0: what the running "Write prompts" is doing (this scene), and Stop
@@ -814,7 +840,8 @@ function shotsCard(ctx, s) {
     children: [
       ctx.eph.beatShots === s.id && songs && beatPlanNote(ctx, s, beatPlan),
       s.shots.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.shots" }, "No shots: the scene is written as one continuous take.")
-        : h("div", { class: "rw-rows" }, s.shots.map((sh, i) => shotRow(ctx, s, sh, i, { plan, lens, proposed: proposed.get(sh.id) }))),
+        // [OLD 2026-11-06 v0.8.0->v0.9.0] : h("div", { class: "rw-rows" }, s.shots.map((sh, i) => shotRow(ctx, s, sh, i, { plan, lens, proposed: proposed.get(sh.id) }))),
+        : rowsBox(ctx, "shots", "shots-" + s.id, s.shots.map((sh, i) => shotRow(ctx, s, sh, i, { plan, lens, proposed: proposed.get(sh.id) }))), // added 2026-11-06 v0.9.0
       over && h("div", { class: "rw-note warn rw-overrun", help: "scene.shots.overrun" }, icon("warn", 12),
         h("span", { class: "grow" }, [over.shots && `${over.shots} shot${over.shots === 1 ? "" : "s"}`, over.lines && `${over.lines} dialogue line${over.lines === 1 ? "" : "s"}`]
           .filter(Boolean).join(" and ") + ` start${over.shots + over.lines === 1 ? "s" : ""} after the scene ends (${s.duration.toFixed(2)} s).`),
@@ -1013,7 +1040,8 @@ function dialogueCard(ctx, s) {
     children: [
       !speakers.length && h("div", { class: "rw-note", help: "scene.dialogue.noCast" }, "Add a character in the Cast tab to give lines a speaker and a voice."),
       s.dialogue.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.dialogue" }, "No spoken lines.")
-        : h("div", { class: "rw-rows" }, s.dialogue.map(d => dialogueRow(ctx, s, d, { plan }))),
+        // [OLD 2026-11-06 v0.8.0->v0.9.0] : h("div", { class: "rw-rows" }, s.dialogue.map(d => dialogueRow(ctx, s, d, { plan }))),
+        : rowsBox(ctx, "lines", "lines-" + s.id, s.dialogue.map(d => dialogueRow(ctx, s, d, { plan }))), // added 2026-11-06 v0.9.0
       s.dialogue.some(d => d.language && !STABLE_LANGUAGES.includes(d.language)) && h("div", { class: "rw-note" }, "Some lines use a language outside H3's 11 stable ones."),
     ],
   });
@@ -1061,6 +1089,9 @@ function previewCard(ctx, s) {
   const overrides = s.prompt.pass_prompts || {};
   const hasOverride = overrides[String(open + 1)] !== undefined;
   const splitting = ctx.eph.splitJob?.scene_id === s.id ? ctx.eph.splitJob : null; // added 2026-11-03 v0.4.2
+  // added 2026-11-06 v0.9.0: which passes to show, from the Prompt card's tab (raw prompts: every pass)
+  const tab = promptTabOf(ctx, s);
+  const shownPasses = !prompts.length ? [0] : tab >= 0 ? [Math.min(tab, prompts.length - 1)] : prompts.map((_, i) => i);
   return section({
     title: "What H3 receives", help: "scene.preview",
     actions: [
@@ -1086,6 +1117,7 @@ function previewCard(ctx, s) {
       } }),
       long && Object.keys(overrides).length > 0 && button({ label: "Automatic split", small: true, help: "scene.preview.splitAuto", onClick: () => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts = {}; }) }),
     ],
+    /* [OLD 2026-11-06 v0.8.0->v0.9.0] its own row of pass tabs (eph.openPasses); the Prompt card's tabs choose now
     children: [
       splitting && llmBusyRow(ctx, splitting.job, "scene.preview.splitStop"), // added 2026-11-03 v0.4.2
       prompts.length > 1 && h("div", { class: "rw-pass-tabs" }, prompts.map((_, i) => {
@@ -1104,6 +1136,31 @@ function previewCard(ctx, s) {
           prompts[open] ? null : h("span", { class: "rw-dim" }, ctx.eph.backend === "online" ? "Nothing to send yet: add a summary, shots or references." : "The exact prompt is built by the Reelwright backend; it appears here when ComfyUI is running.")),
       excerptRow(ctx, s, open), // added 2026-11-03 v0.6.0: listen to the part of the song this pass is sent
       long && !hasOverride && prompts[open] && button({ label: "Edit this pass by hand", small: true, help: "scene.preview.override", onClick: () => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts[String(open + 1)] = prompts[open]; }) }),
+      plan?.key && h("div", { class: "rw-dim small mono", help: "render.cacheKey" }, "cache key " + plan.key.slice(0, 16)),
+    ],
+    [/OLD] */
+    // added 2026-11-06 v0.9.0: the pass of the Prompt card's tab, or every pass in turn on Whole scene (each with a head:
+    // its range, frames and seam), each with its excerpt and "Edit this pass by hand"
+    children: [
+      splitting && llmBusyRow(ctx, splitting.job, "scene.preview.splitStop"),
+      shownPasses.map(i => {
+        const ps = passes[i];
+        const own = overrides[String(i + 1)] !== undefined;
+        return h("div", { class: "rw-h3-pass", key: `h3pass-${s.id}-${i + 1}` },
+          shownPasses.length > 1 || (prompts.length > 1 && tab >= 0) ? h("div", { class: "rw-h3-pass-head", help: "scene.preview.pass" },
+            h("b", null, `Pass ${i + 1} of ${prompts.length}`),
+            ps && h("span", { class: "mono rw-dim small" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)} · ${ps.gen_frames} f${ps.seam_before && ps.seam_before !== "none" ? " · " + ps.seam_before : ""}`),
+            own && h("span", { class: "rw-c-accent small", help: "scene.preview.override" }, " ● edited by hand")) : null,
+          long && own
+            ? codeEditor({ value: overrides[String(i + 1)], help: "scene.preview.override", minRows: 6, maxHeight: 300, key: `pass-${s.id}-${i + 1}`, candidates: tagCandidates(ctx.p),
+              onInput: v => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts[String(i + 1)] = v; }, { coalesce: `pass-${s.id}-${i + 1}`, render: false }),
+              onChange: () => ctx.store.notify() })
+            : h("pre", { class: "rw-prompt-preview mono tall", help: "scene.preview", html: prompts[i] ? highlightHTML(prompts[i]) : "" },
+              prompts[i] ? null : h("span", { class: "rw-dim" }, ctx.eph.backend === "online" ? "Nothing to send yet: add a summary, shots or references." : "The exact prompt is built by the Reelwright backend; it appears here when ComfyUI is running.")),
+          excerptRow(ctx, s, i),
+          long && !own && prompts[i] && button({ label: "Edit this pass by hand", small: true, help: "scene.preview.override", key: `h3edit-${s.id}-${i + 1}`,
+            onClick: () => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts[String(i + 1)] = prompts[i]; }, { label: `Pass ${i + 1}: edit by hand` }) }));
+      }),
       plan?.key && h("div", { class: "rw-dim small mono", help: "render.cacheKey" }, "cache key " + plan.key.slice(0, 16)),
     ],
   });
@@ -1279,12 +1336,14 @@ function passBudgets(ctx, s) {
 function refsCard(ctx, s) {
   const p = ctx.p;
   const edit = (id, fn) => ctx.actions.editScene(s.id, sc => { const r = sc.refs.find(q => q.id === id); if (r) fn(r); });
-  const addable = p.assets.map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file.split("/").pop()}` }));
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] const addable = p.assets.map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file.split("/").pop()}` }));
+  const addable = p.assets.map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file.split("/").pop()}`, pre: assetGroupName(p, a) })); // added 2026-11-06 v0.9.0: group first
   return section({
     title: "References", help: "scene.refs",
     actions: h("span", { class: "rw-dim small" }, "tags renumber per pass"),
     children: [
-      s.refs.length === 0 && h("div", { class: "rw-empty sm", help: "scene.refs" }, "No references. Add one below or drag from the Timeline's asset bin."),
+      // [OLD 2026-11-06 v0.8.0->v0.9.0] s.refs.length === 0 && h("div", { class: "rw-empty sm", help: "scene.refs" }, "No references. Add one below or drag from the Timeline's asset bin."),
+      s.refs.length === 0 && h("div", { class: "rw-empty sm", help: "scene.refs" }, "No references. Add one below."),  // added 2026-11-06 v0.9.0: no asset bin
       s.refs.map(r => {
         const a = findAsset(p, r.asset);
         if (!a) return h("div", { class: "rw-note warn" }, "A reference points at a deleted asset.", button({ label: "Remove", small: true, help: "scene.refs.remove", onClick: () => ctx.actions.editScene(s.id, sc => { sc.refs = sc.refs.filter(x => x.id !== r.id); }) }));
@@ -1445,13 +1504,17 @@ export function afterRender(ctx) {
 export function render(ctx) {
   const s = ctx.scene;
   const issues = ctx.planFor(s.id)?.issues || [];
+  const wholeScene = promptTabOf(ctx, s) < 0; // added 2026-11-06 v0.9.0
   return h("div", { class: "rw-scene-tab" },
     navigator(ctx),
     issues.length > 0 && h("div", { class: "rw-banner warn", help: "app.issues" }, icon("warn", 13), issues.map(i => i.message).join(" · ")),
     h("div", { class: "rw-cols", dataset: { scroll: "scene-cols" } },
       // [OLD 2026-11-05 v0.6.1->v0.7.0] h("div", { class: "rw-col narrow" }, durationCard(ctx, s), startCard(ctx, s), overridesCard(ctx, s), notesCard(ctx, s)),
       h("div", { class: "rw-col narrow" }, durationCard(ctx, s), startCard(ctx, s), cutCard(ctx, s), overridesCard(ctx, s), notesCard(ctx, s)), // added 2026-11-05 v0.7.0: In the cut
-      h("div", { class: "rw-col wide" }, promptCard(ctx, s), shotsCard(ctx, s), dialogueCard(ctx, s), previewCard(ctx, s), rewriteCard(ctx, s)),
+      // [OLD 2026-11-06 v0.8.0->v0.9.0] h("div", { class: "rw-col wide" }, promptCard(ctx, s), shotsCard(ctx, s), dialogueCard(ctx, s), previewCard(ctx, s), rewriteCard(ctx, s)),
+      // added 2026-11-06 v0.9.0: on a pass tab the pass's own shots and dialogue are in the Prompt card, so the whole
+      // scene's cards are hidden
+      h("div", { class: "rw-col wide" }, promptCard(ctx, s), wholeScene && shotsCard(ctx, s), wholeScene && dialogueCard(ctx, s), previewCard(ctx, s), rewriteCard(ctx, s)),
       h("div", { class: "rw-col mid" }, budgetCard(ctx, s), refsCard(ctx, s), castCard(ctx, s), lorasCard(ctx, s))));
 }
 

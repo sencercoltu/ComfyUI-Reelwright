@@ -272,8 +272,14 @@
 .rw-ac-item.on, .rw-ac-item:hover { background: #2f343e; }
 
 /* ---- Timeline tab ---- */
+/* [OLD 2026-11-06 v0.8.0->v0.9.0] fixed sizes; the bars between the panels are the gaps now
 .rw-tl { display: flex; flex-direction: column; gap: 10px; padding: 12px; height: 100%; }
 .rw-tl-top { display: flex; gap: 10px; height: 340px; flex: none; min-height: 0; }
+[/OLD] */
+/* added 2026-11-06 v0.9.0: three panels with bars to resize (the height comes from ui.tl_top) */
+.rw-tl { display: flex; flex-direction: column; gap: 0; padding: 12px; height: 100%; box-sizing: border-box; min-height: 0; }
+.rw-tl > .rw-profile-banner { margin-bottom: 10px; }
+.rw-tl-top { display: flex; gap: 0; height: 340px; flex: none; min-height: 170px; max-height: calc(100% - 180px); }
 .rw-bin { width: 250px; flex: none; display: flex; flex-direction: column; min-height: 0; }
 .rw-bin-list { flex: 1 1 auto; overflow: auto; padding: 0 10px 6px; display: flex; flex-direction: column; gap: 8px; }
 .rw-bin-label { display: flex; align-items: center; gap: 6px; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; margin-bottom: 3px; }
@@ -285,8 +291,39 @@
 .rw-bin-thumb { width: 24px; height: 24px; border-radius: 5px; object-fit: cover; flex: none; display: inline-flex; align-items: center; justify-content: center; }
 .rw-bin-drop { margin: 6px 10px 10px; height: 34px; border: 1.5px dashed var(--line3); border-radius: 8px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--dim); font-size: 11px; }
 .rw-bin-drop.over, .rw-dropzone.over { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+/* [OLD 2026-11-06 v0.8.0->v0.9.0] a 292 px high 16:9 monitor beside the bin
 .rw-mon-col { display: flex; flex-direction: column; gap: 8px; flex: 0 1 auto; min-width: 0; }
 .rw-mon { position: relative; height: 292px; aspect-ratio: 16 / 9; max-width: 100%; border-radius: 10px; overflow: hidden; background: #0e0f13; border: 1px solid var(--line); }
+[/OLD] */
+/* added 2026-11-06 v0.9.0: the monitor fills its panel (the picture keeps its shape inside), the transport under it */
+.rw-mon-col { display: flex; flex-direction: column; gap: 6px; flex: none; min-width: 180px; min-height: 0; padding: 6px; box-sizing: border-box; }
+.rw-mon { position: relative; flex: 1 1 auto; min-height: 60px; width: 100%; border-radius: 8px; overflow: hidden; background: #0e0f13; border: 1px solid var(--line); }
+.rw-mon-col > .rw-transport { border: 0; background: transparent; padding: 0 2px; height: auto; min-height: 34px; flex-wrap: wrap; row-gap: 2px; }
+.rw-mon-cap { position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); max-width: 84%; padding: 4px 10px; border-radius: 4px; background: rgba(8, 9, 12, 0.78);
+  color: #f5f5f4; font-size: 13px; line-height: 1.35; text-align: center; white-space: pre-wrap; text-shadow: 0 1px 2px #000; pointer-events: none; }
+.rw-mon-cap b { color: #fde68a; font-weight: 600; }
+.rw-vol { display: inline-flex; align-items: center; gap: 2px; }
+.rw-vol .rw-range { width: 74px; }
+.rw-vol .rw-slider { gap: 4px; }
+.rw-vol .rw-slider-val { min-width: 32px; }
+/* bars between panels: a 10 px gap with a grip line in the middle */
+.rw-split { flex: none; position: relative; outline: none; }
+.rw-split-x { width: 10px; cursor: col-resize; align-self: stretch; }
+.rw-split-y { height: 10px; cursor: row-resize; }
+.rw-split::after { content: ""; position: absolute; border-radius: 2px; background: transparent; transition: background 0.12s; }
+.rw-split-x::after { left: 4px; width: 2px; top: 20%; bottom: 20%; }
+.rw-split-y::after { top: 4px; height: 2px; left: 30%; right: 30%; }
+.rw-split:hover::after, .rw-split:focus-visible::after { background: var(--line3); }
+.rw-split.on::after { background: var(--accent); }
+body.rw-dragging-x, body.rw-dragging-x * { cursor: col-resize !important; user-select: none !important; }
+body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-select: none !important; }
+/* the inspector's summary and "at the playhead" */
+.rw-insp-sum { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.rw-insp-label { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; color: var(--text3); }
+.rw-insp-text { font-size: 12px; line-height: 1.45; color: var(--text2); max-height: 5.8em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rw-insp-now { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; line-height: 1.4; color: var(--text2); padding: 6px 8px; border-radius: 6px; background: var(--panel2); margin-top: 2px; }
+.rw-insp-now b { color: var(--text); font-weight: 600; }
+.rw-insp-now .rw-insp-label { margin-bottom: 1px; }
 .rw-mon-video, .rw-mon-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #0e0f13; }
 .rw-mon-img { object-fit: cover; filter: saturate(0.9); }
 .rw-mon-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #4b5260; font-size: 18px; font-weight: 600; background: repeating-linear-gradient(135deg, #121419 0 14px, #15171c 14px 28px); }
@@ -300,9 +337,16 @@
 .rw-transport { display: flex; align-items: center; gap: 4px; height: 40px; padding: 0 6px; flex: none; }
 .rw-tc { font-size: 13px; margin-left: 6px; }
 .rw-loop-label { font-size: 10.5px; color: var(--accent-text); margin-left: 6px; }
+/* [OLD 2026-11-06 v0.8.0->v0.9.0]
 .rw-insp { flex: 1 1 auto; min-width: 0; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; overflow: hidden; }
 .rw-insp .rw-chips { flex: none; max-height: 50px; overflow: hidden; }
 .rw-insp .rw-prompt-preview { flex: 1 1 auto; max-height: none; min-height: 0; }
+[/OLD] */
+/* added 2026-11-06 v0.9.0: the inspector scrolls inside its panel; the prompt preview gets what is left, at least 80 px */
+.rw-insp { flex: 1 1 0; min-width: 200px; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; overflow: auto; box-sizing: border-box; }
+.rw-insp .rw-chips { flex: none; max-height: 50px; overflow: hidden; }
+.rw-insp .rw-prompt-preview { flex: 1 1 auto; max-height: none; min-height: 80px; }
+.rw-insp > .rw-row:last-child { position: sticky; bottom: -12px; margin: 0 -14px -12px; padding: 8px 14px; background: var(--panel); border-top: 1px solid var(--line2); z-index: 1; }
 .rw-insp-head { display: flex; align-items: center; gap: 9px; }
 .rw-idx { font-weight: 600; font-size: 11px; padding: 3px 7px; border-radius: 6px; background: var(--accent); color: #1a0d08; }
 .rw-title-input { background: transparent; border: 1px solid transparent; color: var(--text); font: 600 15px var(--sans); height: 30px; border-radius: 6px; padding: 0 6px; min-width: 80px; flex: 0 1 260px; }
@@ -679,11 +723,15 @@
 .rw-sheet-img { width: 150px; max-height: 150px; object-fit: contain; border-radius: 6px; border: 1px solid var(--line); background: #0c0d10; cursor: zoom-in; flex: none; }
 .rw-avatar.sheet { object-fit: contain; background: #0c0d10; }
 /* added 2026-11-03 v0.4.1: Files tab preview pane */
-.rw-files-main { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
+/* [OLD 2026-11-06 v0.8.0->v0.9.0] .rw-files-main { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; } */
+.rw-files-main { flex: 1 1 auto; min-height: 0; display: flex; gap: 0; } /* added 2026-11-06 v0.9.0: the bar is the gap */
+.rw-files-main > .rw-ftree { flex: 1 1 0; }
 .rw-files-main > .rw-ftree { min-width: 0; }
-.rw-fprev { flex: 0 0 380px; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); overflow: auto; }
+/* [OLD 2026-11-06 v0.8.0->v0.9.0] .rw-fprev { flex: 0 0 380px; ... }  (the width comes from ui.files_prev now, set by the bar) */
+.rw-fprev { flex: 0 0 auto; width: 380px; min-width: 220px; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); overflow: auto; }
 .rw-fprev-head { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
-.rw-fprev-media { display: block; width: 100%; max-height: 420px; object-fit: contain; border-radius: 6px; background: #0c0d10; }
+/* [OLD 2026-11-06 v0.8.0->v0.9.0] .rw-fprev-media { ... max-height: 420px; ... } */
+.rw-fprev-media { display: block; width: 100%; max-height: 70vh; object-fit: contain; border-radius: 6px; background: #0c0d10; }
 .rw-fprev-audio { width: 100%; }
 .rw-fprev-text { margin: 0; padding: 8px; font-size: 11px; line-height: 1.45; max-height: 460px; overflow: auto; white-space: pre-wrap; word-break: break-word; background: #0c0d10; border-radius: 6px; color: var(--text2); }
 .rw-fprev-meta { display: flex; flex-direction: column; gap: 2px; }
@@ -719,7 +767,9 @@
 .rw-track-clip.muted { opacity: 0.4; }
 .rw-track-clip.ghost { cursor: pointer; border-style: dashed; opacity: 0.55; }
 .rw-track-clip.ghost.muted { opacity: 0.25; }
-.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: none; }
+/* [OLD 2026-11-06 v0.8.0->v0.9.0] .rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: none; }  (also hit the Assets
+   tab's audio thumbnails, which are .rw-wave too: they were pulled out of their cards to the top of the tab) */
+canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: none; } /* added 2026-11-06 v0.9.0: the soundtrack lane's canvas only */
 .rw-track-label { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; margin: 2px 4px; padding: 0 5px; border-radius: 3px; background: rgba(11, 12, 15, 0.72); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; position: relative; z-index: 1; }
 .rw-track-label b { color: var(--aud-t); font-weight: 500; }
 .rw-track-flags { color: var(--text3); font-size: 9px; margin-left: 4px; }
@@ -894,3 +944,32 @@
 .rw-take-long { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rw-take .rw-take-file { flex: 0 1 auto; min-width: 60px; }
 .rw-ptab > .mono { margin-left: 3px; }
+
+/* added 2026-11-06 v0.9.0: Scene tab shot and dialogue lists scroll in a box whose height the grip under it sets */
+.rw-rlist-wrap { display: flex; flex-direction: column; min-height: 0; }
+.rw-rlist { overflow: auto; min-height: 0; overscroll-behavior: contain; }
+.rw-rlist-grip { height: 12px; margin-top: 2px; }
+.rw-rlist-grip::after { top: 5px; left: calc(50% - 24px); right: calc(50% - 24px); background: var(--line3); }
+.rw-rlist-grip:hover::after { background: var(--text3); }
+/* What H3 receives: one block per pass shown */
+.rw-h3-pass { display: flex; flex-direction: column; gap: 6px; }
+.rw-h3-pass + .rw-h3-pass { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--line2); }
+.rw-h3-pass-head { font-size: 12px; display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+
+/* added 2026-11-06 v0.9.0: Assets tab groups and tags */
+.rw-agroup { transition: border-color 0.12s, background 0.12s; }
+.rw-agroup.over { border-color: var(--accent); background: var(--accent-soft); }
+.rw-agroup.loose .rw-card-title { color: var(--text2); }
+.rw-agroup.closed { gap: 0; }
+.rw-agroup-caret { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: var(--text3); padding: 0; cursor: pointer; }
+.rw-agroup-caret:hover { background: var(--raise); color: var(--text); }
+.rw-agroup-desc { max-width: 46%; }
+.rw-agroup-edit { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--panel2); }
+.rw-tag-row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.rw-tag-row > .rw-dim { display: inline-flex; align-items: center; gap: 4px; margin-right: 2px; }
+.rw-tag-btn { height: 22px; padding: 0 8px; border-radius: 11px; border: 1px solid var(--line3); background: transparent; color: var(--text2); font-size: 11px; cursor: pointer; }
+.rw-tag-btn:hover { background: var(--raise); }
+.rw-tag-btn.on { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+.rw-asset-tags { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; overflow: hidden; max-height: 20px; }
+.rw-asset-grp { font-weight: 500; }
+.rw-combo-pre { color: var(--text3); }

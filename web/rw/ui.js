@@ -109,6 +109,7 @@ const ICONS = {
   // added 2026-11-03 v0.4.0: Files tab
   disk: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 9.5h12"/><path d="M11 11.3h.8"/>',
   folder: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/>',
+  tag: '<path d="M2.5 3.5v4l6 6 5-5-6-6h-4a1 1 0 0 0-1 1z"/><circle cx="5.5" cy="5.5" r="1"/>', // added 2026-11-06 v0.9.0: asset tags
   file: '<path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/>',
   history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.3 2.6v2.6h2.6M8 5v3.2l2.2 1.4"/>', // added 2026-11-03 v0.6.0
 };
@@ -242,7 +243,11 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
   const opts = noneOpt ? [{ value: "", label: placeholder }, ...given] : given;
   const cur = opts.find(o => o.value === value);
   const missing = !cur && !!value && !free;
-  const shown = cur ? (cur.value === "" ? "" : cur.label) : (value || "");
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] const shown = cur ? (cur.value === "" ? "" : cur.label) : (value || "");
+  // added 2026-11-06 v0.9.0: an option's `pre` (an asset's group) is shown before its label and found by the filter;
+  // it is only shown, never part of the value
+  const full = o => (o.pre ? o.pre + " · " + o.label : o.label);
+  const shown = cur ? (cur.value === "" ? "" : full(cur)) : (value || "");
   const input = h("input", {
     type: "text", class: ["rw-combo-input", mono && "mono", missing && "missing"], help, key,
     placeholder: placeholder ?? (free ? "type or pick…" : "type to filter…"),
@@ -255,7 +260,8 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
 
   const matches = q => {
     const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
-    return opts.filter(o => { const s = (o.label + " " + o.value).toLowerCase(); return terms.every(t => s.includes(t)); });
+    // [OLD 2026-11-06 v0.8.0->v0.9.0] return opts.filter(o => { const s = (o.label + " " + o.value).toLowerCase(); return terms.every(t => s.includes(t)); });
+    return opts.filter(o => { const s = (o.label + " " + o.value + " " + (o.pre || "")).toLowerCase(); return terms.every(t => s.includes(t)); }); // added 2026-11-06 v0.9.0: pre
   };
   const mark = (label, q) => {
     const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -290,7 +296,8 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
       ...items.map((o, i) => h("button", {
         type: "button", class: ["rw-combo-opt", i === active && "active", o.value === value && "cur", o.value === "" && "none"], role: "option",
         onPointerdown: e => { e.preventDefault(); choose(o); },
-      }, mark(o.label, q))),
+      // [OLD 2026-11-06 v0.8.0->v0.9.0] }, mark(o.label, q))),
+      }, o.pre ? h("span", { class: "rw-combo-pre" }, mark(o.pre, q), " · ") : null, mark(o.label, q))), // added 2026-11-06 v0.9.0: pre
       freeItem ? h("button", { type: "button", class: ["rw-combo-opt free", active === items.length && "active"],
         onPointerdown: e => { e.preventDefault(); choose({ value: typed, label: typed }); } }, "Use “" + typed + "”") : null,
       !items.length && !freeItem ? h("div", { class: "rw-combo-empty" }, opts.length ? "No match" : "Nothing to pick yet") : null].filter(Boolean));
@@ -335,7 +342,8 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
   }
   function choose(o) {
     done = true;
-    input.value = o.value === "" ? "" : o.label;
+    // [OLD 2026-11-06 v0.8.0->v0.9.0] input.value = o.value === "" ? "" : o.label;
+    input.value = o.value === "" ? "" : full(o); // added 2026-11-06 v0.9.0: pre
     close();
     if (o.value !== value) onChange(o.value);
   }
@@ -694,4 +702,92 @@ export function confirmDialog(root, { title, message, confirmLabel, okLabel, dan
       { value: true, label: okLabel || confirmLabel || "Delete", variant: danger ? "danger" : "primary", help: "common.confirm" },
     ],
   });
+}
+
+// added 2026-11-06 v0.9.0: the scale of the editor on screen (ComfyUI's canvas zoom scales the root), so a drag in
+// screen pixels can be turned into CSS pixels of the editor
+export function rootScale(el) {
+  const root = el?.closest?.(".rw-root");
+  if (!root) return 1;
+  const r = root.getBoundingClientRect();
+  return r.width / (root.offsetWidth || r.width) || 1;
+}
+
+// added 2026-11-06 v0.9.0: a bar between two panels (Timeline tab, Files tab). dir "x" drags sideways (a bar between
+// columns), "y" up and down (a bar between rows). onStart() returns the size being changed (CSS px); onMove(size) is
+// called while dragging (set the style there, cheap) and onEnd(size) once at the end (store it). A double-click calls
+// onReset (back to the default size). Arrow keys move it by 16 px when it has focus.
+export function splitter({ dir = "x", help, key, onStart, onMove, onEnd, onReset, sign = 1 }) {
+  const bar = h("div", {
+    class: ["rw-split", "rw-split-" + dir], role: "separator", tabindex: "0", help, key,
+    "aria-orientation": dir === "x" ? "vertical" : "horizontal",
+    onDblclick: e => { e.preventDefault(); onReset?.(); },
+    onKeydown: e => {
+      const back = dir === "x" ? "ArrowLeft" : "ArrowUp", fwd = dir === "x" ? "ArrowRight" : "ArrowDown";
+      if (e.key !== back && e.key !== fwd) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const start = onStart();
+      const size = start + (e.key === fwd ? 16 : -16) * sign;
+      onMove(size);
+      onEnd(size);
+    },
+    onPointerdown: e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const sc = rootScale(bar);
+      const at = dir === "x" ? e.clientX : e.clientY;
+      const start = onStart();
+      let size = start;
+      bar.classList.add("on");
+      document.body.classList.add(dir === "x" ? "rw-dragging-x" : "rw-dragging-y");
+      const move = ev => {
+        if (!(ev.buttons & 1)) { stop(); return; }
+        size = start + (((dir === "x" ? ev.clientX : ev.clientY) - at) / sc) * sign;
+        onMove(size);
+      };
+      const stop = () => {
+        window.removeEventListener("pointermove", move, true);
+        window.removeEventListener("pointerup", stop, true);
+        window.removeEventListener("pointercancel", stop, true);
+        window.removeEventListener("blur", stop);
+        bar.classList.remove("on");
+        document.body.classList.remove("rw-dragging-x", "rw-dragging-y");
+        onEnd(size);
+      };
+      window.addEventListener("pointermove", move, true);
+      window.addEventListener("pointerup", stop, true);
+      window.addEventListener("pointercancel", stop, true);
+      window.addEventListener("blur", stop);
+    },
+  });
+  return bar;
+}
+
+// added 2026-11-06 v0.9.0: a list that scrolls inside a box whose height the user sets with the grip under it (Scene
+// tab shots and dialogue). `height` is the box's largest height in CSS px (shorter content makes it shorter);
+// onResize(px) stores a new height, onResize(null) the default. `scroll` keeps the list's scroll position across
+// re-renders (editor.js restores [data-scroll]).
+export function resizableList({ height, min = 90, max = 2000, scroll, help, onResize, children, cls }) {
+  const box = h("div", { class: ["rw-rlist", cls], dataset: scroll ? { scroll } : undefined, style: { "max-height": Math.max(min, Math.min(max, height)) + "px" } }, children);
+  // a redraw while dragging puts a new box on screen (found again by its scroll key)
+  let root = null;
+  const live = () => (box.isConnected || !root || !scroll ? box : root.querySelector(`.rw-rlist[data-scroll="${CSS.escape(scroll)}"]`) || box);
+  const grip = splitter({
+    dir: "y", help,
+    onStart: () => { root = box.closest(".rw-root"); return box.getBoundingClientRect().height / rootScale(box); },
+    onMove: v => { live().style.maxHeight = Math.max(min, Math.min(max, v)) + "px"; },
+    onEnd: v => onResize(Math.round(Math.max(min, Math.min(max, v)))),
+    onReset: () => onResize(null),
+  });
+  grip.classList.add("rw-rlist-grip");
+  return h("div", { class: "rw-rlist-wrap" }, box, grip);
+}
+
+// added 2026-11-06 v0.9.0: a number kept in project.ui (layout sizes, the monitor's volume), clamped; anything that is
+// not a finite number gives the default
+export function uiNum(p, key, dflt, lo = -Infinity, hi = Infinity) {
+  const v = p?.ui?.[key];
+  return typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt;
 }

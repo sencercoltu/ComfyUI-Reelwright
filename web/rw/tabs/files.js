@@ -1,7 +1,8 @@
 // added 2026-11-03 v0.4.0: Files tab. Everything Reelwright wrote to disk, for every project, as a tree with sizes:
 // takes (and their intermediate pass videos), merged cuts, autosaved versions, cast training sets and the
 // project's assets. Pick what to delete; the backend (reelwright/files.py) checks every id again.
-import { h, icon, button, segmented, section, confirmDialog } from "../ui.js";
+// [OLD 2026-11-06 v0.8.0->v0.9.0] import { h, icon, button, segmented, section, confirmDialog } from "../ui.js";
+import { h, icon, button, segmented, section, confirmDialog, splitter, uiNum, rootScale } from "../ui.js"; // added 2026-11-06 v0.9.0: the bar
 import { rw, viewURL } from "../api.js";
 
 export function fmtBytes(n) {
@@ -396,6 +397,26 @@ function row(ctx, ix, n, depth, parentSize) {
   return out;
 }
 
+// added 2026-11-06 v0.9.0: the file list and the preview with a bar between them; dragging it sets the preview's
+// width (ui.files_prev, px; kept in the project like the timeline's sizes), a double-click resets it
+const PREV_W = 380, PREV_MIN = 220;
+function filesMain(ctx, tree, pane) {
+  const main = h("div", { class: "rw-files-main" }, tree);
+  if (!pane) return main;
+  // a redraw while dragging (a scan, a render's progress) puts a new pane on screen: the bar works on that one
+  const live = (el, sel) => (el.isConnected ? el : ctx.root.querySelector(sel)) || el;
+  let mainW = 0; // measured when a drag starts
+  const clamp = px => Math.round(Math.max(PREV_MIN, Math.min(Math.max(PREV_MIN, mainW - 280), px)));
+  pane.style.width = Math.round(uiNum(ctx.p, "files_prev", PREV_W, PREV_MIN, 4000)) + "px";
+  const keep = v => ctx.store.update(q => { if (v === null) delete q.ui.files_prev; else q.ui.files_prev = v; }, { history: false, plan: false, autosave: false });
+  main.append(splitter({ dir: "x", sign: -1, help: "files.split", key: "files-split",
+    onStart: () => { const pn = live(pane, ".rw-fprev"); mainW = live(main, ".rw-files-main").clientWidth; return pn.getBoundingClientRect().width / rootScale(pn); },
+    onMove: px => { live(pane, ".rw-fprev").style.width = clamp(px) + "px"; },
+    onEnd: px => keep(clamp(px)),
+    onReset: () => keep(null) }), pane);
+  return main;
+}
+
 export function render(ctx) {
   const data = ctx.eph.files;
   if (data === undefined && !ctx.eph.filesLoading && !ctx.eph.filesError) queueMicrotask(() => load(ctx));
@@ -440,9 +461,12 @@ export function render(ctx) {
     : !data ? h("div", { class: "rw-empty" }, "Scanning Reelwright's folders…")
       : !roots.length ? h("div", { class: "rw-empty" }, "Nothing on disk yet. Takes, cuts and uploaded assets show up here.")
         // [OLD 2026-11-03 v0.4.0->v0.4.1] : h("div", { class: "rw-ftree", dataset: { scroll: "files" }, help: "files.tree" }, roots.flatMap(p => row(ctx, ix, p, 0, data.size)));
+        /* [OLD 2026-11-06 v0.8.0->v0.9.0] the preview had a fixed width
         : h("div", { class: "rw-files-main" },
           h("div", { class: "rw-ftree", dataset: { scroll: "files" }, help: "files.tree" }, roots.flatMap(p => row(ctx, ix, p, 0, data.size))),
           previewPane(ctx, ix));
+        [/OLD] */
+        : filesMain(ctx, h("div", { class: "rw-ftree", dataset: { scroll: "files" }, help: "files.tree" }, roots.flatMap(p => row(ctx, ix, p, 0, data.size))), previewPane(ctx, ix)); // added 2026-11-06 v0.9.0
 
   return h("div", { class: "rw-files-tab" },
     section({

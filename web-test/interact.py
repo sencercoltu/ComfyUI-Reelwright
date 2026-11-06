@@ -1492,6 +1492,7 @@ def main():
         v061_checks(page, check, saved, shots)  # added 2026-11-04 v0.6.1: frontend fixes of the third review
         v070_checks(page, check, saved, shots)  # added 2026-11-05 v0.7.0: In the cut, Merge card, filmstrip, continuity switch
         v080_checks(page, check, saved, shots)  # added 2026-11-05 v0.8.0: pass tabs, Write prompts, rows, follow, seams, drift
+        v090_checks(page, check, saved, shots)  # added 2026-11-06 v0.9.0: Timeline panels, captions, volume; Scene lists; asset groups
         browser.close()
     httpd.shutdown()
 
@@ -3251,7 +3252,10 @@ def v080_checks(page, check, saved, shots):
     check(rows.count() == 1 and rows.first.locator(".rw-shot-label").inner_text() == "[Shot 1]" and "#4" in rows.first.inner_text()
           and pane.locator("input[data-key='p3-shot-t-h_12']").input_value() == "22", "pass 3 shows its one shot, numbered for the pass, at its scene time")
     check(pane.locator(".rw-dlg-row").count() == 0 and pane.locator("[data-key='write-s_07-3']").count() == 1, "pass 3: no lines, Write this pass")
-    check(page.evaluate("window.__editor.eph.openPasses.s_07") == 2 and page.locator(".rw-pass-tab.on").inner_text().startswith("Pass 3"), "the preview follows the open pass tab")
+    # [OLD 2026-11-06 v0.8.0->v0.9.0] What H3 receives had its own pass tabs (.rw-pass-tab); it follows the Prompt tab now
+    # check(page.evaluate("window.__editor.eph.openPasses.s_07") == 2 and page.locator(".rw-pass-tab.on").inner_text().startswith("Pass 3"), "the preview follows the open pass tab")
+    heads = page.locator(".rw-h3-pass-head").all_inner_texts()
+    check(page.locator(".rw-pass-tab").count() == 0 and len(heads) == 1 and heads[0].startswith("Pass 3 of 3"), f"the preview shows the open pass tab's pass: {heads}")
     page.click("[data-key='ptab-s_07-2']")
     page.wait_for_timeout(300)
     check(page.locator(".rw-pass-pane .rw-dlg-row").count() == 1 and page.locator("[data-key='p2-dlg-t-d_4']").input_value() == "20.75", "pass 2 shows the line that starts in it")
@@ -3362,6 +3366,7 @@ def v080_checks(page, check, saved, shots):
     settle()
 
     # 7. Shot rows: start / end / length in scene time, editable length, camera picker, growing text, seam notes
+    page.evaluate("window.__editor.store.setEph({ promptTabs: {} })")  # added 2026-11-06 v0.9.0: a pass tab hides the scene's Shots card
     load(demo(tab="scene", selected="s_07"))
     row = lambda sid: page.locator(f".rw-shot-row:has(input[data-key='shot-t-{sid}'])")
     check(page.locator("input[data-key='shot-t-h_10']").input_value() == "6" and row("h_10").locator(".rw-shot-end").inner_text().startswith("→ 14.375")
@@ -3639,6 +3644,253 @@ def v080_checks(page, check, saved, shots):
           f" not following: {r0['frames']} frames (p95 {r0['p95']:.1f} ms, {r0['renders']} renders)", flush=True)
     r = {**r, "sl": r["moved"]}
     check(r["moved"] > 200 and r0["moved"] == 0 and r["renders"] <= 4 and r["frames"] >= 0.7 * r0["frames"], f"300 scenes: following costs no renders and few frames: {r} vs {r0}")
+
+    load(json.loads(saved))
+    tab("Timeline")
+
+
+
+def v090_checks(page, check, saved, shots):
+    """v0.9.0: the Timeline tab's three panels (no asset bin; bars that resize them, sizes kept in project.ui without an
+    undo step, double-click resets), captions that follow the playhead while the film plays, CC and the monitor's
+    volume; the Scene tab (a pass tab hides the scene's Shots and Dialogue cards, lists scroll in a box the grip resizes,
+    What H3 receives follows the Prompt tabs); asset groups and tags; the Files tab's bar."""
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    labels = lambda: [x["label"] for x in page.evaluate("window.__editor.store.history()") if x["done"]]
+    box = lambda sel: page.locator(sel).first.bounding_box()
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def tab(name):
+        page.click(f".rw-tab:has-text('{name}')")
+        page.wait_for_timeout(300)
+
+    def demo(**ui):
+        q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+        q["soundtrack"] = []
+        q["global"]["merge"]["score"] = {"asset": "", "volume_db": -12, "duck": False}
+        q["ui"].update(ui)
+        return q
+
+    def drag(sel, dx=0, dy=0):
+        b = box(sel)
+        x, y = b["x"] + b["width"] / 2, b["y"] + b["height"] / 2
+        page.mouse.move(x, y)
+        page.mouse.down()
+        for k in range(1, 6):
+            page.mouse.move(x + dx * k / 5, y + dy * k / 5)
+        page.mouse.up()
+        page.wait_for_timeout(250)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    page.evaluate("window.__editor.store.setEph({ toasts: [], promptTabs: {}, assetView: null, assetTag: '', editGroup: '' })")
+
+    # 1. Timeline: monitor | bar | inspector, a bar, then the lanes; no asset bin
+    load(demo(tab="timeline", selected="s_03"))
+    check(page.locator(".rw-bin").count() == 0 and page.locator(".rw-tl-top > .rw-mon-col").count() == 1
+          and page.locator(".rw-tl-top > .rw-split-x").count() == 1 and page.locator(".rw-tl-top > .rw-insp").count() == 1
+          and page.locator(".rw-tl > .rw-split-y").count() == 1 and page.locator(".rw-tl > .rw-tl-main").count() == 1, "timeline: three panels with bars, no asset bin")
+    n0 = len(labels())
+    w0 = box(".rw-mon-col")["width"]
+    drag(".rw-tl-top > .rw-split-x", dx=120)
+    w1 = box(".rw-mon-col")["width"]
+    ui = cur()["ui"]
+    check(abs(w1 - w0 - 120) < 6 and 0.15 <= ui.get("tl_mon", 0) <= 0.85 and len(labels()) == n0, f"the side bar widens the monitor ({w0:.0f} -> {w1:.0f}, tl_mon {ui.get('tl_mon')}), no undo step")
+    h0 = box(".rw-tl-top")["height"]
+    drag(".rw-tl > .rw-split-y", dy=60)
+    h1 = box(".rw-tl-top")["height"]
+    ui = cur()["ui"]
+    check(abs(h1 - h0 - 60) < 4 and abs(ui.get("tl_top", 0) - h1) < 2, f"the lower bar sets the panels' height ({h0:.0f} -> {h1:.0f}, tl_top {ui.get('tl_top')})")
+    page.evaluate("window.__editor.store.notify()")
+    page.wait_for_timeout(200)
+    check(abs(box(".rw-mon-col")["width"] - w1) < 2 and abs(box(".rw-tl-top")["height"] - h1) < 2, "sizes survive a redraw")
+    page.screenshot(path=str(shots / "v090_timeline_resized.png"))
+    page.dblclick(".rw-tl-top > .rw-split-x")
+    page.dblclick(".rw-tl > .rw-split-y")
+    page.wait_for_timeout(250)
+    ui = cur()["ui"]
+    check("tl_mon" not in ui and "tl_top" not in ui and abs(box(".rw-mon-col")["width"] - w0) < 3 and abs(box(".rw-tl-top")["height"] - h0) < 3, "double-clicking the bars resets them")
+    audit("Timeline panels")
+
+    # 2. Captions follow the playhead while the film plays (they stood still after v0.8.0 stopped redrawing every frame)
+    line = page.evaluate("""async () => { const m = await import('/web/rw/model.js'); const p = window.__editor.project; const st = m.sceneStarts(p).starts;
+      for (const s of p.scenes) for (const d of s.dialogue) if (d.text.trim() && d.t >= 2 && d.t < s.duration - 1.5) return { sid: s.id, t: st[s.id] + d.t, text: d.text.trim(), name: (p.cast.find(c => c.id === d.speaker) || {}).name || '' };
+      return null; }""")
+    check(line is not None, "the demo has a spoken line to caption")
+    set_ph = "t => window.__editor.store.update(p => { p.ui.playhead = t; }, { history: false, plan: false })"
+    page.evaluate(set_ph, line["t"] - 0.6)
+    page.wait_for_timeout(250)
+    cap = lambda: page.evaluate("(() => { const c = document.querySelector('.rw-mon-cap'); return c && c.style.display !== 'none' ? c.textContent : ''; })()")
+    before = cap()
+    renders = page.evaluate("() => { window.__rwR = 0; window.__rwOff = window.__editor.store.subscribe(() => { window.__rwR++; }); return 0; }")
+    bl0 = page.evaluate("document.querySelector('.rw-mon-badge.bl').textContent")
+    play = "button[data-help='timeline.transport.play']"
+    page.click(play)
+    page.wait_for_timeout(1100)
+    during = cap()
+    bl1 = page.evaluate("document.querySelector('.rw-mon-badge.bl').textContent")
+    page.click(play)
+    page.wait_for_timeout(200)
+    r = page.evaluate("() => { window.__rwOff(); return window.__rwR; }")
+    check(line["text"][:20] not in before and line["text"][:20] in during and line["name"] in during and bl0 != bl1,
+          f"the caption and frame count follow playback ({r} redraws): before {before!r} during {during!r} frames {bl0!r} -> {bl1!r}")
+    page.evaluate(set_ph, line["t"] + 0.2)
+    page.wait_for_timeout(250)
+    shown = cap()
+    page.click("[data-key='tl-cc']")
+    page.wait_for_timeout(250)
+    off = cap()
+    check(line["text"][:20] in shown and off == "" and cur()["ui"].get("captions") is False, f"CC hides the caption: {shown!r} -> {off!r}")
+    page.click("[data-key='tl-cc']")
+    page.wait_for_timeout(250)
+    check(line["text"][:20] in cap() and cur()["ui"].get("captions") is True, "CC shows it again")
+    # a line without a speaker is the text alone (the live check once showed "null" before it)
+    page.evaluate("sid => window.__editor.store.update(p => { const s = p.scenes.find(x => x.id === sid); for (const d of s.dialogue) d.speaker = ''; }, { history: false })", line["sid"])
+    page.wait_for_timeout(300)
+    check(cap().startswith(line["text"][:20]), f"a caption without a speaker: {cap()!r}")
+    page.screenshot(path=str(shots / "v090_caption.png"))
+
+    # 3. The monitor's volume: mute, and the slider (no undo step, the merge does not read it)
+    n0 = len(labels())
+    page.click("[data-key='tl-mute']")
+    page.wait_for_timeout(200)
+    v_muted = page.evaluate("document.querySelector('.rw-mon-video').volume")
+    check(cur()["ui"].get("mon_muted") is True and v_muted == 0, f"mute: {cur()['ui'].get('mon_muted')} volume {v_muted}")
+    page.click("[data-key='tl-mute']")
+    page.wait_for_timeout(200)
+    page.evaluate("() => { const r = document.querySelector(\"input[data-key='tl-volume']\"); r.value = 40; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); }")
+    page.wait_for_timeout(250)
+    v = page.evaluate("document.querySelector('.rw-mon-video').volume")
+    ui = cur()["ui"]
+    check(ui.get("mon_muted") is False and abs(ui.get("mon_volume", 0) - 0.4) < 1e-9 and abs(v - 0.4) < 0.01 and len(labels()) == n0,
+          f"volume slider: {ui.get('mon_volume')} video {v}, history unchanged")
+    check(page.locator("[data-key='tl-volume']").count() == 1 and page.locator("[data-key='tl-volume']").is_visible(), "the volume slider is visible")
+
+    # 4. Scene tab: Whole scene shows the scene's Shots and Dialogue cards and every pass in What H3 receives; a pass
+    # tab hides the cards and shows its pass only
+    load(demo(tab="scene", selected="s_07"))
+    titles = lambda: page.locator(".rw-card-title").all_inner_texts()
+    heads = lambda: page.locator(".rw-h3-pass-head").all_inner_texts()
+    check("Shots" in titles() and "Dialogue" in titles() and len(heads()) == 3, f"Whole scene: the scene's cards and every pass ({heads()})")
+    page.click("[data-key='ptab-s_07-2']")
+    page.wait_for_timeout(300)
+    check("Shots" not in titles() and "Dialogue" not in titles() and len(heads()) == 1 and heads()[0].startswith("Pass 2 of 3"), f"pass 2 tab: cards hidden, its pass only: {titles()} {heads()}")
+    check(page.locator(".rw-pass-pane .rw-rlist").count() == 2, "pass 2: its shots and lines scroll in boxes")
+    b0 = box(".rw-pass-pane .rw-rlist")["height"]
+    drag(".rw-pass-pane .rw-rlist-grip", dy=-40)
+    sh = cur()["ui"].get("shots_h")
+    check(sh is not None and abs(sh - (b0 - 40)) < 3 and abs(box(".rw-pass-pane .rw-rlist")["height"] - sh) < 2, f"the grip sets the shot list's height ({b0:.0f} -> {sh})")
+    page.click("[data-key='ptab-s_07-scene']")
+    page.wait_for_timeout(300)
+    mh = page.evaluate("document.querySelector('.rw-rlist').style.maxHeight")
+    check(mh == f"{sh}px", f"the scene's Shots card uses the same height: {mh}")
+    page.dblclick(".rw-rlist-grip >> nth=0")
+    page.wait_for_timeout(250)
+    check("shots_h" not in cur()["ui"], "double-click resets the list height")
+    audit("Scene lists")
+
+    # 5. Assets: groups (demo: Mara, Harbor set, Music & sound) with descriptions, then No group; tags
+    load(demo(tab="assets"))
+    page.evaluate("window.__editor.store.setEph({ assetView: null, assetTag: '', editGroup: '', assetQuery: '', assetFilter: 'all' })")
+    page.wait_for_timeout(200)
+    gt = [x.split("\n")[0] for x in page.locator(".rw-agroup .rw-card-title").all_inner_texts()]
+    check(gt == ["Mara", "Harbor set", "Music & sound", "No group"], f"groups in order, then No group: {gt}")
+    check("Night exteriors" in page.locator(".rw-agroup").nth(1).inner_text(), "a group shows its description")
+    page.click("[data-key='asset-group-add']")
+    page.wait_for_timeout(300)
+    gid = cur()["asset_groups"][-1]["id"]
+    nm = page.locator(f"input[data-key='agroup-name-{gid}']")
+    nm.fill("Props")
+    page.locator(f"textarea[data-key='agroup-desc-{gid}']").fill("Things people hold")
+    page.click(f"[data-key='agroup-edit-{gid}']")  # Done
+    page.wait_for_timeout(300)
+    g = cur()["asset_groups"][-1]
+    check(g["name"] == "Props" and g["description"] == "Things people hold" and "Group name" in labels(), f"new group named and described: {g}")
+    # an HTML5 drag from the card to the group (dispatched in the page: Playwright's mouse drag does not start one here)
+    page.evaluate("""gid => { const dt = new DataTransfer(); const card = document.querySelector("[data-key='acard-a_p3']");
+      const sec = document.querySelector(`[data-key='agroup-${gid}']`); const at = sec.getBoundingClientRect();
+      const ev = (el, type) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: at.x + 20, clientY: at.y + 20 }));
+      ev(card, "dragstart"); ev(sec, "dragenter"); ev(sec, "dragover"); ev(sec, "drop"); ev(card, "dragend"); }""", gid)
+    page.wait_for_timeout(300)
+    a3 = next(a for a in cur()["assets"] if a["id"] == "a_p3")
+    check(a3["group"] == gid and labels()[-1] == "Move P3 to Props", f"a card dropped on a group moves there: {a3['group']} {labels()[-1:]}")
+    page.screenshot(path=str(shots / "v090_assets_groups.png"))
+    # the inspector: a typed new name makes a group; tags take the spelling the project uses
+    page.click("[data-key='acard-a_p4']")
+    page.wait_for_timeout(250)
+    gp = page.locator("input[data-key='asset-group-a_p4']")
+    gp.click()
+    gp.fill("Flashback")
+    page.wait_for_timeout(150)
+    gp.press("Enter")
+    page.wait_for_timeout(350)
+    q = cur()
+    fb = next((x for x in q["asset_groups"] if x["name"] == "Flashback"), None)
+    a4 = next(a for a in q["assets"] if a["id"] == "a_p4")
+    check(fb is not None and a4["group"] == fb["id"], f"typing a new group name makes the group: {fb} {a4['group']}")
+    tg = page.locator("input[data-key='asset-tags-a_p4']")
+    tg.fill("NIGHT")
+    tg.press("Enter")
+    page.wait_for_timeout(300)
+    a4 = next(a for a in cur()["assets"] if a["id"] == "a_p4")
+    check(a4["tags"] == ["night"], f"a tag takes the project's spelling: {a4['tags']}")
+    page.click(".rw-tag-btn:has-text('#night')")
+    page.wait_for_timeout(300)
+    shown_ids = page.evaluate("[...document.querySelectorAll('.rw-asset-card')].map(e => e.dataset.key.slice(6)).sort()")
+    want = sorted(a["id"] for a in cur()["assets"] if "night" in a["tags"])
+    check(shown_ids == want, f"the tag filter shows the tagged assets only: {shown_ids} vs {want}")
+    page.click(".rw-tag-btn:has-text('#night')")
+    page.wait_for_timeout(200)
+    # pickers show the group first (visual only)
+    tab("Scene")
+    inp = page.locator("input[data-help='scene.refs.add']").first
+    inp.click()
+    inp.fill("Props")
+    page.wait_for_timeout(250)
+    opts = page.locator(".rw-combo-opt").all_inner_texts()
+    inp.press("Escape")
+    check(any(o.startswith("Props · P3 · Letter prop") for o in opts), f"the reference picker shows the group first: {opts[:4]}")
+    tab("Assets")
+    # deleting a group keeps its assets (no group then); undo brings it back
+    page.click(f"[data-key='agroup-del-{gid}']")
+    page.wait_for_timeout(300)
+    q = cur()
+    a3 = next(a for a in q["assets"] if a["id"] == "a_p3")
+    check(all(x["id"] != gid for x in q["asset_groups"]) and a3["group"] == "", "deleting a group keeps its assets")
+    page.evaluate("window.__editor.store.undo()")
+    page.wait_for_timeout(300)
+    a3 = next(a for a in cur()["assets"] if a["id"] == "a_p3")
+    check(a3["group"] == gid, "undo brings the group back with its assets")
+    page.click(".rw-seg button:has-text('By kind')")
+    page.wait_for_timeout(300)
+    check(page.locator(".rw-agroup").count() == 0 and "Props · " in page.locator("[data-key='acard-a_p3']").inner_text(), "By kind: cards show their group before the name")
+    audit("Assets groups")
+    page.click(".rw-seg button:has-text('By group')")
+
+    # 6. Files tab: the bar between the list and the preview sets the preview's width
+    tab("Files")
+    try:
+        page.wait_for_selector(".rw-ftree-label.clickable", timeout=5000)
+        page.locator(".rw-ftree-label.clickable").first.click()
+        page.wait_for_selector(".rw-fprev", timeout=3000)
+        p0 = box(".rw-fprev")["width"]
+        drag(".rw-files-main > .rw-split-x", dx=-100)
+        p1 = box(".rw-fprev")["width"]
+        fp = cur()["ui"].get("files_prev")
+        check(abs(p1 - p0 - 100) < 4 and fp is not None and abs(fp - p1) < 2, f"the Files bar widens the preview ({p0:.0f} -> {p1:.0f}, files_prev {fp})")
+        page.screenshot(path=str(shots / "v090_files_split.png"))
+        page.dblclick(".rw-files-main > .rw-split-x")
+        page.wait_for_timeout(200)
+        check("files_prev" not in cur()["ui"], "double-click resets the preview width")
+        audit("Files split")
+    except Exception as err:  # noqa: BLE001
+        check(False, f"Files tab preview: {err}")
 
     load(json.loads(saved))
     tab("Timeline")

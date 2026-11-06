@@ -268,6 +268,15 @@ def malformed():
                                                              "pass_cache": "lossless"}}},
         {"scenes": [{}], "global": {"long": {"handoff": ["pixels"], "pass_cache": {"x": 1}, "carry_audio": 1.5,
                                              "seam_video_ref": None, "guide_vae": None}}},
+        # added 2026-11-06 v0.9.0: asset groups and tags, junk and valid
+        {"scenes": [{}], "asset_groups": [{"id": "g_set", "name": "Harbor set", "description": "night"},
+                                          {"id": "g_set", "name": 5}, None, "x", {"name": None, "description": []},
+                                          {"id": 7, "extra": "kept"}],
+         "assets": [{"kind": "image", "group": "g_set", "tags": [" wet  docks ", "wet docks", "\tnight\n", 3, 2.5,
+                                                                   None, {}, "", "   ", "é" * 70, "ü" * 59 + " x"]},
+                    {"kind": "video", "group": "g_set_2", "tags": "x"}, {"kind": "audio", "group": "g_gone"},
+                    {"kind": "image", "group": 7, "tags": [True, False]}, {"kind": "image", "group": None}]},
+        {"scenes": [{}], "asset_groups": "x", "assets": [{"kind": "image", "group": "g_a", "tags": None}]},
     ]
 
 

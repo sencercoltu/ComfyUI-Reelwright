@@ -266,6 +266,15 @@ function demoProject() {
     markers: [{ id: "m_1", t: 12.0, text: "music swell", color: "amber" }, { id: "m_2", t: 41.2, text: "storm peak", color: "coral" }],
     ui: { tab: "timeline", selected: "s_03", zoom: 13, playhead: 21.375, snap: true, ripple: true },
   };
+  // added 2026-11-06 v0.9.0: asset groups (with descriptions) and tags for the Assets tab
+  p.asset_groups = [
+    { id: "g_mara", name: "Mara", description: "Every picture of Mara and her voice." },
+    { id: "g_harbor", name: "Harbor set", description: "Night exteriors of the harbor: pier, lamps, boats, weather." },
+    { id: "g_sound", name: "Music & sound", description: "" },
+  ];
+  const grp = { a_p1: "g_mara", a_p6: "g_mara", a_p7: "g_mara", a_a2: "g_mara", a_p2: "g_harbor", a_p5: "g_harbor", a_v2: "g_harbor", a_a1: "g_harbor", a_a3: "g_sound", a_a5: "g_sound" };
+  const tags = { a_p1: ["identity", "face"], a_p6: ["identity"], a_p7: ["identity", "costume"], a_p2: ["night", "exterior"], a_p5: ["night", "weather"], a_v2: ["water"], a_a5: ["score"] };
+  for (const a of p.assets) { a.group = grp[a.id] || ""; a.tags = tags[a.id] || []; }
   return p;
 }
 
@@ -592,7 +601,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-04 v0.6.0->v0.6.1] case "/reelwright/info": return json({ version: "0.6.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-05 v0.6.1->v0.7.0] case "/reelwright/info": return json({ version: "0.6.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-06 v0.7.0->v0.8.0] case "/reelwright/info": return json({ version: "0.7.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    case "/reelwright/info": return json({ version: "0.8.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-06 v0.8.0->v0.9.0] case "/reelwright/info": return json({ version: "0.8.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.9.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {

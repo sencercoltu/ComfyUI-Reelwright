@@ -103,8 +103,13 @@ lives on disk.
       "duration": 0, "width": 1024, "height": 1365, "category": "subject",
       "defaults": { "role": "reference", "retention": "fully_preserved", "keep": ["face", "hair"], "soundtrack": false },
       "notes": "",
-      "description": "" }                                  // v0.2.0: the asset's subject line; read live by every scene,
+      "description": "",                                   // v0.2.0: the asset's subject line; read live by every scene,
                                                            //   and by a cast member without its own description (v0.3.4)
+      "group": "g_1",                                      // v0.9.0: an asset_groups id or "" (no group)
+      "tags": ["identity", "face"] }                       // v0.9.0: cleaned by asset_tags (one space, ≤ 60 chars, no repeats)
+  ],
+  "asset_groups": [                                        // v0.9.0: Assets tab only (never in a prompt, plan or cache key)
+    { "id": "g_1", "name": "Mara", "description": "Every picture of Mara and her voice." }
   ],
   "cast": [
     { "id": "c_1", "kind": "character",                 // character | location | prop
@@ -171,7 +176,10 @@ lives on disk.
       "sync": true, "marker": "fully_copy" } ],            // send each pass the part it covers
   "markers": [ { "id": "m_1", "t": 12.0, "text": "music swell", "color": "amber" } ],
   "ui": { "tab": "timeline", "selected": "s_1", "zoom": 22, "playhead": 0.0, "snap": true, "ripple": true,
-          "beats": true, "beatSnap": false, "autoRoll": true } // v0.6.0, set by the toolbar; missing = these defaults
+          "beats": true, "beatSnap": false, "autoRoll": true, // v0.6.0, set by the toolbar; missing = these defaults
+          // v0.9.0, layout and monitor (kept as they are; the editor clamps them; missing = the defaults):
+          "tl_top": 340, "tl_mon": 0.42, "files_prev": 380, "shots_h": 380, "lines_h": 300,
+          "captions": true, "mon_volume": 1, "mon_muted": false }
 }
 ```
 
@@ -693,3 +701,12 @@ Editor (`web/rw/editor.js`):
 - `api.js`: `rw.llmPasses(project, scene_id, passes, job, instruction = "")`. `ui.number({placeholder})`; `codeEditor({cls, spellcheck})`.
 - `help.js`: new and replaced entries for the pass tabs, rows, camera picker, Write prompts, Pass seams settings, drift and follow.
 - Harness: `web-test/mock.js` plans `/plan` passes with model.js `planScene`, builds pass prompts with per-pass texts, serves `/llm/passes` with progress events and Stop (flags `passCalls`, `passesMs`, `passesFail`), and gives demo takes drift; `web-test/interact.py v080_checks()`; `shoot.py` adds `scene_pass.png` and `scene_rows.png`.
+
+### Panels, captions, lists and asset groups (v0.9.0)
+
+- `ui.js`: `splitter({dir: "x"|"y", sign, onStart, onMove, onEnd, onReset, help, key})` (a focusable bar; pointer drag in CSS px of the editor via `rootScale`, arrow keys 16 px, double-click resets); `resizableList({height, min, max, scroll, onResize, children})` (a `max-height` box and a grip); `uiNum(p, key, dflt, lo, hi)`. A combobox option may carry `pre` (shown dimmed before the label, searched, never the value). Callers look up the live panel (`ctx.root.querySelector`) while dragging, because a redraw can replace it mid-drag.
+- Timeline (`tabs/timeline.js`): `render` builds `.rw-tl-top` (`.rw-mon-col` with the persistent monitor and the transport, a `splitter`, the inspector) over a `splitter` and `.rw-tl-main`. The monitor's `m.overlay(scene, local)` sets the frame count and the caption (`captionAt`: the merge's `subtitle_cues` timing) and is called by `setPlayhead` on every frame; `nowAt` fills the inspector's "At the playhead" (`summaryBlock`). `applyVolume` = `sceneVolume × soundtrack.monitorGain`; `syncAudio` scales the tracks by `monitorGain` too. `volumeControl` changes the sound while dragging without a redraw. The asset bin (`renderBin`) is commented out.
+- Scene tab (`tabs/scene.js`): `promptTabOf(ctx, s, plan, anyMode)` is the one rule for the Prompt card's tab, which cards show (`render`) and what `previewCard` shows (every pass on Whole scene). `rowsBox(ctx, "shots"|"lines", scrollKey, rows)` wraps shot and dialogue rows (scene cards and pass panes).
+- Assets tab (`tabs/assets.js`): `grid` → `tagRow`, `groupsView` / `kindsView`, `groupSection` (drop target for `application/x-rw-asset`), `assetCard`; `addGroup` (exported; the asset menu uses it), `moveGroup`, `deleteGroup`, `pickGroup`. model.js `assetGroupName` feeds every asset picker's `pre` and `tagCandidates`' labels; `assetTags` / `model.asset_tags` clean tags; `normAssetGroups` / `_norm_asset_groups` normalise both.
+- Files tab (`tabs/files.js`): `filesMain(ctx, tree, pane)` puts a `splitter` (sign −1) between the tree and the preview.
+- Harness: the demo project has three groups and some tags; `web-test/interact.py` `v090_checks()`.

@@ -362,6 +362,7 @@ export function defaultProject(name = "Untitled") {
     // project_id (added 2026-11-03 v0.6.0): who owns the folder; /autosave refuses another project's folder
     schema: 1, id: newId("p"), project_id: newId("p"), name, slug: slugify(name),
     global: defaultGlobal(), assets: [], cast: [],
+    asset_groups: [], // added 2026-11-06 v0.9.0: groups of assets (Assets tab)
     camera_presets: DEFAULT_CAMERA.map(([n, t]) => ({ id: newId("k"), name: n, text: t })),
     camera_version: CAMERA_VERSION, // added 2026-11-05 v0.8.0: the presets are H3's official moves
     scenes: [], markers: [],
@@ -512,6 +513,7 @@ export function normalizeProject(raw) {
     else if (code) seenCodes.add(code);
   }
   assignCodes(assets);
+  normAssetGroups(p, assets); // added 2026-11-06 v0.9.0
 
   p.cast = objects(p.cast);
   for (const c of p.cast) normCast(c, lang);
@@ -656,6 +658,44 @@ function normAsset(a) {
   textField(df, "retention", a.kind === "audio" ? "reference" : "fully_preserved");
   df.keep = texts(df.keep);
   df.soundtrack = flag(df.soundtrack, false);
+}
+
+// added 2026-11-06 v0.9.0 (model.py _norm_asset_groups): the asset groups, in their order: {id, name, description}
+// with unique ids; each asset's group is one of their ids or "" (no group), and its tags are cleaned by assetTags.
+// Groups and tags only sort the Assets tab: no prompt, plan or cache key reads them.
+function normAssetGroups(p, assets) {
+  const groups = p.asset_groups = objects(p.asset_groups);
+  const ids = new Set();
+  for (const gr of groups) {
+    gr.id = uniqueId(gr.id, "g", ids);
+    textField(gr, "name", "");
+    textField(gr, "description", "");
+  }
+  for (const a of assets) {
+    textField(a, "group", "");
+    if (!ids.has(a.group)) a.group = "";
+    a.tags = assetTags(a.tags);
+  }
+}
+
+// added 2026-11-06 v0.9.0: the name of an asset's group ("" when it has none, or the group has no name); pickers show it
+// before the asset (visual only)
+export function assetGroupName(project, a) {
+  if (!a?.group) return "";
+  const g = (project?.asset_groups || []).find(x => x.id === a.group);
+  return g ? String(g.name || "").trim() : "";
+}
+
+// added 2026-11-06 v0.9.0 (model.py asset_tags): the strings (and numbers) of a list with runs of spaces, tabs and line
+// breaks made one space, cut to 60 characters and trimmed; empty and repeated tags (same spelling) are dropped
+export const TAG_MAX = 60;
+export function assetTags(v) {
+  const out = [];
+  for (const x of texts(v)) {
+    const t = Array.from(x.replace(/[ \t\n\r]+/g, " ")).slice(0, TAG_MAX).join("").replace(/^ +| +$/g, "");
+    if (t && !out.includes(t)) out.push(t);
+  }
+  return out;
 }
 
 function normCast(c, lang) {
@@ -1731,7 +1771,9 @@ export function tagCandidates(project) {
 }
 [/OLD] */
 export function tagCandidates(project) {
-  const out = project.assets.filter(a => a.code).map(a => ({ tag: "@" + a.code, label: a.name || a.code, kind: a.kind }));
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] const out = project.assets.filter(a => a.code).map(a => ({ tag: "@" + a.code, label: a.name || a.code, kind: a.kind }));
+  // added 2026-11-06 v0.9.0: the asset's group before its name in the @ list (shown and searched, never written)
+  const out = project.assets.filter(a => a.code).map(a => ({ tag: "@" + a.code, label: (assetGroupName(project, a) ? assetGroupName(project, a) + " · " : "") + (a.name || a.code), kind: a.kind }));
   for (const c of project.cast) {
     if (!c.name) continue;
     out.push({ tag: isTagName(c.name) ? "@" + c.name : "@{" + c.name + "}", label: c.kind, kind: "cast" });

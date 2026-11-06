@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.9.0 — 2026-11-06
+
+The Timeline tab is three panels you can resize, without the asset bin. Captions in the monitor follow the film again, and the monitor has a volume control. In the Scene tab a pass tab shows only that pass. Shot and dialogue lists scroll in boxes you can resize. Assets can be put in groups with a description and given tags.
+
+### What you will notice after updating
+
+- **Nothing renders again.** None of these changes touch a prompt, a plan or a cache key. Asset groups and tags only sort the Assets tab.
+- **The Timeline tab has no asset bin.** Upload and sort assets in the Assets tab; add them to a scene in the Scene tab (References → Add a reference), with the + on the Soundtrack lane, or with an asset's right-click menu (Add to the current scene).
+- **Captions show in the monitor again while the film plays.** Since v0.8.0 the spoken line and the frame count only changed when the tab was redrawn, so they stood still during playback. They now follow the playhead on every frame.
+
+### Timeline tab
+
+- **Three panels:** the monitor with its transport (top left), the selected scene's inspector and summary (top right), and the timeline (below).
+  - Drag the bar between the monitor and the inspector to share the width, and the bar under them to set their height. Double-click a bar to reset it. Arrow keys move a focused bar.
+  - The sizes are kept in the project, like the zoom (no undo step).
+  - The monitor fills its panel; the picture keeps its shape inside.
+- **The inspector shows a summary:** the scene's summary (in a scene of several passes, the whole-scene note), then what is on screen at the playhead: the pass (long scenes, with its own summary when it has one), the shot and the spoken line. That part follows the playhead while the film plays. The Render scene / New take row stays visible at the bottom of the panel.
+- **Captions:** the spoken line at the playhead is a caption at the bottom of the picture, with the speaker's name. It is timed like the merge's .srt: from the line's time for its own length (Scene tab), or for its reading time, and never past the next line or the scene's end. Before, the bottom-right badge showed a line for 3.5 s whatever its length. **CC** on the transport turns captions off and on.
+- **Monitor volume:** a mute button and a volume slider on the transport. They change the take and the soundtrack tracks together, only in the monitor; the merge never reads them.
+
+### Scene tab
+
+- **A pass tab shows only its pass.** On a pass tab the scene's Shots and Dialogue cards are hidden (the pass's own shots and lines are in the tab). Whole scene shows them as before.
+- **What H3 receives follows the Prompt card's tabs.** Its own row of pass tabs is gone. Whole scene shows every pass in turn, each with its range, frames and seam, its song excerpt and "Edit this pass by hand"; a pass tab shows that pass. Raw prompts show every pass.
+- **Shot and dialogue lists scroll inside a box.** Drag the grip under a list to make it taller or shorter; double-click it to reset. All shot lists share one height and all dialogue lists another, in the scene's cards and in the pass tabs.
+
+### Assets tab
+
+- **Groups:** a group has a name and a description (for example *Harbor set: night exteriors of the harbor: pier, lamps, boats*).
+  - **+ Group** makes one; **Edit** renames it and sets its description; ↑ and ↓ order the groups; the arrow folds a group away; deleting a group keeps its assets (they have no group then, and Ctrl+Z brings it back).
+  - Put an asset in a group by dragging its card onto the group, with the **Group** field in its settings (type a new name to make a group), or with its right-click menu (Move to group).
+  - **By group / By kind:** by group lists your groups in their order, then the assets in no group (pictures, videos, then audio in each). By kind is the old view, with each card's group before its name. A project with groups opens by group.
+- **Tags:** free words on an asset (Tags field in its settings, Enter after each). A new tag takes the spelling the project already uses. The tag row above the list filters by a tag; the search field finds groups and tags too.
+- **Pickers show the group first** (visual only): "Harbor set · P2 · Harbor plate" in the reference, anchor, voice, soundtrack and score pickers, the soundtrack's + menu and the @ list in prompt fields.
+- **Fixed:** the audio cards' waveform pictures were drawn at the top of the tab, over the toolbar, instead of in their cards. A style rule of the soundtrack lane's waveform also matched them.
+
+### Files tab
+
+- **The file list and the preview have a bar between them:** drag it to set the preview's width, double-click to reset. A wider preview shows pictures and videos larger.
+
+### For developers
+
+- **Project data** (model.py and model.js normalise it the same way, `tests/test_model_parity.py`):
+  - `asset_groups: [{id, name, description}]`, in order; ids are unique (`g_…` for new ones).
+  - asset `group`: a group id or `""` (an unknown id becomes `""`); asset `tags`: strings, runs of spaces, tabs and line breaks made one space, cut to 60 characters, trimmed, empty and repeated ones dropped (`model.asset_tags` / `assetTags`).
+  - `ui` keys kept as they are (not normalised; the editor clamps them): `tl_top` (px), `tl_mon` (share 0.15–0.85), `files_prev` (px), `shots_h`, `lines_h` (px), `captions` (bool), `mon_volume` (0–1), `mon_muted` (bool).
+- **Frontend:** `ui.splitter({dir, onStart, onMove, onEnd, onReset, sign})`, `ui.resizableList({height, scroll, onResize, children})`, `ui.uiNum`, `ui.rootScale`; a combobox option's `pre` is shown before its label and searched; `model.assetGroupName`; `soundtrack.monitorGain`; `scene.promptTabOf`; `assets.addGroup`. The monitor's `m.overlay(scene, local)` sets the caption and frame count; `setPlayhead` calls it on every frame. Assets added in the editor (upload, ComfyUI files, promoted frames) get `group: ""` and `tags: []`.
+- **Tests:** `web-test/interact.py` runs a new `v090_checks()`; parity fixtures for groups and tags.
+
 ## v0.8.0 — 2026-11-06
 
 Each pass of a long scene has its own prompt now, and the LLM can write it. New settings work against the loss that builds up at pass seams, and a drift meter measures it. Shot and dialogue rows show their start, end and length. The camera picker has the 20 camera moves of MiniMax's H3 guide, with amplitude, speed and framing. The timeline follows the playhead while the film plays.

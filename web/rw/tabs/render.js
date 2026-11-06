@@ -8,6 +8,7 @@ import { rw, viewURL } from "../api.js";
 // [OLD 2026-11-03 v0.4.3->v0.5.0] import { continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, overlapSeconds } from "../model.js";
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, overlapSeconds, soundtrackLocked, playingTracks } from "../model.js";  (effective start / overlap helpers, normalize for the version diff)
 import { continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, soundtrackLocked, playingTracks, effectiveStart, sceneOverlapAt, normalizeProject } from "../model.js";
+import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
 
 const STATUS = {
   cached: ["ok", "on disk"], locked: ["ok", "locked"], stale: ["warn", "stale"], pending: ["empty", "not rendered"],
@@ -783,7 +784,8 @@ function mergeCard(ctx) {
   const m = p.global.merge;
   // [OLD 2026-11-03 v0.5.1->v0.6.0] const set = fn => ctx.actions.edit(q => fn(q.global.merge));  (no History menu name)
   const set = fn => ctx.actions.edit(q => fn(q.global.merge), { label: "Merge setting" }); // added 2026-11-03 v0.6.0: History menu name
-  const audio = p.assets.filter(a => a.kind === "audio").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
+  // [OLD 2026-11-06 v0.8.0->v0.9.0] const audio = p.assets.filter(a => a.kind === "audio").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
+  const audio = p.assets.filter(a => a.kind === "audio").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) })); // added 2026-11-06 v0.9.0: group first
   const ready = p.scenes.map(s => ({ s, ok: !!ctx.starredTake(s.id) }));
   const nReady = ready.filter(r => r.ok).length;
   // [OLD 2026-11-03 v0.4.3->v0.5.0] const cutLen = ready.reduce((t, r, i) => t + (r.ok || m.missing !== "skip" ? r.s.duration - (i > 0 ? overlapSeconds(r.s) : 0) : 0), 0);

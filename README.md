@@ -113,17 +113,21 @@ node. A wired input replaces the matching Global-tab loader.
 2. **Assets tab:** drop in pictures, video and audio. Each asset gets a code
    (P1, V1, A1…) and default settings: role, retention and the features to keep.
    **From ComfyUI** adds files already in ComfyUI's input or output folder, and
-   **Describe** asks a vision LLM to write an asset's description.
+   **Describe** asks a vision LLM to write an asset's description. Put assets
+   in **groups** (each with a description) and give them **tags** to keep a
+   large project tidy; pickers show an asset's group before its name.
 3. **Cast tab:** create your characters, give each anchor pictures, a
    description and a voice.
-4. **Timeline:**
+4. **Timeline:** the monitor (top left), the selected scene's summary
+   (top right) and the lanes (below); drag the bars between them to resize.
    - add scenes and drag their right edge to set the length;
    - drag shot ticks inside a block to move cuts;
    - click the round chip between two scenes to choose how the second one
      starts (fresh, last frame or tail clip).
 5. **Scene tab:** add shots, dialogue and references, and write the prompt.
    Refer to assets as `@P1` and to cast members as `@Mara` (or `@{Old Keeper}`).
-   The preview shows the exact prompt for each pass.
+   The preview shows the exact prompt for each pass. A long scene has a tab
+   per pass with its own sections, shots and dialogue.
 6. **Render pending.** Only new or changed scenes render. Watch progress on the
    timeline blocks, the Render tab ("Scene 2 of 5") and the node title. A scene
    can render as Draft or Final on its own (Scene tab → Generation → Quality).

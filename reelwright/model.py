@@ -259,6 +259,7 @@ def default_project(name="Untitled"):
     # project_id: added 2026-11-03 v0.6.0. Only the editor creates one (newId), so the backend leaves it ""
     p = {"schema": 1, "id": new_id("p"), "project_id": "", "name": name, "slug": slugify(name),
          "global": default_global(), "assets": [], "cast": [], "camera_presets": default_camera_presets(),
+         "asset_groups": [],  # added 2026-11-06 v0.9.0: groups of assets (Assets tab)
          "camera_version": CAMERA_VERSION,  # added 2026-11-05 v0.8.0: the presets are H3's official moves
          "scenes": [], "markers": [], "soundtrack": [],  # soundtrack: added 2026-11-03 v0.5.0 (see soundtrack.py)
          "ui": {"tab": "timeline", "selected": "", "zoom": 22, "playhead": 0, "snap": True, "ripple": True}}
@@ -430,6 +431,7 @@ def normalize_project(raw):
         elif code:
             seen_codes.add(code)
     assign_codes(assets)
+    _norm_asset_groups(p, assets)  # added 2026-11-06 v0.9.0
 
     p["cast"] = _objects(p.get("cast"))
     for c in p["cast"]:
@@ -579,6 +581,37 @@ def _norm_asset(a):
     _text_field(df, "retention", "reference" if a["kind"] == "audio" else "fully_preserved")
     df["keep"] = _texts(df.get("keep"))
     df["soundtrack"] = spec.flag(df.get("soundtrack"), False)
+
+
+def _norm_asset_groups(p, assets):
+    """added 2026-11-06 v0.9.0 (model.js normAssetGroups): the asset groups, in their order: {id, name, description}
+    with unique ids; each asset's group is one of their ids or "" (no group), and its tags are cleaned by asset_tags.
+    Groups and tags only sort the Assets tab: no prompt, plan or cache key reads them."""
+    groups = p["asset_groups"] = _objects(p.get("asset_groups"))
+    ids = set()
+    for gr in groups:
+        gr["id"] = _unique_id(gr.get("id"), "g", ids)
+        _text_field(gr, "name", "")
+        _text_field(gr, "description", "")
+    for a in assets:
+        _text_field(a, "group", "")
+        if a["group"] not in ids:
+            a["group"] = ""
+        a["tags"] = asset_tags(a.get("tags"))
+
+
+TAG_MAX = 60  # added 2026-11-06 v0.9.0
+
+
+def asset_tags(v):
+    """added 2026-11-06 v0.9.0 (model.js assetTags): the strings (and numbers) of a list with runs of spaces, tabs and
+    line breaks made one space, cut to 60 characters and trimmed; empty and repeated tags (same spelling) are dropped."""
+    out = []
+    for x in _texts(v):
+        t = re.sub(r"[ \t\n\r]+", " ", x)[:TAG_MAX].strip(" ")
+        if t and t not in out:
+            out.append(t)
+    return out
 
 
 def _norm_cast(c, lang):
