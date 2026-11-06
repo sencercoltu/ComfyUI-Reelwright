@@ -870,6 +870,36 @@ async def llm_split(request):
     return out if isinstance(out, dict) and out.get("cancelled") else {"pass_prompts": out}
 
 
+# added 2026-11-05 v0.8.0: Write prompts. The six sections of each requested pass of a scene, one LLM request per pass
+# in order (llm.write_passes), with reelwright.llm progress events that say which pass, and Stop (/llm/cancel).
+# Stopped, it answers {cancelled: true} with the passes written so far; a request that fails after a pass was written
+# answers 200 with those passes plus error / reason / failed; one that fails before answers 502 like the other routes.
+@routes.post("/reelwright/llm/passes")
+@json_route
+async def llm_passes(request):
+    b = await body_of(request)
+    p = normalize_project(_project(b))
+    cfg = _cfg(p)
+    scene = _scene(p, b.get("scene_id"))
+    instruction = _str(b, "instruction", "", required=False) or ""
+    wanted = b.get("passes")
+    if wanted is not None:
+        if not isinstance(wanted, list):
+            raise ValueError("passes must be a list of pass numbers (1 = the first pass), or null for every pass")
+        wanted = [_int(v, "passes", 1, 1000) for v in wanted]
+    job = _job_id(b)
+    state = {"passes": [], "warnings": [], "tokens": 0, "ms": 0}
+
+    async def work():  # the job is registered before the passes are planned, so Stop then is not lost either
+        plan, builds = await asyncio.to_thread(llm.scene_builds, p, scene)
+        return await llm.write_passes(cfg, p, scene, wanted, instruction, state=state, plan=plan, builds=builds,
+                                      progress=_llm_progress(job, scene_id=scene["id"]))
+    out = await _llm_job(job, work())
+    if isinstance(out, dict) and out.get("cancelled") and out is not state:
+        return dict(state, cancelled=True)  # the passes written before Stop
+    return out
+
+
 @routes.post("/reelwright/llm/script")
 @json_route
 async def llm_script(request):

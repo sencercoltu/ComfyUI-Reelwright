@@ -2,6 +2,8 @@
 // /reelwright/* responses, generated preview images and fake progress events.
 
 import { createMockStorage } from "./mock_files.js"; // added 2026-11-03 v0.4.0
+// added 2026-11-05 v0.8.0: the passes of a scene as the editor (and the backend planner) make them
+import { planScene as modelPlanScene, SECTION_KEYS } from "../web/rw/model.js";
 
 const SLUG = "harbor_lights";
 const listeners = {};
@@ -19,8 +21,13 @@ const queued = [];
 // [OLD 2026-11-05 v0.6.1->v0.7.0]   plan: {}, estimate: null, filesBusy: "", merges: [], versionEdits: null };
 // added 2026-11-05 v0.7.0: filmstrips (the file of each /filmstrip request), filmstripFail (a substring of the video
 // paths whose filmstrip answers 404, or true for all), sprites (how many filmstrip sprites were drawn)
+// [OLD 2026-11-05 v0.7.0->v0.8.0] export const mockFlags = { slugConflict: "", mergeBusy: false, mergeMs: 0, autosaveFail: false, autosaves: [], queueMs: 0,
+// [OLD 2026-11-05 v0.7.0->v0.8.0]   plan: {}, estimate: null, filesBusy: "", merges: [], versionEdits: null, filmstrips: [], filmstripFail: "", sprites: 0 };
+// added 2026-11-05 v0.8.0: passCalls (the body of each /llm/passes request), passesMs (time per pass), passesFail (a
+// scene id whose /llm/passes fails)
 export const mockFlags = { slugConflict: "", mergeBusy: false, mergeMs: 0, autosaveFail: false, autosaves: [], queueMs: 0,
-  plan: {}, estimate: null, filesBusy: "", merges: [], versionEdits: null, filmstrips: [], filmstripFail: "", sprites: 0 };
+  plan: {}, estimate: null, filesBusy: "", merges: [], versionEdits: null, filmstrips: [], filmstripFail: "", sprites: 0,
+  passCalls: [], passesMs: 0, passesFail: "" };
 if (typeof window !== "undefined") window.__mockFlags = mockFlags;
 const mergeJobs = {};
 
@@ -153,9 +160,17 @@ function demoProject() {
   const img = (id, code, name, file, category, w = 1024, h = 1365, extra = {}) => ({ id, code, kind: "image", name, file: `reelwright/${SLUG}/${file}`, duration: 0, width: w, height: h, category, defaults: { role: "reference", retention: "fully_preserved", keep: [], soundtrack: false }, notes: "", ...extra });
   const media = (id, code, kind, name, file, duration, category, retention) => ({ id, code, kind, name, file: `reelwright/${SLUG}/${file}`, duration, width: kind === "video" ? 1344 : 0, height: kind === "video" ? 768 : 0, category, defaults: { role: "reference", retention, keep: [], soundtrack: false }, notes: "" });
   const sections = (o = {}) => ({ subject_definitions: "", summary: "", retention_analysis: "", detailed_description: "", overall_soundscape: "", non_diegetic_music: "", ...o });
+  /* [OLD 2026-11-05 v0.7.0->v0.8.0] no pass texts
   const scene = (id, title, duration, mode, { sections: sec, ...rest } = {}) => ({
     id, title, duration, color: "", start: { mode, overlap_frames: 39 }, trim: { keep: "start", in: 0 }, refs: [], cast: [], shots: [], dialogue: [],
     prompt: { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections: sections(sec), raw: "", pass_prompts: {} },
+    overrides: {}, lock: false, notes: "", ...rest,
+  });
+  [/OLD] */
+  // added 2026-11-05 v0.8.0: prompt_passes -> scene.prompt.passes (each pass's own sections)
+  const scene = (id, title, duration, mode, { sections: sec, prompt_passes: pp = [], ...rest } = {}) => ({
+    id, title, duration, color: "", start: { mode, overlap_frames: 39 }, trim: { keep: "start", in: 0 }, refs: [], cast: [], shots: [], dialogue: [],
+    prompt: { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections: sections(sec), raw: "", pass_prompts: {}, passes: pp },
     overrides: {}, lock: false, notes: "", ...rest,
   });
   // added 2026-11-05 v0.7.0: scene.merge (In the cut), complete; the demo scenes get varied values below
@@ -227,9 +242,25 @@ function demoProject() {
         dialogue: [{ id: "d_3", speaker: "c_keeper", t: 6.0, language: "English", delivery: "shouts", text: "Get inside — the storm's turning!" }], sections: { summary: "The storm hits the harbor." },
         overrides: { loras: { mode: "add", items: [{ id: "l_storm", name: "storm_fx.safetensors", strength: 0.7, enabled: true }], strengths: {} } } }),
       scene("s_06", "Lights come on", 7.292, "last_frame", { cast: [{ id: "c_mara", outfit: "o_oil" }], shots: [{ id: "h_8", t: 0, camera: "Wide · locked-off", text: "One by one the harbor windows light up." }], sections: { summary: "Calm after the storm." } }),
+      // [OLD 2026-11-05 v0.7.0->v0.8.0] camera words only, no dialogue, no pass texts
+      // scene("s_07", "The long walk home", 32.0, "fresh", { merge: merge({ transition: "wipe", direction: "right", frames: 16, audio_frames: 12 }), cast: [{ id: "c_mara", outfit: "o_navy" }],
+      //   shots: [{ id: "h_9", t: 0, camera: "Wide", text: "@Mara leaves the pier." }, { id: "h_10", t: 6.0, camera: "Tracking", text: "Along the seawall." }, { id: "h_11", t: 14.375, camera: "Medium", text: "The rain starts." }, { id: "h_12", t: 22.0, camera: "Wide · one take", text: "She reaches the door." }],
+      //   sections: { summary: "Mara walks home along the seawall as the rain begins." } }),
+      // added 2026-11-05 v0.8.0: H3 camera moves with amplitude, speed and framing; a line that runs past the seam at
+      // 22 s; pass texts of its own for passes 1 and 2 (pass 3 uses the shared and automatic text)
       scene("s_07", "The long walk home", 32.0, "fresh", { merge: merge({ transition: "wipe", direction: "right", frames: 16, audio_frames: 12 }), cast: [{ id: "c_mara", outfit: "o_navy" }],
-        shots: [{ id: "h_9", t: 0, camera: "Wide", text: "@Mara leaves the pier." }, { id: "h_10", t: 6.0, camera: "Tracking", text: "Along the seawall." }, { id: "h_11", t: 14.375, camera: "Medium", text: "The rain starts." }, { id: "h_12", t: 22.0, camera: "Wide · one take", text: "She reaches the door." }],
-        sections: { summary: "Mara walks home along the seawall as the rain begins." } }),
+        shots: [{ id: "h_9", t: 0, camera: "the camera pulls out", camera_amp: "large", camera_speed: "slow", framing: "wide", text: "@Mara leaves the pier, collar up against the wind, and turns towards the seawall." },
+          { id: "h_10", t: 6.0, camera: "the camera tracks the moving subject", camera_amp: "", camera_speed: "", framing: "medium wide", text: "Along the seawall: waves slap the stones below as she walks, lamps flickering on one by one." },
+          { id: "h_11", t: 14.375, camera: "the camera holds a static shot", camera_amp: "", camera_speed: "", framing: "medium", text: "The rain starts. She stops under a lamp and pulls her scarf tighter." },
+          { id: "h_12", t: 22.0, camera: "the camera pushes in", camera_amp: "small", camera_speed: "slow", framing: "wide", text: "She reaches the door of the cottage, soaked, and looks back at the harbor once." }],
+        dialogue: [{ id: "d_4", speaker: "c_mara", t: 20.75, duration: null, language: "English", delivery: "murmurs", text: "Just a little further now, almost home." }],
+        sections: { summary: "Mara walks home along the seawall as the rain begins.", overall_soundscape: "Wind, waves against the seawall, her footsteps; rain on stone later." },
+        prompt_passes: [
+          { start: 0, end: 14.375, sections: { summary: "Mara leaves the pier at dusk and walks along the seawall while the harbor lamps come on.", subject_definitions: "", retention_analysis: "",
+            detailed_description: "[Shot 1] Live-action, cinematic, a wide shot of the pier at dusk. The camera pulls out with large amplitude at slow speed as <Subject 1> leaves the pier, collar up against the wind.\n[Shot 2] At 00:06.000, the camera cuts to a medium-wide shot tracking her along the seawall; waves slap the stones below and the lamps flicker on one by one.",
+            overall_soundscape: "", non_diegetic_music: "" } },
+          { start: 14.375, end: 22.0, sections: { summary: "The rain starts; Mara stops under a lamp and pulls her scarf tighter.", subject_definitions: "", retention_analysis: "", detailed_description: "", overall_soundscape: "First heavy drops on stone, wind gusts, a far harbor bell.", non_diegetic_music: "" } },
+        ] }),
       scene("s_08", "Insert: hand on the door", 2.5, "fresh", { merge: merge({ transition: "crossfade", frames: 8, fade_out: { frames: 24, color: "#000000" }, audio_fade_out: 24 }), trim: { keep: "custom", in: 1.208 }, shots: [{ id: "h_13", t: 0, camera: "Macro", text: "Her hand grips the brass handle." }], sections: { summary: "Close insert of the door handle." } }),
     ],
     markers: [{ id: "m_1", t: 12.0, text: "music swell", color: "amber" }, { id: "m_2", t: 41.2, text: "storm peak", color: "coral" }],
@@ -237,6 +268,9 @@ function demoProject() {
   };
   return p;
 }
+
+// added 2026-11-05 v0.8.0: the demo project as the mock defines it, for tests that need it unchanged
+if (typeof window !== "undefined") window.__mockDemo = () => demoProject();
 
 // ---------- Render state ----------
 
@@ -255,7 +289,13 @@ function initTakes() {
   const add = (s, list, starred) => { takes[s] = { starred, takes: list }; };
   add("s_01", [take("s_01", "v1", { seconds: 8, frames: 192 })], "v1");
   add("s_02", [take("s_02", "v1", { seconds: 10.13, frames: 243, face: { c_mara: 0.89 } }), take("s_02", "v2", { seconds: 10.13, frames: 243, face: { c_mara: 0.94 } })], "v2");
-  add("s_03", [take("s_03", "v1", { seconds: 8.71, frames: 209 }), take("s_03", "v2", { seconds: 8.71, frames: 209, face: { c_mara: 0.91 } }), take("s_03", "v3", { seconds: 8.71, frames: 209, face: { c_mara: 0.93 } })], "v3");
+  // [OLD 2026-11-05 v0.7.0->v0.8.0] add("s_03", [take("s_03", "v1", { seconds: 8.71, frames: 209 }), take("s_03", "v2", { seconds: 8.71, frames: 209, face: { c_mara: 0.91 } }), take("s_03", "v3", { seconds: 8.71, frames: 209, face: { c_mara: 0.93 } })], "v3");
+  // added 2026-11-05 v0.8.0: drift of the pass that continues the tail (render.py measures it per take)
+  const drift = (anchor_diff, color_shift, rgb_shift, sharpness, level) => [{ pass: 1, source: "prev_scene_tail", frames: 39, anchor_diff, color_shift, rgb_shift, sharpness, level }];
+  add("s_03", [take("s_03", "v1", { seconds: 8.71, frames: 209, drift: drift(17.2, 6.1, [5.2, -1.4, -2.9], 0.66, "bad") }),
+    take("s_03", "v2", { seconds: 8.71, frames: 209, face: { c_mara: 0.91 }, drift: drift(9.5, 2.9, [2.1, 0.4, -1.9], 0.88, "warn") }),
+    take("s_03", "v3", { seconds: 8.71, frames: 209, face: { c_mara: 0.93 }, drift: drift(3.1, 1.2, [0.8, -0.3, -0.8], 0.97, "ok"),
+      long: { guide_vae: "minimax_h3_video_vae_fp16.safetensors", carry_audio: true, seam_video_ref: true, handoff: "pixels", pass_cache: "lossless" } })], "v3");
   add("s_04", [take("s_04", "v1", { seconds: 14.38, frames: 345 })], "v1");
   add("s_05", [take("s_05", "v1", { seconds: 12.25, frames: 294, face: { c_mara: 0.88, c_keeper: 0.9 } })], "v1");
   add("s_06", [take("s_06", "v1", { seconds: 7.29, frames: 175, face: { c_mara: 0.72 } })], "v1");
@@ -330,7 +370,17 @@ function promptFor(p, s, pass) {
   if (s.prompt.sections.non_diegetic_music) lines.push("Music: " + s.prompt.sections.non_diegetic_music);
   return lines.join("\n");
   [/OLD] */
-  const sec = s.prompt.sections;
+  // [OLD 2026-11-05 v0.7.0->v0.8.0] const sec = s.prompt.sections;
+  // added 2026-11-05 v0.8.0: a pass's own text wins; a multi-pass scene's summary is the pass's own or one made from
+  // its shots (the scene summary is a note); the stored pass is the one that overlaps this pass most (passTexts)
+  const multi = modelPlanScene(p, s, p.scenes.indexOf(s)).passes.length > 1;
+  let own = null, best = 0;
+  for (const st of Array.isArray(s.prompt.passes) ? s.prompt.passes : []) {
+    const ov = Math.min(pass.end, Number(st?.end) || 0) - Math.max(pass.start, Number(st?.start) || 0);
+    if (ov > best + 1e-9) { best = ov; own = st.sections || null; }
+  }
+  const sec = Object.fromEntries(SECTION_KEYS.map(k => [k, (own?.[k] || "").trim() ? own[k] : s.prompt.sections[k]]));
+  if (multi && !(own?.summary || "").trim()) sec.summary = (pass.shots || []).map(x => x.text).filter(Boolean).join(" ") || `Pass ${pass.index} of ${s.title}.`;
   const spk = [];
   const inPass = s.dialogue.filter(x => x.t >= pass.start && x.t < pass.end);
   for (const d of inPass) if (!spk.includes(d.speaker)) spk.push(d.speaker);
@@ -339,8 +389,15 @@ function promptFor(p, s, pass) {
   auds.forEach((id, i) => { const c = subj.find(x => x.voice === id); if (c) defs.push(`<Audio ${i + 1}> is the voice-timbre reference for <Subject ${subj.indexOf(c) + 1}> (${sid(c.id)}).`); });
   const ret = subj.map((c, i) => `<Subject ${i + 1}> (appears in [Shot 1]): fully_preserved - identity and appearance are retained.`);
   const shots = s.shots.filter(x => x.t >= pass.start - 0.001 && x.t < pass.end);
-  const cam = c => c ? "a " + c.toLowerCase().replace(/ shot$/, "") + " shot: " : "";
-  const desc = shots.map((x, i) => i ? `[Shot ${i + 1}] At ${fmt(x.t - pass.start)}, the shot cuts to ${cam(x.camera)}${sub(x.text)}.` : `[Shot 1] ${cam(x.camera).replace(/^a/, "A")}${sub(x.text)}.`);
+  // [OLD 2026-11-05 v0.7.0->v0.8.0] const cam = c => c ? "a " + c.toLowerCase().replace(/ shot$/, "") + " shot: " : "";
+  // added 2026-11-05 v0.8.0: framing + the camera move as one sentence (prompt.py writes the real one)
+  const cam = x => {
+    const fr = x.framing ? `${/^[aeiou]/.test(x.framing) ? "an" : "a"} ${x.framing} shot. ` : "";
+    const mv = x.camera ? x.camera.charAt(0).toUpperCase() + x.camera.slice(1) + (x.camera_amp ? ` with ${x.camera_amp} amplitude` : "") + (x.camera_speed ? ` at ${x.camera_speed} speed` : "") + ". " : "";
+    return fr + mv;
+  };
+  // [OLD 2026-11-05 v0.7.0->v0.8.0] const desc = shots.map((x, i) => i ? `[Shot ${i + 1}] At ${fmt(x.t - pass.start)}, the shot cuts to ${cam(x.camera)}${sub(x.text)}.` : `[Shot 1] ${cam(x.camera).replace(/^a/, "A")}${sub(x.text)}.`);
+  const desc = shots.map((x, i) => (i ? `[Shot ${i + 1}] At ${fmt(x.t - pass.start)}, the shot cuts to ${cam(x)}` : `[Shot 1] ${cam(x).replace(/^a/, "A")}`) + sub(x.text).replace(/\.?$/, ".")); // added 2026-11-05 v0.8.0
   for (const d of inPass) {
     const c = subj.findIndex(x => x.id === d.speaker);
     desc.push(`<Subject ${c + 1}> (${sid(d.speaker)}) ${d.delivery || "says"}, <d>[${d.language}] ${d.text}</d>`);
@@ -367,7 +424,8 @@ function plan(p) {
   for (const s of p.scenes) {
     out.timeline.starts[s.id] = t;
     t += s.duration;
-    const passes = planScene(p, s);
+    // [OLD 2026-11-05 v0.7.0->v0.8.0] const passes = planScene(p, s);  (fixed demo passes for s_07; the Prompt card's pass tabs use model.js)
+    const passes = modelPlanScene(p, s, p.scenes.indexOf(s)).passes; // added 2026-11-05 v0.8.0: the same passes as the editor
     const issues = [];
     if (s.dialogue.some(d => !d.speaker)) issues.push({ level: "warn", message: `${s.title}: a dialogue line has no speaker.` });
     out.scenes[s.id] = {
@@ -478,9 +536,13 @@ const llmLive = {};
 const llmCancelled = new Set();
 const failedOnce = new Set();
 export const scriptCalls = [];
-async function llmWork(job, ms, tokens) {
+// [OLD 2026-11-05 v0.7.0->v0.8.0] async function llmWork(job, ms, tokens) {
+// [OLD 2026-11-05 v0.7.0->v0.8.0]   llmLive[job] = true;
+// [OLD 2026-11-05 v0.7.0->v0.8.0]   const send = d => { for (const cb of listeners["reelwright.llm"] || []) cb({ job, budget: 16384, input: 2400, context: 32768, ...d }); };
+// added 2026-11-05 v0.8.0: sendWith (the event sender of /llm/passes, which adds the pass)
+async function llmWork(job, ms, tokens, sendWith = null) {
   llmLive[job] = true;
-  const send = d => { for (const cb of listeners["reelwright.llm"] || []) cb({ job, budget: 16384, input: 2400, context: 32768, ...d }); };
+  const send = sendWith || (d => { for (const cb of listeners["reelwright.llm"] || []) cb({ job, budget: 16384, input: 2400, context: 32768, ...d }); });
   send({ phase: "waiting", elapsed: 0, tokens: 0, reasoning: 0 });
   const steps = 6;
   for (let i = 1; i <= steps; i++) {
@@ -529,7 +591,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-03 v0.5.1->v0.6.0] case "/reelwright/info": return json({ version: "0.5.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true });
     // [OLD 2026-11-04 v0.6.0->v0.6.1] case "/reelwright/info": return json({ version: "0.6.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-05 v0.6.1->v0.7.0] case "/reelwright/info": return json({ version: "0.6.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    case "/reelwright/info": return json({ version: "0.7.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-06 v0.7.0->v0.8.0] case "/reelwright/info": return json({ version: "0.7.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.8.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -669,6 +732,29 @@ async function route(path, opts = {}) {
       // added 2026-11-03 v0.4.2: progress events and Stop
       if (body.job && await llmWork(body.job, 600, 900)) return json({ cancelled: true });
       return json({ sections: { ...s.prompt.sections, summary: (s.prompt.sections.summary || "") + " The candle gutters as she reads.", detailed_description: "Extreme close-ups, warm key light from the candle, shallow depth of field." }, warnings: [] });
+    }
+    // added 2026-11-05 v0.8.0: write the sections of a scene's passes, one fake request per pass, each with progress
+    // events (phase + pass) and Stop. window.__mockFlags.passesMs: time per pass; passesFail: a scene id that fails
+    case "/reelwright/llm/passes": {
+      const p = body.project, i = p.scenes.findIndex(x => x.id === body.scene_id), s = p.scenes[i];
+      if (!s) return json({ error: "Unknown scene " + body.scene_id }, 400);
+      mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job });
+      if (mockFlags.passesFail === body.scene_id) return json({ error: "No answer from http://llm.local:30000/v1 for 120 s. (tried 3 times)", reason: "stall" }, 502);
+      const plan = modelPlanScene(p, s, i).passes;
+      const want = Array.isArray(body.passes) && body.passes.length ? body.passes.filter(k => k >= 1 && k <= plan.length) : plan.map(x => x.index);
+      const out = [];
+      for (const [j, k] of want.entries()) {
+        const ps = plan[k - 1];
+        // the events and answers of llm.write_passes (notes_L): pass / passes (the scene's), item / items (this batch)
+        const send = d => { for (const cb of listeners["reelwright.llm"] || []) cb({ job: body.job, scene_id: s.id, budget: 4096, input: 6100, context: 32768, pass: k, passes: plan.length, item: j + 1, items: want.length, completed: out.length, ...d }); };
+        if (body.job && await llmWork(body.job, mockFlags.passesMs || 600, 700, send)) return json({ cancelled: true, scene_id: s.id, pass_count: plan.length, passes: out, warnings: [], tokens: 700 * out.length, ms: 900 });
+        const shots = (ps.shots || []).map((x, j) => (j ? `[Shot ${j + 1}] At ${fmt(x.t)}, the camera cuts to ` : "[Shot 1] Live-action, cinematic, ") + `${x.text || "the scene continues"}`);
+        out.push({ index: k, start: ps.start, end: ps.end, sections: {
+          subject_definitions: "", summary: `Pass ${k} of ${s.title}: ${(ps.shots || []).map(x => x.text).filter(Boolean).join(" ") || s.prompt.sections.summary || "the action continues."}`.slice(0, 220),
+          retention_analysis: "", detailed_description: (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.",
+          overall_soundscape: s.prompt.sections.overall_soundscape || "Wind and distant surf.", non_diegetic_music: "N/A" } });
+      }
+      return json({ scene_id: s.id, pass_count: plan.length, passes: out, warnings: [], tokens: 700 * out.length, ms: 900 * out.length });
     }
     case "/reelwright/llm/split": return json({ pass_prompts: { 1: "[reference generation] Wide: <Subject 1> leaves the pier…", 2: "[reference generation] Medium: the rain starts…", 3: "[video continuation] Wide, one take: she reaches the door." } });
     // [OLD 2026-11-03 v0.4.1->v0.4.2] case "/reelwright/llm/script": return json({ cast: [{ name: "Mara", kind: "character" }, { name: "Postman", kind: "character", description: "Young postman in a red cap." }], scenes: [{ title: "The postman arrives", duration: 9, summary: "A postman cycles up to the door.", shots: [{ t: 0, camera: "Wide", text: "He cycles along the seawall." }], dialogue: [{ speaker: "Postman", t: 4, text: "Letter for Mara!" }], cast: ["Postman"] }] });

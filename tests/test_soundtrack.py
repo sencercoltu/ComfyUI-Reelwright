@@ -116,7 +116,11 @@ def test_prompt_sends_the_song_instead_of_voices(harbor):
     before, _ = _build(harbor, 1, k)
     assert any(a["cast"] for a in before["audios"])
     p = _song(harbor)
-    p["scenes"][1]["prompt"]["sections"]["summary"] += " She sings along to @soundtrack."
+    # [OLD v0.7.0] p["scenes"][1]["prompt"]["sections"]["summary"] += " She sings along to @soundtrack."
+    # v0.8.0: a multi-pass scene does not send the scene summary; the sentence is this pass's own summary
+    s = p["scenes"][1]
+    s["prompt"]["passes"] = [{"start": x["start"], "end": x["end"], "sections": {"summary": s["prompt"]["sections"][
+        "summary"] + " She sings along to @soundtrack." if n == k else ""}} for n, x in enumerate(plan["passes"])]
     b, _ = _build(p, 1, k)
     assert not any(a.get("cast") for a in b["audios"])
     song = [a for a in b["audios"] if a.get("song")]

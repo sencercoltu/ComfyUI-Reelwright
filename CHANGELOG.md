@@ -1,5 +1,114 @@
 # Changelog
 
+## v0.8.0 — 2026-11-06
+
+Each pass of a long scene has its own prompt now, and the LLM can write it. New settings work against the loss that builds up at pass seams, and a drift meter measures it. Shot and dialogue rows show their start, end and length. The camera picker has the 20 camera moves of MiniMax's H3 guide, with amplitude, speed and framing. The timeline follows the playhead while the film plays.
+
+### What you will notice after updating
+
+- **Long scenes with a written scene summary render again once.** A scene of several passes no longer sends its summary to every pass: that made every pass play the whole scene's action. Each pass now gets a summary made from its own shots and lines.
+  - This affects scenes of several passes in Structured mode whose summary is not empty: every pass without a hand-edited or Split pass prompt. Scenes that continue from them follow, as for any change upstream.
+  - A guide picture or clip named only in such a summary is no longer sent to its pass as a reference. It is still anchored.
+  - Nothing else renders again. Single-pass scenes, long scenes with an empty summary, raw prompts and hand-edited pass prompts keep their prompts and keys. Shots without the new camera fields are written exactly as before. Every new setting starts at v0.7.0's behaviour, and no other cache key changes.
+- **The Prompt card has a tab per pass** (Scene tab) in a scene of several passes: **Whole scene**, then **Pass 1 · 00:00.000–00:14.375**, **Pass 2 · …** in scene times. Single-pass scenes have no tabs.
+- **Script import writes longer shots.** Each shot is 2–4 sentences, and each scene's summary is a note on the whole scene. The default token budget per part is 24,576 (was 16,384), because the answers are about 1.5 times as long. A project saved before keeps the budget it has: raise it in Global → Prompt rewriter → Script import → Max tokens if parts get cut off.
+- **The timeline follows the playhead while the film plays.** The playhead stays in the middle of the view; at the film's start and end the view stops. Scrolling, a sideways wheel or dragging the lanes pauses following. It comes back when you press Play, click **Follow** on the transport, or when the playhead reaches the middle of the view again.
+- **New entries in the Issues list.** A long scene whose passes have no summary of their own gets one warning that lists them. A dialogue line that runs past a pass seam or the scene's end gets a warning. A long scene joined by overlap seams with no shot cuts gets a tip. None of these blocks a render.
+- **More camera presets.** A project saved before gets H3's 20 camera moves added once. Your own presets stay first and unchanged. No shot changes, because a shot keeps its own copy of the camera words.
+
+### Each pass has its own prompt
+
+- **Scene tab → Prompt, a tab per pass.**
+  - **Whole scene:** the summary is a *whole-scene note* for you and the LLM; it is not sent. The other five sections are *shared by every pass*.
+  - **Pass k:** its range, length, frames and seam kind, its own six sections, its shots and its dialogue. An empty section uses the shared text, or the automatic one, and shows it greyed as the placeholder. Each section says where its text comes from (*pass k only*, *shared*, *automatic*); **Use shared** clears the pass's own text.
+  - A dot on a tab means the pass has text of its own. Picking a tab also opens that pass in **What H3 receives**.
+  - When a pass's own hand-edited or Split prompt replaces it, the tab says so.
+- **How a pass is built.** Each section is the pass's own text when written, else the scene's shared text (what every pass got before).
+  - The summary: the pass's own when written. A single-pass scene still sends the scene summary. A pass of a longer scene without its own summary gets one made from its shots: who is in it, how many shots, the first sentence of each of its shots, who speaks, then the voice, song and continuation sentences. When the scene summary is empty, the pass gets the v0.7.0 automatic summary, unchanged.
+  - The detailed description: a pass's own text is used as written, with `[Shot 1]` its own first shot and times in pass time. Without it, the scene's text is split per pass as before.
+- **Pass texts follow the scene when its passes move** (a longer scene, other seams). Each pass gets the text written for the time it covers most. The tab's times turn amber, the Issues list has a note, and **Use the new layout** stores the texts for the new passes (one undo step). Text that no pass gets any more is listed there, and is dropped when you use the new layout or type in a pass.
+- **A single-pass scene that still has pass texts** from when it was longer shows them with **Move into the sections** and **Drop them**.
+- **Rewrite** in a scene of several passes changes the note and the shared sections; the card says so. Write prompts (below) writes each pass.
+
+### Shots and dialogue
+
+- **Bigger text fields that grow** with the text, for shots and dialogue, in single-pass scenes too.
+- **Each row shows its start, end and length in scene time.**
+  - A shot's length can be typed. It moves the next shot's start. The last shot's length sets the scene's length, following the timeline's Ripple, Roll or Auto-roll rule.
+  - A pass seam inside a shot shows as a chip ("seam 00:25.000"). Seams on shot cuts show none.
+- **A dialogue line can have a length** in seconds. Empty, it is estimated from the words: 2.5 words a second (a Chinese, Japanese or Korean character counts as a quarter word), at least 1 s; the estimate is the placeholder.
+  - A row warns when its line runs past a pass seam (it is cut off there) or past the scene's end. The Issues list has the same warnings.
+  - Write prompts tells the LLM each line's length. The merge's `.srt` shows a line with its own length for that long (at least 0.3 s, still ending before the next line and at the scene's end); lines without one keep the reading-time length.
+- In a pass tab, the rows are the pass's own: numbered per pass with the scene number beside them, in scene times, with a continuing shot marked.
+
+### Long scenes: what carries across a pass seam
+
+- **Why later passes got worse.** The VAEs keep no state between calls, so nothing in them gets corrupted. The loss builds up in round trips: at each overlap seam the end of the pass before is decoded to pixels and encoded again for the next pass. That is the anchored overlap (39 frames by default) and its sound, and since v0.7.0 also the last 124 frames as `<Video 1>`.
+  - The default video VAE, `minimax_h3_video_vae_int8_convrot.safetensors`, is an int8 file, so every encode with it loses a little detail.
+  - A pass read back from the pass cache went through H.264 at CRF 4 with 4:2:0 colour as well.
+  - So each pass starts from a slightly worse copy of the pass before.
+- **Seams on shot cuts avoid it.** A seam on a cut joins two passes with a plain cut, with no round trip. A long scene with overlap seams and no shot cuts gets a tip in the Issues list with the seam times: add cuts up to the snap distance before a seam, and with Seams on *Overlap only*, set it to Auto or Cuts.
+- **New settings:** Global → New scenes and long scenes → **Pass seams**. At their defaults everything works as in v0.7.0.
+  - **Guide VAE** (default: *Same as the video VAE*): the VAE that encodes everything a pass is shown: reference pictures and clips, the continuation `<Picture 1>` / `<Video 1>`, and every guide. The video VAE still decodes. Pick the full H3 video VAE (bf16 or fp32) to avoid the int8 encoder's loss. It must be a variant of the H3 video VAE with an encoder; anything else is refused when it loads. It applies to every scene, not only long ones, so setting it renders again nearly every scene.
+  - **Carry sound** (on): off, the guide from the pass before is picture only, and the stitch crossfades the sound over the whole overlap instead of only over the picture's crossfade. A tail start keeps the sound of the scene before. The passes after overlap seams render again.
+  - **`<Video 1>` at seams** (on): off, a pass after an overlap seam is anchored only, as before v0.7.0, with no 124-frame clip. The prompt, the reference budget and the render agree. It is greyed out while Cast tab → Continuity rules → Continuation → Name it in the prompt is off. The passes after overlap seams render again.
+  - **Hand-off: Pixels / Latent · experimental** (Pixels): with Latent, a pass after an overlap seam is anchored with the pass before's own sampled latents for the overlap, with no decode and encode. It falls back to pixels when they don't fit: another canvas size, an overlap or pass not on the 17k+5 grid, or a pass before read from the pass cache without its latents (rendered before v0.8.0 or with Hand-off on Pixels). The sound, the `<Video 1>` clip and tail starts between scenes still go through pixels. The model was trained on guides encoded from pixels, so only real renders can tell whether it helps. The passes after overlap seams render again.
+  - **Pass cache: Near-lossless / Lossless** (Near-lossless): Lossless writes pass files and `tail.mp4` as RGB H.264 at qp 0 with FLAC sound, read back bit for bit (a scene's `tail.mp4` is still cut from the joined video when its last pass doesn't hold all of it). It takes about 4 times the disk (a 362-frame pass about 0.7 GB in a test) and writes faster. Nothing renders again: new passes are written lossless, and cached passes are reused. Lossless files don't play in the Files tab's preview.
+- **Drift meter** (Render tab). For each pass that continues from footage (an overlap seam, a tail start, a last-frame start), the render compares what the pass made with the footage it was anchored to, on up to 3 of the anchored frames (first, middle, last):
+  - **anchor**: the mean pixel difference, 0–255 (ok below 8, bad from 16);
+  - **colour**: how far the mean colour moved (ok below 4, bad from 10), with the shift per channel in the tooltip;
+  - **sharpness**: generated against guide, 1 = as sharp (ok 0.8–1.25, bad below 0.6 or above 1.6).
+  - Each take lists `● P2 4.2 · 1.1 · 0.95` per pass, with an ok / warn / bad light; the tooltip says what the pass continued from, the hand-off used and whether the pass came from the pass cache. The Passes column shows the starred take's worst light, and a take shows the pass-seam settings it was made with when they are not the defaults.
+  - The limits are starting values. The trend over the passes matters more than one number.
+- **Test it on your GPU.** An A/B on one long scene:
+  1. Take a scene of about 50 s with no shot cuts. Set Seams to *Overlap only* (longest pass 362, overlap 39), so it renders in 4 passes. Turn the face check off. Press Render each time: a pending render keeps the seeds, while New take and Variants change them.
+  2. Render with the defaults and note the drift of passes 2–4.
+  3. Change one setting, render (only the passes it affects render), note the drift and switch it back: Guide VAE = the full H3 video VAE; Carry sound off; `<Video 1>` at seams off; Hand-off = Latent.
+  4. Pass cache, once with each choice: delete the scene's pass cache in the Files tab, render and press Stop while pass 4 samples, then render again, so pass 4 starts from pass 3 read back. Compare pass 4's drift.
+  5. Turn on what helped together and compare. A setting helps when passes 3–4 stay close to pass 2: anchor flat, sharpness near 1, the colour shift not creeping one way. Watch the seams in the video too.
+
+### Script import and Write prompts
+
+- **Script import asks for more.** Each shot is 2–4 sentences: the framing, who is where, the action, the camera and the sound; spoken words stay in the dialogue. The scene's summary is a note on the whole scene. Older one-line answers import as before. A shot answered in parts (composition, action, sound…) keeps all of them, joined in that order.
+- **Write prompts.** The LLM writes each pass of a scene its own six sections, one request per pass, in order, so each pass sees the pass before as just written.
+  - Each request gets the project and cast, the whole-scene note, the pass's range, its shots and lines with pass and scene times, lengths and camera, the references it sends, the pass before (its summary, last shot and line) and an outline of the pass after, and MiniMax's Ref2VA rules: 350–500 words of detailed description, `[Shot N]` counted from 1 in each pass, spoken lines word for word in `<d>…</d>`.
+  - The answer is checked: when it has one `[Shot N]` per shot, they are numbered from 1 and their cut times set to the timeline's. Warnings say when the description is under 300 or over 650 words, a spoken line is missing or made up, a frame guide is not named, or a hand-edited pass prompt overrides the pass.
+  - **Where:** **Write prompts** on the Prompt card (every pass), **Write this pass** on a pass tab, and after a script import **Write prompts for the N imported scenes** (Global → Import a script), one scene after another.
+  - It shows which pass it is on ("pass 2 of 3"), and **Stop** keeps the passes already written. A failed scene can be retried; only its missing passes are asked again. Each scene's result is one undo step.
+  - A single-pass scene's answer goes into its sections; an empty answered section keeps the scene's text. Raw-mode scenes can't be written this way (their raw text goes to every pass).
+  - Budget per pass: Max tokens, at least 8,192 (4,096 with Thinking off); a cut-off answer is asked again with twice the budget, up to 32,768.
+- **Split** stays for whole-text pass prompts. Such a prompt still replaces its pass's sections.
+
+### Timeline
+
+- **Follow during playback** (see above). The view moves in steps of 4 px; a 300-scene film plays as smoothly following as not.
+- The Camera lane shows the framing, the move (the preset's name) and its amplitude and speed.
+- Fixed: a lanes element replaced by a redraw could report a scroll and make the timeline rebuild on every frame.
+
+### H3 camera moves
+
+- **The camera presets are the 20 moves of MiniMax's H3 guide:** Zoom In / Out, Push In, Pull Out, Pan Left / Right, Truck Left / Right, Tilt Up / Down, Pedestal Up / Down, Arc Shot, Tracking Shot, Static Shot, Shake Slightly, Shake Strongly, POV, Roll Clockwise / Counterclockwise. Each puts a natural phrase into the shot, "the camera pushes in". New projects start with these 20 only.
+- **Each shot can set the move's amplitude** (Small / Medium / Large) **and speed** (Slow / Normal / Fast). Medium and Normal write nothing. They are greyed out without a move and for Static Shot, POV and the two shakes; picking one of those clears them.
+- **And a framing:** extreme wide, wide, medium wide, medium, medium close-up, close-up, extreme close-up, over-the-shoulder, two-shot, insert, low angle, high angle, overhead, Dutch angle.
+- **The shot line follows the guide's form**, one sentence for the move: `[Shot 1] A close-up: The camera pushes in with small amplitude at slow speed. <text>.` and `[Shot 2] At 00:05.000, the shot cuts to a low-angle shot: The camera pans left with large amplitude. <text>.` A shot without a framing, amplitude or speed is written exactly as before. Camera words typed by hand work the same way.
+- The camera picker lists H3's moves, then your own presets, and takes free text.
+
+### For developers
+
+- **Project data** (Python and JS normalise it the same way, `tests/test_model_parity.py`):
+  - `scene.prompt.passes`: `[{start, end, sections: {six sections}}]`, index = pass number − 1; `start` / `end` are the pass's range in scene seconds when the text was written. A non-object item becomes an empty entry, so later indexes don't shift.
+  - shot `camera_amp` (`"" | "small" | "large"`), `camera_speed` (`"" | "slow" | "fast"`), `framing` (`""` or one of `FRAMINGS`); other values become `""`. Planner pass shots carry them.
+  - dialogue `duration`: seconds > 0 (at most 600), or `null` = estimated.
+  - project `camera_version: 2`; below 2 the missing official moves are appended once.
+  - `global.long`: `guide_vae: ""`, `carry_audio: true`, `seam_video_ref: true`, `handoff: "pixels" | "latent"`, `pass_cache: "near_lossless" | "lossless"` (unknown values reset). `global.llm.import_max_tokens` defaults to 24576.
+- **Takes:** `drift: [{pass, source, frames, anchor_diff, color_shift, rgb_shift, sharpness, level, handoff?, handoff_reason?, pass_cache?}]` and `long` (the five settings) in `index.json`, `meta.json` and `/plan`'s takes. A pass cache `.json` gets `codec` and `drift`; with Latent hand-off a pass keeps `<file key>.latent.safetensors` beside it, pruned with it.
+- **Routes:** `POST /reelwright/llm/passes {project, scene_id, passes: [1-based] | null, instruction?, job?}` → `{scene_id, pass_count, passes: [{index, start, end, sections}], warnings, tokens, ms}`; after a later pass fails, also `error`, `reason` and `failed`; `/llm/cancel` → `{cancelled: true, passes, …}`; 400 for a bad body or a raw-mode scene, 502 when the first pass fails. Its `reelwright.llm` events add `scene_id`, `pass`, `passes`, `item`, `items` and `completed`.
+- **Model helpers**, each with a JS twin: `pass_texts` / `passTexts` → `{texts, moved, unused, same, stored, entry}`, `relayout_pass_texts` / `relayoutPassTexts`, `pass_sections` / `passSections` → `{own, used, source}`, `dialogue_seconds` / `dialogueSeconds`, `dialogue_spans` / `dialogueSpans`, `camera_sentence` / `cameraSentence`, `framing_phrase` / `framingPhrase`; constants `DEFAULT_CAMERA`, `CAMERA_VERSION`, `CAMERA_AMPS`, `CAMERA_SPEEDS`, `FRAMINGS`, `FRAMING_PHRASE`, `LONG_HANDOFF`, `LONG_PASS_CACHE`. JS only: `setPassSection`, `writePassTexts`, `migrateCamera`. `pass_continuation` / `passContinuation` read `seam_video_ref`.
+- **Prompt and LLM:** `prompt.pass_summary`, `prompt._framed_shot`; `llm.write_passes`, `scene_builds`, `pass_request`, `tidy_pass`, `pass_budget`, `PASS_RULES`, `IMPORT_MAX_TOKENS`.
+- **Render, cache and merge:** `cache.pass_key(…, extra=None)` with `cache.long_pass_extra` (empty at the defaults), `cache.scene_key(…, carry_audio=True)`; `analysis.long_settings`, `apply_long`, `drift_metrics`, `drift_level`, `DRIFT_LIMITS`; `render.Models.encoder_vae`, `check_guide_vae`, `add_latent_guide`, `save_handoff` / `load_handoff`; `media.save_video_lossless`, `load_video(exact=True)`; `assemble.pass_segments(…, carry_audio=True)` and the segment key `audio_lead_frames` in `merge.build_command`; `merge.subtitle_cues` reads a line's `duration`.
+- **Frontend:** `web/rw/passes.js` (pass layout, pass texts, rows, camera options, the Write prompts runner), `rw.llmPasses(project, scene_id, passes, job, instruction)`, `ui.number({placeholder})`, `codeEditor({cls, spellcheck})`. The mock plans passes with model.js and serves `/llm/passes` and drift; `web-test/interact.py` runs `v080_checks()`.
+- **Tests:** new `tests/test_pass_prompts.py` and `tests/test_long_continuity.py`; additions to `test_llm.py`, `test_routes.py`, `test_render_flow.py`, `test_continuation.py` and `test_model_parity.py`.
+
 ## v0.7.0 — 2026-11-05
 
 A continuing scene now names the frame or clip it continues from in its prompt. Each scene sets how it sits in the merged film: its transition, fades, sound level and colour. The timeline shows the frame that is actually at each time.

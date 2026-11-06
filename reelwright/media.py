@@ -17,6 +17,13 @@ from . import merge, spec
 # added 2026-11-03 v0.6.0: passes in the pass cache and tail clips are written almost losslessly, so the encode of the
 # take (and of the cut) is the only one that loses detail
 PASS_CRF = 4
+# added 2026-11-05 v0.8.0: Global -> Long scenes -> pass cache "lossless": RGB H.264 at qp 0 (libx264rgb) with FLAC
+# sound in the same .mp4 name, so the pass cache keeps its file names. Read back with load_video(exact=True) the
+# frames are the 8-bit frames that were written, bit for bit (ComfyUI's own reader converts RGB streams through
+# swscale's float path, which is off by up to about one level). About 4x the size of CRF 4 and much faster to write.
+LOSSLESS_CODEC = "libx264rgb"
+LOSSLESS_OPTIONS = {"qp": "0", "preset": "ultrafast"}
+RGB_PIX_FMTS = ("gbrp", "bgr0", "rgb24", "bgr24", "rgba", "bgra", "gbrap", "0rgb", "rgb0")
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
@@ -147,13 +154,19 @@ def _duration(path):
         return None
 
 
-def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_frames=None):
+# [OLD 2026-11-05 v0.7.0->v0.8.0] def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_frames=None):
+def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_frames=None, exact=False):
     """Frames at 24 fps [N,H,W,3] and the matching audio dict (or None).
 
     added 2026-11-03 v0.6.0: only the part that is needed is decoded. `last_frames` = the last N frames (tails);
-    `max_seconds` / `max_frames` = at most that much from the start (references). Frame positions are integers."""
+    `max_seconds` / `max_frames` = at most that much from the start (references). Frame positions are integers.
+    added 2026-11-05 v0.8.0: exact=True (files Reelwright wrote itself: pass cache, tail.mp4) reads an RGB stream (a
+    lossless pass cache file) with PyAV straight to 8-bit RGB, so the frames are exactly the ones written; other
+    streams are read as before."""
     if last_frames is None and last_seconds:
         last_frames = int(round(float(last_seconds) * spec.FPS))
+    if exact and not max_seconds and not max_frames and is_rgb_video(path):  # added 2026-11-05 v0.8.0
+        return load_video_exact(path, last_frames=last_frames)
     if last_frames:
         n = max(1, int(last_frames))
         dur = _duration(path)
@@ -218,18 +231,119 @@ def slice_audio(audio, start, end):
     return {"waveform": w[..., a:b].contiguous(), "sample_rate": sr}
 
 
-def save_video(frames, audio, path, crf=16):
+# [OLD 2026-11-05 v0.7.0->v0.8.0] def save_video(frames, audio, path, crf=16):
+def save_video(frames, audio, path, crf=16, lossless=False):
+    """lossless (added 2026-11-05 v0.8.0): see save_video_lossless."""
+    if lossless:  # added 2026-11-05 v0.8.0
+        return save_video_lossless(frames, audio, path)
     comp = Types.VideoComponents(images=frames, audio=audio, frame_rate=Fraction(spec.FPS))
     InputImpl.VideoFromComponents(comp).save_to(path, format=Types.VideoContainer.MP4,
                                                 codec=Types.VideoCodec.H264, crf=crf)
 
 
-def save_video_atomic(frames, audio, path, crf=16):
+# ---- lossless pass cache (added 2026-11-05 v0.8.0) -------------------------------------------------------------------
+
+def to_u8(frames):
+    """Float frames [N,H,W,3] in 0..1 as uint8, rounded (the lossless writer's 8-bit frames)."""
+    return (frames[..., :3].float().clamp(0, 1) * 255.0 + 0.5).to(torch.uint8)
+
+
+def save_video_lossless(frames, audio, path):
+    """An .mp4 holding RGB H.264 at qp 0 (LOSSLESS_CODEC, bit-exact 8-bit RGB) and the sound as FLAC (24-bit), at
+    24 fps. load_video(exact=True) gives the frames back exactly (to_u8(frames) / 255)."""
+    import av
+    n, h, w = int(frames.shape[0]), int(frames.shape[1]), int(frames.shape[2])
+    with av.open(path, "w", format="mp4") as out:
+        vs = out.add_stream(LOSSLESS_CODEC, rate=spec.FPS)
+        vs.width, vs.height = w, h
+        vs.pix_fmt = "rgb24"
+        vs.options = dict(LOSSLESS_OPTIONS)
+        astream, wave, layout = None, None, None
+        if audio is not None and audio.get("waveform") is not None and audio["waveform"].shape[-1]:
+            sr = int(audio["sample_rate"])
+            wave = audio["waveform"][0].float().clamp(-1.0, 1.0)
+            wave = wave[:, :math.ceil(sr / spec.FPS * n)]  # as long as the picture, like ComfyUI's writer
+            layout = {1: "mono", 2: "stereo"}.get(int(wave.shape[0]), "stereo")
+            if layout == "stereo" and wave.shape[0] != 2:
+                wave = wave[:2] if wave.shape[0] > 2 else wave.repeat(2, 1)
+            astream = out.add_stream("flac", rate=sr, layout=layout)
+            astream.format = "s32"
+        for k in range(n):
+            img = to_u8(frames[k]).cpu().numpy()
+            for packet in vs.encode(av.VideoFrame.from_ndarray(img, format="rgb24")):
+                out.mux(packet)
+        for packet in vs.encode(None):
+            out.mux(packet)
+        if astream is not None:
+            af = av.AudioFrame.from_ndarray(np.ascontiguousarray(wave.cpu().numpy()), format="fltp", layout=layout)
+            af.sample_rate = int(audio["sample_rate"])
+            af.pts = 0
+            for packet in astream.encode(af):
+                out.mux(packet)
+            for packet in astream.encode(None):
+                out.mux(packet)
+
+
+def is_rgb_video(path):
+    """True when the file's first video stream is RGB (a lossless pass cache file or tail clip)."""
+    import av
+    try:
+        with av.open(path) as c:
+            v = c.streams.video[0] if c.streams.video else None
+            return v is not None and (v.codec_context.pix_fmt or "") in RGB_PIX_FMTS
+    except Exception:  # noqa: BLE001 - not readable here: the normal reader reports it
+        return False
+
+
+def load_video_exact(path, last_frames=None):
+    """(frames [N,H,W,3] float32 = 8-bit / 255, audio dict or None) of a file Reelwright wrote at 24 fps, decoded
+    with PyAV to rgb24 (no float conversion in swscale); last_frames = only the last N frames and their sound."""
+    import collections
+    import av
+    keep = collections.deque(maxlen=int(last_frames)) if last_frames else []
+    chunks, sr = [], None
+    m = 0
+    with av.open(path) as c:
+        streams = [c.streams.video[0]] + ([c.streams.audio[0]] if c.streams.audio else [])
+        resampler = None
+        for packet in c.demux(*streams):
+            if packet.stream.type == "video":
+                for frame in packet.decode():
+                    keep.append(frame.to_ndarray(format="rgb24"))
+                    m += 1
+            else:
+                for frame in packet.decode():
+                    if resampler is None:
+                        sr = int(frame.sample_rate)
+                        resampler = av.AudioResampler(format="fltp", layout=frame.layout.name, rate=sr)
+                    for rf in resampler.resample(frame):
+                        chunks.append(rf.to_ndarray())
+        if resampler is not None:
+            for rf in resampler.resample(None):
+                chunks.append(rf.to_ndarray())
+    if not keep:
+        raise ValueError("no video frames could be decoded from {}".format(os.path.basename(path)))
+    arr = list(keep)
+    frames = torch.empty((len(arr),) + tuple(arr[0].shape), dtype=torch.float32)
+    for k, a in enumerate(arr):
+        frames[k] = torch.from_numpy(a).float().div_(255.0)
+    audio = None
+    if chunks:
+        wave = torch.from_numpy(np.concatenate(chunks, axis=1)).float()[None]
+        audio = {"waveform": wave, "sample_rate": sr}
+        if last_frames:
+            audio = slice_audio(audio, (m - len(arr)) / spec.FPS, m / spec.FPS)
+    return frames, audio
+
+
+# [OLD 2026-11-05 v0.7.0->v0.8.0] def save_video_atomic(frames, audio, path, crf=16):
+def save_video_atomic(frames, audio, path, crf=16, lossless=False):
     """added 2026-11-03 v0.6.0: write to a temporary name next to `path`, then move it into place, so a stopped or
-    failed write never leaves a half-written file under the final name."""
+    failed write never leaves a half-written file under the final name. lossless: added 2026-11-05 v0.8.0."""
     tmp = "{}.{}.partial.mp4".format(os.path.splitext(path)[0], os.getpid())
     try:
-        save_video(frames, audio, tmp, crf=crf)
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] save_video(frames, audio, tmp, crf=crf)
+        save_video(frames, audio, tmp, crf=crf, lossless=lossless)
         os.replace(tmp, path)
     finally:
         if os.path.exists(tmp):

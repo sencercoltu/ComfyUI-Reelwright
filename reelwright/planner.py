@@ -149,9 +149,14 @@ def plan_scene(p, scene, scene_index):
         for number, sh, a, b in shot_ranges:
             if b <= s or a >= end:
                 continue
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] pass_shots.append({"id": sh["id"], "number": number, "continuing": a < s,
+            #                                                   "t": (max(a, s) - s + keep_in_frames) / spec.FPS,
+            #                                                   "camera": sh["camera"], "text": sh["text"]})
+            # added 2026-11-05 v0.8.0: + the camera's amplitude and speed and the framing (prompt.shot_parts writes them)
             pass_shots.append({"id": sh["id"], "number": number, "continuing": a < s,
                                "t": (max(a, s) - s + keep_in_frames) / spec.FPS,
-                               "camera": sh["camera"], "text": sh["text"]})
+                               "camera": sh["camera"], "text": sh["text"], "camera_amp": sh.get("camera_amp", ""),
+                               "camera_speed": sh.get("camera_speed", ""), "framing": sh.get("framing", "")})
         lines = []
         for d in scene["dialogue"]:
             # [OLD 2026-11-03 v0.5.1->v0.6.0] f = spec.frames_of(float(d["t"]))  (a line before 0 s or in the last half frame vanished)

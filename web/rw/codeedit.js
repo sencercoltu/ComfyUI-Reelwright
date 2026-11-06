@@ -3,6 +3,7 @@
 import { h } from "./ui.js";
 import { highlightHTML } from "./prompttext.js";
 
+/* [OLD 2026-11-05 v0.7.0->v0.8.0] one look (mono); shot and dialogue texts use it now in a text font
 export function codeEditor({ value, onInput, onChange, key, help, candidates, placeholder, minRows = 3, maxHeight = 220 }) {
   const pre = h("pre", { class: "rw-code-hl mono", "aria-hidden": "true", html: highlightHTML(value) });
   const list = h("div", { class: "rw-ac", role: "listbox" });
@@ -11,6 +12,16 @@ export function codeEditor({ value, onInput, onChange, key, help, candidates, pl
     dataset: { scroll: key },
   });
   const wrap = h("div", { class: "rw-code", style: { "max-height": maxHeight + "px" } }, pre, ta, list);
+[/OLD] */
+// added 2026-11-05 v0.8.0: cls (an extra class on the box: "sans" for shot and dialogue texts), spellcheck
+export function codeEditor({ value, onInput, onChange, key, help, candidates, placeholder, minRows = 3, maxHeight = 220, cls, spellcheck = false }) {
+  const pre = h("pre", { class: "rw-code-hl mono", "aria-hidden": "true", html: highlightHTML(value) });
+  const list = h("div", { class: "rw-ac", role: "listbox" });
+  const ta = h("textarea", {
+    class: "rw-code-ta mono", key, help, placeholder, spellcheck: spellcheck ? "true" : "false", rows: minRows, value: value ?? "",
+    dataset: { scroll: key },
+  });
+  const wrap = h("div", { class: ["rw-code", cls], style: { "max-height": maxHeight + "px" } }, pre, ta, list);
   let matches = [];
   let active = 0;
   let token = null;

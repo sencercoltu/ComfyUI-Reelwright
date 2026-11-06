@@ -196,8 +196,9 @@ def run_app(coro_fn, chat_handler, models=None, **cfg):
 def test_limits_are_clamped():
     got = llm.limits({"timeout_s": 2, "max_wait_s": 5, "retries": 9, "context_tokens": 500, "import_part_chars": 100,
                       "import_max_tokens": "x", "import_thinking": "off", "import_guides": 1})
+    # v0.8.0: the import's default budget is 24576 (was 16384), for the longer shots
     assert got == {"timeout_s": 10, "max_wait_s": 30, "retries": 5, "context_tokens": 0, "import_part_chars": 0,
-                   "import_max_tokens": 16384, "import_thinking": "off", "import_guides": True}
+                   "import_max_tokens": 24576, "import_thinking": "off", "import_guides": True}
     assert llm.limits({})["max_wait_s"] == 900 and llm.limits({"timeout_s": 600, "max_wait_s": 60})["max_wait_s"] == 600
 
 
@@ -549,3 +550,304 @@ def test_script_part_skips_known_cast_without_a_text_name(harbor, monkeypatch):
                                       known_cast=[{"name": 5}, {"name": "Finn"}, {"name": ""}, "Ola"]))
     assert isinstance(out, dict)
     assert "Finn (character)" in seen["user"] and "5 (" not in seen["user"]
+
+
+# ---- added 2026-11-05 v0.8.0: Write prompts (one request per pass) and the longer import ---------------------------
+
+def long_scene(harbor):
+    """The harbor's 32 s continuing scene with a second shot in pass 2, normalised. Three passes split at shot cuts:
+    0-14.375 (shots at 0 and 6), 14.375-22 (shots at 14.375 and 18, "Almost home." at 16), 22-32."""
+    from reelwright.model import normalize_project
+    harbor["scenes"][1]["shots"].append({"t": 18.0, "camera": "Close", "text": "rain runs down her face"})
+    p = normalize_project(harbor)
+    return p, p["scenes"][1]
+
+
+def asked_pass(body):
+    import re
+    m = re.search(r"Write the prompt of pass (\d+) of", body["messages"][1]["content"])
+    return int(m.group(1)) if m else 1
+
+
+def filler(n):
+    return " ".join(["rain"] * n)
+
+
+PASS_ANSWERS = {
+    1: {"subject_definitions": "<Subject 1> is Mara.",
+        "summary": "[reference generation] <Subject 1> leaves the pier (pass one).",
+        "retention_analysis": "<Subject 1>: fully_preserved - identity.",
+        "detailed_description": "Live-action, dusk light.\n[Shot1] At 00:00.000, the shot cuts to a wide shot: <Subject 1> "
+                                "leaves the pier. " + filler(160) + "\n[Shot 2] At 00:05.000, the shot cuts to a tracking "
+                                "shot along the seawall. " + filler(160),
+        "overall_soundscape": "Gulls and the sound of <Audio 1>.", "non_diegetic_music": "N/A"},
+    # scene numbering and scene times: renumbered and moved to pass time
+    2: {"summary": "The rain starts.",
+        "detailed_description": "[Shot 3] A medium shot: the rain starts. @Mara (S1) mutters, <d>[English] Almost "
+                                "home.</d> " + filler(150) + "\n[Shot 4] At 00:18.000, the shot cuts to a close-up of "
+                                "rain on her face. " + filler(150),
+        "overall_soundscape": "Rain.", "non_diegetic_music": ""},
+    3: {"summary": "She reaches the door.", "detailed_description": "[Shot 1] A wide shot: she reaches the door."},
+}
+
+
+def pass_server(seen, answers=PASS_ANSWERS):
+    async def handler(request):
+        body = await request.json()
+        seen.append(body)
+        return await stream_response(request, sse((json.dumps(answers[asked_pass(body)]), "")))
+    return handler
+
+
+def test_write_passes_one_request_per_pass(harbor):
+    from reelwright import prompt
+    p, scene = long_scene(harbor)
+    seen, events = [], []
+    out = run_app(lambda cfg: llm.write_passes(cfg, p, scene, None, "make it rain harder", progress=events.append),
+                  pass_server(seen), include_guides=True, guides={"ref-en.txt": "REF-GUIDE", "base-en.txt": "BASE-GUIDE"})
+    assert [asked_pass(b) for b in seen] == [1, 2, 3]
+    systems = {b["messages"][0]["content"] for b in seen}
+    assert len(systems) == 1  # one system prompt for the whole batch (the server's prefix cache)
+    system = systems.pop()
+    assert "REF-GUIDE" in system and "BASE-GUIDE" in system and "350-500 English words in detailed_description" in system
+    assert [b["max_tokens"] for b in seen] == [8192] * 3  # thinking may be on: at least PASS_MIN_TOKENS_THINKING
+    u1, u2, u3 = (b["messages"][1]["content"] for b in seen)
+    # pass 1: the start of a tail scene, no pass before it
+    assert "The pass before" not in u1 and "It continues seamlessly from the end of the scene before (@tail)." in u1
+    assert "@tail -> <Video 1>: the end of the scene before; [Shot 1] continues seamlessly from its final frames" in u1
+    assert "The pass after (pass 2, scene 00:14.375 to 00:22.000), only so this pass leads into it" in u1
+    # pass 2: its range, shots and line in pass and scene time, the pass before as just written, the pass after
+    assert "Write the prompt of pass 2 of 3. It covers scene time 00:14.375 to 00:22.000 (7.62 s)" in u2
+    assert ("[Shot 2] 00:03.625 to 00:07.625 in the pass (scene 00:18.000 to 00:22.000, 4.00 s): Close | rain runs "
+            "down her face") in u2
+    import re
+    assert re.search(r"00:01\.625 in the pass \(scene 00:16\.000\), in \[Shot 1\](, about 1\.0 s)?: @Mara \(S1\) mutters, "
+                     r"<d>\[English\] Almost home\.</d>", u2)
+    assert "The pass before (pass 1, scene 00:00.000 to 00:14.375) was just written." in u2
+    assert "Its summary: @Mara leaves the pier (pass one)." in u2
+    assert "Its last shot: [Shot 2] At 00:06.000, the shot cuts to a tracking shot along the seawall." in u2
+    assert "Shot at scene 00:22.000: Wide | she reaches the door" in u2 and "Shot at scene 00:00.000" not in u2
+    assert "Whole-scene note" in u2 and "@Mara walks home as a storm builds" in u2
+    assert "Not sent with this pass (the editor writes them as words): @P3" in u2
+    assert "Instruction: make it rain harder" in u2 and "2 [Shot N] lines (about 212 words per shot, 350-500" in u2
+    assert "Leave subject_definitions empty" in u2 and "What H3 receives for this pass now" in u2
+    assert "The pass after" not in u3 and "Its last spoken line: @Mara <d>[English] Almost home.</d>" in u3
+    assert ("Frame guides of this pass (sent as pictures when the text names them):\n@P3 is the keyframe at 00:03.000 in "
+            "the pass (scene 00:25.000), in [Shot 1]: name it in that shot, for example \"the shot's keyframe corresponds "
+            "to @P3\"") in u3
+    assert "Not sent with this pass" not in u3
+    # the answers, tidied
+    plan, _ = llm.scene_builds(p, scene)
+    assert [(x["index"], x["start"], x["end"]) for x in out["passes"]] == \
+        [(x["index"], x["start"], x["end"]) for x in plan["passes"]]
+    s1, s2, s3 = (x["sections"] for x in out["passes"])
+    assert set(s1) == set(prompt.REF2VA_SECTIONS)
+    assert s1["summary"] == "@Mara leaves the pier (pass one)."  # labels back to @ tokens, no task-type prefix
+    assert s1["subject_definitions"] == "" and s1["retention_analysis"] == ""  # the editor writes them (auto)
+    d1 = s1["detailed_description"].split("\n")
+    assert d1[0] == "Live-action, dusk light." and d1[1].startswith("[Shot 1] A wide shot: @Mara leaves the pier.")
+    assert d1[2].startswith("[Shot 2] At 00:06.000, the shot cuts to a tracking shot")
+    assert s1["overall_soundscape"] == "Gulls and the sound of @tail." and s1["non_diegetic_music"] == "N/A"
+    d2 = s2["detailed_description"].split("\n")
+    assert d2[0].startswith("[Shot 1] A medium shot: the rain starts. @Mara (S1) mutters, <d>[English] Almost home.</d>")
+    assert d2[1].startswith("[Shot 2] At 00:03.625, the shot cuts to a close-up of rain on her face.")
+    assert s3 == {"subject_definitions": "", "summary": "She reaches the door.", "retention_analysis": "",
+                  "detailed_description": "[Shot 1] A wide shot: she reaches the door.", "overall_soundscape": "",
+                  "non_diegetic_music": ""}
+    w = out["warnings"]
+    assert "Pass 1: cut times set to the timeline's: [Shot 2] 00:05.000 -> 00:06.000" in w
+    assert "Pass 2: the shots were numbered [Shot 3], [Shot 4] and are numbered from [Shot 1] in the pass" in w
+    assert "Pass 2: cut times set to the timeline's: [Shot 2] 00:18.000 -> 00:03.625" in w
+    assert any(x.startswith("Pass 3: the detailed description has 7 words; H3's guide asks for 350-500") for x in w)
+    assert "Pass 3: the keyframe @P3 is not named, so it is only anchored, not sent as a picture" in w
+    assert not any(x.startswith(("Pass 1: the detailed", "Pass 2: the detailed", "Pass 2: spoken")) for x in w)
+    assert out["scene_id"] == "s_long" and out["pass_count"] == 3 and out["tokens"] == 3 and out["ms"] >= 0
+    # progress: every event says which pass of how many, and how far the batch is
+    assert {(e["pass"], e["passes"], e["item"], e["items"]) for e in events} == {(1, 3, 1, 3), (2, 3, 2, 3), (3, 3, 3, 3)}
+    assert [e["completed"] for e in events if e["phase"] == "waiting"] == [0, 1, 2]
+
+
+def test_write_passes_stop_keeps_the_passes_written(harbor):
+    p, scene = long_scene(harbor)
+    seen, gate = [], []
+
+    async def handler(request):
+        body = await request.json()
+        seen.append(body)
+        if asked_pass(body) == 2:
+            await asyncio.wait_for(gate[0].wait(), 5)
+        return await stream_response(request, sse((json.dumps(PASS_ANSWERS[asked_pass(body)]), "")))
+
+    async def go(cfg):
+        gate.append(asyncio.Event())
+        state = {}
+        task = asyncio.ensure_future(llm.write_passes(cfg, p, scene, None, "", state=state))
+        for _ in range(250):
+            if state.get("passes") and len(seen) == 2:
+                break
+            await asyncio.sleep(0.02)
+        task.cancel()
+        try:
+            await task
+            stopped = False
+        except asyncio.CancelledError:
+            stopped = True
+        gate[0].set()
+        return state, stopped
+    state, stopped = run_app(go, handler)
+    assert stopped and [x["index"] for x in state["passes"]] == [1] and len(seen) == 2
+    assert state["passes"][0]["sections"]["summary"] == "@Mara leaves the pier (pass one)."
+
+
+def test_write_passes_retries_busy_and_cut_off_answers(harbor):
+    p, scene = long_scene(harbor)
+    calls, events = [], []
+
+    async def handler(request):
+        body = await request.json()
+        calls.append((asked_pass(body), body["max_tokens"]))
+        if len(calls) == 1:
+            return web.json_response({"error": {"message": "rate limit"}}, status=429, headers={"Retry-After": "0"})
+        if len(calls) == 3:
+            return await stream_response(request, sse(('{"summary": "The rain sta', ""), finish="length"))
+        return await stream_response(request, sse((json.dumps(PASS_ANSWERS[asked_pass(body)]), "")))
+    out = run_app(lambda cfg: llm.write_passes(cfg, p, scene, [2, 1], "", progress=events.append), handler, retries=2)
+    # pass 1 waits once after the 429; pass 2's cut-off answer is asked again with twice the budget
+    assert calls == [(1, 8192), (1, 8192), (2, 8192), (2, 16384)]
+    assert [x["index"] for x in out["passes"]] == [1, 2] and "error" not in out
+    assert [(e["pass"], e["attempt"]) for e in events if e["phase"] == "retry"] == [(1, 2), (2, 2)]
+    assert llm.pass_budget({"max_tokens": 2048, "thinking": "off"}) == 4096
+    assert llm.pass_budget({"max_tokens": 10000, "thinking": "auto"}) == 10000
+
+
+def test_write_passes_failure_keeps_the_passes_before_it(harbor):
+    p, scene = long_scene(harbor)
+    calls = []
+
+    async def handler(request):
+        body = await request.json()
+        calls.append(asked_pass(body))
+        if asked_pass(body) == 2:
+            return web.json_response({"error": {"message": "model 'x' not found"}}, status=404)
+        return await stream_response(request, sse((json.dumps(PASS_ANSWERS[asked_pass(body)]), "")))
+    out = run_app(lambda cfg: llm.write_passes(cfg, p, scene), handler, retries=2)
+    assert calls == [1, 2]  # a 404 is not retried, and the batch ends there
+    assert [x["index"] for x in out["passes"]] == [1] and out["failed"] == 2 and out["reason"] == "http"
+    assert "not found" in out["error"] and "Pass 2 was not written: model 'x' not found" in out["warnings"]
+
+    async def go(cfg):  # nothing written yet: the error is raised, as for Rewrite
+        with pytest.raises(llm.LLMError) as e:
+            await llm.write_passes(cfg, p, scene, [2, 3])
+        return e.value
+    assert run_app(go, handler).reason == "http"
+
+
+def test_write_passes_checks_its_input(harbor):
+    import copy
+    p, scene = long_scene(harbor)
+    cfg = llm.resolve({"base_url": "http://127.0.0.1:9/v1"}, {"base_url": "", "model": "", "api_key": ""})
+    with pytest.raises(ValueError, match="pass 4, 7 is not in this scene, which is made in 3 passes"):
+        asyncio.run(llm.write_passes(cfg, p, scene, [7, 4]))
+    raw = copy.deepcopy(scene)
+    raw["prompt"]["mode"] = "raw"
+    with pytest.raises(ValueError, match="raw text"):
+        asyncio.run(llm.write_passes(cfg, p, raw))
+
+
+def test_pass_request_for_one_pass_and_after_an_overlap_seam(harbor):
+    from reelwright.model import normalize_project
+    p, scene = long_scene(harbor)
+    one = p["scenes"][0]
+    plan, builds = llm.scene_builds(p, one)
+    user = llm.pass_request(p, one, plan, builds, 1)
+    assert "This scene is made in one pass; write its prompt." in user
+    assert "The pass before" not in user and "The pass after" not in user
+    p["global"]["long"]["seam_mode"] = "overlap"
+    plan, builds = llm.scene_builds(p, scene)
+    user = llm.pass_request(p, scene, plan, builds, 2, {}, [{}, {}, {"summary": "She reaches the door at last."}])
+    assert ("It starts at an overlap seam, in the middle of a shot: its first 1.62 s repeat the end of pass 1, and its "
+            "[Shot 1] continues that shot seamlessly.") in user
+    assert "- it continues the shot that is running at the end of pass 1: Tracking | along the seawall" in user
+    assert "@tail -> <Video 1>: the end of pass 1; [Shot 1] continues seamlessly from its final frames" in user
+    assert '(its own sound is sent as <Audio 2>; write it as "the sound of @V1")' in user
+    assert "has no text of its own yet" in user
+    assert "Its last shot: [Shot 3] At 00:14.375, the shot cuts to a medium shot: the rain starts." in user  # as built
+    assert "Its summary: She reaches the door at last." in user  # the pass after, written earlier
+    # texts stored for the current layout are found again
+    scene["prompt"]["passes"] = [{"start": plan["passes"][0]["start"], "end": plan["passes"][0]["end"],
+                                  "sections": {"summary": "Stored one."}}]
+    p = normalize_project(p)
+    scene = p["scenes"][1]
+    assert llm.stored_pass_texts(p, scene, plan)[0]["summary"] == "Stored one."
+
+
+def test_pass_answers_in_other_shapes():
+    secs = {"summary": "S", "detailed_description": "D"}
+    assert llm.pass_sections(secs, 2) == secs
+    assert llm.pass_sections({"sections": secs}, 2) == secs
+    assert llm.pass_sections({"passes": [{"index": 1, "sections": {"summary": "one"}}, {"index": 2, "sections": secs}]},
+                             2) == secs
+    assert llm.pass_sections({"pass 2": secs, "pass 3": {"summary": "x"}}, 2) == secs
+    assert llm.pass_sections({"P2": secs}, 5) == secs  # the only one
+    assert llm.pass_sections([secs], 2) == secs
+    assert llm.pass_sections({"prompt": "summary:\nS\n\ndetailed_description:\nD"}, 2) == secs
+    assert llm.pass_sections("Here it is.\nsummary: S\ndetailed_description:\nD", 2) == secs
+    assert llm.pass_sections({"notes": "x"}, 2) is None and llm.pass_sections([1, 2], 2) is None
+    parse = llm._pass_parser(2)
+    assert parse('Sure! {"summary": "S", "detailed_description": "D",}', {}) == secs
+    assert parse("summary:\nS\n\ndetailed_description:\nD", {}) == secs  # labelled text, not JSON
+    with pytest.raises(llm.LLMError) as e:
+        parse("summary:\nS", {"finish": "length", "budget": 8192})
+    assert e.value.reason == "cut" and "pass 2 was cut off at 8,192 tokens" in str(e.value)
+    with pytest.raises(llm.LLMError) as e:
+        parse("I cannot do that.", {})
+    assert e.value.reason == "bad_json"
+
+
+def test_tidy_pass_checks_the_answer(harbor):
+    p, scene = long_scene(harbor)
+    plan, builds = llm.scene_builds(p, scene)
+    x, b = plan["passes"][1], builds[1]  # two shots, "Almost home."
+    desc = ("[Shot 1] Rain. @Bob (S1) says, <d>[English] Hello there.</d>\n[Shot 2] At 00:03.625, the shot cuts to a "
+            "close-up.\n[Shot 3] At 00:05.000, the shot cuts to more rain.")
+    secs = {"summary": "N/A", "subject_definitions": "@Mara is the woman.", "detailed_description": desc,
+            "overall_soundscape": "summary:\nRain on <Audio 7>."}
+    out, warns = llm.tidy_pass(secs, x, b, {"subjects": False, "retention": True, "shots": True}, 2,
+                               llm._scene_tokens(p, scene))
+    assert out["summary"] == "" and out["subject_definitions"] == "@Mara is the woman." and out["retention_analysis"] == ""
+    assert out["detailed_description"] == desc  # three lines for two shots: kept as written
+    assert out["overall_soundscape"] == "summary:\nRain on <Audio 7>."  # another section's label: kept as written
+    for bit in ("<Audio 7> left as written", "the answer has 3 [Shot N] lines for the pass's 2 shots",
+                'spoken lines missing or changed: "Almost home."',
+                "spoken lines that are not this pass's (H3 would say them): \"Hello there.\"",
+                "references the scene does not have: @Bob", "the detailed description has "):
+        assert any(bit in w for w in warns), (bit, warns)
+    # the whole prompt in one key is split into its sections
+    whole = {"detailed_description": "summary:\nShe walks.\n\ndetailed_description:\n[Shot 1] Rain.\n[Shot 2] Close."}
+    out, _ = llm.tidy_pass(whole, x, b, {"subjects": True, "retention": True, "shots": True}, 2)
+    assert out["summary"] == "She walks." and out["detailed_description"].startswith("[Shot 1] Rain.\n[Shot 2] At 00:03.625")
+
+
+def test_script_import_asks_for_fuller_shots_and_a_scene_note():
+    from reelwright.model import default_project
+    seen = []
+    answer = {"scenes": [{"title": "Pier", "summary": "Dusk at the harbor; Mara walks out and stops.", "shots": [
+        {"t": 0, "duration": 4, "camera": "Wide", "composition": "A wide shot of the harbor at dusk", "subject": "Mara",
+         "action": "Mara walks to the end of the pier", "sound": "gulls cry over the water"},
+        {"t": 4, "duration": 3, "text": "Mara stops."}]}], "cast": []}
+
+    async def handler(request):
+        seen.append(await request.json())
+        return await stream_response(request, sse((json.dumps(answer), "")))
+    out = run_app(lambda cfg: llm.script_part(cfg, default_project("Demo"), "INT. PIER - DUSK\nMara walks."), handler)
+    user = seen[0]["messages"][1]["content"]
+    assert "Each shot's \"text\" is 2-4 English sentences" in user and "note on the whole scene in 2-4 sentences" in user
+    assert "\"duration\": seconds, \"camera\"" in user  # the JSON shape is the same as before
+    shots = out["scenes"][0]["shots"]
+    assert shots[0]["text"] == ("A wide shot of the harbor at dusk. Mara walks to the end of the pier. gulls cry over the "
+                                "water.")
+    assert shots[1]["text"] == "Mara stops."  # an answer in the old shape is read as before
+    assert out["scenes"][0]["summary"] == "Dusk at the harbor; Mara walks out and stops."
+    # the default budget per part is bigger, in Python and in the editor's model
+    assert llm.resolve({"base_url": "x:1/v1"}, {"base_url": "", "model": "", "api_key": ""})["import_max_tokens"] == 24576
+    assert default_project("Demo")["global"]["llm"]["import_max_tokens"] == 24576 == llm.IMPORT_MAX_TOKENS

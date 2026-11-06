@@ -40,12 +40,44 @@ SLUG_MAX = 64
 SLUG_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,63}$")  # same as storage.SLUG_RE
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # same as storage.ID_RE: scene ids are folder names
 SEED_N_LIMIT = 2 ** 31
-DEFAULT_CAMERA = (("Slow push-in", "slow push-in toward the subject"),
-                  ("Locked-off", "static locked-off camera"),
-                  ("Crane up", "slow crane up revealing the scene"),
-                  ("Handheld pan \u2192", "handheld camera panning right"),
-                  ("Rack focus", "rack focus from foreground to background"),
-                  ("Macro", "macro close-up, shallow depth of field"))
+# [OLD 2026-11-05 v0.7.0->v0.8.0] six presets of our own; new projects now start with H3's 20 official moves
+# DEFAULT_CAMERA = (("Slow push-in", "slow push-in toward the subject"),
+#                   ("Locked-off", "static locked-off camera"),
+#                   ("Crane up", "slow crane up revealing the scene"),
+#                   ("Handheld pan \u2192", "handheld camera panning right"),
+#                   ("Rack focus", "rack focus from foreground to background"),
+#                   ("Macro", "macro close-up, shallow depth of field"))
+# [/OLD]
+# added 2026-11-05 v0.8.0: the camera moves MiniMax's H3 guide lists (base-en.txt 4.3), name = the guide's label,
+# text = the natural phrase written into the shot line ("The camera pushes in with small amplitude at slow speed.").
+# Projects saved before get the missing ones appended once (camera_version 2); their own presets stay. model.js has
+# the same list.
+DEFAULT_CAMERA = (("Zoom In", "the camera zooms in"), ("Zoom Out", "the camera zooms out"),
+                  ("Push In", "the camera pushes in"), ("Pull Out", "the camera pulls out"),
+                  ("Pan Left", "the camera pans left"), ("Pan Right", "the camera pans right"),
+                  ("Truck Left", "the camera trucks left"), ("Truck Right", "the camera trucks right"),
+                  ("Tilt Up", "the camera tilts up"), ("Tilt Down", "the camera tilts down"),
+                  ("Pedestal Up", "the camera pedestals up"), ("Pedestal Down", "the camera pedestals down"),
+                  ("Arc Shot", "the camera arcs around the subject"),
+                  ("Tracking Shot", "the camera tracks the moving subject"),
+                  ("Static Shot", "the camera holds a static shot"),
+                  ("Shake Slightly", "the camera shakes slightly"), ("Shake Strongly", "the camera shakes strongly"),
+                  ("POV", "the camera takes the subject's point of view"),
+                  ("Roll Clockwise", "the camera rolls clockwise"),
+                  ("Roll Counterclockwise", "the camera rolls counterclockwise"))
+CAMERA_VERSION = 2  # added 2026-11-05 v0.8.0: p["camera_version"]; below 2 the official moves are appended once
+# added 2026-11-05 v0.8.0: shot fields camera_amp / camera_speed / framing ("" = not said), and how they are written
+CAMERA_AMPS = ("", "small", "large")
+CAMERA_SPEEDS = ("", "slow", "fast")
+FRAMINGS = ("", "extreme wide", "wide", "medium wide", "medium", "medium close-up", "close-up", "extreme close-up",
+            "over-the-shoulder", "two-shot", "insert", "low angle", "high angle", "overhead", "dutch angle")
+FRAMING_PHRASE = {"extreme wide": "an extreme wide shot", "wide": "a wide shot", "medium wide": "a medium-wide shot",
+                  "medium": "a medium shot", "medium close-up": "a medium close-up", "close-up": "a close-up",
+                  "extreme close-up": "an extreme close-up", "over-the-shoulder": "an over-the-shoulder shot",
+                  "two-shot": "a two-shot", "insert": "an insert shot", "low angle": "a low-angle shot",
+                  "high angle": "a high-angle shot", "overhead": "an overhead shot",
+                  "dutch angle": "a Dutch-angle shot"}
+DIALOGUE_MAX_SECONDS = 600.0  # added 2026-11-05 v0.8.0: dialogue duration is at most a scene's length
 
 
 def new_id(prefix):
@@ -77,6 +109,11 @@ def project_slug(p):
     return s if SLUG_RE.fullmatch(s) else slugify(s or p.get("name"))  # fullmatch: re's $ allows a trailing \n
 
 
+# added 2026-11-05 v0.8.0: Global -> Long scenes -> hand-off and pass cache (model.js LONG_HANDOFF / LONG_PASS_CACHE)
+LONG_HANDOFF = ("pixels", "latent")
+LONG_PASS_CACHE = ("near_lossless", "lossless")
+
+
 def default_global():
     return {
         "models": {
@@ -95,8 +132,22 @@ def default_global():
         "quality": "final",
         "draft": {"scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0},
         "defaults": {"duration": 8.0, "start_mode": "last_frame", "overlap_frames": 39, "language": "English"},
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] no long-scene continuity switches
+        # "long": {"max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
+        #          "seam_mode": "auto", "cut_snap_seconds": 2.0},
+        # [/OLD]
+        # added 2026-11-05 v0.8.0: long-scene continuity (later passes degraded through decode -> re-encode round
+        # trips at overlap seams). The defaults keep v0.7.0's behaviour and every cache key. guide_vae: a VAE file
+        # (a variant of the H3 video VAE, same latent space) that encodes references, guides and continuation clips,
+        # "" = the video VAE; carry_audio: anchor the pass before's sound at an overlap seam (False: picture only,
+        # the pass stitch crossfades the sound over the whole overlap); seam_video_ref: send the end of the pass
+        # before as <Video 1> at overlap seams (with Continuity -> name_continuation on); handoff: "pixels" |
+        # "latent" (experimental: the overlap guide is the pass before's sampled latents, no decode -> encode);
+        # pass_cache: "near_lossless" (H.264 CRF 4, 4:2:0) | "lossless" (RGB H.264 qp 0 + FLAC; tail.mp4 too)
         "long": {"max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
-                 "seam_mode": "auto", "cut_snap_seconds": 2.0},
+                 "seam_mode": "auto", "cut_snap_seconds": 2.0,
+                 "guide_vae": "", "carry_audio": True, "seam_video_ref": True, "handoff": "pixels",
+                 "pass_cache": "near_lossless"},
         "memory": {"policy": "free_cache", "encode_first": True, "group_by_lora": True},
         # [OLD 2026-11-05 v0.6.1->v0.7.0] no name_continuation switch
         # "continuity": {"reanchor_after": 2, "face_check": False, "face_threshold": 0.8, "on_drift": "flag"},
@@ -126,7 +177,9 @@ def default_global():
                 # script import: the script is sent in parts of about this many characters (0 = all at once),
                 # each part may answer with up to import_max_tokens; import_thinking: same | off;
                 # import_guides: also send MiniMax's H3 guides (about 10k tokens) with every part
-                "import_part_chars": 3000, "import_max_tokens": 16384, "import_thinking": "same",
+                # [OLD 2026-11-05 v0.7.0->v0.8.0] "import_part_chars": 3000, "import_max_tokens": 16384, "import_thinking": "same",
+                # added 2026-11-05 v0.8.0: import_max_tokens 24576 (llm.IMPORT_MAX_TOKENS): shots are 2-4 sentences now
+                "import_part_chars": 3000, "import_max_tokens": 24576, "import_thinking": "same",
                 "import_guides": False},
         "merge": {"use": "starred", "missing": "skip", "hard_cut": "cut", "transition_frames": 12,
                   "audio_fade_frames": 6, "loudness": -16.0, "normalize": True,
@@ -140,8 +193,11 @@ def default_global():
 
 
 def default_prompt():
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] return {"mode": "structured", "auto": {"subjects": True, "retention": True, "shots": True},
+    #                                          "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}}
+    # passes: added 2026-11-05 v0.8.0, each pass's own six sections (see pass_texts)
     return {"mode": "structured", "auto": {"subjects": True, "retention": True, "shots": True},
-            "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}}
+            "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}, "passes": []}
 
 
 def default_merge():
@@ -203,6 +259,7 @@ def default_project(name="Untitled"):
     # project_id: added 2026-11-03 v0.6.0. Only the editor creates one (newId), so the backend leaves it ""
     p = {"schema": 1, "id": new_id("p"), "project_id": "", "name": name, "slug": slugify(name),
          "global": default_global(), "assets": [], "cast": [], "camera_presets": default_camera_presets(),
+         "camera_version": CAMERA_VERSION,  # added 2026-11-05 v0.8.0: the presets are H3's official moves
          "scenes": [], "markers": [], "soundtrack": [],  # soundtrack: added 2026-11-03 v0.5.0 (see soundtrack.py)
          "ui": {"tab": "timeline", "selected": "", "zoom": 22, "playhead": 0, "snap": True, "ripple": True}}
     p["scenes"].append(default_scene(p, title="Scene 1"))
@@ -213,6 +270,26 @@ def default_project(name="Untitled"):
 def default_camera_presets():
     """Camera moves every new project starts with (added 2026-11-03 v0.6.0, as model.js always had)."""
     return [{"id": new_id("k"), "name": n, "text": t} for n, t in DEFAULT_CAMERA]
+
+
+def _camera_key(name):
+    """added 2026-11-05 v0.8.0: a preset name compared without case and surrounding ASCII spaces (model.js the same)."""
+    return spec.text(name).strip(" \t\n\r").lower()
+
+
+def _migrate_camera(p):
+    """added 2026-11-05 v0.8.0: a project saved before v0.8.0 (camera_version below 2) gets H3's official camera moves
+    it does not have yet (compared by name) appended to its presets, once; its own presets stay as they are. Then
+    camera_version is 2 (a higher whole number is kept). model.js migrateCamera is the same."""
+    cv = spec.num(p.get("camera_version"), 0)
+    if cv < CAMERA_VERSION:
+        have = {_camera_key(k["name"]) for k in p["camera_presets"]}
+        for name, text in DEFAULT_CAMERA:
+            if _camera_key(name) not in have:
+                p["camera_presets"].append({"id": new_id("k"), "name": name, "text": text})
+        p["camera_version"] = CAMERA_VERSION
+    else:
+        p["camera_version"] = int(min(cv, 1000000))
 
 
 def _fill(target, defaults):
@@ -382,6 +459,7 @@ def normalize_project(raw):
         k["id"] = spec.text(k.get("id")) or new_id("k")
         _text_field(k, "name", "")
         _text_field(k, "text", "")
+    _migrate_camera(p)  # added 2026-11-05 v0.8.0: H3's official camera moves, appended once (camera_version 2)
 
     # v0.5.0 soundtrack tracks; the old merge score becomes one
     p["soundtrack"] = _objects(p.get("soundtrack"))
@@ -470,6 +548,12 @@ def normalize_global(g):
     d["duration"] = min(MAX_SCENE_SECONDS, max(MIN_SCENE_SECONDS, d["duration"]))
     d["overlap_frames"] = max(0, int(d["overlap_frames"]))
     g["continuity"]["reanchor_after"] = max(0, int(g["continuity"]["reanchor_after"]))
+    # added 2026-11-05 v0.8.0: the long-scene continuity choices (model.js normalizeGlobal the same)
+    lg = g["long"]
+    if lg["handoff"] not in LONG_HANDOFF:
+        lg["handoff"] = "pixels"
+    if lg["pass_cache"] not in LONG_PASS_CACHE:
+        lg["pass_cache"] = "near_lossless"
     g["loras"] = _objects(g["loras"])
     for l in g["loras"]:
         _norm_lora(l)
@@ -524,6 +608,18 @@ def _blank(s):
     return not re.search(r"[^ \t\n\r\f\v]", s)
 
 
+def _norm_pass_text(x):
+    """added 2026-11-05 v0.8.0: one entry of scene.prompt.passes: {"start", "end" (scene seconds of the pass when its
+    text was written), "sections": the six sections as text}; anything else becomes an empty entry (0, 0)."""
+    x = x if isinstance(x, dict) else {}
+    x["start"] = float(spec.num(x.get("start"), 0.0))
+    x["end"] = float(spec.num(x.get("end"), 0.0))
+    sec = x["sections"] = x["sections"] if isinstance(x.get("sections"), dict) else {}
+    for k in SECTION_KEYS:
+        _text_field(sec, k, "")
+    return x
+
+
 def _norm_scene(s, d, lang, used_ids):
     """One scene in place. d: Global -> New-scene defaults; used_ids: scene ids taken so far."""
     s["id"] = _unique_id(s.get("id"), "s", used_ids, ID_RE)
@@ -564,6 +660,9 @@ def _norm_scene(s, d, lang, used_ids):
         x["t"] = spec.num(x.get("t"), 0.0)
         _text_field(x, "camera", "")
         _text_field(x, "text", "")
+        # added 2026-11-05 v0.8.0: H3's camera amplitude and speed (base-en.txt 4.3) and the shot size / angle
+        for k, allowed in (("camera_amp", CAMERA_AMPS), ("camera_speed", CAMERA_SPEEDS), ("framing", FRAMINGS)):
+            x[k] = x[k] if x.get(k) in allowed else ""
     s["shots"].sort(key=lambda x: x["t"])
     used = set()
     s["dialogue"] = _objects(s.get("dialogue"))
@@ -573,6 +672,9 @@ def _norm_scene(s, d, lang, used_ids):
         for k in ("speaker", "delivery", "text"):
             _text_field(x, k, "")
         _text_field(x, "language", lang)
+        # added 2026-11-05 v0.8.0: how long the line is spoken (seconds > 0), None = estimated (dialogue_seconds)
+        dur = spec.num(x.get("duration"), None)
+        x["duration"] = float(min(dur, DIALOGUE_MAX_SECONDS)) if dur is not None and dur > 0 else None
     s["dialogue"].sort(key=lambda x: x["t"])
 
     pr = s.get("prompt")
@@ -589,6 +691,9 @@ def _norm_scene(s, d, lang, used_ids):
     _text_field(pr, "raw", "")
     pp = pr.get("pass_prompts") if isinstance(pr.get("pass_prompts"), dict) else {}
     pr["pass_prompts"] = {k: spec.text(v) for k, v in pp.items() if spec.text(v, None) is not None}
+    # added 2026-11-05 v0.8.0: each pass's own six sections (see pass_texts); an item that is not an object becomes an
+    # empty entry, so the pass numbers of the others stay
+    pr["passes"] = [_norm_pass_text(x) for x in pr["passes"]] if isinstance(pr.get("passes"), list) else []
 
     o = s["overrides"] = s["overrides"] if isinstance(s.get("overrides"), dict) else {}
     for k in ("seed", "steps", "width", "height"):
@@ -997,7 +1102,11 @@ def pass_continuation(p, i, pass_, mode=None):
     if not spec.flag(((p.get("global") or {}).get("continuity") or {}).get("name_continuation", True), True):
         return ""
     if int(spec.num(pass_.get("index"), 1)) > 1:
-        return "video" if pass_.get("seam_before") == "overlap" else ""
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] return "video" if pass_.get("seam_before") == "overlap" else ""
+        # added 2026-11-05 v0.8.0: Global -> Long scenes -> seam_video_ref off: the pass after an overlap seam is
+        # anchored only (no <Video 1>); prompt, budget, lint and render all ask here
+        seam_ref = spec.flag(((p.get("global") or {}).get("long") or {}).get("seam_video_ref", True), True)
+        return "video" if pass_.get("seam_before") == "overlap" and seam_ref else ""
     if i is None or i <= 0:
         return ""
     if mode is None:
@@ -1127,3 +1236,199 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
             out["audio_seconds"] += secs
             out["continuation"] = "video_audio"
     return out
+
+
+# ---- v0.8.0: camera wording, dialogue length, per-pass prompt sections (added 2026-11-05 v0.8.0; model.js has the
+# same functions: cameraSentence, framingPhrase, dialogueSeconds, dialogueSpans, passTexts, relayoutPassTexts,
+# passSections; tests/test_model_parity.py compares them) ----
+
+def framing_phrase(framing):
+    """"close-up" -> "a close-up", "low angle" -> "a low-angle shot"; "" for no framing (FRAMINGS)."""
+    return FRAMING_PHRASE.get(framing, "") if isinstance(framing, str) else ""
+
+
+# added 2026-11-06 v0.8.0 (lead review): a shot whose camera is just an official move's name ("Push In", "tracking
+# shot", "POV") is written with that move's phrase ("the camera pushes in"), not as the name
+_MOVE_BY_NAME = {n.lower(): t for n, t in DEFAULT_CAMERA}
+
+
+def official_camera(camera):
+    """The phrase of an official H3 camera move when `camera` is just its name (any case, an end stop allowed),
+    else the text unchanged."""
+    t = spec.text(camera)
+    return _MOVE_BY_NAME.get(t.strip(" \t\n\r").rstrip(".").strip().lower(), t)
+
+
+def camera_sentence(camera, amp="", speed=""):
+    """A shot's camera text as one sentence in the form of H3's guide (base-en.txt 4.3): "the camera pushes in" with
+    amp "small" and speed "slow" -> "The camera pushes in with small amplitude at slow speed." Medium amplitude and
+    normal speed ("") are not written; hand-written text works the same way. "" when there is no camera text."""
+    # [OLD 2026-11-06 v0.8.0 lead review] t = spec.text(camera).strip(" \t\n\r")  (an official name was written as the name)
+    t = official_camera(camera).strip(" \t\n\r")
+    extra = (" with {} amplitude".format(amp) if amp in ("small", "large") else "") + \
+            (" at {} speed".format(speed) if speed in ("slow", "fast") else "")
+    if extra:
+        t = t.rstrip(" \t\n\r.!?")
+        t = t + extra if t else ""
+    if not t:
+        return ""
+    t = t[:1].upper() + t[1:]
+    return t if t[-1] in ".!?\"'" else t + "."
+
+
+# a dialogue line's length when it has none: the words at 2.5 a second, CJK characters (Han, kana, Hangul) counting
+# as a quarter word each; at least 1 s
+CJK_RANGES = ((0x1100, 0x11FF), (0x3040, 0x30FF), (0x3130, 0x318F), (0x31F0, 0x31FF), (0x3400, 0x4DBF),
+              (0x4E00, 0x9FFF), (0xAC00, 0xD7AF), (0xF900, 0xFAFF), (0xFF66, 0xFF9F), (0x20000, 0x2FFFF))
+WORDS_PER_SECOND = 2.5
+CJK_PER_WORD = 4
+SPACES_RE = re.compile("[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+")
+
+
+def _is_cjk(cp):
+    return any(a <= cp <= b for a, b in CJK_RANGES)
+
+
+def dialogue_seconds(d):
+    """How long dialogue line d is spoken: its duration (seconds > 0), else max(1.0, words / 2.5), where words are
+    the runs between spaces that hold a letter or digit, plus the CJK characters / 4."""
+    d = d if isinstance(d, dict) else {}
+    dur = spec.num(d.get("duration"), None)
+    if dur is not None and dur > 0:
+        return float(min(dur, DIALOGUE_MAX_SECONDS))
+    cjk, rest = 0, []
+    for ch in spec.text(d.get("text")):
+        if _is_cjk(ord(ch)):
+            cjk += 1
+            rest.append(" ")
+        else:
+            rest.append(ch)
+    words = sum(1 for w in SPACES_RE.split("".join(rest))
+                if any(unicodedata.category(c)[0] in ("L", "N") for c in w))
+    return max(1.0, (words + cjk / CJK_PER_WORD) / WORDS_PER_SECOND)
+
+
+def dialogue_spans(scene, plan):
+    """Where each dialogue line of the scene is spoken, in the scene's order: [{"id", "pass" (1-based; None when the
+    line is in no pass), "start", "end" (scene seconds; start is where the planner put it), "seconds",
+    "estimated" (no duration given), "seam" (scene time of the pass seam the line runs past, else None),
+    "past_end" (it runs past the scene's end)}]. plan: planner.plan_scene of the scene."""
+    where = {}
+    for x in plan["passes"]:
+        for d in x["dialogue"]:
+            where.setdefault(d.get("id"), (x, d))
+    n = len(plan["passes"])
+    out = []
+    for d in scene["dialogue"]:
+        seconds = dialogue_seconds(d)
+        given = spec.num(d.get("duration"), None)
+        hit = where.get(d.get("id"))
+        start = hit[0]["start"] + hit[1]["t"] if hit else spec.num(d.get("t"), 0.0)
+        end = start + seconds
+        seam = hit[0]["end"] if hit and hit[0]["index"] < n and end > hit[0]["end"] + 1e-6 else None
+        out.append({"id": d.get("id"), "pass": hit[0]["index"] if hit else None, "start": start, "end": end,
+                    "seconds": seconds, "estimated": not (given is not None and given > 0), "seam": seam,
+                    "past_end": end > float(plan["duration"]) + 1e-6})
+    return out
+
+
+FRAME_SECONDS = 1.0 / spec.FPS
+
+
+def empty_sections():
+    return {k: "" for k in SECTION_KEYS}
+
+
+def _entry_sections(x):
+    sec = x.get("sections") if isinstance(x, dict) and isinstance(x.get("sections"), dict) else {}
+    return {k: spec.text(sec.get(k)) for k in SECTION_KEYS}
+
+
+def _close(a, b):
+    """Two (start, end) ranges within a frame of each other."""
+    return abs(a[0] - b[0]) <= FRAME_SECONDS + 1e-9 and abs(a[1] - b[1]) <= FRAME_SECONDS + 1e-9
+
+
+def _plan_of(p, scene, plan):
+    if plan is not None:
+        return plan
+    from .planner import plan_scene  # planner imports model
+    i = next((k for k, s in enumerate(p["scenes"]) if s is scene or s.get("id") == scene.get("id")), 0)
+    return plan_scene(p, scene, i)
+
+
+def pass_texts(p, scene, plan=None):
+    """The six sections written for each pass of the scene's CURRENT layout (scene.prompt.passes, stored with the
+    start / end the pass had when they were written). When the stored ranges match the layout (within a frame;
+    entries without text and a one-pass scene always match), entry k is pass k. Otherwise each pass gets the text of
+    the stored entry it overlaps most in time, each entry used once (largest overlap first).
+    Returns {"texts": [six sections per current pass], "moved": [1-based passes whose text was written for another
+    range], "unused": [1-based stored entries with text that no pass gets], "same": the layout matches,
+    "stored": any entry has text, "entry": [per current pass, the 1-based stored entry its text comes from, or None]}."""
+    plan = _plan_of(p, scene, plan)
+    raw = (scene.get("prompt") or {}).get("passes")
+    stored = [x if isinstance(x, dict) else {} for x in raw] if isinstance(raw, list) else []
+    secs = [_entry_sections(x) for x in stored]
+    has = [any(not _blank(v) for v in s.values()) for s in secs]
+    ranges = [(spec.num(x.get("start"), 0.0), spec.num(x.get("end"), 0.0)) for x in stored]
+    cur = [(x["start"], x["end"]) for x in plan["passes"]]
+    n = len(cur)
+    if n == 1:
+        same = not any(has[1:])
+    else:
+        same = all(not has[j] or (j < n and _close(ranges[j], cur[j])) for j in range(len(stored)))
+    if same:
+        texts = [dict(secs[k]) if k < len(stored) else empty_sections() for k in range(n)]
+        return {"texts": texts, "moved": [], "unused": [], "same": True, "stored": any(has),
+                "entry": [k + 1 if k < len(stored) and has[k] else None for k in range(n)]}
+    pairs = []
+    for k, (a, b) in enumerate(cur):
+        for j, (c, d) in enumerate(ranges):
+            if has[j]:
+                ov = min(b, d) - max(a, c)
+                if ov > 1e-9:
+                    pairs.append((-ov, k, j))
+    pairs.sort()
+    take, used = {}, set()
+    for _, k, j in pairs:
+        if k not in take and j not in used:
+            take[k] = j
+            used.add(j)
+    texts = [dict(secs[take[k]]) if k in take else empty_sections() for k in range(n)]
+    moved = [k + 1 for k in range(n) if k in take and not _close(ranges[take[k]], cur[k])]
+    unused = [j + 1 for j in range(len(stored)) if has[j] and j not in used]
+    return {"texts": texts, "moved": moved, "unused": unused, "same": False, "stored": any(has),
+            "entry": [take[k] + 1 if k in take else None for k in range(n)]}
+
+
+def relayout_pass_texts(p, scene, plan=None):
+    """scene.prompt.passes for the current layout ("Use the new layout"): one entry per pass with its start / end
+    and the text pass_texts gives it (text no pass gets is dropped)."""
+    plan = _plan_of(p, scene, plan)
+    texts = pass_texts(p, scene, plan)["texts"]
+    return [{"start": float(x["start"]), "end": float(x["end"]), "sections": texts[k]}
+            for k, x in enumerate(plan["passes"])]
+
+
+def pass_sections(p, scene, plan, k):
+    """What pass k (1-based) of a structured prompt is built from: {"own": the six sections written for it
+    (pass_texts), "used": the text each section is built from, "source": {section: "pass" (its own), "scene" (the
+    scene's, shared by every pass), "auto" (the summary: made by the prompt builder; a multi-pass scene never sends
+    the scene summary), "split" (detailed_description of a multi-pass scene: the scene's [Shot N] lines of this
+    pass)}}. prompt.build_pass uses it."""
+    plan = _plan_of(p, scene, plan)
+    n = len(plan["passes"])
+    texts = pass_texts(p, scene, plan)["texts"]
+    own = texts[k - 1] if 1 <= k <= n else empty_sections()
+    sec = _entry_sections(scene.get("prompt") or {})
+    used, source = {}, {}
+    for key in SECTION_KEYS:
+        if not _blank(own[key]):
+            used[key], source[key] = own[key], "pass"
+        elif key == "summary" and (n > 1 or _blank(sec[key])):
+            used[key], source[key] = "", "auto"
+        elif key == "detailed_description" and n > 1:
+            used[key], source[key] = sec[key], "split"
+        else:
+            used[key], source[key] = sec[key], "scene"
+    return {"own": own, "used": used, "source": source}

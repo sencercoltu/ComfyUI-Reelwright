@@ -145,10 +145,96 @@ def _merge_issues(p, i, s, name, ctx, locked, scene_ids):
     return out
 
 
+def _cut_seam_hint(p, s, plan, name):
+    """added 2026-11-05 v0.8.0 (Agent V): an info line for a long scene with overlap seams and no shot cuts: each
+    overlap seam re-encodes the end of the pass before (decode -> encode), so later passes can drift; a shot cut near
+    a seam makes it a plain cut (Seams: Auto or Cuts). None when it does not apply."""
+    seams = [x for x in plan["passes"] if x.get("seam_before") == "overlap"]
+    d = float(s["duration"])
+    if not seams or any(0 < float(sh.get("t") or 0) < d for sh in s.get("shots") or []):
+        return None
+    lg = (p.get("global") or {}).get("long") or {}
+    times = ", ".join("{:.2f} s".format(float(x["start"]) + int(x["overlap_frames"]) / spec.FPS) for x in seams)
+    snap = float(lg.get("cut_snap_seconds") or 0)
+    where = "up to {:g} s before a seam".format(snap) if snap > 0 else "at a seam"
+    mode = "" if lg.get("seam_mode") != "overlap" else " and set Global → Long scenes → Seams to Auto or Cuts"
+    return ("{}: its passes are joined by {} overlap seam{} (at {}); each re-encodes the end of the pass before, so "
+            "later passes can drift. Add shot cuts {}{} to make them plain cuts.".format(
+                name, len(seams), "" if len(seams) == 1 else "s", times, where, mode))
+
+
 def _passes_label(name, indexes, n_passes):
     if n_passes == 1 or len(indexes) == n_passes:
         return name
     return "{} pass{} {}".format(name, "es" if len(indexes) > 1 else "", ", ".join(str(i) for i in indexes))
+
+
+# ---- added 2026-11-05 v0.8.0 (Agent P, contract P1): dialogue length, per-pass sections ----------------------------
+
+def _numbers(xs):
+    """[1, 2, 3] -> "1, 2 and 3"."""
+    xs = [str(x) for x in xs]
+    return xs[0] if len(xs) == 1 else "{} and {}".format(", ".join(xs[:-1]), xs[-1])
+
+
+def _dialogue_span_issues(s, plan, name):
+    """A dialogue line that runs past the end of its pass (the next pass's prompt does not have it, so H3 cuts it off)
+    or past the scene's end; its length is its duration, else the estimate from its words (model.dialogue_spans)."""
+    out = []
+    for sp, line in zip(_model.dialogue_spans(s, plan), s["dialogue"]):
+        if sp["pass"] is None or not str(line.get("text") or "").strip():
+            continue  # in no pass, or empty: reported above
+        about = "about " if sp["estimated"] else ""
+        hint = " (its length is estimated from its words; give it a duration if it is shorter)" if sp["estimated"] else ""
+        if sp["seam"] is not None:
+            out.append(_issue("warn", "{}: the dialogue line at {:.2f} s runs to {}{:.2f} s, past the pass seam at {:.2f} s "
+                                      "where pass {} takes over, so it is cut off; let it end before the seam or start "
+                                      "after it{}".format(name, sp["start"], about, sp["end"], sp["seam"],
+                                                          sp["pass"] + 1, hint), s["id"]))
+        elif sp["past_end"]:
+            out.append(_issue("warn", "{}: the dialogue line at {:.2f} s runs to {}{:.2f} s, past the scene's end at "
+                                      "{:.2f} s{}".format(name, sp["start"], about, sp["end"], float(s["duration"]),
+                                                          hint), s["id"]))
+    return out
+
+
+def _pass_text_issues(p, s, plan, name):
+    """Structured prompts: pass texts written for another pass layout (info; Scene tab -> Prompt: Use the new layout),
+    and the passes of a multi-pass scene without a summary of their own (one warning per scene)."""
+    pr = s["prompt"]
+    if pr["mode"] == "raw":
+        return []
+    out = []
+    pt = _model.pass_texts(p, s, plan)
+    stored = pr.get("passes") or []
+    passes = plan["passes"]
+
+    def span(x):
+        x = x if isinstance(x, dict) else {}
+        return "{}–{}".format(spec.fmt_time(spec.num(x.get("start"), 0.0)), spec.fmt_time(spec.num(x.get("end"), 0.0)))
+    if pt["moved"] or pt["unused"]:
+        parts = []
+        for k in pt["moved"]:
+            parts.append("pass {} ({} now) gets the text written for {}".format(
+                k, span(passes[k - 1]), span(stored[pt["entry"][k - 1] - 1])))
+        for j in pt["unused"]:
+            parts.append("the text written for {} is not used".format(span(stored[j - 1])))
+        out.append(_issue("info", "{}: pass texts were written for another pass layout: {} (Scene tab, Prompt: Use the "
+                                  "new layout)".format(name, "; ".join(parts)), s["id"]))
+    if len(passes) > 1:
+        own = pr.get("pass_prompts") or {}
+        missing = [k + 1 for k, t in enumerate(pt["texts"])
+                   if _model._blank(t["summary"]) and not str(own.get(str(k + 1)) or "").strip()]
+        if missing:
+            note = _prompt._strip_task_tags(pr["sections"]["summary"]).strip()
+            their = "its" if len(missing) == 1 else "their"
+            made = "one made from {} shots".format(their) if note or pr["auto"].get("subjects") else \
+                "only the task tags as {} summary".format(their)
+            out.append(_issue("warn", "{}: pass{} {} {} no summary of {} own; {} {}{}".format(
+                name, "es" if len(missing) > 1 else "", _numbers(missing), "has" if len(missing) == 1 else "have",
+                "its" if len(missing) == 1 else "their", "it gets" if len(missing) == 1 else "they get", made,
+                " (the scene summary is a note for you and the LLM and is not sent)" if note else ""), s["id"]))
+    return out
 
 
 # [OLD 2026-11-03 v0.5.1->v0.6.0] def lint_project(p, plans, builds, asset_exists):
@@ -234,6 +320,9 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             issues.append(_issue("info", "{}: the first scene always starts fresh".format(name), sid))
         if plan["kind"] == "long":
             issues.append(_issue("info", "{}: split into {} passes".format(name, len(plan["passes"])), sid))
+            seam_hint = _cut_seam_hint(p, s, plan, name)  # added 2026-11-05 v0.8.0 (Agent V)
+            if seam_hint:
+                issues.append(_issue("info", seam_hint, sid))
         if plan["kind"] == "short":
             issues.append(_issue("info", "{}: rendered as {} frames and trimmed to {:.2f} s".format(
                 name, spec.MIN_PASS_FRAMES, d), sid))
@@ -283,6 +372,8 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                 issues.append(_issue("warn", "{}: a dialogue line has no language tag".format(name), sid))
             elif line["language"] not in spec.STABLE_LANGUAGES:
                 issues.append(_issue("info", "{}: {} is outside H3's 11 stable dialogue languages".format(name, line["language"]), sid))
+        issues += _dialogue_span_issues(s, plan, name)  # added 2026-11-05 v0.8.0: past a pass seam or the scene's end
+        issues += _pass_text_issues(p, s, plan, name)  # added 2026-11-05 v0.8.0: per-pass sections (P1)
 
         has_first = False
         for r in s["refs"]:
@@ -428,9 +519,18 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                     issues.append(_issue("info", "{}: detailed_description has {} words; H3's guide aims for 350-500 "
                                                  "(Rewrite can expand it)".format(where, words), sid))
         if s["prompt"]["mode"] != "raw":
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] the scene's soundscape only (a pass may have its own now)
+            # if not s["prompt"]["sections"]["overall_soundscape"].strip():
+            #     issues.append(_issue("info", "{}: overall_soundscape is empty, so H3 gets N/A, which its guide "
+            #                                  "reserves for complete silence".format(name), sid))
+            # [/OLD]
             if not s["prompt"]["sections"]["overall_soundscape"].strip():
-                issues.append(_issue("info", "{}: overall_soundscape is empty, so H3 gets N/A, which its guide "
-                                             "reserves for complete silence".format(name), sid))
+                silent = [k + 1 for k, t in enumerate(_model.pass_texts(p, s, plan)["texts"])
+                          if not t["overall_soundscape"].strip()]
+                if silent:
+                    issues.append(_issue("info", "{}: overall_soundscape is empty, so H3 gets N/A, which its guide "
+                                                 "reserves for complete silence".format(
+                                                     _passes_label(name, silent, n_passes)), sid))
             described = set()
             for b in builds[sid]:
                 for subj in b["subjects"]:

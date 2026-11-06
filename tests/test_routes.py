@@ -549,3 +549,95 @@ def test_filmstrip_route(api, store, roots):
     for status, body in out[4:-1]:
         assert status == 400 and body["error"], body
     assert out[-1][0] == 404
+
+
+# ---- added 2026-11-05 v0.8.0: Write prompts (/llm/passes) ----------------------------------------------------------
+
+async def _stub_llm(handler):
+    """An OpenAI-compatible stub on a free port, in the running loop: (base_url, runner)."""
+    from aiohttp import web
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    return "http://127.0.0.1:{}/v1".format(site._server.sockets[0].getsockname()[1]), runner
+
+
+def _pass_of(body):
+    import re
+    m = re.search(r"Write the prompt of pass (\d+) of", body["messages"][1]["content"])
+    return int(m.group(1)) if m else 1
+
+
+def _answer(k):
+    return {"summary": "[reference generation] Pass {} of the walk.".format(k),
+            "detailed_description": "[Shot 1] A wide shot of <Subject 1> in the rain. " + " ".join(["rain"] * 340),
+            "overall_soundscape": "Rain.", "non_diegetic_music": "N/A"}
+
+
+def test_llm_passes_route(api, harbor):
+    run, routes, events = api
+    from aiohttp import web
+    seen, gate = [], []
+
+    async def handler(request):
+        body = await request.json()
+        seen.append(_pass_of(body))
+        if body["messages"][1]["content"].count("STOP-AT-3") and _pass_of(body) == 3:
+            await asyncio.wait_for(gate[0].wait(), 5)
+        return web.json_response({"model": "stub", "choices": [{"message": {"content": json.dumps(_answer(
+            _pass_of(body)))}, "finish_reason": "stop"}]})
+
+    async def go(c):
+        gate.append(asyncio.Event())
+        base, runner = await _stub_llm(handler)
+        p = json.loads(json.dumps(harbor))
+        p["global"]["llm"].update(base_url=base, retries=0)
+        try:
+            out = [await post(c, "/reelwright/llm/passes", {"project": p, "scene_id": "s_long", "passes": [3, 1],
+                                                            "job": "wp"})]
+            # Stop during the third pass: the answer holds the two passes written before it
+            task = asyncio.ensure_future(post(c, "/reelwright/llm/passes", {
+                "project": p, "scene_id": "s_long", "passes": None, "instruction": "STOP-AT-3", "job": "wp2"}))
+            for _ in range(250):
+                if seen.count(3) == 2:
+                    break
+                await asyncio.sleep(0.02)
+            out.append(await post(c, "/reelwright/llm/cancel", {"job": "wp2"}))
+            out.append(await task)
+            gate[0].set()
+            raw = json.loads(json.dumps(p))
+            raw["scenes"][1]["prompt"].update(mode="raw", raw="@Mara walks.")
+            for body in ({"project": p, "scene_id": "s_long", "passes": "2"},
+                         {"project": p, "scene_id": "s_long", "passes": [0]},
+                         {"project": p, "scene_id": "s_long", "passes": [7]},
+                         {"project": p, "scene_id": "s_long", "passes": [1.5]},
+                         {"project": p, "scene_id": "nope"},
+                         {"project": raw, "scene_id": "s_long"},
+                         {"project": p, "scene_id": "s_long", "instruction": 5}):
+                out.append(await post(c, "/reelwright/llm/passes", body))
+        finally:
+            gate[0].set()
+            await runner.cleanup()
+        return out
+    out = run(go)
+    status, body = out[0]
+    assert status == 200 and [x["index"] for x in body["passes"]] == [1, 3] and body["pass_count"] == 3
+    assert body["scene_id"] == "s_long" and body["passes"][0]["start"] == 0.0 and body["passes"][0]["end"] == 14.375
+    assert body["passes"][1]["sections"]["summary"] == "Pass 3 of the walk."
+    assert body["passes"][1]["sections"]["detailed_description"].startswith("[Shot 1] A wide shot of @Mara in the rain.")
+    assert body["warnings"] == ["Pass 1: the answer has 1 [Shot N] line for the pass's 2 shots; they are kept as written",
+                                "Pass 3: the keyframe @P3 is not named, so it is only anchored, not sent as a picture"]
+    assert "cancelled" not in body and "error" not in body
+    llm_events = [d for e, d in events if e == "reelwright.llm" and d.get("job") == "wp"]
+    assert llm_events and all(d["scene_id"] == "s_long" and d["passes"] == 3 for d in llm_events)
+    assert [d["pass"] for d in llm_events if d["phase"] == "waiting"] == [1, 3]
+    stop, stopped = out[1], out[2]
+    assert stop == (200, {"ok": True, "cancelled": True})
+    assert stopped[0] == 200 and stopped[1]["cancelled"] is True
+    assert [x["index"] for x in stopped[1]["passes"]] == [1, 2]
+    for status, body in out[3:]:
+        assert status == 400 and body["error"], (status, body)
+    assert "not in this scene" in out[5][1]["error"] and "raw text" in out[8][1]["error"]

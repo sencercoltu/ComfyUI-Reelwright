@@ -844,3 +844,53 @@
 .rw-cut-fade { position: absolute; top: 0; bottom: 0; z-index: 1; }
 .rw-cut-fade.in { left: 0; background: linear-gradient(to top left, transparent calc(50% - 0.75px), rgba(255, 255, 255, 0.8) 50%, transparent calc(50% + 0.75px)), linear-gradient(to right, var(--fc, #000), transparent); }
 .rw-cut-fade.out { right: 0; background: linear-gradient(to top right, transparent calc(50% - 0.75px), rgba(255, 255, 255, 0.8) 50%, transparent calc(50% + 0.75px)), linear-gradient(to left, var(--fc, #000), transparent); }
+
+/* added 2026-11-05 v0.8.0: Scene tab Prompt card with a tab per pass, shot and dialogue rows (start, end, length,
+   camera picker, growing text), pass-seam notes, "Write prompts" progress; Global long-scene continuity; Render drift */
+.rw-ptabs { display: flex; gap: 4px; flex-wrap: wrap; padding-bottom: 2px; border-bottom: 1px solid var(--line2); }
+.rw-ptab { position: relative; display: inline-flex; align-items: center; gap: 0; height: 28px; padding: 0 10px; border-radius: 7px 7px 0 0; border: 1px solid transparent; border-bottom: 0; background: transparent; color: var(--text3); cursor: pointer; font-size: 11.5px; margin-bottom: -3px; }
+.rw-ptab b { font-weight: 600; }
+.rw-ptab .mono { font-size: 10.5px; color: var(--dim); }
+.rw-ptab:hover { color: var(--text); background: var(--panel2); }
+.rw-ptab.on { color: var(--text); background: var(--panel2); border-color: var(--line); box-shadow: inset 0 2px 0 var(--vid); }
+.rw-ptab.on .mono { color: var(--text3); }
+.rw-ptab.moved .mono { color: var(--warn); }
+.rw-ptab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vid); margin-left: 6px; flex: none; }
+.rw-pass-pane { display: flex; flex-direction: column; gap: 9px; }
+.rw-pass-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 2px 0; }
+.rw-psec-src { font-size: 10.5px; color: var(--dim); padding: 0 6px; height: 17px; line-height: 17px; border-radius: 9px; border: 1px solid var(--line); white-space: nowrap; }
+.rw-psec-src.own { color: var(--vid-t); border-color: rgba(167, 139, 250, 0.5); background: rgba(167, 139, 250, 0.1); }
+.rw-psec-src.note { color: var(--cam-t); border-color: rgba(251, 191, 36, 0.4); }
+.rw-psec-head .rw-btn-sm { height: 20px; padding: 0 6px; font-size: 10.5px; margin-left: auto; }
+.rw-psec.own .rw-code { border-color: rgba(167, 139, 250, 0.35); }
+.rw-layout-note { align-items: center; }
+.rw-layout-note .rw-btn { margin-left: 0; }
+.rw-rows { display: flex; flex-direction: column; gap: 6px; }
+.rw-shot-row, .rw-dlg-row { display: flex; flex-direction: column; gap: 6px; padding: 7px 8px 8px; border: 1px solid var(--line2); border-radius: 8px; background: rgba(18, 20, 25, 0.55); min-width: 0; }
+.rw-shot-row:focus-within, .rw-dlg-row:focus-within { border-color: var(--line3); }
+.rw-shot-row.past { border-color: rgba(251, 191, 36, 0.35); }
+.rw-shot-row .rw-list-row, .rw-dlg-row .rw-list-row { flex-wrap: wrap; row-gap: 6px; gap: 6px; }
+.rw-shot-label { flex: none; min-width: 56px; }
+.rw-shot-end { flex: none; white-space: nowrap; min-width: 66px; }
+.rw-shot-cam { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rw-shot-cam .rw-seg-sm .rw-seg-btn { padding: 0 7px; }
+.rw-seg.rw-disabled { opacity: 0.45; }
+.rw-shot-row .rw-code, .rw-dlg-row .rw-code { background: var(--panel2); }
+.rw-code.sans .rw-code-hl, .rw-code.sans .rw-code-ta { font: 12.5px/1.5 var(--sans); padding: 6px 9px; }
+.rw-code.sans .hl-shot, .rw-code.sans .hl-ret { font-weight: inherit; }
+.rw-seam-chip { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 10px; font-size: 10.5px; white-space: nowrap; color: #fde68a; background: rgba(251, 191, 36, 0.09); border: 1px solid rgba(251, 191, 36, 0.4); font-family: var(--mono); }
+.rw-chip-mini { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 9px; font-size: 10.5px; color: var(--text3); border: 1px solid var(--line3); white-space: nowrap; }
+.rw-write-box { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: 8px; border: 1px solid rgba(244, 114, 182, 0.35); background: rgba(244, 114, 182, 0.06); }
+.rw-write-item { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 11.5px; }
+.rw-write-item .st { text-align: center; color: var(--dim); }
+.rw-write-item.done .st { color: var(--aud-t); } .rw-write-item.failed .st { color: var(--err); } .rw-write-item.run .st { color: var(--dlg-t); }
+.rw-long-note { color: var(--dim); font-size: 11px; line-height: 1.45; }
+.rw-drift { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 10.5px; }
+.rw-drift-pass { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--text3); }
+.rw-drift-pass b { font-weight: 600; color: var(--text2); }
+.rw-follow { height: 24px; }
+.rw-seam-note { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #fde68a; }
+.rw-dlg-row.seam { border-color: rgba(251, 191, 36, 0.35); }
+.rw-take-long { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rw-take .rw-take-file { flex: 0 1 auto; min-width: 60px; }
+.rw-ptab > .mono { margin-left: 3px; }

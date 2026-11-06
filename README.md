@@ -8,6 +8,11 @@ into one video. Only what you changed gets rendered again.
   Longer scenes are split into passes, with seams placed on your shot cuts or
   covered by guided overlaps. Shorter scenes render the shortest pass and keep
   the window you choose.
+- **Long scenes, pass by pass.** Each pass has its own prompt, on its own tab.
+  Pass-seam settings cut the decode and re-encode round trips that can make
+  later passes drift: a full-precision guide VAE, picture-only seams, no clip
+  reference at seams, an experimental latent hand-off and a lossless pass
+  cache. A drift meter on the Render tab measures each continuing pass.
 - **Continuity.** A scene can start fresh, start from the last frame of the
   previous scene, or continue from its tail clip. A tail clip carries motion,
   light and sound across the cut. The frame or clip is also sent as
@@ -50,10 +55,16 @@ into one video. Only what you changed gets rendered again.
   fast), a range of scenes, and audio stems with an EBU R128 loudness report.
 - **A timeline that shows the film.** Rendered scenes show the frame that is
   at each time, and transitions and fades are marked on the scene blocks.
+  During playback the view follows the playhead.
 - **Prompt tools.** A structured six-section editor with `@P1` / `@Mara` tags
   that are renumbered per pass, a live preview of the exact prompt for each
-  pass, and an optional OpenAI-compatible LLM for rewrite, pass splitting and
-  script import. The LLM runs only when you click.
+  pass, and an optional OpenAI-compatible LLM for rewrite, pass splitting,
+  script import and **Write prompts** (a full prompt for every pass, one
+  request per pass). The LLM runs only when you click.
+- **Shots, dialogue and camera.** Shot and dialogue rows show start, end and
+  length, and warn when a line runs past a pass seam. The camera picker has
+  the 20 camera moves of MiniMax's H3 guide, with amplitude, speed and a
+  framing.
 - **Undo with names.** The History menu lists every edit by name; click one to
   go back to it. Undo never changes the view.
 - **Help everywhere.** Hover any control for a tooltip; press **?** on any
@@ -156,6 +167,9 @@ pass). A seam goes on one of your shot cuts when one is close enough, or when
 cutting there doesn't add a pass. Otherwise the next pass starts from the
 previous pass's tail and the two are crossfaded. Shots, dialogue and keyframes
 go to the pass they fall in, with their timestamps re-based to that pass.
+Each pass can have its own prompt sections (Scene tab → Prompt, a tab per
+pass); **Global → New scenes and long scenes → Pass seams** sets what
+carries across an overlap seam.
 
 ### Prompt rewriter
 
@@ -168,7 +182,7 @@ warns you if the model changed one.
 Press **Download** next to *H3 guides* to fetch MiniMax's official H3 prompt
 guides (the Ref2VA guide and the base guide) from the MiniMax-H3 GitHub
 repository into `user/reelwright/guides/`. They are sent to the LLM with every
-rewrite, split and script import (about 10,000 tokens; turn it off for small
+rewrite, split, script import and Write prompts (about 10,000 tokens; turn it off for small
 local models). They are not bundled because of their licence; until you
 download them a short built-in summary is sent instead.
 

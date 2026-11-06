@@ -11,17 +11,17 @@ ComfyUI-Reelwright/
     prompt.py            per-pass prompt assembly and tag numbering (pure)
     validate.py          lint rules (pure)
     soundtrack.py        soundtrack tracks: resolve them, the part each pass gets (pure)
-    analysis.py          plan, prompts, keys and status of every scene; /plan's answer (pure + file hashing)
+    analysis.py          plan, prompts, keys and status of every scene; /plan's answer (pure + file hashing); v0.8.0: long-scene settings, drift meter
     cache.py             cache keys, pass cache keys, staleness (pure + file hashing)
     storage.py           folders, path containment, take lists, autosave/versions, cut numbers (pure + fs)
     jobs.py              v0.6.0: per-project locks and running jobs (render, merge) (pure)
     files.py             Files tab: disk-use tree and deleting (pure + fs)
-    media.py             load images/video/audio to tensors, write files (comfy)
-    render.py            render run using the native H3 nodes (comfy + torch)
+    media.py             load images/video/audio to tensors, write files (comfy); v0.8.0: lossless pass files, exact reads (PyAV)
+    render.py            render run using the native H3 nodes (comfy + torch); v0.8.0: guide VAE, latent hand-off, drift
     assemble.py          the cut plan and merge_project: takes -> merge.join (ffmpeg); v0.7.0: scene.merge, per-scene colour match
     merge.py             ffmpeg merge, srt/chapters/otio/fcpxml/color match, loudness (ffmpeg); v0.7.0: transitions, fades, filmstrips
     beats.py             v0.6.0: tempo, beats and bar starts of an audio file (numpy + ffmpeg)
-    llm.py               OpenAI-compatible client and prompt templates (aiohttp)
+    llm.py               OpenAI-compatible client and prompt templates (aiohttp); v0.8.0: Write prompts (write_passes)
     scriptparts.py       cuts a long script into parts for the import (v0.4.2); imported scene length vs shots (v0.4.3) (pure)
     continuity.py        optional face-match drift check (insightface)
     routes.py            /reelwright/* HTTP routes
@@ -31,6 +31,7 @@ ComfyUI-Reelwright/
     reelwright.js        ComfyUI extension: registers the DOM widget
     rw/*.js, rw/tabs/*.js, rw/reelwright.css
     rw/cut.js            v0.7.0: scene.merge helpers shared by the Scene tab's In the cut card and the timeline
+    rw/passes.js         v0.8.0: pass layout, pass texts, shot/line rows, camera options, the Write prompts runner
   tests/                 pytest for the pure modules, merge, routes and the JS model (test_model_parity.py)
   web-test/              mock backend (mock.js), interaction checks (interact.py), screenshots (shoot.py)
 ```
@@ -70,7 +71,12 @@ lives on disk.
     "draft": { "scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0 },
     "defaults": { "duration": 8.0, "start_mode": "last_frame", "overlap_frames": 39, "language": "English" },
     "long": { "max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
-              "seam_mode": "auto", "cut_snap_seconds": 2.0 },       // auto | cuts | overlap
+              "seam_mode": "auto", "cut_snap_seconds": 2.0,        // auto | cuts | overlap
+              "guide_vae": "",                 // v0.8.0: VAE file that does every encode; "" = the video VAE
+              "carry_audio": true,              // v0.8.0: anchor the pass before's sound at overlap seams
+              "seam_video_ref": true,           // v0.8.0: the end of the pass before as <Video 1> at overlap seams
+              "handoff": "pixels",             // v0.8.0: pixels | latent (experimental)
+              "pass_cache": "near_lossless" },  // v0.8.0: near_lossless (H.264 CRF 4) | lossless (RGB qp 0 + FLAC)
     "memory": { "policy": "free_cache", "encode_first": true, "group_by_lora": true },  // keep | free_cache | unload_all
     "continuity": { "reanchor_after": 2, "face_check": false, "face_threshold": 0.8, "on_drift": "flag", // flag | retake
                     "name_continuation": true },  // v0.7.0: send the frame / clip a pass continues from as <Picture 1> / <Video 1>
@@ -80,7 +86,7 @@ lives on disk.
              "timeout_s": 120, "max_wait_s": 900,         // v0.4.2: stall timeout (no data), longest request
              "retries": 2, "context_tokens": 0,           // v0.4.2: extra attempts; context window, 0 = ask GET /models
              "import_part_chars": 3000,                   // v0.4.2: script import part size, 0 = whole script
-             "import_max_tokens": 16384, "import_thinking": "same", "import_guides": false },  // same | off
+             "import_max_tokens": 24576, "import_thinking": "same", "import_guides": false },  // same | off; v0.8.0: 24576 (was 16384)
     "merge": { "use": "starred", "missing": "skip",                 // skip | slate | block
                "hard_cut": "cut", "transition_frames": 12,           // cut | crossfade | dip; v0.7.0: deprecated, see scene.merge
                "audio_fade_frames": 6, "loudness": -16.0, "normalize": true,   // audio_fade_frames: v0.7.0 deprecated
@@ -109,7 +115,8 @@ lives on disk.
       "voice": "a_7", "language": "English",
       "lora": { "name": "", "strength": 0.8 } }
   ],
-  "camera_presets": [ { "id": "k_1", "name": "Slow push-in", "text": "slow push-in" } ],
+  "camera_presets": [ { "id": "k_1", "name": "Push In", "text": "the camera pushes in" } ],  // v0.8.0: H3's 20 moves (DEFAULT_CAMERA)
+  "camera_version": 2,                    // v0.8.0: below 2, the official moves the presets lack are appended once
   "scenes": [
     { "id": "s_1", "title": "Harbor at dusk", "duration": 8.0,   // 1/24 .. 600 s
       "seed_n": 0,                                        // v0.6.0: the scene's seed number ("+1 per scene" mode), see "Seeds"
@@ -134,14 +141,20 @@ lives on disk.
       "refs": [ { "id": "r_1", "asset": "a_2", "role": "reference",   // reference | first_frame | last_frame | keyframe
                   "time": 0.0, "retention": "weak_reference", "keep": [], "soundtrack": false } ],
       "cast": [ { "id": "c_1", "outfit": "o_1" } ],
-      "shots": [ { "id": "h_1", "t": 0.0, "camera": "Wide · slow push-in", "text": "The harbor at dusk…" } ],
-      "dialogue": [ { "id": "d_1", "speaker": "c_1", "t": 3.5, "language": "English", "delivery": "calls out", "text": "Is anyone still out there?" } ],
+      "shots": [ { "id": "h_1", "t": 0.0, "camera": "the camera pushes in", "text": "The harbor at dusk…",
+                   "camera_amp": "small",       // v0.8.0: "" | small | large ("" = not said)
+                   "camera_speed": "slow",      // v0.8.0: "" | slow | fast
+                   "framing": "wide" } ],       // v0.8.0: "" | one of model.FRAMINGS (extreme wide … dutch angle)
+      "dialogue": [ { "id": "d_1", "speaker": "c_1", "t": 3.5, "language": "English", "delivery": "calls out", "text": "Is anyone still out there?",
+                      "duration": null } ],   // v0.8.0: seconds > 0 (≤ 600), null = estimated (dialogue_seconds)
       "prompt": { "mode": "structured",                   // structured | raw
                   "auto": { "subjects": true, "retention": true, "shots": true },
                   "sections": { "subject_definitions": "", "summary": "", "retention_analysis": "",
                                 "detailed_description": "", "overall_soundscape": "", "non_diegetic_music": "" },
                   "raw": "",
-                  "pass_prompts": {} },                     // long scenes: {"1": "...", "2": "..."} overrides per pass
+                  "pass_prompts": {},                      // long scenes: {"1": "...", "2": "..."} overrides per pass
+                  "passes": [ { "start": 0.0, "end": 14.375,  // v0.8.0: each pass's own sections, index = pass - 1;
+                                "sections": { … the six … } } ] },  //   start/end = its range (scene s) when written
       "overrides": {},                                     // any of: quality (draft|final), seed, steps, sampler, scheduler, width, height,
                                                            //   diffusion, video_vae, audio_vae, text_encoder,
                                                            //   loras: { "mode": "add"|"replace", "items": [ {id,name,strength,enabled} ],
@@ -191,6 +204,12 @@ timing, overlaps, visible starts, frame counts, seeds, slugs and budgets.
 
   Then every field is coerced: an unknown transition is `cut`, direction `left`, colour match `off`; frame counts are whole numbers 0 .. 14400 (fractions cut off); colours `#rrggbb` in lower case, else `#000000`; `volume_db` −60 .. 24, `brightness` −1 .. 1, `contrast` 0 .. 2, `saturation` 0 .. 3; missing fields take `default_merge()`. It is idempotent, and applying a Global profile does not migrate again (the scenes already have `merge`). `scene.transition` and the Global keys stay in the JSON; nothing else reads them. A scene inserted without `merge` gets one at the next normalise, so the UI reads it through `cut.js mergeOf()`.
 - `global.continuity.name_continuation` (v0.7.0) is a bool like the other Global keys; missing is `true`.
+- v0.8.0 (`normalize_global`, `_norm_scene` and `normalize_project`; JS the same; `tests/test_model_parity.py` adds `v080_fixtures()` and malformed `global.long` fixtures):
+  - `global.long`: the five new keys follow the usual rules (strings from strings or numbers, bools from bools or numbers); an unknown `handoff` is `"pixels"`, an unknown `pass_cache` `"near_lossless"`. Missing keys take the defaults, which keep v0.7.0's behaviour.
+  - shot `camera_amp`, `camera_speed`, `framing`: only the exact values (`CAMERA_AMPS`, `CAMERA_SPEEDS`, `FRAMINGS`) are kept, anything else is `""`.
+  - dialogue `duration`: a number > 0, at most 600 (`DIALOGUE_MAX_SECONDS`), else `null`.
+  - `prompt.passes` (`_norm_pass_text` / `normPassText`): a non-list is `[]`; an item that is not an object becomes `{start: 0, end: 0, sections: <six empty strings>}`, so later indexes never shift; `start` / `end` are floats, every section a string; extra keys are kept.
+  - `camera_version` (`_migrate_camera` / `migrateCamera`): below 2, missing or junk, the `DEFAULT_CAMERA` moves whose name the presets lack (compared without case and outer spaces) are appended once and it becomes 2; user presets stay first and unchanged. 2 or more is kept (a whole number, at most 1e6), so presets deleted later stay deleted.
 
 ### Seeds (v0.6.0)
 
@@ -237,6 +256,8 @@ pass that has one). A continuation picture counts for *Auto* packing (JS
 (picture), or 3 videos or 12 files (clip), the continuation is left out and the pass
 counts as in v0.6.1, matching what `build_pass` sends. `mode` is the scene's
 effective start when the caller has it; `continuation=False` counts as v0.6.1.
+v0.8.0: with `global.long.seam_video_ref` off, a pass after an overlap seam has no
+continuation (`pass_continuation` returns `""`), so it counts as in v0.6.1.
 
 ### Tag syntax (v0.6.0)
 
@@ -257,7 +278,7 @@ after a letter, digit, `_` or `@` starts no tag, so e-mail addresses are text.
 |---|---|---|---|
 | GET | `/reelwright/info` | – | `{version, ffmpeg, insightface, insightface_error, h3_nodes, h3_error}`; `insightface_error` (v0.4.1) is why face checks could not load or run, `""` otherwise; v0.6.0: `h3_nodes` is whether `render.py` could import the H3 nodes (`render.h3_available()`), `h3_error` why not |
 | GET | `/reelwright/models` | – | `{diffusion_models[], text_encoders[], vae[], loras[], latent_upscale_models[], samplers[], schedulers[]}` |
-| POST | `/reelwright/plan` | `{project}` | `{scenes: {<scene_id>: {passes[], status, key, starred, match, kind, takes[], issues[], prompts[], tags[], tag_maps[], settings, loras[], upstream_take, upstream_changed, manual_star, estimate_seconds, starred_prompts, cached_passes}}, issues[], timeline: {starts:{id:t}, total}, estimate: {seconds, scenes, unknown}}`; the v0.6.0 fields are under "Plan fields" |
+| POST | `/reelwright/plan` | `{project}` | `{scenes: {<scene_id>: {passes[], status, key, starred, match, kind, takes[], issues[], prompts[], tags[], tag_maps[], settings, loras[], upstream_take, upstream_changed, manual_star, estimate_seconds, starred_prompts, cached_passes}}, issues[], timeline: {starts:{id:t}, total}, estimate: {seconds, scenes, unknown}}`; the v0.6.0 fields are under "Plan fields"; v0.8.0: `takes[]` carry `drift` and `long` (see Takes) |
 | POST | `/reelwright/upload` | multipart: one `file` part and `slug`, any order | `{asset}` with kind, file, duration, width, height. v0.6.0: streamed in 1 MB chunks to `input/reelwright/.uploads/` off the event loop, checked to decode (PIL for pictures, ffprobe for a video's picture or an audio's sound), then moved into `input/reelwright/<slug>/`; 400 for an unreadable or empty file or several file parts |
 | GET | `/reelwright/takes?slug=` | – | `{scenes: {<id>: {starred, auto_star?, project_id?, takes:[{id, key, created, quality, seconds, frames, face, files:{video, first, last, tail, passes}, …}]}}}`; take fields under "Takes"; per-pass `prompts` are left out (v0.6.0); folders whose name is not an id are skipped |
 | POST | `/reelwright/takes/star` | `{slug, scene_id, take_id}` | `{ok}` |
@@ -276,7 +297,8 @@ after a letter, digit, `_` or `@` starts no tag, so e-mail addresses are text.
 | POST | `/reelwright/llm/split` | `{project, scene_id, job?}` | `{pass_prompts:{n: text}}` or `{cancelled: true}`; v0.6.0: `llm.split_prompts` accepts keys `"2"`, `"02"`, `"pass 2"`, `"Pass_2"`, `"P2"`, a list, `{"passes": …}`, and object values (written out as text) |
 | POST | `/reelwright/llm/script` | `{project, script, part?, parts?, notes?, known_cast?[], job?, can_split?}` | `{scenes[], cast[], warnings[], tokens, ms, attempts, budget, input, context}` or `{cancelled: true}`; v0.6.0: `llm.coerce_script` gives every field the editor's type and leaves out bad items, with a line in `warnings`; v0.4.3: shots carry `duration`, and `scriptparts.fit_scene` makes each scene's length fit its shots and dialogue (a changed scene gets `fit_note`); v0.4.2: `script` is one part, `notes` go with every part, `known_cast` keeps names; with `can_split` a cut-off answer is not retried (the editor splits the part) |
 | POST | `/reelwright/llm/script/parts` | `{script, part_chars}` | v0.4.2, `scriptparts.split_script`: `{notes, parts:[[block…]], chars, blocks}`; a part's text is its blocks joined by newlines |
-| POST | `/reelwright/llm/cancel` | `{job}` | v0.4.2: `{ok, cancelled}`; stops the running rewrite / split / script request with that job id, which then answers `{cancelled: true}` |
+| POST | `/reelwright/llm/passes` | `{project, scene_id, passes: [1-based] \| null, instruction?, job?}` | v0.8.0, `llm.write_passes` (see "Write prompts"): `{scene_id, pass_count, passes: [{index, start, end, sections: {six}}], warnings: ["Pass k: …"], tokens, ms}`. `passes` null, missing or `[]` = every pass; written in ascending order, one request each. `start` / `end` = the planner's pass range in scene seconds. A request that fails after a pass was written: 200 with the passes so far plus `error`, `reason`, `failed` (the pass number) and a warning. Stopped (`/llm/cancel`): `{cancelled: true, passes, warnings, tokens, ms, scene_id?, pass_count?}`. 400: `passes` not a list of whole numbers ≥ 1, `instruction` not text, an unknown scene or pass, a raw-mode scene, no base URL; 502 `{error, reason}` when the first pass fails |
+| POST | `/reelwright/llm/cancel` | `{job}` | v0.4.2: `{ok, cancelled}`; stops the running rewrite / split / script request with that job id, which then answers `{cancelled: true}` (v0.8.0: also `/llm/passes`, which answers with the passes written so far) |
 | POST | `/reelwright/promote_frame` | `{slug, scene_id, take_id, which: first\|last\|time, t?}` | `{asset}` |
 | POST | `/reelwright/cast/export` | `{project, cast_id}` | `{folder, files}` |
 | POST | `/reelwright/continuity/check` | `{project, scene_id}` | `{scores:{cast_id: value}, available}` |
@@ -310,7 +332,7 @@ File previews use ComfyUI's own `/view?filename=&subfolder=&type=output|input`.
 | `reelwright.run` | v0.6.0: `{slug, run_id, phase: "start", targets: [scene_id], reused: [scene_id]}`; `{slug, run_id, phase: "end", targets, reused, rendered: [scene_id], failed: [{scene_id, error}], skipped: [{scene_id, reason}], warnings: [{scene_id, message}], interrupted: bool, error?}`, always sent (`warnings`: a drift retake or an extra variant that failed after the scene's first take was made; the scene still counts as rendered) (from a `finally` that also catches ComfyUI's Stop, a BaseException); `error` only when the run itself stopped ("Stopped." with `interrupted: true`, else the exception text); per-scene failures are only in `failed`. `{slug, run_id?, phase: "rejected", error}` when a check fails before any GPU work (node setup, pre-flight, an unknown action); the node then raises. After `end`, the node raises when `failed` is not empty |
 | `reelwright.preview` | `{slug, scene_id, pass, passes, step, steps, image: "data:image/jpeg;base64,…"}` every sampler step, at most one per 0.25 s, always the last step (v0.3.5; v0.3.8 was one a second). The editor turns `image` into a `blob:` URL (`web/rw/preview.js`) before showing it. Made with ComfyUI's own previewer under any extension wrapper (`render.stock_previewer`, v0.3.9; VideoHelperSuite's animated previews wrap it). Replaces ComfyUI's own node preview |
 | `reelwright.merge` | `{slug, job, phase: "start"\|"progress"\|"end"\|"error", …}`. From `/merge`: `start` `{draft, range, stems}`, `progress` `{percent}`, `end` `{files, duration, loudness, draft, range}`, `end` `{cancelled: true}` or `end` `{error}`. From the automatic merge after a render (job `merge-<run_id>`): `start`, `progress`, `end` `{files, duration}`, `end` `{cancelled: true}`, `error` `{error}`. `job` is v0.6.0 |
-| `reelwright.llm` | v0.4.2: `{job, phase: "waiting"\|"thinking"\|"writing"\|"done"\|"retry", tokens, reasoning, chars, elapsed, budget, input, context, attempt, attempts, note?, part?, parts?}` about twice a second while an LLM request with a `job` id runs (`llm.chat` streams the answer). `tokens` counts streamed chunks, about one token each; `input` is the estimated prompt size |
+| `reelwright.llm` | v0.4.2: `{job, phase: "waiting"\|"thinking"\|"writing"\|"done"\|"retry", tokens, reasoning, chars, elapsed, budget, input, context, attempt, attempts, note?, part?, parts?}` about twice a second while an LLM request with a `job` id runs (`llm.chat` streams the answer). `tokens` counts streamed chunks, about one token each; `input` is the estimated prompt size. v0.8.0: `/llm/passes` adds `scene_id`, `pass` (1-based), `passes` (the scene's count), `item` / `items` (place in this batch) and `completed`; `done` comes once per pass, and the HTTP answer ends the job |
 
 ## Running a render
 
@@ -330,9 +352,9 @@ New actions (v0.6.0):
 What a run does (v0.6.0, `render.Renderer.run`):
 
 1. Registers a `"render"` job for the project (`jobs.running`), picks and orders the targets.
-2. Pre-flight, before any GPU work: the H3 nodes import (`render.h3_available()`; render.py imports them lazily, so the extension loads without them), the slug is valid, lint errors of the targets ("fix these first"), model files, every reference / anchor / voice / song-piece / guide file of every pass, each continuing scene has a starred upstream take with `last` and `tail` or `video` (or its upstream renders earlier in this run), asset video guides fit their pass (`fit_clip`), ffmpeg when a target has several passes or a song. Every problem in one `RuntimeError`, sent as `rejected`.
+2. Pre-flight, before any GPU work: the H3 nodes import (`render.h3_available()`; render.py imports them lazily, so the extension loads without them), the slug is valid, lint errors of the targets ("fix these first"), model files, every reference / anchor / voice / song-piece / guide file of every pass, each continuing scene has a starred upstream take with `last` and `tail` or `video` (or its upstream renders earlier in this run), asset video guides fit their pass (`fit_clip`), ffmpeg when a target has several passes or a song. Every problem in one `RuntimeError`, sent as `rejected`. v0.8.0: `missing_models` also checks `global.long.guide_vae` ("vae/<name> (the guide VAE)").
 3. Re-stars cached scenes whose matching take is not starred, except where the star was picked by hand (`cache.manual_star`). Sends `start`.
-4. Renders scene by scene. A failing scene sends `error` and the run goes on; a scene that continues from a failed or skipped scene sends `skipped`. Memory is freed after every scene (`_free(policy)`), also after a failure. Encode-first skips passes the pass cache will provide. v0.7.0: it also leaves for render time every pass whose continuation reference is made in this run (`Renderer._late_encode`: a pass that names the pass before, or a continuing scene whose scene before is a target of this run). Those passes are encoded just before they sample (`encode(scene, sr, n, upstream, prev_pass)`), after encode-first has dropped the text encoder, so it is loaded again (from disk once, then kept in `Models.clips` for the run).
+4. Renders scene by scene. A failing scene sends `error` and the run goes on; a scene that continues from a failed or skipped scene sends `skipped`. Memory is freed after every scene (`_free(policy)`), also after a failure. Encode-first skips passes the pass cache will provide. v0.7.0: it also leaves for render time every pass whose continuation reference is made in this run (`Renderer._late_encode`: a pass that names the pass before, or a continuing scene whose scene before is a target of this run). Those passes are encoded just before they sample (`encode(scene, sr, n, upstream, prev_pass)`), after encode-first has dropped the text encoder, so it is loaded again (from disk once, then kept in `Models.clips` for the run). v0.8.0: with `seam_video_ref` off a pass after an overlap seam names nothing, so it is encoded first again.
 5. Sends `end`; raises `"Reelwright: N scene(s) failed: …"` when any failed.
 
 `fit_clip(frame_idx, clip_frames, gen_frames, role)` places a video guide: a
@@ -369,7 +391,15 @@ passes some take uses. Single-pass scenes that are not short don't use the cache
 While a long scene renders, the frames of a pass are handed to the next pass when they
 are joined by an overlap seam: only the overlap (v0.6.1), or v0.7.0, when the next pass
 names the pass before (`<Video 1>`), its last max(overlap, 124) frames (about 1.5 GB of
-float32 at 1344×768) with the pass's sound.
+float32 at 1344×768) with the pass's sound. v0.8.0: with latent hand-off, also the pass's
+sampled video latents (see "Long-scene continuity").
+
+v0.8.0: with `global.long.pass_cache: "lossless"` pass files (and `tail.mp4`) are written by
+`media.save_video_lossless`, and the pass `.json` gets `"codec": "lossless" | "near_lossless"`
+and `"drift"` (the pass's drift entry, so a pass reused from the cache keeps the numbers it was
+rendered with). With latent hand-off a pass keeps `<file key>.latent.safetensors` beside it
+(`save_handoff`); pruning removes it with its pass. Reelwright's own files are read with
+`media.load_video(exact=True)`.
 
 Before a new take, take folders that are not in `index.json` and have no
 `meta.json` (stopped renders) are removed. `Store.new_take_id` skips every number
@@ -381,6 +411,7 @@ listed or on disk and creates the folder at once, so an id is never reused.
 - `cache.scene_key(plan, keys, crossfade_frames)`: the long-scene crossfade counts when the plan has overlap seams.
 - The v0.5.1 key (no upstream take, no crossfade) is computed beside it. A take without an `upstream` field (made before v0.6.0) with that key still matches, unless the take it continues from is newer than it (`cache.resolve`). So upgrading does not make every continuing scene stale.
 - v0.7.0: `cache.py` is unchanged. A continuation reference hashes as a picture with no assets (`[]`) or a video with no asset (`asset_digest(None)`); what it is made from is already in the key (the guides' upstream key, the upstream take, the previous pass's file key), and the prompt text differs. With `name_continuation` off every key is v0.6.1's (`tests/test_continuation.py` compares against builds stored from v0.6.1 in `tests/data/v061_continuation.json`). With it on, continuing scenes and the passes after an overlap seam get new keys; fresh scenes, and the passes before the first named pass, keep theirs.
+- v0.8.0: `cache.pass_key(…, extra=None)` adds `"long": extra` only when `extra` is not empty; `cache.long_pass_extra(long, settings, build)` gives `guide_vae` (a file other than the scene's video VAE, for a pass with any reference or guide to encode) and `handoff: "latent"` (a pass with a `prev_pass_tail` guide), `{}` at the defaults. `carry_audio` off reaches the pass key through the build's guides (`analysis.apply_long` sets `"audio": False` on `prev_pass_tail` guides) and the take key through `cache.scene_key(…, carry_audio=False)` (scenes with overlap seams). `seam_video_ref` counts through the prompt and references. `pass_cache` is in no key. `analysis` keeps the extras per scene (`sr["_extras"]`) for `rekey`. `tests/test_long_continuity.py::test_defaults_keep_every_v070_key` recomputes the v0.7.0 formula. Separately, `build_pass` sends new summaries for multi-pass scenes with a written scene summary (see "Per-pass prompts"); `tests/test_continuation.py` shows that only those passes change.
 - `cache.manual_star(index)`: the star was picked by hand when it differs from `index.auto_star` (the take a render or a fallback starred); an index without `auto_star` (before v0.6.0) counts the newest take as automatic. A hand-picked star is kept by runs, and it is the take the next scene continues from.
 
 ### Plan fields (v0.6.0, `analysis.plan_response`)
@@ -409,7 +440,8 @@ tail, passes}`:
 - `pass_keys` (the pass cache file keys; `files.passes` point into `scenes/<id>/passes/`);
 - `start_mode` (the effective start), `upstream: {scene_id, take_id} | null`;
 - `prompts` (per pass), `render_seconds`, `generated_frames`, `sampled_frames` (cache hits not counted), `cached_passes`, `width`, `height`, `steps`;
-- `face_score` (the lowest face similarity, or null).
+- `face_score` (the lowest face similarity, or null);
+- v0.8.0: `drift` (`[]` for fresh scenes; see "Long-scene continuity") and `long` (the take's `guide_vae`, `carry_audio`, `seam_video_ref`, `handoff`, `pass_cache`, `render.LONG_TAKE_KEYS`). `TAKE_FIELDS_NOT_IN_PLAN` is unchanged, so `/plan` has both.
 
 `meta.json` also has `passes[n].key` (the plan pass key), `settings` and `loras`.
 `index.json` gains `auto_star` (the take a render starred) and `project_id` (the
@@ -436,6 +468,7 @@ output/reelwright/<slug>/
                                                       (merge.filmstrip; .partial files while one is written)
   scenes/<scene_id>/takes/<take_id>/passes/p1.mp4 …   before v0.6.0 only; still read (see Pass cache)
   scenes/<scene_id>/passes/<file key>.mp4 .json       v0.6.0: pass cache, shared by the scene's takes
+  scenes/<scene_id>/passes/<file key>.latent.safetensors   v0.8.0: the pass's sampled latents (latent hand-off)
                                                       (<key>.<pid>.partial.mp4 while one is written)
   cuts/<slug>_cut_vN.mp4 .srt .otio .fcpxml .chapters.txt .zip
   cuts/<slug>_cut_vN_draft.mp4 …     v0.6.0: draft merge (half size, veryfast, CRF 28)
@@ -519,7 +552,7 @@ continues from is also sent to `MiniMaxH3ReferenceToVideo` as reference 1 and na
 in the prompt, as MiniMax's `ref-en.txt` does for a first-frame picture (2.2) and a
 continued video (2.3). The `MiniMaxH3AddGuide` anchoring is unchanged.
 
-- Which passes: `model.pass_continuation(p, i, pass_, mode=None)` (JS `passContinuation`) → `"picture" | "video" | ""`. `""` when the switch is off, for scene 0 and for fresh starts. Pass 1 of an effective `tail` start with an overlap → `"video"`; pass 1 of an effective `last_frame` start (a re-anchored tail too) → `"picture"`; a later pass → `"video"` when `seam_before` is `"overlap"`, else `""`. `continuation_frames(...)` (JS `continuationFrames`): 124 after a pass seam, min(124, frames of the scene before) for a tail start, 0 for no clip.
+- Which passes: `model.pass_continuation(p, i, pass_, mode=None)` (JS `passContinuation`) → `"picture" | "video" | ""`. `""` when the switch is off, for scene 0 and for fresh starts. Pass 1 of an effective `tail` start with an overlap → `"video"`; pass 1 of an effective `last_frame` start (a re-anchored tail too) → `"picture"`; a later pass → `"video"` when `seam_before` is `"overlap"` (v0.8.0: and `global.long.seam_video_ref` is on), else `""`. `continuation_frames(...)` (JS `continuationFrames`): 124 after a pass seam, min(124, frames of the scene before) for a tail start, 0 for no clip.
 - Refs: `prompt.continuation_of(p, scene, i, pass_, ctx)` → `{kind, source, frames}` or None; `source` is `prev_scene_last`, `prev_scene_tail` or `prev_pass_tail`. `collect_refs(…, continuation=)` puts it first: `images[0] = {"assets": [], "source": "prev_scene_last", "continuation": True, …}` or `videos[0] = {"asset": None, "source", "frames", "soundtrack", "continuation": True, …}`. The clip's `soundtrack` (its sound as `<Audio N>`) is true when the pass's other video sounds and audio refs leave one of the 3 audio slots. `PassRefs.continuation` = `{kind, source, frames, label: "<Picture 1>" | "<Video 1>", audio_number}`. Every other number follows (`number()`), so subjects, `@P` / `@V` / `@A` labels and `tag_map` move up by one.
 - `build_pass` builds the pass as in v0.6.1 (anchor only), with an issue, when:
   - the written text (pass prompt, raw prompt, written sections, shots) holds `<Picture N>` (picture continuation) or `<Video N>` / `<Audio N>` (clip) and not the editor's own definition (`OWN_DEFINITION`, so a hand-edited copy of a v0.7.0 build is kept): `info`;
@@ -530,6 +563,61 @@ continued video (2.3). The `MiniMaxH3AddGuide` anchoring is unchanged.
 - Render: `Renderer.encode(scene, sr, n, upstream=None, prev_pass=None)` sends it as `ref_image_0`, or `ref_video_0` (+ `ref_video_audio_0`). `_continuation_ref`: `prev_scene_last` → the upstream take's `last.png`; `prev_scene_tail` → `_upstream_tail_clip(take)` (see Takes); `prev_pass_tail` → the last ≤ 124 frames of the pass before and the matching end of its sound. Encode-first leaves such passes for render time when their source is made in the same run (`_late_encode`, see "Running a render").
 - Lint: `validate._sent_assets` skips the asset-less clip; `_media_counts` passes the effective start, so the budget matches what the build sends; the 2–15 s video check names the clip by its source ("the tail clip of the scene before is 1.0 s").
 - Tests: `tests/test_continuation.py` (off gives the stored v0.6.1 builds and keys; on changes only the passes that continue), parity fixtures in `tests/test_model_parity.py`.
+
+## Per-pass prompts (v0.8.0)
+
+`scene.prompt.passes[k-1]` holds pass k's own six sections and the range (scene seconds) it was written for.
+`model.py` and `model.js` share the helpers (parity-tested):
+
+- `pass_texts(p, scene, plan=None)` / `passTexts(project, scene, plan = null)` → `{texts: [six sections per current pass], moved: [1-based passes whose text was written for another range], unused: [1-based stored entries with text no current pass gets], same, stored, entry: [per current pass: the 1-based stored entry its text came from, or null]}`. `same` when every stored entry with text has an index below the pass count and a range within one frame (1/24 s + 1e-9) of that pass's; a one-pass scene is `same` unless entries after the first have text. Otherwise greedy matching: every (pass, entry with text) pair that overlaps in time, largest overlap first (ties: lower pass, then lower entry), each used once.
+- `relayout_pass_texts` / `relayoutPassTexts` → a new `prompt.passes`: one entry per current pass with its `start` / `end` and `texts[k]`; `unused` text is dropped ("Use the new layout").
+- `pass_sections(p, scene, plan, k)` / `passSections(…)` (k 1-based) → `{own, used, source}`; `source` per section: `"pass"` (own text), `"auto"` (the summary in a multi-pass scene, or an empty summary; `used` is `""`), `"split"` (detailed_description in a multi-pass scene without own text: the scene text, split per pass by the build), else `"scene"` (shared).
+- JS only, for edits inside `ctx.actions.edit`: `setPassSection(project, scene, plan, k, key, value)` and `writePassTexts(project, scene, plan, [{index, sections}])`. Both relayout first, so index = pass number − 1 always holds after an edit.
+- `dialogue_seconds(d)` / `dialogueSeconds(d)`: `duration` when > 0 (at most 600), else max(1.0, (words + CJK characters / 4) / 2.5) (`WORDS_PER_SECOND`, `CJK_PER_WORD`; words are runs between spaces that hold a letter or digit). `dialogue_spans(scene, plan)` / `dialogueSpans` → per line `{id, pass, start, end, seconds, estimated, seam, past_end}` (`seam`: the end of a pass that is not the last when the line runs past it).
+- `camera_sentence(camera, amp, speed)` / `cameraSentence` → "The camera pushes in with small amplitude at slow speed." (`""` without camera text; trailing `.!?` dropped before amplitude and speed; capitalised; full stop). `framing_phrase(f)` / `framingPhrase` → "a close-up", "a low-angle shot", `""`.
+
+`prompt.build_pass`, structured mode, no `pass_prompts[k]` override:
+
+- each section is `pass_sections(…).used` (extra keys of `scene.prompt.sections` are kept, as before);
+- summary: the pass's own when written. A single-pass scene: else the scene summary (unchanged). A multi-pass scene never sends the scene summary and reads no tags from it. A pass without its own summary gets `prompt.pass_summary(…)` when the scene summary is written ("The target video shows <Subject 1> and unfolds over 2 shots." + the first sentence of each of the pass's shots, labels substituted, `<d>` spans removed + "<Subject 1> speaks." + the voice, song and continuation sentences of the automatic summary; made even with automatic subjects off), else the v0.7.0 automatic summary (so those scenes keep their keys);
+- detailed_description: the pass's own text as written (its own `[Shot N]` numbering and pass times, merged with the automatic shot lines by label, spoken lines kept); else `written_shots` splits the scene text as before;
+- a shot with `framing`, `camera_amp` or `camera_speed` (planner pass shots carry them) is written by `prompt._framed_shot`: `[Shot 1] A close-up: The camera pushes in with small amplitude at slow speed. <text>.`, `[Shot 2] At 00:05.000, the shot cuts to a close-up: …`; without a framing the move follows the text in later shots. A shot without them is written exactly as before.
+
+A hand-edited or Split pass prompt (`pass_prompts[k]`) still replaces the whole pass; pass texts are the structured layer under it.
+
+Lint (`validate.py`): `_pass_text_issues` (info: texts written for another pass layout, naming moved and unused ranges; warning, one per multi-pass scene: the passes without a summary of their own and without an override), `_dialogue_span_issues` (warning: a line past a pass seam or the scene's end, "about" and a hint when its length is estimated; empty lines and lines in no pass are skipped); the empty-soundscape info names only the passes without one. Tests: `tests/test_pass_prompts.py`, `tests/test_continuation.py` (`test_v080_changes_only_the_summary_of_multi_pass_scenes_with_a_written_summary`).
+
+## Long-scene continuity (v0.8.0)
+
+Later passes of a long scene lose quality through decode → encode round trips at overlap seams (the
+VAEs keep no state between calls): the anchored overlap and its sound, the 124-frame `<Video 1>`, the
+int8 video VAE's encoder, and CRF 4 4:2:0 pass-cache read-backs. `global.long` has a switch for each;
+at the defaults behaviour and every key are v0.7.0's (`analysis.long_settings(p)` fills missing keys).
+
+- **guide_vae**: `render.Models.encoder_vae(settings, guide_vae)` returns the VAE that encodes the `MiniMaxH3ReferenceToVideo` references (pictures, clips, the continuation) and every `MiniMaxH3AddGuide` guide; the video VAE still decodes. `""` or the scene's own video VAE file = the video VAE (wired or file). Loaded through `Models.vae`, once per run. `check_guide_vae` refuses a VAE whose model is not `MiniMaxH3VideoVAE` or has no encoder.
+- **carry_audio** false: `analysis.apply_long(p, builds)` sets `"audio": False` on `prev_pass_tail` guides, so render anchors the picture only. `assemble.pass_segments(plan, files, crossfade, carry_audio=False)` gives the pass after an overlap seam `audio_lead_frames = overlap − crossfade`; `merge.build_command` (`_audio_lead`) starts its sound at the overlap's first frame and `acrossfade`s over crossfade + lead frames. Picture, timing and length are unchanged; 0 or a missing key gives the old graph. A tail start's guide keeps its sound.
+- **seam_video_ref** false: `model.pass_continuation` / `passContinuation` return `""` for a pass after an overlap seam, so `prompt.continuation_of`, the budget, lint and render all leave out `<Video 1>` (the prompt writes "[Shot 1] The shot continues seamlessly from the previous moment."); the pass is still anchored, is encoded first again and only the overlap frames are kept between passes. Pass 1 of a tail start is unaffected.
+- **handoff** `"latent"` (experimental): the guide a pass after an overlap seam gets from the pass before is that pass's sampled video latents for the overlap (`latent_guide`; the last 5j+2 latents for 17j+5 frames, 12 for 39), added to `minimax_keyframes` as `MiniMaxH3AddGuide` adds an encoded clip (`add_latent_guide`: `{"resolved_frame_index": 0, "latent": slice}`); the sound, when carried, is a second, audio-only `AddGuide` at the same frame. `_generate` also returns the video latent; `save_handoff` / `load_handoff` keep it beside the pass in the pass cache, so a retake reading the pass before from the cache hands off the same latents. Valid because the encoder takes 17-frame chunks with no state between them and an aligned overlap starts on a chunk boundary (`test_h3_vae_latents_of_an_aligned_overlap_are_a_slice`, random-initialised encoder, difference 0.0). Falls back to pixels (logged; the drift entry gets `handoff: "pixels"` and `handoff_reason`) for an overlap or a pass before off the 17k+5 grid, a guide not at frame 0, another canvas size or channel count, a latent that is not an H3 AV latent, or a pass before from the cache without its `.latent.safetensors`. Not covered: the sound (the audio encoder's causal attention spans the whole clip), the `<Video 1>` reference (the node needs pixels), tail starts between scenes, the first pass.
+- **pass_cache** `"lossless"`: `media.save_video(lossless=)` / `save_video_lossless` write `libx264rgb` (`LOSSLESS_CODEC`, qp 0, preset ultrafast, rgb24) with 24-bit FLAC in the same `.mp4` names; `media.load_video(exact=True)` / `load_video_exact` decode RGB streams with PyAV to rgb24 (`is_rgb_video`, `RGB_PIX_FMTS`), bit-identical (ComfyUI's reader is off by up to 1.13 levels on RGB streams). `tail.mp4` is written lossless too: from the last pass in memory when its 124 frames all lie past the blended overlap, else from the joined CRF 16 video, as before. About 4× the disk of CRF 4 in a test; faster to write.
+- **Drift meter**: for each pass with a `prev_pass_tail`, `prev_scene_tail` or `prev_scene_last` guide, `render_scene` calls `analysis.drift_metrics(guide, gen)` on up to `DRIFT_SAMPLES` = 3 anchored frames (first, middle, last), 0–255 scale: `anchor_diff` (mean |gen − guide|), `color_shift` (length of the mean RGB difference) and `rgb_shift` (per channel, gen − guide), `sharpness` (Laplacian variance gen / guide; null for a flat guide). `drift_level` → `"ok" | "warn" | "bad"` against `DRIFT_LIMITS` (anchor 8 / 16, colour 4 / 10, sharpness 0.8–1.25 / 0.6–1.6; starting values). Entry: `{pass, source, frames, anchor_diff, color_shift, rgb_shift, sharpness, level, handoff?, handoff_reason?, pass_cache?}` in `take["drift"]` and each pass cache `.json` (`pass_cache: true` when reused).
+- Lint: `validate._cut_seam_hint` (info) for a scene with overlap seams and no shot cuts: the seam times and "Add shot cuts up to N s before a seam", plus "set Global → Long scenes → Seams to Auto or Cuts" when Seams is Overlap only.
+- Tests: `tests/test_long_continuity.py`, the v0.8.0 tests at the end of `tests/test_render_flow.py` (stubs record which VAE each node gets), `global.long` fixtures in `tests/test_model_parity.py`.
+
+## Write prompts (v0.8.0)
+
+`llm.write_passes(cfg, p, scene, wanted=None, instruction="", progress=None, state=None, plan=None, builds=None)` writes
+each wanted pass (1-based; None = all) of a normalised project's scene, one request per pass, in ascending order;
+each request sees the passes written before it in the batch. `state` fills as it goes (`{scene_id, pass_count,
+passes, warnings, tokens, ms}`), so a Stop keeps what was written; a failure after the first pass ends the batch with
+`error`, `reason`, `failed`; a failure before it raises. Raw-mode scenes raise ("switch it to Structured").
+`llm.scene_builds` re-plans the scene (planner + `prompt.build_pass`, no file hashing).
+
+- System prompt, the same for every pass (a server's prefix cache reuses it): `H3_RULES`, MiniMax's guides when downloaded and Global → Prompt rewriter → guides is on, the preset, `PASS_RULES` (this pass only, `[Shot N]` from 1 per pass, "At MM:SS.mmm, the shot cuts to" in pass time, 350–500 words in detailed_description, spoken lines word for word with (S1)…, overlap seam continuation, @ tokens only, JSON with six keys).
+- `pass_request(…)`: `scene_context`, the whole-scene note, "Write the prompt of pass k of n" with its range, frames and seam; its shots (pass and scene times, length, framing, camera, amplitude, speed, text) and lines (pass and scene time, shot, speaker token and (S1), delivery, `dialogue_seconds`, `<d>[Lang] text</d>`); the references it sends (`pass_guides`: frame guides with the guide's phrasing), the scene's tokens it does not send, its task types; the pass before (just written, else stored via `pass_texts`, else as built now) and its last line; the pass after (summary, shots, lines); what H3 receives now (`build_pass`); the instruction (default "Write this pass's prompt following the guide.").
+- `pass_budget(cfg)`: max(Max tokens, 8192), or 4096 with Thinking off; `ask` retries a cut-off answer with twice the budget up to 32,768, and 429 after Retry-After.
+- Parsing (`pass_sections`, `tidy_pass`): the six keys, `{sections}`, `{passes: […]}` or a list (the entry for k, or the only one), `{"2": …}` / `{"pass 2": …}`, `{prompt: "<labelled text>"}` or labelled text; labels → @ tokens through the pass's `tag_map`; the task-type prefix removed from the summary; `"N/A"` = empty except for the soundscape and music; with one `[Shot N]` per timeline shot they are renumbered 1..m and every later shot's "At MM:SS.mmm," set to the timeline's pass time. `subject_definitions` / `retention_analysis` are `""` while their automatic parts are on. Warnings (each "Pass k: …"): moved cut times (> 0.05 s), renumbered or miscounted shots, a description under 300 or over 650 words, spoken lines missing or invented, unknown @ names, fixed labels left as written, a frame guide not named, a `pass_prompts[k]` override.
+- Script import (`script_part`): the same JSON; the prompt asks for 2–4 sentences per shot and a 2–4 sentence whole-scene `summary`. `coerce_script` joins a shot answered as separate keys (`_shot_text`: composition, framing, subject, appearance, position, then text / action / description, then environment, lighting, camera_movement, movement, sound, audio; parts under 3 words left out). `IMPORT_MAX_TOKENS = 24576` is the default of `limits()` and `script_part`.
+- Split (`/llm/split`) and Rewrite are unchanged. Tests: `tests/test_llm.py`, `tests/test_routes.py::test_llm_passes_route`.
 
 ## Merge: scene.merge (v0.7.0)
 
@@ -549,6 +637,7 @@ transition, audio fade and colour-match keys are no longer read by the merge.
 - `build_command`, per scene. Picture: trim → fit to the canvas → `colorchannelmixer` (gain) → `eq` → own fades (`fade` from / to the colour; the first or last frame is the colour; black is written `black`, so v0.6.1 graphs are unchanged, other colours `0xrrggbb`) → the timing dip (`_vfades`). Sound: mute (silence) → `volume` → own fades (`afade`) → the cut fades (`fade`, at most half the segment, only at plain cuts). Overlapping joins use `xfade` and `acrossfade` over the same frames.
 - The merge answer gains `warnings` (also logged). FCPXML and OTIO are unchanged: overlapping scenes are cut where the next one starts.
 - Tests: `tests/test_scene_merge.py`. `test_a_v061_project_merges_exactly_as_before` loads the v0.6.1 code from `REELWRIGHT_BASE_V061` (skipped when it is missing) and compares the ffmpeg arguments, filter graph, entries and timing of a converted project, with and without a soundtrack; the only difference is the identity `colorchannelmixer=rr=1:gg=1:bb=1` v0.6.1 ran on the reference scene.
+- v0.8.0: `cut_plan`'s entries pass each line's `duration` to `merge.subtitle_cues`; a line with one (> 0) is shown that long (at least 0.3 s), still cut 0.05 s before the next line and at the scene's end; other lines keep the reading-time length. `build_command` reads a segment's `audio_lead_frames` (the pass stitch with `carry_audio` off, see "Long-scene continuity").
 
 ## Editor ↔ backend details
 
@@ -556,7 +645,7 @@ transition, audio fade and colour-match keys are no longer read by the merge.
 - Queueing runs only this node: `app.queuePrompt(0, 1, [<execution id>])` (v0.6.0: the node's full execution id; `String(node.id)` before). **Stop** calls `api.interrupt()`; a running merge is stopped with `POST /reelwright/merge/cancel`.
 - `/plan` scene status is one of `cached | stale | missing | locked | error`. The editor adds `queued` and live progress from `reelwright.progress`. A scene whose star was picked by hand stays `cached` when some take matches.
 - Take and merge file paths are relative to the output directory. Asset `file` paths are relative to the input directory. Both are previewed through `/view`.
-- `scene.prompt.pass_prompts` is keyed by 1-based pass numbers as strings. `scene.overrides.loras.strengths` is keyed by global LoRA id. `scene.trim.in` is seconds inside the generated pass.
+- `scene.prompt.pass_prompts` is keyed by 1-based pass numbers as strings; `scene.prompt.passes` (v0.8.0) is a list, index = pass number − 1. `scene.overrides.loras.strengths` is keyed by global LoRA id. `scene.trim.in` is seconds inside the generated pass.
 - When a render runs, the node writes `wired.json` (which inputs are wired) into the project folder. `/plan` reads it, so its cache keys match the renderer's.
 - Keys (v0.5.1): ComfyUI's ChangeTracker has a capture-phase `keydown` listener on `window`; it reads `document.activeElement` at once and runs the workflow undo/redo (which rebuilds the graph) unless that element is an INPUT, TEXTAREA or contenteditable. The editor therefore keeps keyboard focus on a hidden read-only `input.rw-keys` (`root.focus()` is redirected to it; focus landing on the root or on a mouse-clicked button goes back to it), and its own `keydown` handler on the root treats that field as "not typing".
 - Graph rebuilds (v0.5.1): with Vue nodes, a rebuilt node with the same id can stay displayed through the old node's DOM widget element. `web/reelwright.js` remembers a removed node's element for 10 s, and a 250 ms check moves the new editor root into whichever of the two elements is on the page.
@@ -593,3 +682,14 @@ Editor (`web/rw/editor.js`):
 - `api.js`: `rw.filmstrip(file, h = 54)`; `viewURL(rel, type, version)` puts an optional `version` in the query as `rwv=` (the timeline passes the take's `created`, so a sprite rewritten at the same path is loaded again).
 - `editor.forkProject` maps each scene's `merge.color_ref` to the new scene ids.
 - The editor does not show the merge answer's `warnings` yet; they are in the answer and the server log.
+
+### Pass tabs, rows, Write prompts, follow and drift (v0.8.0)
+
+- `web/rw/passes.js`: `passLayout` (model.js `planScene`), `passTextsOf` (`passTexts` plus `movedPasses`), `adoptLayout` (`relayoutPassTexts`), `setPassSection`, `applyWritten` (an `/llm/passes` answer: `writePassTexts` when its start / end match the current passes within a frame, else relayout first and keep the written ranges, so the card offers "Use the new layout"; a single-pass scene's answer goes into `scene.prompt.sections`, empty answered sections keep the scene's text, and `scene.prompt.passes` is cleared), `dialogueSecs`, `lineSeam`, `shotSeams`, `cameraOptions` (`DEFAULT_CAMERA` first, then the project's presets), `stillMove` (Static Shot, POV, the shakes), `framingOptions`, `runWrite` / `stopWrite` (the Write prompts runner in `eph.passWrite`: one `/llm/passes` call per scene, the live project each time, one undo step per scene, Retry asks only for the passes left). Every model.js helper is feature-detected, with a fallback that follows the same rules.
+- Scene tab (`tabs/scene.js`): `promptCard` (Whole scene + `passPane` per pass, `singlePassNote`, `writeRow`, `writeToast`), `shotsCard` / `shotRow`, `dialogueCard` / `dialogueRow` (the v0.7.0 functions are commented out above them). Row keys `shot-…` / `dlg-…`, in a pass tab `p<k>-shot-…` / `p<k>-dlg-…`. Text fields are `codeEditor({cls: "sans"})` with @tag autocomplete. Labelled History steps: "Pass 3 summary" (coalesced while typing), "Write prompts", "Write pass 2", "Write prompts: <title>" (batch), "Use the new pass layout". Picking a pass tab opens that pass in What H3 receives.
+- Global tab (`tabs/global.js`): `seamFields` (Pass seams: guide VAE combobox from `/models` `vae[]` without audio VAEs, carry sound, `<Video 1>` at seams, disabled while `name_continuation` is off, hand-off, pass cache, a note line); `writeBatchBox` after a script import (`eph.imported = {ids}`).
+- Timeline (`tabs/timeline.js`): `followPlayhead` runs in the playback loop and sets only `scrollLeft` (the middle of the view, in steps of `FOLLOW_STEP` = 4 px; clamped at the ends), so a long film is rebuilt only near the edge of the built lanes. `pauseFollow` on a drag, `followScrolled` on a scroll the follow did not make (a zoom resets `play.sl` first), `resumeFollow` from the transport's Follow button; Play sets `follow: true`; while paused, the playhead crossing the middle of the view resumes it. The lanes' scroll handler ignores an element that is no longer on the page (a replaced element still got its last scroll event and read 0, rebuilding the lanes every frame). The Camera lane label is framing · preset name · amplitude speed.
+- Render tab (`tabs/render.js`): `driftView` per take (`● P2 4.2 · 1.1 · 0.95`, the light from the server's `level`, else the same starting limits), `driftWorst` for the Passes column (starred take), `longView` (the take's non-default `long` settings as a tag).
+- `api.js`: `rw.llmPasses(project, scene_id, passes, job, instruction = "")`. `ui.number({placeholder})`; `codeEditor({cls, spellcheck})`.
+- `help.js`: new and replaced entries for the pass tabs, rows, camera picker, Write prompts, Pass seams settings, drift and follow.
+- Harness: `web-test/mock.js` plans `/plan` passes with model.js `planScene`, builds pass prompts with per-pass texts, serves `/llm/passes` with progress events and Stop (flags `passCalls`, `passesMs`, `passesFail`), and gives demo takes drift; `web-test/interact.py v080_checks()`; `shoot.py` adds `scene_pass.png` and `scene_rows.png`.

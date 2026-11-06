@@ -62,15 +62,18 @@ def stubs(comfy, monkeypatch):
                                 "video_last_means": [round(float(v[-1].float().mean()), 3)
                                                      for v in (kw["ref_videos"] or {}).values()],
                                 "video_audio_secs": {k: round(a["waveform"].shape[-1] / a["sample_rate"], 3)
-                                                     for k, a in (kw["ref_video_audios"] or {}).items()}})
+                                                     for k, a in (kw["ref_video_audios"] or {}).items()},
+                                "vae": kw.get("vae")})  # added 2026-11-05 v0.8.0: which VAE encodes the references
         return types.SimpleNamespace(result=([["cond", {}]], {"samples": torch.zeros(1), "frames": kw["length"],
                                                              "size": (kw["width"], kw["height"])}))
 
     def fake_guide(**kw):
-        calls["guides"].append({"frame_idx": kw["frame_idx"], "frames": int(kw["image"].shape[0]),
-                                "audio": kw["audio"] is not None})
+        # v0.8.0: a sound-only guide (latent hand-off) has no image: frames 0
+        n = int(kw["image"].shape[0]) if kw.get("image") is not None else 0
+        calls["guides"].append({"frame_idx": kw["frame_idx"], "frames": n, "audio": kw["audio"] is not None})
         # added 2026-11-03 v0.6.0: the pass length, to check that every guide fits inside its pass
-        calls.setdefault("guide_fit", []).append((kw["frame_idx"], int(kw["image"].shape[0]), kw["latent"]["frames"]))
+        calls.setdefault("guide_fit", []).append((kw["frame_idx"], n, kw["latent"]["frames"]))
+        calls.setdefault("guide_vaes", []).append(kw.get("vae"))  # added 2026-11-05 v0.8.0
         return types.SimpleNamespace(result=(kw["positive"],))
 
     def fake_sample(model, positive, latent, seed, settings, on_step):
@@ -80,6 +83,7 @@ def stubs(comfy, monkeypatch):
 
     class FakeDecode:
         def decode(self, vae, samples):
+            calls.setdefault("decode_vaes", []).append(vae)  # added 2026-11-05 v0.8.0
             w, h = samples["size"]
             n = samples["frames"]
             ramp = torch.linspace(0, 1, n).view(n, 1, 1, 1)
@@ -1273,3 +1277,307 @@ def test_continuation_switched_off_sends_what_v061_sent(stubs, harbor, store, ro
     assert enc[("s_long", 2)]["video_order"] == ["ref_video_0"]
     assert not any("<Video 1> is the end" in e["prompt"] or "the last frame of the scene before" in e["prompt"]
                    for e in calls["encode"])
+
+
+# ---- long-scene continuity (added 2026-11-05 v0.8.0, Agent V) ------------------------------------------------------
+# Global -> Long scenes: guide_vae, carry_audio, seam_video_ref, handoff, pass_cache, and the drift meter. Each test
+# checks what reaches MiniMaxH3AddGuide and MiniMaxH3ReferenceToVideo for one setting. _continuing_harbor: s_one
+# (fresh) -> s_lf (last-frame start) -> s_long (tail start, three passes joined by 39-frame overlap seams).
+
+def _frame0_guides(calls):
+    return [g for g in calls["guides"] if g["frame_idx"] == 0]
+
+
+def test_defaults_send_what_v070_sent(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    p = _continuing_harbor(harbor, roots)
+    assert render.Renderer(p, store, {}, {"action": "pending"}).run() == ["s_one", "s_lf", "s_long"]
+    video_vae = "vae:" + p["global"]["models"]["video_vae"]
+    assert {e["vae"] for e in calls["encode"]} == {video_vae} and set(calls["guide_vaes"]) == {video_vae}
+    assert _frame0_guides(calls) == [{"frame_idx": 0, "frames": 1, "audio": False}] + \
+        [{"frame_idx": 0, "frames": 39, "audio": True}] * 3
+    take = store.starred_take("s_long")
+    assert take["long"] == {"guide_vae": "", "carry_audio": True, "seam_video_ref": True, "handoff": "pixels",
+                            "pass_cache": "near_lossless"}
+    from reelwright import media
+    assert not any(media.is_rgb_video(store.output_path(f)) for f in take["files"]["passes"] + [take["files"]["tail"]])
+
+
+def test_guide_vae_encodes_references_and_guides(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    p = _continuing_harbor(harbor, roots)
+    p["global"]["long"]["guide_vae"] = "h3_full.safetensors"
+    assert render.Renderer(p, store, {}, {"action": "pending"}).run() == ["s_one", "s_lf", "s_long"]
+    assert {e["vae"] for e in calls["encode"]} == {"vae:h3_full.safetensors"}
+    assert set(calls["guide_vaes"]) == {"vae:h3_full.safetensors"}
+    assert set(calls["decode_vaes"]) == {"vae:" + p["global"]["models"]["video_vae"]}  # the video VAE decodes
+    assert store.starred_take("s_long")["long"]["guide_vae"] == "h3_full.safetensors"
+
+
+def test_guide_vae_must_exist_and_be_an_h3_video_vae_with_an_encoder(comfy, harbor, store, monkeypatch):
+    render, _ = comfy
+    import comfy.ldm.minimax.vae as h3vae
+    harbor["global"]["long"]["guide_vae"] = "nope.safetensors"
+    r = render.Renderer(harbor, store, {}, {"action": "pending"})
+    monkeypatch.setattr(render.folder_paths, "get_filename_list", lambda folder: [])
+    assert "vae/nope.safetensors (the guide VAE)" in r.missing_models(["s_one"])
+    with pytest.raises(RuntimeError, match="not a MiniMax H3 video VAE"):
+        render.check_guide_vae(types.SimpleNamespace(first_stage_model=object()), "x.safetensors")
+    with pytest.raises(RuntimeError, match="no encoder"):
+        render.check_guide_vae(types.SimpleNamespace(
+            first_stage_model=h3vae.MiniMaxH3VideoVAE(ch=32, encoder=False, decoder=False)), "dec.safetensors")
+    render.check_guide_vae(types.SimpleNamespace(first_stage_model=h3vae.MiniMaxH3VideoVAE(ch=32, decoder=False)), "ok")
+
+
+def test_carry_audio_off_anchors_the_picture_only_and_crossfades_the_sound(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    from reelwright import merge
+    p = _continuing_harbor(harbor, roots)
+    p["global"]["long"]["carry_audio"] = False
+    joined = []
+    real_join = render.merge.join
+
+    def join(segs, *a, **k):
+        joined.append(segs)
+        return real_join(segs, *a, **k)
+    monkeypatch.setattr(render.merge, "join", join)
+    assert render.Renderer(p, store, {}, {"action": "pending"}).run() == ["s_one", "s_lf", "s_long"]
+    # the tail of the scene before keeps its sound; the end of the pass before goes without
+    assert _frame0_guides(calls) == [{"frame_idx": 0, "frames": 1, "audio": False},
+                                     {"frame_idx": 0, "frames": 39, "audio": True},
+                                     {"frame_idx": 0, "frames": 39, "audio": False},
+                                     {"frame_idx": 0, "frames": 39, "audio": False}]
+    segs = joined[-1]
+    assert [s.get("audio_lead_frames") for s in segs] == [None, 39 - 12, 39 - 12]
+    take = store.starred_take("s_long")
+    assert merge.probe(store.output_path(take["files"]["video"]))["duration"] == pytest.approx(32.0, abs=0.1)
+
+
+def test_seam_video_ref_off_anchors_pass_seams_without_video_1(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    from reelwright.analysis import analyze
+    p = _continuing_harbor(harbor, roots)
+    p["global"]["long"]["seam_video_ref"] = False
+    first_sample = []
+    real_sample = render._sample
+
+    def sample(*a, **k):
+        first_sample.append(len(calls["encode"]))
+        return real_sample(*a, **k)
+    monkeypatch.setattr(render, "_sample", sample)
+    assert render.Renderer(p, store, {}, {"action": "pending"}).run() == ["s_one", "s_lf", "s_long"]
+    enc = _encodes_by_pass(calls, analyze(p, store))
+    assert enc[("s_long", 1)]["video_order"][0] == "ref_video_0" and enc[("s_long", 1)]["video_frames"][0] == 124
+    for n in (2, 3):
+        e = enc[("s_long", n)]
+        assert 124 not in e["video_frames"] and "ref_video_audio_0" in e["video_audios"]  # the dolly only
+        assert "<Video 1> is the end of the previous part" not in e["prompt"]
+    # encode-first now covers the passes after the seams (nothing in them is made during the run): s_one and the
+    # two later passes of s_long are encoded before sampling starts
+    assert first_sample[0] == 3
+    assert _frame0_guides(calls)[2:] == [{"frame_idx": 0, "frames": 39, "audio": True}] * 2  # still anchored
+
+
+def _nested_latents(render, calls, monkeypatch):
+    """Stubs that pass real H3-shaped AV latents (NestedTensor video [1, 24, T, h, w] + audio): the sampler writes
+    latent index + 1000 * (seed % 1000) into every video latent, and records the conditioning it got."""
+    import torch
+    from comfy.nested_tensor import NestedTensor
+    from comfy_extras.nodes_minimax_h3 import temporal_shape
+    stub = render.MiniMaxH3ReferenceToVideo.execute
+
+    def ref2v(**kw):
+        positive, lat = stub(**kw).result
+        _, lt, at = temporal_shape(kw["length"])
+        lat = dict(lat, samples=NestedTensor((torch.zeros(1, 24, lt, kw["height"] // 16, kw["width"] // 16),
+                                              torch.zeros(1, 32, 2, at))))
+        return types.SimpleNamespace(result=(positive, lat))
+
+    def sample(model, positive, latent, seed, settings, on_step):
+        calls["sample"].append(seed)
+        calls.setdefault("positives", []).append(positive)
+        v, a = latent["samples"].tensors
+        t = torch.arange(v.shape[2], dtype=torch.float32).view(1, 1, -1, 1, 1)
+        on_step(settings["steps"], settings["steps"])
+        return dict(latent, samples=NestedTensor((v * 0 + t + 1000.0 * (seed % 1000), a)))
+    monkeypatch.setattr(render.MiniMaxH3ReferenceToVideo, "execute", staticmethod(ref2v))
+    monkeypatch.setattr(render, "_sample", sample)
+
+
+def _expected_slice(seed, t_prev, need=12):
+    import torch
+    return (torch.arange(t_prev - need, t_prev, dtype=torch.float32) + 1000.0 * (seed % 1000)).view(1, 1, -1, 1, 1)
+
+
+def test_latent_handoff_guides_with_the_sampled_latents(stubs, harbor, store, roots, monkeypatch):
+    """With handoff "latent", the guide after an overlap seam is the pass before's last 12 sampled latents (39 frames),
+    added to minimax_keyframes as MiniMaxH3AddGuide would add an encoded clip; MiniMaxH3AddGuide gets only the sound
+    (no picture, so no VAE encode for that guide). A pass read back from the pass cache hands off the latents kept
+    next to it; without them it falls back to the decoded frames."""
+    render, calls, events = stubs
+    import torch
+    p = _continuing_harbor(harbor, roots)
+    p["global"]["long"]["handoff"] = "latent"
+    _nested_latents(render, calls, monkeypatch)
+    assert render.Renderer(p, store, {}, {"action": "pending"}).run() == ["s_one", "s_lf", "s_long"]
+    from reelwright.analysis import analyze
+    plan = analyze(p, store)["scenes"]["s_long"]["plan"]
+    t = [render.latent_count(x["gen_frames"]) for x in plan["passes"]]
+    seeds = calls["sample"][2:5]  # s_one, s_lf, then the three passes of s_long
+    for n in (1, 2):  # passes 2 and 3
+        kfs = calls["positives"][2 + n][0][1].get("minimax_keyframes") or []
+        assert len(kfs) == 1 and kfs[0]["resolved_frame_index"] == 0
+        assert kfs[0]["latent"].shape == (1, 24, 12, 2, 4)
+        assert torch.equal(kfs[0]["latent"], _expected_slice(seeds[n - 1], t[n - 1]).expand(1, 24, 12, 2, 4))
+    # pass 1 continues the scene before: its tail clip goes through AddGuide as pixels; the seams send sound only
+    assert _frame0_guides(calls) == [{"frame_idx": 0, "frames": 1, "audio": False},
+                                     {"frame_idx": 0, "frames": 39, "audio": True},
+                                     {"frame_idx": 0, "frames": 0, "audio": True},
+                                     {"frame_idx": 0, "frames": 0, "audio": True}]
+    take = store.starred_take("s_long")
+    assert [(d["pass"], d.get("handoff")) for d in take["drift"]] == [(1, None), (2, "latent"), (3, "latent")]
+    pdir = os.path.join(store.scene_dir("s_long"), "passes")
+    kept = sorted(f for f in os.listdir(pdir) if f.endswith(".latent.safetensors"))
+    assert [k.split(".")[0] for k in kept] == sorted(take["pass_keys"][:2])  # passes 1 and 2 keep theirs
+
+    # a retake of pass 3: pass 2 comes from the pass cache and hands off the latents kept with it
+    calls["positives"].clear()
+    calls["guides"].clear()
+    render.Renderer(p, store, {}, {"action": "pass_retake", "scene_id": "s_long", "pass": 3}).run()
+    kf = calls["positives"][-1][0][1]["minimax_keyframes"][0]["latent"]
+    assert torch.equal(kf, _expected_slice(seeds[1], t[1]).expand(1, 24, 12, 2, 4))
+    assert _frame0_guides(calls) == [{"frame_idx": 0, "frames": 0, "audio": True}]
+
+    # without the kept latents the pass falls back to the decoded frames (AddGuide encodes the 39 frames)
+    for f in os.listdir(pdir):
+        if f.endswith(".latent.safetensors"):
+            os.remove(os.path.join(pdir, f))
+    calls["positives"].clear()
+    calls["guides"].clear()
+    render.Renderer(p, store, {}, {"action": "pass_retake", "scene_id": "s_long", "pass": 3}).run()
+    assert not calls["positives"][-1][0][1].get("minimax_keyframes")
+    assert _frame0_guides(calls) == [{"frame_idx": 0, "frames": 39, "audio": True}]
+    d3 = [d for d in store.starred_take("s_long")["drift"] if d["pass"] == 3][0]
+    assert d3["handoff"] == "pixels" and "pass cache" in d3["handoff_reason"]
+
+
+def test_latent_guide_refuses_what_is_not_a_valid_slice(comfy):
+    import torch
+    from comfy.nested_tensor import NestedTensor
+    render, _ = comfy
+    lat = {"samples": NestedTensor((torch.zeros(1, 24, 37, 2, 4), torch.zeros(1, 32, 2, 207)))}  # 124 frames
+    prev = {"video": torch.ones(1, 24, 12, 2, 4), "gen_frames": 362}
+    g = {"source": "prev_pass_tail", "frames": 39, "frame_idx": 0}
+    got, why = render.latent_guide(g, lat, prev)
+    assert why is None and torch.equal(got, prev["video"])
+    assert render.latent_guide(dict(g, frames=38), lat, prev)[1] == "the overlap is 38 frames, not 17k+5"
+    assert "pass cache" in render.latent_guide(g, lat, None)[1]
+    assert "canvas" in render.latent_guide(g, lat, dict(prev, video=torch.ones(1, 24, 12, 4, 4)))[1]
+    assert "fewer latents" in render.latent_guide(g, lat, dict(prev, video=torch.ones(1, 24, 7, 2, 4)))[1]
+    assert "17m+5" in render.latent_guide(g, lat, dict(prev, gen_frames=360))[1]
+    assert "not a MiniMax H3 AV latent" in render.latent_guide(g, {"samples": torch.zeros(1)}, prev)[1]
+    assert render.latent_count(39) == 12 and render.latent_count(124) == 37 and render.latent_frames(37) == 124
+
+
+def test_h3_vae_latents_of_an_aligned_overlap_are_a_slice(comfy):
+    """Why the latent hand-off is valid: the H3 video VAE encodes each 17-frame chunk on its own, so encoding the last
+    17j+5 frames of a 17m+5-frame clip gives exactly its last 5j+2 latents (here with a small randomly initialised
+    encoder). A tail that does not start on a chunk boundary gives other latents."""
+    import torch
+    import comfy.ldm.minimax.vae as h3vae
+    torch.manual_seed(0)
+    vae = h3vae.MiniMaxH3VideoVAE(ch=32, decoder=False, tiling=False)
+    for prm in vae.parameters():
+        torch.nn.init.normal_(prm, std=0.05)
+    vae.latents_mean.zero_()
+    vae.latents_std.fill_(1.0)
+    x = torch.rand(1, 3, 17 * 4 + 5, 32, 32) * 2 - 1
+    with torch.no_grad():
+        z = vae.encode(x)
+        for k in (39, 22, 5):
+            n = (k - 5) // 17 * 5 + 2
+            assert torch.equal(z[:, :, -n:], vae.encode(x[:, :, -k:])), k
+        assert not torch.allclose(z[:, :, -7:], vae.encode(x[:, :, -38:][:, :, :22]), atol=1e-3)
+
+
+def test_lossless_pass_cache_reads_back_identical_frames(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    import torch
+    from reelwright import media
+    p = _continuing_harbor(harbor, roots)
+    p["global"]["long"]["pass_cache"] = "lossless"
+    assert render.Renderer(p, store, {}, {"action": "pending"}).run() == ["s_one", "s_lf", "s_long"]
+    take = store.starred_take("s_long")
+    from reelwright.analysis import analyze
+    plan = analyze(p, store)["scenes"]["s_long"]["plan"]
+    for rel, x in zip(take["files"]["passes"], plan["passes"]):
+        path = store.output_path(rel)
+        assert media.is_rgb_video(path)
+        frames, audio = media.load_video(path, exact=True)
+        n = x["gen_frames"]
+        written = torch.linspace(0, 1, n).view(n, 1, 1, 1).expand(n, 32, 64, 3)  # what the stub decoder made
+        assert torch.equal(frames, media.to_u8(written).float() / 255)
+        assert audio["waveform"].shape[-1] == pytest.approx(n / 24 * 32000, abs=2)
+        with open(path[:-4] + ".json", encoding="utf-8") as f:
+            assert json.load(f)["codec"] == "lossless"
+    # tail.mp4 is lossless too; the last pass holds 124 frames past its seam, so it comes from memory exactly
+    tail = store.output_path(take["files"]["tail"])
+    assert media.is_rgb_video(tail)
+    t, _ = media.load_video(tail, exact=True)
+    n = plan["passes"][-1]["gen_frames"]
+    ko = plan["passes"][-1]["keep_out_frames"]
+    ramp = media.to_u8(torch.linspace(0, 1, n).view(n, 1, 1, 1).expand(n, 32, 64, 3)).float() / 255
+    assert t.shape[0] == 124 and torch.equal(t, ramp[ko - 124:ko])
+    # a retake of pass 3 reads pass 2 back exactly: the overlap guide is the same 39 frames as from memory
+    render.Renderer(p, store, {}, {"action": "pass_retake", "scene_id": "s_long", "pass": 3}).run()
+    assert store.starred_take("s_long")["cached_passes"] == 2
+
+
+def test_lossless_writer_round_trip(comfy, tmp_path):
+    import torch
+    from reelwright import media
+    torch.manual_seed(5)
+    frames = torch.rand(29, 48, 80, 3)
+    audio = {"waveform": (0.4 * torch.randn(1, 2, int(29 / 24 * 32000))).clamp(-1, 1), "sample_rate": 32000}
+    path = str(tmp_path / "p.mp4")
+    media.save_video_atomic(frames, audio, path, lossless=True)
+    got, a = media.load_video(path, exact=True)
+    assert torch.equal(got, media.to_u8(frames).float() / 255)
+    n = a["waveform"].shape[-1]
+    assert (a["waveform"] - audio["waveform"][..., :n]).abs().max() < 1e-6  # FLAC at 24 bits
+    tail, ta = media.load_video(path, exact=True, last_frames=5)
+    assert torch.equal(tail, got[-5:]) and ta["waveform"].shape[-1] == pytest.approx(5 / 24 * 32000, abs=2)
+    near = str(tmp_path / "n.mp4")
+    media.save_video_atomic(frames, audio, near, crf=media.PASS_CRF)
+    assert not media.is_rgb_video(near) and media.is_rgb_video(path)
+    approx, _ = media.load_video(near, exact=True)  # a CRF 4 file reads as before
+    assert not torch.equal(approx, got)
+
+
+def test_drift_is_recorded_per_continuing_pass(stubs, harbor, store, roots):
+    render, calls, events = stubs
+    from reelwright.analysis import analyze, plan_response
+    p = _continuing_harbor(harbor, roots)
+    assert render.Renderer(p, store, {}, {"action": "pending"}).run() == ["s_one", "s_lf", "s_long"]
+    assert store.starred_take("s_one")["drift"] == []  # a fresh scene continues from nothing
+    lf = store.starred_take("s_lf")["drift"]
+    assert [(d["pass"], d["source"], d["frames"]) for d in lf] == [(1, "prev_scene_last", 1)]
+    long_ = store.starred_take("s_long")["drift"]
+    assert [(d["pass"], d["source"]) for d in long_] == [(1, "prev_scene_tail"), (2, "prev_pass_tail"),
+                                                         (3, "prev_pass_tail")]
+    for d in long_:
+        assert {"anchor_diff", "color_shift", "rgb_shift", "sharpness", "level", "frames"} <= set(d)
+        assert d["level"] in ("ok", "warn", "bad") and d["frames"] == 3
+    # the stub decoder ramps 0 -> 1 through every pass: a pass starts dark where the pass before ended bright
+    assert long_[1]["anchor_diff"] > 100 and long_[1]["handoff"] == "pixels" and long_[1]["level"] == "bad"
+    # in meta.json, the index and /plan's takes
+    sid_take = store.starred_take("s_long")
+    with open(os.path.join(store.take_dir("s_long", sid_take["id"]), "meta.json"), encoding="utf-8") as f:
+        assert json.load(f)["drift"] == long_
+    takes = plan_response(analyze(p, store))["scenes"]["s_long"]["takes"]
+    assert takes[-1]["drift"] == long_
+    # a retake of pass 3 keeps the drift passes 1 and 2 were rendered with (from the pass cache)
+    render.Renderer(p, store, {}, {"action": "pass_retake", "scene_id": "s_long", "pass": 3}).run()
+    again = store.starred_take("s_long")["drift"]
+    assert [d.get("pass_cache", False) for d in again] == [True, True, False]
+    assert {k: v for k, v in again[1].items() if k != "pass_cache"} == long_[1]

@@ -71,6 +71,10 @@ export const rw = {
   scriptParts: (script, part_chars) => req("POST", "/reelwright/llm/script/parts", { script, part_chars }),
   scriptPart: (project, body) => req("POST", "/reelwright/llm/script", { project, ...body }),
   llmCancel: job => req("POST", "/reelwright/llm/cancel", { job }),
+  // added 2026-11-05 v0.8.0: write the sections of a scene's passes (null = all), one LLM request per pass, with
+  // reelwright.llm progress events for `job` and Stop (llmCancel) -> {passes: [{index, start, end, sections}], warnings}
+  llmPasses: (project, scene_id, passes, job, instruction = "") => req("POST", "/reelwright/llm/passes",
+    instruction ? { project, scene_id, passes: passes || null, instruction, job } : { project, scene_id, passes: passes || null, job }),
   promoteFrame: (slug, scene_id, take_id, which, t) => req("POST", "/reelwright/promote_frame", { slug, scene_id, take_id, which, t }),
   castExport: (project, cast_id) => req("POST", "/reelwright/cast/export", { project, cast_id }),
   continuityCheck: (project, scene_id) => req("POST", "/reelwright/continuity/check", { project, scene_id }),

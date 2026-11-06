@@ -385,9 +385,13 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
   return wrap;
 }
 
-export function number({ value, onChange, help, key, min, max, step = 1, width = "84px", unit, mono = true }) {
+// [OLD 2026-11-05 v0.7.0->v0.8.0] export function number({ value, onChange, help, key, min, max, step = 1, width = "84px", unit, mono = true }) {
+// [OLD 2026-11-05 v0.7.0->v0.8.0]   const input = h("input", {
+// [OLD 2026-11-05 v0.7.0->v0.8.0]     type: "number", class: ["rw-input", mono && "mono"], help, key, value: value ?? "", min, max, step,
+// added 2026-11-05 v0.8.0: placeholder (an empty field shows it, e.g. a dialogue line's estimated length)
+export function number({ value, onChange, help, key, min, max, step = 1, width = "84px", unit, mono = true, placeholder }) {
   const input = h("input", {
-    type: "number", class: ["rw-input", mono && "mono"], help, key, value: value ?? "", min, max, step,
+    type: "number", class: ["rw-input", mono && "mono"], help, key, value: value ?? "", min, max, step, placeholder,
     style: { width },
     /* [OLD 2026-11-03 v0.5.1->v0.6.0] a typo ("1e", "-", ".") reads as "" in a number field and was stored as null (the default; a seed became 0)
     onChange: e => {

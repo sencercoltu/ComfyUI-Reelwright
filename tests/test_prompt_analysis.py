@@ -12,6 +12,17 @@ def _build(p, i, n=0):
     return build_pass(p, p["scenes"][i], i, plan, plan["passes"][n]), plan
 
 
+def _every_pass(p, i, **sections):
+    """v0.8.0: a multi-pass scene no longer sends the scene summary to every pass; text meant for every pass is written
+    as each pass's own section (scene.prompt.passes, with the current layout)."""
+    from reelwright.model import empty_sections
+    s = p["scenes"][i]
+    plan = plan_scene(p, s, i)
+    s["prompt"]["passes"] = [{"start": x["start"], "end": x["end"], "sections": dict(empty_sections(), **sections)}
+                             for x in plan["passes"]]
+    return p
+
+
 def test_reference_numbering_follows_native_order(harbor):
     # v0.6.0: pass 1 (0-14.4 s) gets the cast sheet and the dolly video whose soundtrack takes <Audio 1>; Mara speaks
     # only in pass 2 (her voice comes after the video's sound there) and the 25 s letter keyframe guides pass 3
@@ -24,15 +35,26 @@ def test_reference_numbering_follows_native_order(harbor):
     assert b["tag_map"]["@V1"] == "<Video 2>" and b["tag_map"]["@tail"] == "<Video 1>"
     assert "@A1" not in b["tag_map"] and not any(a.get("cast") for a in b["audios"])
     assert b["tag_map"]["@Mara"] == "<Subject 1>"
-    assert "<Subject 1> walks home" in b["prompt"]
+    # [OLD v0.7.0] assert "<Subject 1> walks home" in b["prompt"]
+    # v0.8.0: the scene summary of a multi-pass scene is a note, never sent; @P3 there names nothing now
+    assert "walks home" not in b["prompt"] and "@P3" not in b["tag_map"]
     b2, _ = _build(harbor, 1, 1)
     assert b2["tag_map"]["@A1"] == "<Audio 2>" and "@tail" not in b2["tag_map"]
+    b3, _ = _build(harbor, 1, 2)
+    # [OLD v0.7.0] assert [img["assets"] for img in b3["images"]] == [["a_front", "a_side"], ["a_letter"]]
+    # v0.8.0: the 25 s letter keyframe was named only in the scene summary, which a multi-pass scene does not send, so
+    # pass 3 only anchors it (guide) and does not send it as <Picture 2>
+    assert [img["assets"] for img in b3["images"]] == [["a_front", "a_side"]]
+    assert any(g["source"] == "asset" and g["asset"] == "a_letter" for g in b3["guides"])
+    _every_pass(harbor, 1, summary=harbor["scenes"][1]["prompt"]["sections"]["summary"])  # named in the pass's own
     b3, _ = _build(harbor, 1, 2)
     assert [img["assets"] for img in b3["images"]] == [["a_front", "a_side"], ["a_letter"]]
 
 
 def test_keyframe_named_in_prompt_becomes_a_picture(harbor):
     # v0.6.0: only in the pass the keyframe guides; the other passes name it in words
+    # v0.8.0: the sentence is each pass's own summary (the scene summary is not sent in a multi-pass scene)
+    _every_pass(harbor, 1, summary=harbor["scenes"][1]["prompt"]["sections"]["summary"])
     b, _ = _build(harbor, 1, 2)
     assert b["tag_map"]["@P3"] == "<Picture 2>"
     assert "holding <Picture 2>" in b["prompt"]
@@ -61,7 +83,9 @@ def test_dialogue_line_format(harbor):
 
 def test_unknown_tags_are_reported(harbor):
     p = copy.deepcopy(harbor)
-    p["scenes"][1]["prompt"]["sections"]["summary"] += " @Nobody looks at @P9."
+    # [OLD v0.7.0] p["scenes"][1]["prompt"]["sections"]["summary"] += " @Nobody looks at @P9."
+    # v0.8.0: a multi-pass scene sends each pass's own summary, not the scene summary
+    _every_pass(p, 1, summary=p["scenes"][1]["prompt"]["sections"]["summary"] + " @Nobody looks at @P9.")
     b, _ = _build(p, 1)
     # [OLD v0.5.1] assert set(b["unknown"]) == {"@Nobody", "@P9"}
     # v0.6.0: only a name that looks like an asset code is an error; any other unknown name is a warning
@@ -169,7 +193,11 @@ def test_ref2va_sections_follow_the_guide(harbor):
     assert "[Shot 1] The shot continues seamlessly from the final frames of <Video 1>. A wide shot: Mara leaves the " \
            "pier." in b["prompt"]
     assert "[Shot 2] At 00:06.000, the shot cuts to a tracking shot: along the seawall." in b["prompt"]
-    assert "summary:\n[reference generation + video continuation + audio reference] <Subject 1> walks home" in b["prompt"]
+    # [OLD v0.7.0] assert "summary:\n[reference generation + video continuation + audio reference] <Subject 1> walks home" in b["prompt"]
+    # v0.8.0: pass 1 of a multi-pass scene gets a summary made from its own shots, not the scene summary
+    assert "summary:\n[reference generation + video continuation + audio reference] The target video shows " \
+           "<Subject 1> and unfolds over 2 shots. Mara leaves the pier. Along the seawall. It continues seamlessly " \
+           "from the final frames of <Video 1>, the end of the scene before.\n" in b["prompt"]
     assert b["prompt"].endswith("overall_soundscape:\nN/A\n\nnon_diegetic_music:\nN/A")
 
 
@@ -257,7 +285,9 @@ def test_written_subject_line_replaces_the_automatic_one(harbor):
     s["prompt"]["auto"] = {"subjects": True, "retention": True, "shots": True}
     s["prompt"]["sections"]["subject_definitions"] = "@Mara is a tall woman in a navy coat."
     s["prompt"]["sections"]["retention_analysis"] = "@Mara (appears in [Shot 1]): fully_preserved - her face is retained."
-    s["prompt"]["sections"]["summary"] = "[reference generation + audio reference + keyframe completion] Mara walks home."
+    # [OLD v0.7.0] s["prompt"]["sections"]["summary"] = "[reference generation + audio reference + keyframe completion] Mara walks home."
+    # v0.8.0: a pass's own summary (a multi-pass scene does not send the scene summary)
+    _every_pass(harbor, 1, summary="[reference generation + audio reference + keyframe completion] Mara walks home.")
     b, _ = _build(harbor, 1)
     sec = _sections(b["prompt"])
     subj = [x for x in sec["subject_definitions"].split("\n") if x.startswith("<Subject 1>")]
@@ -417,6 +447,7 @@ def test_soundtrack_tag_without_song_is_not_an_error(harbor):
 def test_task_tags_once_in_overrides_and_raw(harbor):
     p = copy.deepcopy(harbor)
     s = p["scenes"][1]
+    _every_pass(p, 1, summary=s["prompt"]["sections"]["summary"])  # v0.8.0: the scene summary is not sent
     builds, plan = _passes(p, 1)
     tags = "[reference generation + video continuation + audio reference]"
     s["prompt"]["pass_prompts"] = {"1": builds[0]["prompt"]}  # Edit this pass by hand: a copy of the built prompt
@@ -504,7 +535,8 @@ def test_guide_clip_named_in_text_is_a_video_of_its_pass(harbor):
     p["assets"].append({"id": "a_wave", "code": "V2", "kind": "video", "name": "wave", "file": p["assets"][4]["file"],
                         "duration": 2.0, "defaults": {}, "description": "a wave breaking over the wall"})
     s["refs"].append({"id": "r_wave", "asset": "a_wave", "role": "keyframe", "time": 23.0})
-    s["prompt"]["sections"]["summary"] += " The wall is hit by @V2."
+    # [OLD v0.7.0] s["prompt"]["sections"]["summary"] += " The wall is hit by @V2."
+    _every_pass(p, 1, summary=s["prompt"]["sections"]["summary"] + " The wall is hit by @V2.")  # v0.8.0
     builds, plan = _passes(p, 1)
     b3 = builds[2]
     assert b3["tag_map"]["@V2"] == "<Video 2>" and b3["videos"][1]["guide"] is True

@@ -11,6 +11,9 @@ export const VISUAL_RETENTION = ["fully_preserved", "partially_preserved", "attr
 export const AUDIO_RETENTION = ["fully_copy", "partially_copy", "reference", "weak_reference"];
 export const ROLES = ["reference", "first_frame", "last_frame", "keyframe"];
 export const START_MODES = ["fresh", "last_frame", "tail"];
+// added 2026-11-05 v0.8.0: Global -> Long scenes -> hand-off and pass cache (model.py LONG_HANDOFF / LONG_PASS_CACHE)
+export const LONG_HANDOFF = ["pixels", "latent"];
+export const LONG_PASS_CACHE = ["near_lossless", "lossless"];
 export const ASPECTS = { "21:9": [21, 9], "16:9": [16, 9], "4:3": [4, 3], "1:1": [1, 1], "3:4": [3, 4], "9:16": [9, 16] };
 export const ASSET_CATEGORIES = {
   image: ["subject", "location", "prop", "style", "keyframe"],
@@ -230,7 +233,11 @@ function defaultGlobal() {
     quality: "final",
     draft: { scale: 0.5, steps: 8, lora: "", lora_strength: 1.0 },
     defaults: { duration: 8.0, start_mode: "last_frame", overlap_frames: 39, language: "English" },
-    long: { max_pass_frames: 362, overlap_frames: 39, crossfade_frames: 12, seam_mode: "auto", cut_snap_seconds: 2.0 },
+    // [OLD 2026-11-05 v0.7.0->v0.8.0] long: { max_pass_frames: 362, overlap_frames: 39, crossfade_frames: 12, seam_mode: "auto", cut_snap_seconds: 2.0 },
+    // added 2026-11-05 v0.8.0: long-scene continuity switches (see reelwright/model.py default_global); the defaults keep
+    // v0.7.0's behaviour and cache keys
+    long: { max_pass_frames: 362, overlap_frames: 39, crossfade_frames: 12, seam_mode: "auto", cut_snap_seconds: 2.0,
+      guide_vae: "", carry_audio: true, seam_video_ref: true, handoff: "pixels", pass_cache: "near_lossless" },
     memory: { policy: "free_cache", encode_first: true, group_by_lora: true },
     // [OLD 2026-11-05 v0.6.1->v0.7.0] continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag" },
     // added 2026-11-05 v0.7.0: name_continuation: the frame or clip a continuing scene (or a pass after an overlap seam)
@@ -244,7 +251,9 @@ function defaultGlobal() {
     llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va", include_guides: true, thinking: "auto",
       // added 2026-11-03 v0.4.2: limits (see reelwright/model.py)
       timeout_s: 120, max_wait_s: 900, retries: 2, context_tokens: 0,
-      import_part_chars: 3000, import_max_tokens: 16384, import_thinking: "same", import_guides: false },
+      // [OLD 2026-11-05 v0.7.0->v0.8.0] import_part_chars: 3000, import_max_tokens: 16384, import_thinking: "same", import_guides: false },
+      // added 2026-11-05 v0.8.0: import_max_tokens 24576 (llm.IMPORT_MAX_TOKENS): shots are 2-4 sentences now
+      import_part_chars: 3000, import_max_tokens: 24576, import_thinking: "same", import_guides: false },
     merge: { use: "starred", missing: "skip", hard_cut: "cut", transition_frames: 12, audio_fade_frames: 6,
       loudness: -16.0, normalize: true, score: { asset: "", volume_db: -12.0, duck: true }, // v0.5.0: score moves to p.soundtrack on load
       scene_audio: { mix: false, volume_db: -12.0 }, // added 2026-11-03 v0.5.0: the scenes' own sound under a soundtrack
@@ -253,6 +262,7 @@ function defaultGlobal() {
   };
 }
 
+/* [OLD 2026-11-05 v0.7.0->v0.8.0] six presets of our own; new projects now start with H3's 20 official moves
 const DEFAULT_CAMERA = [
   ["Slow push-in", "slow push-in toward the subject"],
   ["Locked-off", "static locked-off camera"],
@@ -261,11 +271,52 @@ const DEFAULT_CAMERA = [
   ["Rack focus", "rack focus from foreground to background"],
   ["Macro", "macro close-up, shallow depth of field"],
 ];
+[/OLD] */
+// added 2026-11-05 v0.8.0: the camera moves of MiniMax's H3 guide (base-en.txt 4.3), same as model.py DEFAULT_CAMERA:
+// [name = the guide's label, text = the phrase written into the shot line]. Older projects get the missing ones
+// appended once (camera_version 2, migrateCamera); their own presets stay.
+export const DEFAULT_CAMERA = [
+  ["Zoom In", "the camera zooms in"], ["Zoom Out", "the camera zooms out"],
+  ["Push In", "the camera pushes in"], ["Pull Out", "the camera pulls out"],
+  ["Pan Left", "the camera pans left"], ["Pan Right", "the camera pans right"],
+  ["Truck Left", "the camera trucks left"], ["Truck Right", "the camera trucks right"],
+  ["Tilt Up", "the camera tilts up"], ["Tilt Down", "the camera tilts down"],
+  ["Pedestal Up", "the camera pedestals up"], ["Pedestal Down", "the camera pedestals down"],
+  ["Arc Shot", "the camera arcs around the subject"],
+  ["Tracking Shot", "the camera tracks the moving subject"],
+  ["Static Shot", "the camera holds a static shot"],
+  ["Shake Slightly", "the camera shakes slightly"], ["Shake Strongly", "the camera shakes strongly"],
+  ["POV", "the camera takes the subject's point of view"],
+  ["Roll Clockwise", "the camera rolls clockwise"],
+  ["Roll Counterclockwise", "the camera rolls counterclockwise"],
+];
+export const CAMERA_VERSION = 2; // added 2026-11-05 v0.8.0: project.camera_version (model.py)
+// added 2026-11-05 v0.8.0: shot fields camera_amp / camera_speed / framing ("" = not said), as model.py
+export const CAMERA_AMPS = ["", "small", "large"];
+export const CAMERA_SPEEDS = ["", "slow", "fast"];
+export const FRAMINGS = ["", "extreme wide", "wide", "medium wide", "medium", "medium close-up", "close-up", "extreme close-up",
+  "over-the-shoulder", "two-shot", "insert", "low angle", "high angle", "overhead", "dutch angle"];
+export const FRAMING_PHRASE = {
+  "extreme wide": "an extreme wide shot", wide: "a wide shot", "medium wide": "a medium-wide shot",
+  medium: "a medium shot", "medium close-up": "a medium close-up", "close-up": "a close-up",
+  "extreme close-up": "an extreme close-up", "over-the-shoulder": "an over-the-shoulder shot",
+  "two-shot": "a two-shot", insert: "an insert shot", "low angle": "a low-angle shot",
+  "high angle": "a high-angle shot", overhead: "an overhead shot", "dutch angle": "a Dutch-angle shot",
+};
+export const DIALOGUE_MAX_SECONDS = 600; // added 2026-11-05 v0.8.0
 
+/* [OLD 2026-11-05 v0.7.0->v0.8.0] no "passes" (each pass's own sections)
 export function defaultPrompt() {
   const sections = {};
   for (const k of SECTION_KEYS) sections[k] = "";
   return { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections, raw: "", pass_prompts: {} };
+}
+[/OLD] */
+export function defaultPrompt() {
+  const sections = {};
+  for (const k of SECTION_KEYS) sections[k] = "";
+  // passes: added 2026-11-05 v0.8.0 (see passTexts)
+  return { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections, raw: "", pass_prompts: {}, passes: [] };
 }
 
 export function defaultScene(project, patch = {}) {
@@ -312,6 +363,7 @@ export function defaultProject(name = "Untitled") {
     schema: 1, id: newId("p"), project_id: newId("p"), name, slug: slugify(name),
     global: defaultGlobal(), assets: [], cast: [],
     camera_presets: DEFAULT_CAMERA.map(([n, t]) => ({ id: newId("k"), name: n, text: t })),
+    camera_version: CAMERA_VERSION, // added 2026-11-05 v0.8.0: the presets are H3's official moves
     scenes: [], markers: [],
     soundtrack: [], // added 2026-11-03 v0.5.0: audio laid on the film (see reelwright/soundtrack.py)
     ui: { tab: "timeline", selected: "", zoom: 22, playhead: 0, snap: true, ripple: true },
@@ -335,6 +387,9 @@ export function normalizeGlobal(g, p = null) {
   d.duration = Math.min(MAX_SCENE_SECONDS, Math.max(MIN_SCENE_SECONDS, d.duration));
   d.overlap_frames = Math.max(0, Math.trunc(d.overlap_frames));
   out.continuity.reanchor_after = Math.max(0, Math.trunc(out.continuity.reanchor_after));
+  // added 2026-11-05 v0.8.0: the long-scene continuity choices (model.py normalize_global the same)
+  if (!LONG_HANDOFF.includes(out.long.handoff)) out.long.handoff = "pixels";
+  if (!LONG_PASS_CACHE.includes(out.long.pass_cache)) out.long.pass_cache = "near_lossless";
   out.loras = objects(out.loras);
   for (const l of out.loras) normLora(l);
   // a profile saved in another project may name a score asset or colour scene this project lacks
@@ -483,6 +538,7 @@ export function normalizeProject(raw) {
     textField(k, "name", "");
     textField(k, "text", "");
   }
+  migrateCamera(p); // added 2026-11-05 v0.8.0: H3's official camera moves, appended once (camera_version 2)
 
   // v0.5.0 soundtrack tracks; the old merge score becomes one (migrateScore, as soundtrack.migrate_score)
   p.soundtrack = objects(p.soundtrack);
@@ -506,6 +562,21 @@ function defaultCameraPresets() {
   return DEFAULT_CAMERA.map(([n, t]) => ({ id: newId("k"), name: n, text: t }));
 }
 
+// added 2026-11-05 v0.8.0 (model.py _migrate_camera): a project saved before v0.8.0 (camera_version below 2) gets H3's
+// official camera moves it does not have yet (by name, without case) appended once; its own presets stay.
+const cameraKey = name => text(name).replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, "").toLowerCase();
+export function migrateCamera(p) {
+  const cv = num(p.camera_version, 0);
+  if (cv < CAMERA_VERSION) {
+    const have = new Set(p.camera_presets.map(k => cameraKey(k.name)));
+    for (const [name, txt] of DEFAULT_CAMERA) {
+      if (!have.has(cameraKey(name))) p.camera_presets.push({ id: newId("k"), name, text: txt });
+    }
+    p.camera_version = CAMERA_VERSION;
+  } else p.camera_version = Math.trunc(Math.min(cv, 1000000));
+  return p;
+}
+
 // the object items of a list (anything else gives [])
 function objects(v) {
   return Array.isArray(v) ? v.filter(isObj) : [];
@@ -522,6 +593,17 @@ function textField(o, key, dflt) {
 
 function blank(s) {
   return !/[^ \t\n\r\f\v]/.test(s);
+}
+
+// added 2026-11-05 v0.8.0 (model.py _norm_pass_text): one entry of scene.prompt.passes: {start, end (scene seconds of the
+// pass when its text was written), sections: the six sections as text}; anything else becomes an empty entry (0, 0).
+function normPassText(x) {
+  x = isObj(x) ? x : {};
+  x.start = num(x.start, 0);
+  x.end = num(x.end, 0);
+  const sec = x.sections = isObj(x.sections) ? x.sections : {};
+  for (const k of SECTION_KEYS) textField(sec, k, "");
+  return x;
 }
 
 // v when it is a free id; a taken one gets _2, _3 ...; a missing one a new id. With `pattern`, characters it does not
@@ -639,6 +721,10 @@ function normScene(s, d, lang, usedIds) {
     x.t = num(x.t, 0);
     textField(x, "camera", "");
     textField(x, "text", "");
+    // added 2026-11-05 v0.8.0: H3's camera amplitude and speed (base-en.txt 4.3) and the shot size / angle
+    for (const [k, allowed] of [["camera_amp", CAMERA_AMPS], ["camera_speed", CAMERA_SPEEDS], ["framing", FRAMINGS]]) {
+      x[k] = allowed.includes(x[k]) ? x[k] : "";
+    }
   }
   s.shots.sort((a, b) => a.t - b.t);
   used = new Set();
@@ -648,6 +734,9 @@ function normScene(s, d, lang, usedIds) {
     x.t = num(x.t, 0);
     for (const k of ["speaker", "delivery", "text"]) textField(x, k, "");
     textField(x, "language", lang);
+    // added 2026-11-05 v0.8.0: how long the line is spoken (seconds > 0), null = estimated (dialogueSeconds)
+    const dur = num(x.duration, null);
+    x.duration = dur !== null && dur > 0 ? Math.min(dur, DIALOGUE_MAX_SECONDS) : null;
   }
   s.dialogue.sort((a, b) => a.t - b.t);
 
@@ -662,6 +751,9 @@ function normScene(s, d, lang, usedIds) {
   textField(pr, "raw", "");
   const pp = isObj(pr.pass_prompts) ? pr.pass_prompts : {};
   pr.pass_prompts = Object.fromEntries(Object.entries(pp).filter(([, v]) => text(v, null) !== null).map(([k, v]) => [k, text(v)]));
+  // added 2026-11-05 v0.8.0: each pass's own six sections (see passTexts); an item that is not an object becomes an
+  // empty entry, so the pass numbers of the others stay
+  pr.passes = Array.isArray(pr.passes) ? pr.passes.map(normPassText) : [];
 
   const o = s.overrides = isObj(s.overrides) ? s.overrides : {};
   for (const k of ["seed", "steps", "width", "height"]) {
@@ -1288,7 +1380,11 @@ const MAX_REF_VIDEOS = 3, MAX_REF_AUDIOS = 3, MAX_REF_FILES = 12; // added 2026-
 // last-frame start, a re-anchored tail too), "video" (pass 1 of a tail start; a later pass after an overlap seam), "".
 export function passContinuation(project, i, pass, mode = null) {
   if (!flag(project.global?.continuity?.name_continuation ?? true, true)) return "";
-  if (Math.trunc(num(pass.index, 1)) > 1) return pass.seam_before === "overlap" ? "video" : "";
+  // [OLD 2026-11-05 v0.7.0->v0.8.0] if (Math.trunc(num(pass.index, 1)) > 1) return pass.seam_before === "overlap" ? "video" : "";
+  // added 2026-11-05 v0.8.0: Global -> Long scenes -> seam_video_ref off: anchored only after an overlap seam
+  if (Math.trunc(num(pass.index, 1)) > 1) {
+    return pass.seam_before === "overlap" && flag(project.global?.long?.seam_video_ref ?? true, true) ? "video" : "";
+  }
   if (i === null || i === undefined || i <= 0) return "";
   if (mode === null) mode = effectiveStart(project, i);
   if (mode === "tail" && pass.overlap_frames) return "video";
@@ -1508,7 +1604,10 @@ function planSceneNow(project, scene, index) {
     const shots = [];
     for (const [number, sh, a, b] of ranges) {
       if (b <= s || a >= end) continue;
-      shots.push({ id: sh.id, number, continuing: a < s, t: (Math.max(a, s) - s + keepIn) / FPS, camera: sh.camera, text: sh.text });
+      // [OLD 2026-11-05 v0.7.0->v0.8.0] shots.push({ id: sh.id, number, continuing: a < s, t: (Math.max(a, s) - s + keepIn) / FPS, camera: sh.camera, text: sh.text });
+      // added 2026-11-05 v0.8.0: + the camera's amplitude and speed and the framing (as planner.py)
+      shots.push({ id: sh.id, number, continuing: a < s, t: (Math.max(a, s) - s + keepIn) / FPS, camera: sh.camera, text: sh.text,
+        camera_amp: sh.camera_amp ?? "", camera_speed: sh.camera_speed ?? "", framing: sh.framing ?? "" });
     }
     const dialogue = [];
     for (const d of scene.dialogue) {
@@ -1641,4 +1740,194 @@ export function tagCandidates(project) {
   // the part of the soundtrack a pass is sent (v0.5.0); a pass without the song writes it as plain text
   if (playingTracks(project).some(({ t }) => t.sync)) out.push({ tag: "@soundtrack", label: "the song this part is cut to", kind: "audio" });
   return out;
+}
+
+// ---- v0.8.0: camera wording, dialogue length, per-pass prompt sections (added 2026-11-05 v0.8.0; the same as
+// model.py framing_phrase, camera_sentence, dialogue_seconds, dialogue_spans, pass_texts, relayout_pass_texts,
+// pass_sections; tests/test_model_parity.py compares them) ----
+
+// "close-up" -> "a close-up", "low angle" -> "a low-angle shot"; "" for no framing (FRAMINGS).
+export function framingPhrase(framing) {
+  return typeof framing === "string" && Object.hasOwn(FRAMING_PHRASE, framing) ? FRAMING_PHRASE[framing] : "";
+}
+
+// A shot's camera text as one sentence in the form of H3's guide (base-en.txt 4.3): "the camera pushes in", "small",
+// "slow" -> "The camera pushes in with small amplitude at slow speed." Medium amplitude / normal speed ("") are not
+// written; hand-written text works the same way. "" without camera text.
+// added 2026-11-06 v0.8.0 (lead review): an official move's name ("Push In", "tracking shot", "POV") is written with
+// its phrase ("the camera pushes in"), as model.official_camera
+export function officialCamera(camera) {
+  const t = text(camera);
+  const k = t.replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, "").replace(/\.+$/, "").trim().toLowerCase();
+  const hit = DEFAULT_CAMERA.find(([n]) => n.toLowerCase() === k);
+  return hit ? hit[1] : t;
+}
+
+export function cameraSentence(camera, amp = "", speed = "") {
+  /* [OLD 2026-11-06 v0.8.0 lead review] an official name was written as the name
+  let t = text(camera).replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, "");
+  [/OLD] */
+  let t = officialCamera(camera).replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, "");
+  const extra = (amp === "small" || amp === "large" ? ` with ${amp} amplitude` : "") +
+    (speed === "slow" || speed === "fast" ? ` at ${speed} speed` : "");
+  if (extra) {
+    t = t.replace(/[ \t\n\r.!?]+$/, "");
+    t = t ? t + extra : "";
+  }
+  if (!t) return "";
+  const first = String.fromCodePoint(t.codePointAt(0));
+  t = first.toUpperCase() + t.slice(first.length);
+  return '.!?"\''.includes(t.at(-1)) ? t : t + ".";
+}
+
+// a dialogue line's length when it has none: the words at 2.5 a second, CJK characters (Han, kana, Hangul) counting as
+// a quarter word each; at least 1 s
+const CJK_RANGES = [[0x1100, 0x11FF], [0x3040, 0x30FF], [0x3130, 0x318F], [0x31F0, 0x31FF], [0x3400, 0x4DBF],
+  [0x4E00, 0x9FFF], [0xAC00, 0xD7AF], [0xF900, 0xFAFF], [0xFF66, 0xFF9F], [0x20000, 0x2FFFF]];
+const WORDS_PER_SECOND = 2.5, CJK_PER_WORD = 4;
+const SPACES_RE = /[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/u;
+
+// How long dialogue line d is spoken: its duration (seconds > 0), else max(1, words / 2.5), where words are the runs
+// between spaces that hold a letter or digit, plus the CJK characters / 4.
+export function dialogueSeconds(d) {
+  d = isObj(d) ? d : {};
+  const dur = num(d.duration, null);
+  if (dur !== null && dur > 0) return Math.min(dur, DIALOGUE_MAX_SECONDS);
+  let cjk = 0, rest = "";
+  for (const ch of text(d.text)) {
+    const cp = ch.codePointAt(0);
+    if (CJK_RANGES.some(([a, b]) => a <= cp && cp <= b)) { cjk++; rest += " "; } else rest += ch;
+  }
+  const words = rest.split(SPACES_RE).filter(w => /[\p{L}\p{N}]/u.test(w)).length;
+  return Math.max(1, (words + cjk / CJK_PER_WORD) / WORDS_PER_SECOND);
+}
+
+// Where each dialogue line of the scene is spoken, in the scene's order: [{id, pass (1-based; null when the line is in
+// no pass), start, end (scene seconds; start is where the planner put it), seconds, estimated (no duration given),
+// seam (scene time of the pass seam the line runs past, else null), past_end (it runs past the scene's end)}].
+// plan: planScene(project, scene).
+export function dialogueSpans(scene, plan) {
+  const where = new Map();
+  for (const x of plan.passes) for (const d of x.dialogue) if (!where.has(d.id)) where.set(d.id, [x, d]);
+  const n = plan.passes.length;
+  return scene.dialogue.map(d => {
+    const seconds = dialogueSeconds(d);
+    const given = num(d.duration, null);
+    const hit = where.get(d.id);
+    const start = hit ? hit[0].start + hit[1].t : num(d.t, 0);
+    const end = start + seconds;
+    const seam = hit && hit[0].index < n && end > hit[0].end + 1e-6 ? hit[0].end : null;
+    return { id: d.id, pass: hit ? hit[0].index : null, start, end, seconds, estimated: !(given !== null && given > 0),
+      seam, past_end: end > plan.duration + 1e-6 };
+  });
+}
+
+const FRAME_SECONDS = 1 / FPS;
+export function emptySections() {
+  const o = {};
+  for (const k of SECTION_KEYS) o[k] = "";
+  return o;
+}
+function entrySections(x) {
+  const sec = isObj(x) && isObj(x.sections) ? x.sections : {};
+  const o = {};
+  for (const k of SECTION_KEYS) o[k] = text(sec[k]);
+  return o;
+}
+// two [start, end] ranges within a frame of each other
+function closeRange(a, b) {
+  return Math.abs(a[0] - b[0]) <= FRAME_SECONDS + 1e-9 && Math.abs(a[1] - b[1]) <= FRAME_SECONDS + 1e-9;
+}
+
+// The six sections written for each pass of the scene's CURRENT layout (scene.prompt.passes, stored with the start /
+// end the pass had when they were written). When the stored ranges match the layout (within a frame; entries without
+// text and a one-pass scene always match), entry k is pass k. Otherwise each pass gets the text of the stored entry
+// it overlaps most in time, each entry used once (largest overlap first).
+// {texts: [six sections per current pass], moved: [1-based passes whose text was written for another range],
+//  unused: [1-based stored entries with text that no pass gets], same: the layout matches, stored: any entry has text,
+//  entry: [per current pass, the 1-based stored entry its text comes from, or null]}
+export function passTexts(project, scene, plan = null) {
+  plan = plan || planScene(project, scene);
+  const raw = scene.prompt?.passes;
+  const stored = Array.isArray(raw) ? raw.map(x => (isObj(x) ? x : {})) : [];
+  const secs = stored.map(entrySections);
+  const has = secs.map(s => Object.values(s).some(v => !blank(v)));
+  const ranges = stored.map(x => [num(x.start, 0), num(x.end, 0)]);
+  const cur = plan.passes.map(x => [x.start, x.end]);
+  const n = cur.length;
+  const same = n === 1 ? !has.slice(1).some(Boolean)
+    : stored.every((_, j) => !has[j] || (j < n && closeRange(ranges[j], cur[j])));
+  if (same) {
+    return { texts: cur.map((_, k) => (k < stored.length ? { ...secs[k] } : emptySections())), moved: [], unused: [],
+      same: true, stored: has.some(Boolean), entry: cur.map((_, k) => (k < stored.length && has[k] ? k + 1 : null)) };
+  }
+  const pairs = [];
+  cur.forEach(([a, b], k) => ranges.forEach(([c, d], j) => {
+    if (!has[j]) return;
+    const ov = Math.min(b, d) - Math.max(a, c);
+    if (ov > 1e-9) pairs.push({ ov, k, j });
+  }));
+  pairs.sort((x, y) => (y.ov - x.ov) || (x.k - y.k) || (x.j - y.j));
+  const take = new Map(), used = new Set();
+  for (const { k, j } of pairs) {
+    if (!take.has(k) && !used.has(j)) { take.set(k, j); used.add(j); }
+  }
+  const texts = cur.map((_, k) => (take.has(k) ? { ...secs[take.get(k)] } : emptySections()));
+  const moved = cur.map((_, k) => k).filter(k => take.has(k) && !closeRange(ranges[take.get(k)], cur[k])).map(k => k + 1);
+  const unused = stored.map((_, j) => j).filter(j => has[j] && !used.has(j)).map(j => j + 1);
+  return { texts, moved, unused, same: false, stored: has.some(Boolean),
+    entry: cur.map((_, k) => (take.has(k) ? take.get(k) + 1 : null)) };
+}
+
+// scene.prompt.passes for the current layout ("Use the new layout"): one entry per pass with its start / end and the
+// text passTexts gives it (text no pass gets is dropped).
+export function relayoutPassTexts(project, scene, plan = null) {
+  plan = plan || planScene(project, scene);
+  const texts = passTexts(project, scene, plan).texts;
+  return plan.passes.map((x, k) => ({ start: x.start, end: x.end, sections: texts[k] }));
+}
+
+// What pass k (1-based) of a structured prompt is built from: {own: the six sections written for it (passTexts),
+// used: the text each section is built from, source: {section: "pass" (its own) | "scene" (the scene's, shared by every
+// pass) | "auto" (the summary: made by the prompt builder; a multi-pass scene never sends the scene summary) | "split"
+// (detailed_description of a multi-pass scene: the scene's [Shot N] lines of this pass)}}. Same as model.pass_sections.
+export function passSections(project, scene, plan, k) {
+  plan = plan || planScene(project, scene);
+  const n = plan.passes.length;
+  const texts = passTexts(project, scene, plan).texts;
+  const own = k >= 1 && k <= n ? texts[k - 1] : emptySections();
+  const sec = entrySections(scene.prompt || {});
+  const used = {}, source = {};
+  for (const key of SECTION_KEYS) {
+    if (!blank(own[key])) { used[key] = own[key]; source[key] = "pass"; }
+    else if (key === "summary" && (n > 1 || blank(sec[key]))) { used[key] = ""; source[key] = "auto"; }
+    else if (key === "detailed_description" && n > 1) { used[key] = sec[key]; source[key] = "split"; }
+    else { used[key] = sec[key]; source[key] = "scene"; }
+  }
+  return { own, used, source };
+}
+
+// For edits (mutate scene, call inside ctx.actions.editScene): set one section of pass k (1-based). The stored list is
+// first laid out for the current passes (relayoutPassTexts), so a text in passTexts(...).unused is dropped: offer
+// "Use the new layout" before editing when there is one.
+export function setPassSection(project, scene, plan, k, key, value) {
+  plan = plan || planScene(project, scene);
+  if (!SECTION_KEYS.includes(key) || !(k >= 1 && k <= plan.passes.length)) return scene;
+  scene.prompt.passes = relayoutPassTexts(project, scene, plan);
+  scene.prompt.passes[k - 1].sections[key] = text(value);
+  return scene;
+}
+
+// For edits: write the sections of several passes at once, e.g. the /llm/passes answer. items: [{index (1-based),
+// sections: {...}}]; the sections given (strings) replace the pass's, the others stay. Lays the list out for the
+// current passes first, as setPassSection.
+export function writePassTexts(project, scene, plan, items) {
+  plan = plan || planScene(project, scene);
+  scene.prompt.passes = relayoutPassTexts(project, scene, plan);
+  for (const it of Array.isArray(items) ? items : []) {
+    const k = Math.trunc(num(it?.index, 0));
+    if (!(k >= 1 && k <= plan.passes.length) || !isObj(it.sections)) continue;
+    for (const key of SECTION_KEYS) if (typeof it.sections[key] === "string") scene.prompt.passes[k - 1].sections[key] = it.sections[key];
+  }
+  return scene;
 }

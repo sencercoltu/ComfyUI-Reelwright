@@ -12,6 +12,7 @@ import {
   nextSeedN, // added 2026-11-03 v0.6.0: a seed number per imported scene
 } from "../model.js";
 import { VERSION } from "../version.js";
+import { runWrite, stopWrite } from "../passes.js"; // added 2026-11-05 v0.8.0: Write prompts after an import
 
 const DTYPES = ["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"];
 
@@ -280,8 +281,41 @@ function defaultsCard(ctx) {
       onChange: v => setL(x => { x.seam_mode = v; }) }), { help: "global.long.seams" }),
       field("Snap seam to cut", number({ value: L.cut_snap_seconds, min: 0, max: 10, step: 0.25, unit: "s", help: "global.long.snap", onChange: v => setL(x => { x.cut_snap_seconds = v ?? 2; }) }), { help: "global.long.snap" }),
       h("div", { class: "rw-dim small" }, `Longest pass ${(L.max_pass_frames / FPS).toFixed(2)} s · overlap ${(L.overlap_frames / FPS).toFixed(2)} s · crossfade ${(L.crossfade_frames / FPS).toFixed(2)} s`),
+      ...seamFields(ctx, L), // added 2026-11-05 v0.8.0: what carries across an overlap seam (global.long, contract P2)
     ],
   });
+}
+
+// added 2026-11-05 v0.8.0: the long-scene continuity settings (global.long: guide_vae, carry_audio, seam_video_ref,
+// handoff, pass_cache). Missing keys (a project from before v0.8.0) show their defaults, which keep the old behaviour.
+function seamFields(ctx, L) {
+  const setLn = (label, fn) => ctx.actions.edit(q => fn(q.global.long), { label });
+  const vaes = (ctx.eph.models?.vae || []).filter(v => !/audio/i.test(v));
+  const named = ctx.p.global.continuity?.name_continuation !== false;
+  const seamVideo = L.seam_video_ref !== false;
+  const handoff = L.handoff === "latent" ? "latent" : "pixels";
+  const cache = L.pass_cache === "lossless" ? "lossless" : "near_lossless";
+  const videoEl = toggle({ value: seamVideo, key: "long-seam-video", help: "global.long.seamVideo", disabled: !named,
+    onChange: v => setLn(v ? "Send the pass before as <Video 1>" : "Don't send the pass before as <Video 1>", x => { x.seam_video_ref = v; }) });
+  return [
+    h("div", { class: "rw-subhead", help: "global.long.seamsHead" }, "Pass seams"),
+    field("Guide VAE", select({ options: vaes, value: L.guide_vae || "", placeholder: "Same as the video VAE", mono: true, key: "long-guide-vae", help: "global.long.guideVae",
+      onChange: v => setLn("Guide VAE", x => { x.guide_vae = v || ""; }) }), { help: "global.long.guideVae", wide: true }),
+    field("Carry sound", toggle({ value: L.carry_audio !== false, key: "long-carry-audio", help: "global.long.carryAudio",
+      onChange: v => setLn(v ? "Carry sound across seams" : "Picture only across seams", x => { x.carry_audio = v; }) }), { help: "global.long.carryAudio" }),
+    field("<Video 1> at seams", h("span", { class: "rw-row" }, videoEl,
+      h("span", { class: "rw-dim small", help: "global.long.seamVideo" }, named ? (seamVideo ? "the pass before is sent as a clip" : "guide frames only") : "off: Cast → Name the continuation is off")),
+    { help: "global.long.seamVideo" }),
+    field("Hand-off", segmented({ small: true, value: handoff, key: "long-handoff", help: "global.long.handoff", options: [
+      { value: "pixels", label: "Pixels", help: "global.long.handoff.pixels" }, { value: "latent", label: "Latent · experimental", help: "global.long.handoff.latent" }],
+    onChange: v => setLn(v === "latent" ? "Latent hand-off" : "Pixel hand-off", x => { x.handoff = v; }) }), { help: "global.long.handoff" }),
+    field("Pass cache", segmented({ small: true, value: cache, key: "long-pass-cache", help: "global.long.passCache", options: [
+      { value: "near_lossless", label: "Near-lossless", help: "global.long.passCache.near" }, { value: "lossless", label: "Lossless", help: "global.long.passCache.lossless" }],
+    onChange: v => setLn(v === "lossless" ? "Lossless pass cache" : "Near-lossless pass cache", x => { x.pass_cache = v; }) }), { help: "global.long.passCache" }),
+    h("div", { class: "rw-long-note", help: "global.long.seamsHead" }, handoff === "latent"
+      ? "Latent hand-off is experimental: a pass whose size or settings differ from the pass before falls back to pixels."
+      : `Every overlap seam decodes ${L.overlap_frames} frames and encodes them again${L.guide_vae ? " with the guide VAE" : ""}. Shot cuts as seams avoid that.`),
+  ];
 }
 
 function llmCard(ctx) {
@@ -398,7 +432,7 @@ function limitFields(ctx, l, st, set) {
       number({ value: l.import_part_chars, min: 0, max: 1000000, step: 500, width: "96px", unit: "chars", help: "global.llm.importPart", onChange: v => set(x => { x.import_part_chars = v ?? 3000; }) }),
       hint(l.import_part_chars ? "a long script is sent in parts of about this size" : "0 = the whole script in one request", "global.llm.importPart")), { help: "global.llm.importPart" }),
     field("Max tokens", h("span", { class: "rw-row grow" },
-      number({ value: l.import_max_tokens, min: 256, max: 1000000, step: 1024, width: "96px", unit: "tokens", help: "global.llm.importTokens", onChange: v => set(x => { x.import_max_tokens = v ?? 16384; }) }),
+      number({ value: l.import_max_tokens, min: 256, max: 1000000, step: 1024, width: "96px", unit: "tokens", help: "global.llm.importTokens", onChange: v => set(x => { x.import_max_tokens = v ?? 24576; }) }), /* v0.8.0: default 24576 (was 16384), as model.js */
       hint("per part, thinking included; a part that runs out is split in two", "global.llm.importTokens")), { help: "global.llm.importTokens" }),
     field("Thinking", segmented({ small: true, value: l.import_thinking === "off" ? "off" : "same", help: "global.llm.importThinking", options: [
       { value: "same", label: "Same as above", help: "global.llm.importThinking.same" }, { value: "off", label: "Off", help: "global.llm.importThinking.off" }],
@@ -534,6 +568,7 @@ function scriptCard(ctx) {
         message: `The ${n} current scene${n > 1 ? "s are" : " is"} removed and the ${pickedScenes.length} imported scene${pickedScenes.length > 1 ? "s" : ""} take${pickedScenes.length > 1 ? "" : "s"} their place. Cast, assets and Global settings stay. Rendered takes stay on disk. Ctrl+Z undoes this.` }))) return;
     }
     let firstId = null;
+    let importedIds = []; // added 2026-11-05 v0.8.0
     ctx.actions.edit(p => {
       const ids = {};
       for (const c of p.cast) ids[c.name.toLowerCase()] = c.id;
@@ -577,13 +612,18 @@ function scriptCard(ctx) {
       }
       p.scenes[0].start.mode = "fresh";
       firstId = made[0].id;
+      importedIds = made.map(x => x.id); // added 2026-11-05 v0.8.0: offered to "Write prompts" next
       p.ui.selected = firstId;
     // [OLD 2026-11-03 v0.5.1->v0.6.0] });  (no name in the History menu)
     }, { label: mode === "replace" ? "Replace scenes with script" : "Import script" });
-    ctx.store.setEph({ scriptDraft: null });
+    // [OLD 2026-11-05 v0.7.0->v0.8.0] ctx.store.setEph({ scriptDraft: null });
+    // added 2026-11-05 v0.8.0: the imported scenes can get their pass prompts written next (eph.imported)
+    ctx.store.setEph({ scriptDraft: null, imported: importedIds.length ? { ids: importedIds } : ctx.eph.imported });
     ctx.root.focus?.({ preventScroll: true }); // the button is gone after the re-render; keep Ctrl+Z working
     const where = mode === "replace" ? "replaced the old scenes" : mode === "insert" ? `inserted after ${selScene?.title || "the selected scene"}` : "added at the end";
-    ctx.actions.toast(pickedScenes.length ? `Imported ${pickedScenes.length} scene${pickedScenes.length > 1 ? "s" : ""} (${where}). Ctrl+Z undoes this.` : "Imported the cast.", "ok");
+    // [OLD 2026-11-05 v0.7.0->v0.8.0] ctx.actions.toast(pickedScenes.length ? `Imported ${pickedScenes.length} scene${pickedScenes.length > 1 ? "s" : ""} (${where}). Ctrl+Z undoes this.` : "Imported the cast.", "ok");
+    // added 2026-11-05 v0.8.0: points at "Write prompts for the imported scenes"
+    ctx.actions.toast(pickedScenes.length ? `Imported ${pickedScenes.length} scene${pickedScenes.length > 1 ? "s" : ""} (${where}). Ctrl+Z undoes this. Write prompts (below) writes their passes in full.` : "Imported the cast.", "ok");
   };
   return section({
     title: "Import a script", help: "global.script",
@@ -625,8 +665,59 @@ function scriptCard(ctx) {
       draft && !draft.busy && (draft.scenes.length > 0 || draft.cast.length > 0) && h("div", { class: "rw-row" },
         button({ label: mode === "replace" ? "Replace scenes with the selected" : "Add selected to the project", icon: mode === "replace" ? "refresh" : "plus",
           variant: mode === "replace" ? "danger" : "primary", small: true, help: "global.script.apply", onClick: apply })),
+      writeBatchBox(ctx), // added 2026-11-05 v0.8.0: "Write prompts for the N imported scenes"
     ],
   });
+}
+
+// added 2026-11-05 v0.8.0: after an import, the LLM can write every pass of the imported scenes (POST /llm/passes,
+// one request per pass, one scene after another, each scene one undo step), with progress and Stop
+function writeBatchBox(ctx) {
+  const imp = ctx.eph.imported;
+  const scenes = ctx.p.scenes;
+  let run = ctx.eph.passWrite?.origin === "import" ? ctx.eph.passWrite : null;
+  // a finished run whose scenes are all gone (another project loaded, undo of the import) is not shown
+  if (run && !run.running && !run.items.some(x => scenes.some(s => s.id === x.sid))) run = null;
+  const ids = (imp?.ids || []).filter(id => scenes.some(s => s.id === id));
+  if (!ids.length && !run) return null;
+  const title = id => scenes.find(s => s.id === id)?.title || "(deleted scene)";
+  const num = id => String(sceneIndex(ctx.p, id) + 1).padStart(2, "0");
+  const n = ids.length;
+  const start = items => runWrite(ctx, items, { origin: "import" }).then(r => {
+    if (!r) return;
+    const done = r.items.filter(x => x.state === "done").length, failed = r.items.filter(x => x.state === "failed").length;
+    const left = r.items.length - done;
+    if (failed) ctx.actions.toast(`Wrote ${done} of ${r.items.length} scenes; ${failed} failed. Retry them in Global → Import a script.`, "error");
+    else if (left) ctx.actions.toast(`Stopped after ${done} of ${r.items.length} scenes. Ctrl+Z undoes them one scene at a time.`, "warn");
+    else ctx.actions.toast(`Wrote the prompts of ${done} scene${done === 1 ? "" : "s"}. Ctrl+Z undoes them one scene at a time.`, "ok");
+  });
+  const dismiss = button({ label: "Dismiss", small: true, variant: "ghost", key: "write-batch-dismiss", help: "global.script.writeDismiss",
+    onClick: () => { ctx.store.setEph({ imported: null, passWrite: run?.running ? ctx.eph.passWrite : null }); ctx.root.focus?.({ preventScroll: true }); } });
+  if (!run) {
+    return h("div", { class: "rw-write-box", help: "global.script.write" },
+      h("div", { class: "small" }, `Imported ${n} scene${n === 1 ? "" : "s"} with a short outline each. The LLM can now write every pass in full (one request per pass).`),
+      h("div", { class: "rw-row" },
+        button({ label: `Write prompts for the ${n} imported scene${n === 1 ? "" : "s"}`, icon: "wand", small: true, variant: "pink", key: "write-batch", help: "global.script.write",
+          disabled: !!ctx.eph.passWrite?.running, onClick: () => start(ids.map(sid => ({ sid, passes: null }))) }),
+        dismiss));
+  }
+  const d = run.running ? ctx.eph.llmJobs[run.job] : null;
+  const cur = run.items[run.at];
+  const doneN = run.items.filter(x => x.state === "done").length;
+  const retry = run.items.filter(x => x.state === "failed" || x.state === "stopped" || x.state === "wait");
+  const mark = { wait: "·", run: "…", done: "✓", failed: "✕", stopped: "–" };
+  return h("div", { class: "rw-write-box", help: "global.script.write" },
+    h("div", { class: "rw-row" },
+      h("b", { class: "small grow" }, run.running ? `Writing scene ${run.at + 1} of ${run.items.length}: ${cur ? num(cur.sid) + " · " + title(cur.sid) : ""}` : `Wrote ${doneN} of ${run.items.length} scene${run.items.length === 1 ? "" : "s"}`),
+      run.running && button({ label: run.stop ? "Stopping…" : "Stop", icon: "close", small: true, key: "write-batch-stop", help: "global.script.writeStop", disabled: !!run.stop, onClick: () => stopWrite(ctx) }),
+      !run.running && retry.length > 0 && button({ label: `Retry ${retry.length}`, icon: "refresh", small: true, key: "write-batch-retry", help: "global.script.writeRetry",
+        onClick: () => start(retry.filter(x => scenes.some(s => s.id === x.sid)).map(x => ({ sid: x.sid, passes: x.passes || null }))) }),
+      !run.running && dismiss),
+    run.running && h("div", { class: "rw-dim small mono", help: "scene.prompt.writeProgress" }, (d?.pass ? `pass ${d.pass}${d.passes ? " of " + d.passes : ""} · ` : "") + jobLine(d)),
+    run.items.map(x => h("div", { class: ["rw-write-item", x.state], help: "global.script.writeItem" },
+      h("span", { class: "st mono" }, mark[x.state] || "·"),
+      h("span", { class: "rw-ellipsis" }, `${num(x.sid)} · ${title(x.sid)}`),
+      h("span", { class: ["small", x.state === "failed" ? "rw-c-err" : "rw-dim"] }, x.state === "failed" ? x.error : x.state === "run" ? "writing" : x.state === "done" ? "written" : x.state === "stopped" ? "stopped" : "waiting"))));
 }
 
 // ---- script import in parts (added 2026-11-03 v0.4.2) ---------------------------------------------------------

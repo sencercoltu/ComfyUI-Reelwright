@@ -23,8 +23,13 @@ from .model import project_index, scene_starts
 log = logging.getLogger("reelwright")  # added 2026-11-05 v0.7.0
 
 
-def pass_segments(plan, pass_files, crossfade_frames):
-    """Segments that stitch a scene's pass files into the scene video."""
+# [OLD 2026-11-05 v0.7.0->v0.8.0] def pass_segments(plan, pass_files, crossfade_frames):
+def pass_segments(plan, pass_files, crossfade_frames, carry_audio=True):
+    """Segments that stitch a scene's pass files into the scene video.
+    added 2026-11-05 v0.8.0: carry_audio False (Global -> Long scenes): the pass after an overlap seam got no sound
+    guide, so its sound is not the same as the pass before's inside the overlap; its sound starts at the overlap's
+    first frame (merge's audio_lead_frames) and crossfades with the pass before's over the whole overlap. The picture
+    is stitched as before."""
     segs = []
     for x, path in zip(plan["passes"], pass_files):
         seg = {"path": path, "in": x["keep_in"], "out": x["keep_out"], "has_audio": True, "join": "cut", "dur": 0.0}
@@ -37,6 +42,8 @@ def pass_segments(plan, pass_files, crossfade_frames):
             seg["dur"] = cf / spec.FPS
             if not cf:
                 seg["in"] = x["overlap_frames"] / spec.FPS
+            if not carry_audio:  # added 2026-11-05 v0.8.0
+                seg["audio_lead_frames"] = int(x["overlap_frames"]) - cf
         segs.append(seg)
     return segs
 
@@ -414,7 +421,10 @@ def cut_plan(result, store, options=None, info=None):
                 seg["out"] = seg["in"] + have_f / F
                 gap_f = need_f - have_f
         segments.append(seg)
-        lines = [{"t": float(d["t"]), "speaker": names.get(d["speaker"], ""), "text": d["text"]} for d in s["dialogue"]]
+        # [OLD 2026-11-06 v0.8.0] lines = [{"t": float(d["t"]), "speaker": names.get(d["speaker"], ""), "text": d["text"]} for d in s["dialogue"]]
+        # added 2026-11-06 v0.8.0: a line's own duration goes to the subtitles too
+        lines = [{"t": float(d["t"]), "speaker": names.get(d["speaker"], ""), "text": d["text"], "duration": d.get("duration")}
+                 for d in s["dialogue"]]
         # [OLD 2026-11-03 v0.6.0 review] src_out could be a held frame past the end of the file
         # entries.append({"scene_id": s["id"], "title": "{:02d} {}".format(i + 1, s["title"]), "path": path,
         #                 "src_in": seg["in"], "src_out": seg["out"], "src_len": length, "dialogue": lines})

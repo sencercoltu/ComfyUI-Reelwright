@@ -332,6 +332,63 @@ function abVideo(ctx, side, url) {
   return el;
 }
 
+// added 2026-11-05 v0.8.0: drift of a take (contract P2, render.py): take.drift = [{pass, source, frames, anchor_diff,
+// color_shift, rgb_shift: [r, g, b], sharpness, level: "ok"|"warn"|"bad", handoff?, handoff_reason?, pass_cache?}]
+// for each pass that continues from footage. The server sets `level` (analysis.drift_level); a take without it gets
+// one from the same starting limits (analysis.DRIFT_LIMITS): anchor_diff and color_shift on a 0–255 scale, sharpness
+// generated / guide (1 = the same).
+const DRIFT_LIMITS = { anchor: [8, 16], color: [4, 10], sharpLow: [0.8, 0.6], sharpHigh: [1.25, 1.6] }; // [warn from, bad from]
+const DRIFT_CLASS = { ok: "ok", warn: "warn", bad: "error", error: "error" };
+function driftNumber(v) {
+  if (Array.isArray(v)) return v.length ? Math.hypot(...v.map(x => Number(x) || 0)) : null;
+  const n = Number(v);
+  return v === null || v === undefined || !Number.isFinite(n) ? null : n;
+}
+function driftLevel(d) {
+  if (DRIFT_CLASS[d?.level]) return DRIFT_CLASS[d.level];
+  const a = driftNumber(d?.anchor_diff), c = driftNumber(d?.color_shift), s = driftNumber(d?.sharpness);
+  if (a === null && c === null && s === null) return "";
+  let lv = 0;
+  const up = (v, [warn, bad]) => { if (v !== null) lv = Math.max(lv, v >= bad ? 2 : v >= warn ? 1 : 0); };
+  up(a, DRIFT_LIMITS.anchor);
+  up(c, DRIFT_LIMITS.color);
+  if (s !== null) lv = Math.max(lv, s < DRIFT_LIMITS.sharpLow[1] || s > DRIFT_LIMITS.sharpHigh[1] ? 2 : s < DRIFT_LIMITS.sharpLow[0] || s > DRIFT_LIMITS.sharpHigh[0] ? 1 : 0);
+  return ["ok", "warn", "error"][lv];
+}
+function driftOf(tk) {
+  return Array.isArray(tk?.drift) ? tk.drift.filter(d => d && typeof d === "object") : [];
+}
+function driftWorst(tk) {
+  const order = { "": 0, ok: 1, warn: 2, error: 3 };
+  return driftOf(tk).map(driftLevel).reduce((a, b) => (order[b] > order[a] ? b : a), "");
+}
+function driftView(tk) {
+  const list = driftOf(tk);
+  if (!list.length) return null;
+  const f = (v, n) => (v === null ? "–" : v.toFixed(n));
+  const from = { prev_pass_tail: "the pass before", prev_scene_tail: "the tail of the scene before", prev_scene_last: "the last frame of the scene before" };
+  return h("span", { class: "rw-drift mono", help: "render.take.drift" }, list.map(d => {
+    const a = driftNumber(d.anchor_diff), c = driftNumber(d.color_shift), s = driftNumber(d.sharpness);
+    const rgb = Array.isArray(d.rgb_shift) ? ` (r ${d.rgb_shift.map(x => (x > 0 ? "+" : "") + Number(x).toFixed(1)).join(" g ").replace(/ g ([^ ]+)$/, " b $1")})` : "";
+    const title = `Pass ${d.pass ?? "?"}${from[d.source] ? ", continuing " + from[d.source] : ""}: anchor ${f(a, 1)} · colour ${f(c, 1)}${rgb} · sharpness ${f(s, 2)}`
+      + (d.handoff ? ` · ${d.handoff} hand-off${d.handoff_reason ? " (" + d.handoff_reason + ")" : ""}` : "") + (d.pass_cache ? " · from the pass cache" : "");
+    return h("span", { class: "rw-drift-pass", title },
+      h("span", { class: ["rw-led", driftLevel(d)] }), h("b", null, `P${d.pass ?? "?"}`), `${f(a, 1)} · ${f(c, 1)} · ${f(s, 2)}`);
+  }));
+}
+// added 2026-11-05 v0.8.0: the long-scene settings a take was made with (take.long), where they differ from the defaults
+function longView(tk) {
+  const L = tk?.long;
+  if (!L || typeof L !== "object") return null;
+  const tags = [];
+  if (L.guide_vae) tags.push("guide " + String(L.guide_vae).replace(/\.safetensors$/, "").replace(/^minimax_h3_video_vae_/, ""));
+  if (L.carry_audio === false) tags.push("picture-only seams");
+  if (L.seam_video_ref === false) tags.push("no <Video 1>");
+  if (L.handoff === "latent") tags.push("latent hand-off");
+  if (L.pass_cache === "lossless") tags.push("lossless cache");
+  return tags.length ? h("span", { class: "rw-dim small mono rw-take-long", help: "render.take.long", title: tags.join(" · ") }, tags.join(" · ")) : null;
+}
+
 // options of the next merge (not saved in the project): {draft, range: [from_id, to_id] | null, stems}
 function mergeOpts(ctx) {
   const o = ctx.eph.mergeOpts || {};
@@ -561,8 +618,12 @@ function takesTable(ctx) {
           : h("span", { class: "rw-dim", help: "render.table.file" }, "—");
       })(),
       h("span", { class: "mono rw-dim", help: "render.cacheKey" }, plan?.key ? plan.key.slice(0, 4) + "…" + plan.key.slice(-2) : "—"),
+      // [OLD 2026-11-05 v0.7.0->v0.8.0] h("span", { class: "rw-dim small", help: kept ? "render.table.cachedPasses" : "render.table.passes" }, nPass ? `${nPass} pass${nPass > 1 ? "es" : ""}` : "",
+      // [OLD 2026-11-05 v0.7.0->v0.8.0]   kept ? h("span", { class: "rw-c-aud" }, ` · ${kept} kept`) : null),
+      // added 2026-11-05 v0.8.0: a light for the worst drift of the starred take's continuing passes
       h("span", { class: "rw-dim small", help: kept ? "render.table.cachedPasses" : "render.table.passes" }, nPass ? `${nPass} pass${nPass > 1 ? "es" : ""}` : "",
-        kept ? h("span", { class: "rw-c-aud" }, ` · ${kept} kept`) : null),
+        kept ? h("span", { class: "rw-c-aud" }, ` · ${kept} kept`) : null,
+        (lv => lv ? h("span", { class: ["rw-led", lv], help: "render.table.drift", style: { "margin-left": "6px", "vertical-align": "1px" } }) : null)(driftWorst(ctx.starredTake(s.id)))),
       h("span", { class: "mono", style: { "text-align": "right" } }, s.duration.toFixed(2) + " s")));
     if (plan?.upstream_changed && !busy) rows.push(upstreamNote(ctx, s, plan));
     if (canDiff && openDiff[s.id]) rows.push(promptDiffView(plan));
@@ -590,6 +651,7 @@ function takesTable(ctx) {
         h("span", { class: "mono rw-dim" }, `${(tk.seconds ?? 0).toFixed(2)} s · ${tk.frames ?? "?"} f`),
         h("span", { class: "rw-dim small" }, tk.created ? new Date(tk.created * (tk.created < 1e12 ? 1000 : 1)).toLocaleString() : ""),
         tk.face && Object.keys(tk.face).length ? h("span", { class: "mono small rw-c-aud", help: "cast.appearances.score" }, "face " + Object.values(tk.face).map(v => Number(v).toFixed(2)).join(" / ")) : null,
+        driftView(tk), longView(tk), // added 2026-11-05 v0.8.0: drift of the passes that continue from footage, the take's seam settings
         h("span", { class: "rw-flex" }),
         button({ label: "A", small: true, help: "render.take.compareA", variant: ctx.eph.compare?.a?.take === tk.id ? "accent-ghost" : "ghost", onClick: () => ctx.store.setEph({ compare: { ...(ctx.eph.compare || {}), a: { scene: s.id, take: tk.id, url: viewURL(tk.files?.video) } } }) }),
         button({ label: "B", small: true, help: "render.take.compareB", variant: ctx.eph.compare?.b?.take === tk.id ? "accent-ghost" : "ghost", onClick: () => ctx.store.setEph({ compare: { ...(ctx.eph.compare || {}), b: { scene: s.id, take: tk.id, url: viewURL(tk.files?.video) } } }) }),

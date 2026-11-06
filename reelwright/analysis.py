@@ -93,13 +93,42 @@ def short_upstream_tail(p, i, builds, take):
                 name, need, prev_name, take.get("id"), have, prev_name, shorter))
 
 
-def _pass_keys(fp, builds, plan, asset_digest, upstream_key, upstream_take):
-    """added 2026-11-03 v0.6.0"""
+# [OLD 2026-11-05 v0.7.0->v0.8.0] def _pass_keys(fp, builds, plan, asset_digest, upstream_key, upstream_take):
+def _pass_keys(fp, builds, plan, asset_digest, upstream_key, upstream_take, extras=None):
+    """added 2026-11-03 v0.6.0. extras (added 2026-11-05 v0.8.0): cache.long_pass_extra per pass, or None."""
     keys, prev = [], None
-    for b, x in zip(builds, plan["passes"]):
-        prev = cache.pass_key(fp, b, x, asset_digest, upstream_key, prev, upstream_take)
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] for b, x in zip(builds, plan["passes"]):
+    # [OLD 2026-11-05 v0.7.0->v0.8.0]     prev = cache.pass_key(fp, b, x, asset_digest, upstream_key, prev, upstream_take)
+    for n, (b, x) in enumerate(zip(builds, plan["passes"])):
+        prev = cache.pass_key(fp, b, x, asset_digest, upstream_key, prev, upstream_take,
+                              extras[n] if extras else None)
         keys.append(prev)
     return keys
+
+
+def long_settings(p):
+    """added 2026-11-05 v0.8.0: Global -> Long scenes with the v0.8.0 continuity keys filled in (a project dict that
+    skipped normalisation still works)."""
+    lg = dict((p.get("global") or {}).get("long") or {})
+    lg.setdefault("guide_vae", "")
+    lg.setdefault("carry_audio", True)
+    lg.setdefault("seam_video_ref", True)
+    lg.setdefault("handoff", "pixels")
+    lg.setdefault("pass_cache", "near_lossless")
+    return lg
+
+
+def apply_long(p, builds):
+    """added 2026-11-05 v0.8.0: Global -> Long scenes -> carry_audio off: the guide a pass after an overlap seam gets
+    from the pass before is picture only (its "audio" is False), so render sends no sound to MiniMaxH3AddGuide and the
+    pass key changes with it. Changes `builds` ({scene id: [build]}) in place; nothing at the default."""
+    if long_settings(p)["carry_audio"]:
+        return builds
+    for blist in builds.values():
+        for b in blist:
+            b["guides"] = [dict(g, audio=False) if g.get("source") == "prev_pass_tail" and g.get("audio") else g
+                           for g in b.get("guides") or []]
+    return builds
 
 
 _meta_memo = {}
@@ -193,6 +222,8 @@ def analyze(project, store, wired=None):
     ctx, build = _builder(p)  # added 2026-11-03 v0.6.0: one prompt context for every scene and pass
     builds = {s["id"]: [build(s, i, plans[s["id"]], x) for x in plans[s["id"]]["passes"]]
               for i, s in enumerate(p["scenes"])}
+    apply_long(p, builds)  # added 2026-11-05 v0.8.0: carry_audio off drops the sound of overlap guides
+    lg = long_settings(p)  # added 2026-11-05 v0.8.0
 
     def asset_path(a):
         return store.input_path(a["file"]) if a.get("file") else ""
@@ -274,9 +305,15 @@ def analyze(project, store, wired=None):
         if short_tail:
             issues.append({"level": "warn", "message": short_tail, "scene_id": sid, "code": "short_upstream_tail"})
         up_key = up_take["key"] if up_take and up_take.get("key") else prev_key
-        keys = _pass_keys(fp, builds[sid], plan, asset_digest, up_key, up_take["id"] if up_take else None)
-        key = cache.scene_key(plan, keys, crossfade)
-        legacy_keys = _pass_keys(fp, builds[sid], plan, asset_digest, legacy_up, None)
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] keys = _pass_keys(fp, builds[sid], plan, asset_digest, up_key, up_take["id"] if up_take else None)
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] key = cache.scene_key(plan, keys, crossfade)
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] legacy_keys = _pass_keys(fp, builds[sid], plan, asset_digest, legacy_up, None)
+        # added 2026-11-05 v0.8.0: the long-scene choices that are not at their default (guide VAE, latent hand-off;
+        # carry_audio through the guides and the stitch)
+        extras = [cache.long_pass_extra(lg, settings, b) for b in builds[sid]]
+        keys = _pass_keys(fp, builds[sid], plan, asset_digest, up_key, up_take["id"] if up_take else None, extras)
+        key = cache.scene_key(plan, keys, crossfade, bool(lg["carry_audio"]))
+        legacy_keys = _pass_keys(fp, builds[sid], plan, asset_digest, legacy_up, None, extras)
         legacy_key = cache.scene_key(plan, legacy_keys)
         index = store.read_index(sid)
         res = cache.resolve(s, index, key, sid in errors_by_scene, legacy_key=legacy_key, upstream=up_take)
@@ -325,6 +362,7 @@ def analyze(project, store, wired=None):
             if status in ("stale", "missing") else [],
             "_fp": fp,
             "_prev_key": prev_key,
+            "_extras": extras,  # added 2026-11-05 v0.8.0: for rekey()
         }
         prev_key, prev_provided = key, res["provided"]
         prev_pending = res["provided"] is None
@@ -368,8 +406,73 @@ def rekey(result, sid, upstream):
     if not sr.get("continues") or not upstream:
         return sr["pass_keys"], sr["key"]
     up_key = upstream.get("key") or sr["_prev_key"]
-    keys = _pass_keys(sr["_fp"], sr["builds"], sr["plan"], result["_asset_digest"], up_key, upstream.get("id"))
-    return keys, cache.scene_key(sr["plan"], keys, int(result["project"]["global"]["long"]["crossfade_frames"]))
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] keys = _pass_keys(sr["_fp"], sr["builds"], sr["plan"], result["_asset_digest"], up_key, upstream.get("id"))
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] return keys, cache.scene_key(sr["plan"], keys, int(result["project"]["global"]["long"]["crossfade_frames"]))
+    # added 2026-11-05 v0.8.0: the same long-scene extras and stitch as analyze()
+    keys = _pass_keys(sr["_fp"], sr["builds"], sr["plan"], result["_asset_digest"], up_key, upstream.get("id"),
+                      sr.get("_extras"))
+    lg = long_settings(result["project"])
+    return keys, cache.scene_key(sr["plan"], keys, int(lg["crossfade_frames"]), bool(lg["carry_audio"]))
+
+
+# ---- drift meter (added 2026-11-05 v0.8.0) ------------------------------------------------------------------------
+# How well a pass that continues from footage (an overlap seam, a tail or last-frame start) reproduced the frames it
+# was anchored to: render measures it on a few frames after each such pass and stores take["drift"] (index and
+# meta.json, so /plan's takes carry it). Starting thresholds for the Render tab's traffic light; Sencer's A/B renders
+# should calibrate them (notes_V.md).
+DRIFT_SAMPLES = 3
+# metric: (green below / within, amber below / within); beyond amber is red
+DRIFT_LIMITS = {"anchor_diff": (8.0, 16.0), "color_shift": (4.0, 10.0), "sharpness": ((0.8, 1.25), (0.6, 1.6))}
+
+
+def _laplacian_var(luma):
+    """Variance of the 4-neighbour Laplacian of a [H, W] array (0..255)."""
+    lap = 4.0 * luma[1:-1, 1:-1] - luma[:-2, 1:-1] - luma[2:, 1:-1] - luma[1:-1, :-2] - luma[1:-1, 2:]
+    return float(lap.var()) if lap.size else 0.0
+
+
+def drift_metrics(guide, gen, samples=DRIFT_SAMPLES):
+    """guide, gen: frames [K, H, W, 3] in 0..1 (numpy or anything numpy.asarray takes) at the same positions: the
+    footage a pass was anchored to and what the pass made there. Measured on `samples` frames spread over them (first,
+    middle, last), 0..255 scale:
+    anchor_diff = mean |gen - guide| (0 = identical; a fresh anchor round trip is a few levels),
+    color_shift = length of the mean RGB difference, rgb_shift = that difference per channel (gen - guide),
+    sharpness = Laplacian variance gen / guide (1 = as sharp; below 1 softer, above 1 sharper or noisier; None when the
+    guide is flat), level = ok | warn | bad (DRIFT_LIMITS)."""
+    import numpy as np
+    k = min(len(guide), len(gen))
+    if k <= 0:
+        return None
+    idx = sorted({int(round(i * (k - 1) / max(1, samples - 1))) for i in range(max(1, samples))}) if k > 1 else [0]
+    g = np.asarray(guide[idx] if hasattr(guide, "shape") else [guide[i] for i in idx], dtype=np.float32)[..., :3] * 255.0
+    x = np.asarray(gen[idx] if hasattr(gen, "shape") else [gen[i] for i in idx], dtype=np.float32)[..., :3] * 255.0
+    if g.shape != x.shape:
+        return None
+    rgb = x.reshape(-1, 3).mean(0) - g.reshape(-1, 3).mean(0)
+    w = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    lg = sum(_laplacian_var(f @ w) for f in g)
+    lx = sum(_laplacian_var(f @ w) for f in x)
+    out = {"frames": len(idx), "anchor_diff": round(float(np.abs(x - g).mean()), 2),
+           "color_shift": round(float(np.sqrt((rgb ** 2).sum())), 2), "rgb_shift": [round(float(v), 2) for v in rgb],
+           "sharpness": round(lx / lg, 3) if lg > 1e-6 else None}
+    out["level"] = drift_level(out)
+    return out
+
+
+def drift_level(entry):
+    """"ok" | "warn" | "bad" for a drift entry: the worst of its metrics against DRIFT_LIMITS."""
+    rank = 0
+    for key in ("anchor_diff", "color_shift"):
+        v = entry.get(key)
+        if v is None:
+            continue
+        ok, warn = DRIFT_LIMITS[key]
+        rank = max(rank, 0 if v < ok else 1 if v < warn else 2)
+    v = entry.get("sharpness")
+    if v is not None:
+        (a, b), (c, d) = DRIFT_LIMITS["sharpness"]
+        rank = max(rank, 0 if a <= v <= b else 1 if c <= v <= d else 2)
+    return ("ok", "warn", "bad")[rank]
 
 
 def plan_response(result):

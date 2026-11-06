@@ -385,10 +385,64 @@ function startPlayback(ctx) {
     // soundtrack tracks follow the playhead; the take plays at the scene level
     m.video.volume = sceneVolume(ctx.p);
     syncAudio(ctx, t, true, jump);
+    followPlayhead(ctx, t); // added 2026-11-05 v0.8.0
     pl.raf = requestAnimationFrame(loop);
   };
+  // added 2026-11-05 v0.8.0: pressing play follows the playhead again (see followPlayhead)
+  Object.assign(pl, { follow: true, sl: null, prevPx: null });
   pl.raf = requestAnimationFrame(loop);
   ctx.render();
+}
+
+// added 2026-11-05 v0.8.0: while the film plays, the lanes scroll so the playhead stays in the middle of the view
+// (the browser clamps it at the film's start and end). A manual scroll, wheel or drag pauses following (pl.follow =
+// false) until play is pressed again or the playhead reaches the middle of the view again. Only scrollLeft is set,
+// so a long film is rebuilt only when the view nears the edge of the lanes that were built (lanesScroll).
+function followPlayhead(ctx, t) {
+  const pl = playOf(ctx);
+  const el = ctx.root.querySelector(".rw-lanes");
+  if (!el) return;
+  const z = zoomOf(ctx);
+  const half = Math.max(0, (el.clientWidth - HEAD_W) / 2);
+  const x = t * z; // the playhead, in lane-body pixels
+  if (!pl.follow) {
+    const px = x - el.scrollLeft; // where it is in the view
+    const back = pl.prevPx !== null && pl.prevPx < half - 0.5 && px >= half - 0.5;
+    pl.prevPx = px;
+    if (!back) return;
+    pl.follow = true; // it came back to the middle
+    ctx.store.notify(); // the transport's Follow button goes away
+  }
+  const max = Math.max(0, el.scrollWidth - el.clientWidth);
+  const sl = Math.round(Math.max(0, Math.min(max, x - half)));
+  // the view moves in steps of a few pixels (the playhead stays within FOLLOW_STEP of the middle): every scroll repaints
+  // the lanes, which cost a long film (300 scenes) frames when it happened on every frame at a high zoom
+  if (Math.abs(el.scrollLeft - sl) >= FOLLOW_STEP || ((sl === 0 || sl === max) && el.scrollLeft !== sl)) el.scrollLeft = sl;
+  pl.sl = el.scrollLeft;
+  pl.prevPx = x - pl.sl;
+}
+const FOLLOW_STEP = 4;
+
+// a manual scroll (scrollbar, wheel, drag) while following: pause it. `el` scrolled to somewhere followPlayhead did not
+// put it (re-renders restore the same position; a zoom resets pl.sl first)
+function pauseFollow(ctx) {
+  const pl = ctx.play;
+  if (!pl?.follow || !ctx.eph.playing) return;
+  pl.follow = false;
+  pl.prevPx = null;
+  ctx.store.notify(); // shows the transport's Follow button
+}
+function followScrolled(ctx, el) {
+  const pl = ctx.play;
+  // a lanes element a render replaced still gets its last scroll event (and reads 0): not a manual scroll
+  if (!pl?.follow || !ctx.eph.playing || typeof pl.sl !== "number" || !el.isConnected) return;
+  if (Math.abs(el.scrollLeft - pl.sl) > 2) pauseFollow(ctx);
+}
+function resumeFollow(ctx) {
+  const pl = playOf(ctx);
+  Object.assign(pl, { follow: true, sl: null, prevPx: null });
+  followPlayhead(ctx, ctx.p.ui.playhead);
+  ctx.store.notify();
 }
 
 function togglePlay(ctx) {
@@ -475,6 +529,7 @@ export function sceneKeys(ctx, e) {
 
 function setZoom(ctx, z) {
   z = Math.max(4, Math.min(160, z));
+  if (ctx.play) ctx.play.sl = null; // added 2026-11-05 v0.8.0: a zoom moves the view; that is not a manual scroll
   ctx.store.update(p => { p.ui.zoom = Math.round(z * 10) / 10; }, { history: false, plan: false, autosave: false });
 }
 
@@ -691,6 +746,9 @@ function renderTransport(ctx) {
     } }),
     timecode, h("span", { class: "mono rw-dim" }, "/ " + fmtTime(total)),
     loop && h("span", { class: "mono rw-loop-label", help: "timeline.transport.loop" }, `loop ${fmtTime(loop.in, false)}–${fmtTime(loop.out, false)}`),
+    // added 2026-11-05 v0.8.0: following the playhead was paused by a scroll or drag; click to follow again
+    ctx.eph.playing && ctx.play && ctx.play.follow === false && button({ label: "Follow", icon: "eye", small: true, variant: "accent-ghost", key: "tl-follow",
+      help: "timeline.follow", extra: null, onClick: () => resumeFollow(ctx) }),
     h("span", { class: "rw-flex" }),
     h("span", { class: "rw-dim", help: "timeline.transport.cut" }, "cut " + fmtTime(assembledDuration(p))));
 }
@@ -755,6 +813,7 @@ function renderLanes(ctx) {
   const vis = laneWindow(ctx, width);
   const near = (left, w = 0) => left + w >= vis.from && left <= vis.to;
   const lazyTiles = []; // waveform tiles, painted when they scroll into view
+  const camNames = new Map((p.camera_presets || []).map(c => [c.text, c.name])); // added 2026-11-05 v0.8.0: camera lane labels
   const step = pickStep(z);
   const selectScene = id => () => ctx.actions.select(id);
 
@@ -889,11 +948,16 @@ function renderLanes(ctx) {
     placeRows(picItems, 2).forEach(it => pics.append(bar({ ...it, rows: 2 })));
     placeRows(audItems, 2).forEach(it => auds.append(bar({ ...it, rows: 2 })));
     s.shots.forEach((sh, k) => {
-      if (!sh.camera) return;
+      // [OLD 2026-11-05 v0.7.0->v0.8.0] if (!sh.camera) return;
+      if (!sh.camera && !sh.framing) return; // added 2026-11-05 v0.8.0: a framing alone is shown too
       const end = s.shots[k + 1]?.t ?? s.duration;
       // [OLD 2026-11-03 v0.4.3->v0.5.0] cam.append(h("span", { class: "rw-cam", style: { left: x0 + sh.t * z + 3 + "px", "max-width": Math.max(24, (end - sh.t) * z - 6) + "px" }, help: "timeline.lane.camera", onClick: selectScene(s.id) }, sh.camera));
       const from = Math.max(sh.t, ov(s, si)); // added 2026-11-03 v0.5.0
-      cam.append(h("span", { class: "rw-cam", style: { left: x00 + from * z + 3 + "px", "max-width": Math.max(24, (end - from) * z - 6) + "px" }, help: "timeline.lane.camera", onClick: selectScene(s.id) }, sh.camera));
+      // [OLD 2026-11-05 v0.7.0->v0.8.0] cam.append(h("span", { class: "rw-cam", style: { left: x00 + from * z + 3 + "px", "max-width": Math.max(24, (end - from) * z - 6) + "px" }, help: "timeline.lane.camera", onClick: selectScene(s.id) }, sh.camera));
+      // added 2026-11-05 v0.8.0: framing · move (the preset's name for a preset's words) · amplitude and speed
+      const word = camNames.get(sh.camera) || sh.camera || "";
+      const label = [sh.framing && sh.framing[0].toUpperCase() + sh.framing.slice(1), word, [sh.camera_amp, sh.camera_speed].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+      cam.append(h("span", { class: "rw-cam", style: { left: x00 + from * z + 3 + "px", "max-width": Math.max(24, (end - from) * z - 6) + "px" }, help: "timeline.lane.camera", title: label, onClick: selectScene(s.id) }, label));
     });
     const own = effectiveLoras(p, s).filter(l => l.source !== "global");
     if (own.length) {
@@ -960,6 +1024,7 @@ function renderLanes(ctx) {
   // up and down; Alt + wheel zooms. Click = playhead, drag = pan (see lanesPointerdown).
   // [OLD 2026-11-03 v0.5.1->v0.6.0] return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onPointerdown: e => lanesPointerdown(ctx, e), wheel: e => {
   // added 2026-11-03 v0.6.0: onScroll renders again when the view leaves the part that was built
+  /* [OLD 2026-11-05 v0.7.0->v0.8.0] no follow-playback: a scroll or sideways wheel did not pause it
   const lanesEl = h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onPointerdown: e => lanesPointerdown(ctx, e), onScroll: e => lanesScroll(ctx, e.currentTarget), wheel: e => {
     if (e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); return; }
     const el = ctx.root.querySelector(".rw-lanes");
@@ -971,6 +1036,23 @@ function renderLanes(ctx) {
     }
     if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && el.scrollWidth > el.clientWidth + 1) { e.preventDefault(); el.scrollLeft += e.deltaY * unit; }
   } },
+  [/OLD] */
+  // added 2026-11-05 v0.8.0: a manual scroll (scrollbar or sideways wheel) pauses following the playhead
+  const lanesEl = h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onPointerdown: e => lanesPointerdown(ctx, e),
+    // a lanes element a render replaced still gets the scroll event of its last scroll (and reads 0 when detached):
+    // it rebuilt the lanes on every frame while the view followed the playhead, so only the lanes on the page count
+    onScroll: e => { if (!e.currentTarget.isConnected) return; followScrolled(ctx, e.currentTarget); lanesScroll(ctx, e.currentTarget); }, wheel: e => {
+      if (e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); return; }
+      const el = ctx.root.querySelector(".rw-lanes");
+      if (!el) return;
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientWidth : 1;
+      if (e.shiftKey) {
+        if (el.scrollHeight > el.clientHeight + 1) { e.preventDefault(); el.scrollTop += (e.deltaY || e.deltaX) * unit; }
+        return;
+      }
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && el.scrollWidth > el.clientWidth + 1) { e.preventDefault(); pauseFollow(ctx); el.scrollLeft += e.deltaY * unit; }
+      else if (Math.abs(e.deltaX) > 0) pauseFollow(ctx);
+    } },
   h("div", { class: "rw-lanes-inner", style: { width: HEAD_W + width + "px" } },
     h("div", { class: "rw-lane ruler" }, h("div", { class: "rw-lane-head mono rw-dim", help: "timeline.ruler" }, "24 fps"), ruler),
     // [OLD 2026-11-03 v0.4.3->v0.5.0] lanes.map(([label, ic, cls, help, el, kind, extra]) => h("div", { class: ["rw-lane", kind] }, laneHead(label, ic, cls, help, extra), el)),
@@ -1083,7 +1165,8 @@ function lanesPointerdown(ctx, e) {
   let panning = false;
   trackDrag(ev => {
     if (!panning && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
-    if (!panning) { panning = true; ctx.root.classList.add("rw-panning"); }
+    // [OLD 2026-11-05 v0.7.0->v0.8.0] if (!panning) { panning = true; ctx.root.classList.add("rw-panning"); }
+    if (!panning) { panning = true; ctx.root.classList.add("rw-panning"); pauseFollow(ctx); } // added 2026-11-05 v0.8.0: a drag pauses following
     const el = ctx.root.querySelector(".rw-lanes") || el0; // a re-render may have replaced the lanes
     el.scrollLeft = sl0 - (ev.clientX - x0) / sc;
     el.scrollTop = st0 - (ev.clientY - y0) / sc;

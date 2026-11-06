@@ -61,9 +61,12 @@ def settings_fingerprint(settings, wired):
 
 # [OLD 2026-11-03 v0.5.1->v0.6.0] the take a scene continues from was not part of its key (fix #11)
 # def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pass_key):
-def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pass_key, upstream_take=None):
+# [OLD 2026-11-05 v0.7.0->v0.8.0] def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pass_key, upstream_take=None):
+def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pass_key, upstream_take=None, extra=None):
     """The key of one pass. `upstream_take` (added 2026-11-03 v0.6.0) is the id of the take the scene continues from;
-    with None the key is the one v0.5.1 computed, so older takes can still be matched (see resolve)."""
+    with None the key is the one v0.5.1 computed, so older takes can still be matched (see resolve).
+    added 2026-11-05 v0.8.0: `extra` (a dict, see long_pass_extra) holds the Global -> Long scenes choices that change
+    how this pass is encoded or guided; empty or None leaves the key as v0.7.0 computed it."""
     guides = []
     for g in build["guides"]:
         x = {k: v for k, v in g.items() if k != "asset"}
@@ -76,7 +79,8 @@ def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pas
         if g["source"] == "prev_pass_tail":
             x["upstream"] = previous_pass_key
         guides.append(x)
-    return _hash({
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] return _hash({   (the entries below are unchanged; the closing "})" became "}")
+    data = {
         "settings": settings_fp,
         "frames": pass_["gen_frames"],
         "seed": pass_["seed"],
@@ -89,7 +93,31 @@ def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pas
         "audios": [soundtrack.digest(a["song"], asset_digest) if a.get("song") else asset_digest(a["asset"])
                    for a in build["audios"]],
         "guides": guides,
-    })
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] })
+    }
+    if extra:  # added 2026-11-05 v0.8.0: only a non-default long-scene choice adds it
+        data["long"] = extra
+    return _hash(data)
+
+
+def long_pass_extra(long_settings, settings, build):
+    """added 2026-11-05 v0.8.0: the Global -> Long scenes choices that change this pass, for pass_key's `extra`
+    ({} at the defaults, so no key changes):
+    - guide_vae: a guide VAE other than the scene's video VAE, for a pass that encodes anything (reference pictures or
+      videos, guides);
+    - handoff "latent": a pass guided by the end of the pass before (an overlap seam).
+    carry_audio is in the key through the build's guides (analysis.apply_long sets their "audio" to False) and
+    seam_video_ref through the prompt and references (model.pass_continuation). pass_cache is a storage format and
+    changes no key."""
+    lg = long_settings or {}
+    out = {}
+    gv = str(lg.get("guide_vae") or "")
+    if gv and gv != str((settings or {}).get("video_vae") or "") and \
+            (build.get("images") or build.get("videos") or build.get("guides")):
+        out["guide_vae"] = gv
+    if lg.get("handoff") == "latent" and any(g.get("source") == "prev_pass_tail" for g in build.get("guides") or []):
+        out["handoff"] = "latent"
+    return out
 
 
 # [OLD 2026-11-03 v0.5.1->v0.6.0] Global -> Long scenes -> crossfade changed the stitched take but not its key
@@ -97,13 +125,18 @@ def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pas
 #     return _hash({"kind": plan["kind"], "frames": plan["frames"], "passes": pass_keys,
 #                   "keep": [[x["keep_in_frames"], x["keep_out_frames"]] for x in plan["passes"]]})
 # [/OLD]
-def scene_key(plan, pass_keys, crossfade_frames=None):
+# [OLD 2026-11-05 v0.7.0->v0.8.0] def scene_key(plan, pass_keys, crossfade_frames=None):
+def scene_key(plan, pass_keys, crossfade_frames=None, carry_audio=True):
     """The take's key. `crossfade_frames` (added 2026-11-03 v0.6.0) counts only when passes are joined with overlap
-    seams (that is where the crossfade is used); None gives the v0.5.1 key."""
+    seams (that is where the crossfade is used); None gives the v0.5.1 key.
+    added 2026-11-05 v0.8.0: carry_audio False (Global -> Long scenes) changes how overlap seams are stitched (the
+    sound crossfades over the whole overlap), so it counts for scenes with overlap seams; True leaves the key as is."""
     data = {"kind": plan["kind"], "frames": plan["frames"], "passes": pass_keys,
             "keep": [[x["keep_in_frames"], x["keep_out_frames"]] for x in plan["passes"]]}
     if crossfade_frames is not None and any(x.get("seam_before") == "overlap" for x in plan["passes"]):
         data["crossfade"] = int(crossfade_frames)
+    if not carry_audio and any(x.get("seam_before") == "overlap" for x in plan["passes"]):  # added 2026-11-05 v0.8.0
+        data["carry_audio"] = False
     return _hash(data)
 
 

@@ -16,6 +16,9 @@ from .prompt import tidy_rewrite  # added 2026-11-03 v0.4.1
 from . import prompt as _prompt  # added 2026-11-03 v0.6.0: the editor's tag rule (prompt.tag_re), as_text, tag_token
 from .scriptparts import fit_scene  # added 2026-11-03 v0.4.3
 from .storage import read_json, write_json
+from . import model as _model  # added 2026-11-05 v0.8.0: pass_texts / dialogue_seconds (Agent P), when present
+from . import spec  # added 2026-11-05 v0.8.0: fmt_time, FPS for the per-pass requests
+from .planner import plan_scene  # added 2026-11-05 v0.8.0: scene_builds (the passes a scene is made in)
 
 TIMEOUT = aiohttp.ClientTimeout(total=180)
 # [OLD 2026-11-03 v0.5.1->v0.6.0] TAG_RE = re.compile(r"@\{[^}]+\}|@[A-Za-z][\w-]*")  (preserved_warnings uses prompt.tag_re now)
@@ -24,6 +27,10 @@ DIALOGUE_RE = re.compile(r"<d>.*?</d>", re.S)
 HTML_PAGE = "the server sent a web page, not JSON — check the base URL (usually ends in /v1)"
 CUT_RETRY_CAP = 32768  # a cut-off answer is asked again with twice the budget, up to this many tokens
 RETRY_AFTER_MAX = 60   # a 429 asking to wait longer than this is not retried
+# added 2026-11-05 v0.8.0: the import's default answer budget per part (was 16384). Since v0.8.0 every shot is 2-4
+# sentences and the summary a note on the whole scene: a 3,000-character part of a shot table answers with about
+# 7,000 tokens instead of 5,000, plus a thinking model's reasoning. model.py / model.js have the same default.
+IMPORT_MAX_TOKENS = 24576
 
 # [OLD 2026-11-02 v0.1.0->v0.2.0] rules used "[Shot1]"; MiniMax's guide writes "[Shot 1]" and the guides
 # themselves are now sent along (see GUIDES below)
@@ -215,7 +222,9 @@ def limits(project_llm):
             "retries": _num(project_llm.get("retries"), 2, 0, 5),
             "context_tokens": ctx if ctx >= 1024 else 0,
             "import_part_chars": part if part >= 500 else 0,
-            "import_max_tokens": _num(project_llm.get("import_max_tokens"), 16384, 256, 1_000_000),
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] "import_max_tokens": _num(project_llm.get("import_max_tokens"), 16384, 256, 1_000_000),
+            # added 2026-11-05 v0.8.0: 2-4 sentences per shot make an answer about 1.5 times as long (IMPORT_MAX_TOKENS)
+            "import_max_tokens": _num(project_llm.get("import_max_tokens"), IMPORT_MAX_TOKENS, 256, 1_000_000),
             "import_thinking": "off" if project_llm.get("import_thinking") == "off" else "same",
             "import_guides": bool(project_llm.get("import_guides", False))}
 
@@ -1007,6 +1016,644 @@ def split_prompts(data, n_passes=0):
     return out
 
 
+# ---- Write prompts: each pass's own six sections, one request per pass (added 2026-11-05 v0.8.0) ------------------
+# Split (above) rewrites the whole prompt of every pass in one answer, as text that replaces the pass's prompt
+# (scene.prompt.pass_prompts, edited by hand afterwards). write_passes asks for one pass at a time and returns the
+# six sections, which the editor stores as scene.prompt.passes[k] = {start, end, sections}; prompt.build_pass sends a
+# pass's own sections and falls back to the scene's shared ones. A pass prompt from Split still wins over them.
+
+PASS_WORDS = (350, 500)        # detailed_description of a generation task (ref-en.txt 5.2)
+PASS_WORDS_WARN = (300, 650)   # an answer outside this range gets a warning
+PASS_MIN_TOKENS = 4096         # one pass answers with about 1,000-1,500 tokens
+PASS_MIN_TOKENS_THINKING = 8192  # ... and a thinking model reasons before it
+
+PASS_RULES = """How these requests work: H3 makes at most about 15 seconds per generation, so a longer scene is made \
+in passes, one after another, and every pass gets its own prompt. Each request asks for the prompt of ONE pass:
+- Write only what happens in this pass, from its first frame to its last, with its own shots and spoken lines. The \
+pass before it is already written: continue the story from where it ends, without repeating it. The next pass is \
+shown only so that this one leads into it; do not describe it.
+- summary: one short paragraph about this pass only (its subjects, its shot flow and the roles of its references), \
+not about the whole scene. Do not write the task-type prefix; the editor adds it.
+- detailed_description: one or two English sentences on the visual style, then one [Shot N] line per shot of this \
+pass, numbered from [Shot 1] inside the pass. [Shot 1] has no time; every later shot begins "At MM:SS.mmm, the shot \
+cuts to" with its start time inside the pass, as listed. Describe each shot by composition, subject appearance and \
+position in the frame, environment and lighting, action, camera movement (type, amplitude, speed) and sound. Write \
+350-500 English words in detailed_description; when the pass is dense with dialogue, fit every spoken line first.
+- Every spoken line of the pass appears exactly once, word for word, in the shot where it is spoken, after its \
+speaker and speaker ID, for example: @Mara (S1) mutters, <d>[English] Almost home.</d> Speaker IDs (S1), (S2) follow \
+the order in which voices are first heard in this pass. Write no other spoken words.
+- A pass that starts at an overlap seam continues the same shot: its [Shot 1] carries on seamlessly from the final \
+frames of the pass before (@tail), without restarting the action or introducing the setting again.
+- overall_soundscape: the ambience and physical sounds of this pass, no dialogue. non_diegetic_music: the score only \
+the audience hears in this pass (carry on the scene's music), or N/A.
+- Write references as the @ tokens listed (@Mara, @P1, @tail). Never write <Subject N>, <Picture N>, <Video N> or \
+<Audio N> yourself: every pass numbers them differently, and the editor puts them in.
+- Answer with one JSON object with exactly the keys subject_definitions, summary, retention_analysis, \
+detailed_description, overall_soundscape, non_diegetic_music; every value is text."""
+
+_CONTINUES_FROM = {
+    "prev_scene_last": "the last frame of the scene before; [Shot 1] begins from it",
+    "prev_scene_tail": "the end of the scene before; [Shot 1] continues seamlessly from its final frames",
+    "prev_pass_tail": "the end of pass {prev}; [Shot 1] continues seamlessly from its final frames",
+}
+_LABEL_ORDER = {"Subject": 0, "Picture": 1, "Video": 2, "Audio": 3}
+_LABEL = re.compile(r"<(Subject|Picture|Video|Audio) (\d+)>")
+_SHOT_LOOSE = re.compile(r"\[\s*shot\s*(\d+)\s*\]", re.I)
+_CUT_TIME = re.compile(r"^At\s+(\d{1,2}):(\d{2}(?:\.\d{1,3})?)(\s*,\s*)", re.I)
+_EMPTY = ("n/a", "na", "none", "-")
+
+
+def scene_builds(p, scene):
+    """(plan, builds) of one scene of a normalised project: planner.plan_scene and prompt.build_pass, the same calls
+    analysis.analyze makes, without hashing files or reading takes."""
+    i = next(n for n, s in enumerate(p["scenes"]) if s["id"] == scene["id"])
+    plan = plan_scene(p, scene, i)
+    ctx = _prompt.prepare(p)
+    return plan, [_prompt.build_pass(p, scene, i, plan, x, ctx=ctx) for x in plan["passes"]]
+
+
+def pass_budget(cfg):
+    """Answer budget of one pass: Max tokens, at least PASS_MIN_TOKENS (PASS_MIN_TOKENS_THINKING unless thinking is
+    off). A cut-off answer is asked again with twice the budget (ask)."""
+    floor = PASS_MIN_TOKENS if cfg.get("thinking") == "off" else PASS_MIN_TOKENS_THINKING
+    return max(int(cfg.get("max_tokens") or 0), floor)
+
+
+def _sections_of(value):
+    """{section: text} of a dict, or of text with the six labels ("summary:\\n..."); {} when it has none."""
+    if isinstance(value, dict):
+        return {k: value[k] for k in _prompt.REF2VA_SECTIONS if k in value}
+    if not isinstance(value, str):
+        return {}
+    found = list(_prompt.SECTION_LABEL.finditer(value))
+    out = {}
+    for i, m in enumerate(found):
+        end = found[i + 1].start() if i + 1 < len(found) else len(value)
+        out.setdefault(m.group(1), value[m.end():end].strip())
+    return out
+
+
+def stored_pass_texts(p, scene, plan):
+    """[sections dict or {}] per current pass: the texts scene.prompt.passes holds for it. model.pass_texts (largest
+    time overlap) when the model has it, else the stored entry with the same number whose range is the pass's."""
+    fn = getattr(_model, "pass_texts", None)
+    if fn is not None:
+        try:
+            texts = fn(p, scene, plan)
+            texts = texts.get("texts") if isinstance(texts, dict) else texts
+            if isinstance(texts, list):
+                return [(t.get("sections") if isinstance(t.get("sections"), dict) else t) if isinstance(t, dict) else {}
+                        for t in texts] + [{}] * (len(plan["passes"]) - len(texts))
+        except (TypeError, KeyError, ValueError, AttributeError):
+            pass
+    stored = (scene.get("prompt") or {}).get("passes")
+    stored = stored if isinstance(stored, list) else []
+    out = []
+    for k, x in enumerate(plan["passes"]):
+        s = stored[k] if k < len(stored) and isinstance(stored[k], dict) else {}
+        try:
+            same = abs(float(s.get("start")) - float(x["start"])) <= 1.0 / spec.FPS and \
+                abs(float(s.get("end")) - float(x["end"])) <= 1.0 / spec.FPS
+        except (TypeError, ValueError):
+            same = False
+        out.append(s.get("sections") if same and isinstance(s.get("sections"), dict) else {})
+    return out
+
+
+def _clean_line(text):
+    """A spoken line as the editor sends it: one line, ending with punctuation (prompt._dialogue_sentence)."""
+    line = " ".join(str(text or "").split())
+    if line and line[-1] not in ".!?…\"'":
+        line += "."
+    return line
+
+
+def _speaker(p, d):
+    c = next((c for c in p["cast"] if c["id"] == d.get("speaker")), None)
+    return _prompt.tag_token(c["name"]) if c and str(c.get("name") or "").strip() else "an off-screen voice"
+
+
+def _shot_camera(sh):
+    """Camera words of a shot: framing, camera text, amplitude and speed (the v0.8.0 shot fields, when present)."""
+    words = " · ".join(str(sh[k]).strip() for k in ("framing", "camera") if isinstance(sh.get(k), str) and sh[k].strip())
+    how = ", ".join(x for x in ((sh.get("camera_amp") or "") and "{} amplitude".format(sh["camera_amp"]),
+                                (sh.get("camera_speed") or "") and "{} speed".format(sh["camera_speed"])) if x)
+    return (words + " ({})".format(how) if words else how) if how else words
+
+
+def _last_shot(desc):
+    """The last [Shot N] line of a detailed description, '' without one."""
+    _, chunks = _prompt._chunks(desc or "", _prompt.SHOT_START)
+    return chunks[-1][1] if chunks else ""
+
+
+def _pass_lines(p, scene, x, prev_n):
+    """(shot lines, dialogue lines) of a pass, with pass and scene times."""
+    by_id = {s["id"]: s for s in scene["shots"]}
+    shots, start, end = x["shots"], float(x["start"]), float(x["keep_out"])
+    out = []
+    for n, sh in enumerate(shots, 1):
+        t0 = float(sh["t"])
+        t1 = float(shots[n]["t"]) if n < len(shots) else max(end, t0)
+        full = dict(by_id.get(sh.get("id"), {}), **sh)
+        cam, text = _shot_camera(full), " ".join(str(full.get("text") or "").split())
+        note = " - it continues the shot that is running at the end of pass {}".format(prev_n) \
+            if sh.get("continuing") and prev_n else ""
+        out.append("[Shot {}] {} to {} in the pass (scene {} to {}, {:.2f} s){}: {}".format(
+            n, spec.fmt_time(t0), spec.fmt_time(t1), spec.fmt_time(start + t0), spec.fmt_time(start + t1), t1 - t0,
+            note, " | ".join(v for v in (cam, text) if v) or "(no text)"))
+    ids = _prompt.speaker_ids(x)
+    seconds = getattr(_model, "dialogue_seconds", None)
+    lines = []
+    for d in x["dialogue"]:
+        t = float(d["t"])
+        n = _prompt._shot_index(shots, t) if shots else 1
+        dur = ""
+        if seconds is not None:
+            try:
+                dur = ", about {:.1f} s".format(float(seconds(d)))
+            except (TypeError, ValueError, KeyError):
+                dur = ""
+        lines.append("{} in the pass (scene {}), in [Shot {}]{}: {} ({}) {}, <d>[{}] {}</d>".format(
+            spec.fmt_time(t), spec.fmt_time(start + t), n, dur, _speaker(p, d), ids.get(d.get("speaker") or "", "S?"),
+            (d.get("delivery") or "").strip() or "says", d.get("language") or "English", _clean_line(d.get("text"))))
+    return out, lines
+
+
+def _pass_refs(p, scene, b, k):
+    """Lines that list what this pass sends: @ token -> label, @tail's meaning, the scene's tokens it does not send."""
+    by_label = {}
+    for key, label in (b.get("tag_map") or {}).items():
+        if key.startswith("@"):
+            by_label.setdefault(label, []).append(_prompt.tag_token(key[1:]))
+
+    def order(label):
+        m = _LABEL.fullmatch(label)
+        return (_LABEL_ORDER.get(m.group(1), 9), int(m.group(2))) if m else (9, 0)
+    cont = b.get("continuation") or {}
+    sounds = {}  # <Video k> -> <Audio n> of its own sound
+    for n, v in enumerate(b.get("videos") or [], 1):
+        if isinstance(v, dict) and v.get("soundtrack") and v.get("audio_number"):
+            sounds["<Video {}>".format(n)] = "<Audio {}>".format(v["audio_number"])
+    out = []
+    for label in sorted(by_label, key=order):
+        tokens = list(dict.fromkeys(by_label[label]))
+        line = "{} -> {}".format(", ".join(tokens), label)
+        if cont and label == cont.get("label") and "@tail" in tokens:
+            line += ": " + _CONTINUES_FROM.get(cont.get("source"), "the footage this pass continues from").format(
+                prev=k - 1)
+        if label in sounds:
+            line += " (its own sound is sent as {}; write it as \"the sound of {}\")".format(sounds[label], tokens[0])
+        out.append(line)
+    sent = {_prompt.name_key(t[1:].strip("{}")) for ts in by_label.values() for t in ts}
+    idx = {a["id"]: a for a in p["assets"]}
+    cast = {c["id"]: c for c in p["cast"]}
+    other = []
+    for r in scene["refs"]:
+        a = idx.get(r.get("asset"))
+        if a and _prompt.name_key(a["code"]) not in sent:
+            other.append("@" + a["code"])
+    for e in scene["cast"]:
+        c = cast.get(e.get("id"))
+        if c and str(c.get("name") or "").strip() and _prompt.name_key(c["name"]) not in sent:
+            other.append(_prompt.tag_token(c["name"]))
+    return out, list(dict.fromkeys(other))
+
+
+_GUIDE_PHRASE = {"first frame": "the shot begins from {}", "keyframe": "the shot's keyframe corresponds to {}",
+                 "last frame": "the shot ends on {}"}  # ref-en.txt 5.3
+
+
+def pass_guides(p, scene, x):
+    """[(token, what, line)] for the first-frame, keyframe and last-frame references that guide pass x: they are sent
+    to H3 as pictures (or clips) only when the pass's text names them (prompt.build_pass), so the request asks for it."""
+    refs = {r["id"]: r for r in scene["refs"]}
+    idx = {a["id"]: a for a in p["assets"]}
+    out = []
+    for key, what in (("first_frame", "first frame"), ("keyframes", "keyframe"), ("last_frame", "last frame")):
+        for g in x.get(key) or []:
+            r = refs.get(g.get("ref")) if isinstance(g, dict) else None
+            a = idx.get(r.get("asset")) if r else None
+            if not a:
+                continue
+            t = int(g.get("frame_idx") or 0) / spec.FPS
+            n = _prompt._shot_index(x["shots"], t) if x["shots"] else 1
+            token = "@" + a["code"]
+            out.append((token, what, "{} is the {} at {} in the pass (scene {}), in [Shot {}]: name it in that shot, for "
+                        "example \"{}\"".format(token, what, spec.fmt_time(t), spec.fmt_time(float(x["start"]) + t), n,
+                                                _GUIDE_PHRASE[what].format(token))))
+    return out
+
+
+def _scene_tokens(p, scene, tag_map=None):
+    """name_key of every @ name the scene can use: its references, its cast and their pictures and voices, @tail,
+    @soundtrack, @song, and what the pass's tag_map holds."""
+    idx = {a["id"]: a for a in p["assets"]}
+    cast = {c["id"]: c for c in p["cast"]}
+    keys = {"tail", "soundtrack", "song"}
+    for r in scene["refs"]:
+        if r.get("asset") in idx:
+            keys.add(_prompt.name_key(idx[r["asset"]]["code"]))
+    for e in scene["cast"]:
+        c = cast.get(e.get("id"))
+        if not c:
+            continue
+        keys.add(_prompt.name_key(c.get("name")))
+        assets = list(c.get("anchors") or []) + [c.get("voice")] + \
+            [a for o in (c.get("outfits") or []) if isinstance(o, dict) for a in (o.get("assets") or [])]
+        keys |= {_prompt.name_key(idx[a]["code"]) for a in assets if a in idx}
+    keys |= {_prompt.name_key(k[1:]) for k in (tag_map or {}) if k.startswith("@")}
+    return keys
+
+
+def pass_request(p, scene, plan, builds, k, written=None, stored=None, instruction=""):
+    """The user message that asks for pass k (1-based) of a scene: the scene and cast (scene_context), the whole-scene
+    note, this pass's range, shots and spoken lines in pass and scene time, the references it sends, the pass before
+    (its summary and last shot: just written, written earlier, or as the editor builds it now) and the pass after
+    (an outline), what H3 receives for the pass now, the instruction and the rules that depend on the scene."""
+    written, stored = written or {}, stored or [{}] * len(plan["passes"])
+    n = len(plan["passes"])
+    x, b = plan["passes"][k - 1], builds[k - 1]
+    pr = scene["prompt"]
+    auto = pr.get("auto") or {}
+    parts = ["The whole scene, for context (you write only pass {}):\n{}".format(k, scene_context(p, scene))]
+    note = _prompt._strip_task_tags(str((pr.get("sections") or {}).get("summary") or "")).strip()
+    parts.append("Whole-scene note (what the whole scene is about; not a prompt of its own):\n" + (note or "(none)"))
+
+    start, end, gen = float(x["start"]), float(x["end"]), int(x["gen_frames"])
+    head = ("Write the prompt of pass {} of {}. It covers scene time {} to {} ({:.2f} s); H3 generates {} frames "
+            "({:.2f} s) for it.".format(k, n, spec.fmt_time(max(0.0, start)), spec.fmt_time(end), end - max(0.0, start),
+                                        gen, gen / spec.FPS) if n > 1 else
+            "This scene is made in one pass; write its prompt. H3 generates {} frames ({:.2f} s) for it.".format(
+                gen, gen / spec.FPS))
+    if plan.get("kind") == "short":
+        head += (" The scene is shorter than one pass: the cut keeps {} to {} of what H3 makes, and the times below are "
+                 "times in what H3 makes.".format(spec.fmt_time(float(x["keep_in"])), spec.fmt_time(float(x["keep_out"]))))
+    cont = b.get("continuation") or {}
+    if x.get("seam_before") == "overlap":
+        head += (" It starts at an overlap seam, in the middle of a shot: its first {:.2f} s repeat the end of pass {}, "
+                 "and its [Shot 1] continues that shot seamlessly.".format(int(x.get("overlap_frames") or 0) / spec.FPS,
+                                                                             k - 1))
+    elif x.get("seam_before") == "cut":
+        head += " It starts at a shot cut, with a new shot."
+    elif cont.get("source") == "prev_scene_last" or (k == 1 and plan.get("start_mode") == "last_frame"):
+        head += " It begins from the last frame of the scene before (@tail)."
+    elif cont.get("source") == "prev_scene_tail" or (k == 1 and plan.get("start_mode") == "tail"):
+        head += " It continues seamlessly from the end of the scene before (@tail)."
+    shot_lines, spoken = _pass_lines(p, scene, x, k - 1 if k > 1 else 0)
+    parts.append(head + "\nIts shots:\n" + ("\n".join(shot_lines) or "(no shots on the timeline: write it as one shot)") +
+                 "\nIts spoken lines:\n" + ("\n".join(spoken) or "(none)"))
+
+    sent, not_sent = _pass_refs(p, scene, b, k)
+    guides = pass_guides(p, scene, x)
+    refs = "References this pass sends to H3 (write the @ token; the editor turns it into the label):\n" + \
+        ("\n".join(sent) or "(none)")
+    if guides:
+        refs += "\nFrame guides of this pass (sent as pictures when the text names them):\n" + \
+            "\n".join(g[2] for g in guides)
+    not_sent = [t for t in not_sent if t not in {g[0] for g in guides}]
+    if not_sent:
+        refs += "\nNot sent with this pass (the editor writes them as words): " + ", ".join(not_sent)
+    if b.get("tags"):
+        refs += "\nTask types of this pass (the editor writes them before the summary): [{}]".format(
+            " + ".join(b["tags"]))
+    parts.append(refs)
+
+    if k > 1:
+        px = plan["passes"][k - 2]
+        mine = written.get(k - 1) or {}
+        theirs = stored[k - 2] if k - 2 < len(stored) and isinstance(stored[k - 2], dict) else {}
+        secs, how = (mine, "was just written") if mine else (theirs, "was written earlier") if any(
+            str(v or "").strip() for v in theirs.values()) else ({}, "has no text of its own yet")
+        summary = _prompt._strip_task_tags(str(secs.get("summary") or "")).strip()
+        last = _last_shot(str(secs.get("detailed_description") or ""))
+        if not last:  # as H3 receives it now (labels resolved), else the timeline's last shot
+            last = _last_shot(str(_sections_of(builds[k - 2].get("prompt") or "").get("detailed_description") or ""))
+        if not last and px["shots"]:
+            sh = px["shots"][-1]
+            last = " | ".join(v for v in (sh.get("camera"), sh.get("text")) if v)
+        block = ["The pass before (pass {}, scene {} to {}) {}. Continue the story from where it ends; do not repeat "
+                 "it.".format(k - 1, spec.fmt_time(max(0.0, float(px["start"]))), spec.fmt_time(float(px["end"])), how)]
+        if summary:
+            block.append("Its summary: " + summary)
+        block.append("Its last shot: " + (last or "(none)"))
+        if px["dialogue"]:
+            d = px["dialogue"][-1]
+            block.append("Its last spoken line: {} <d>[{}] {}</d>".format(_speaker(p, d), d.get("language") or "English",
+                                                                         _clean_line(d.get("text"))))
+        parts.append("\n".join(block))
+    if k < n:
+        nx = plan["passes"][k]
+        nstart = float(nx["start"])
+        block = ["The pass after (pass {}, scene {} to {}), only so this pass leads into it; do not describe it:".format(
+            k + 1, spec.fmt_time(nstart), spec.fmt_time(float(nx["end"])))]
+        theirs = stored[k] if k < len(stored) and isinstance(stored[k], dict) else {}
+        if str(theirs.get("summary") or "").strip():
+            block.append("Its summary: " + _prompt._strip_task_tags(str(theirs["summary"])).strip())
+        for sh in nx["shots"]:
+            block.append("Shot at scene {}: {}".format(spec.fmt_time(nstart + float(sh["t"])), " | ".join(
+                v for v in (sh.get("camera"), sh.get("text")) if v) or "(no text)"))
+        for d in nx["dialogue"]:
+            block.append("Line at scene {}: {} <d>[{}] {}</d>".format(spec.fmt_time(nstart + float(d["t"])),
+                                                                      _speaker(p, d), d.get("language") or "English",
+                                                                      _clean_line(d.get("text"))))
+        parts.append("\n".join(block))
+    if b.get("prompt"):
+        parts.append("What H3 receives for this pass now (labels already resolved; the sections without text of this "
+                     "pass's own are the scene's shared ones):\n" + b["prompt"])
+
+    m = max(1, len(x["shots"]))
+    rules = ["Write detailed_description with {} [Shot N] line{} (about {} words per shot, {}-{} words in all).".format(
+        m, "s" if m > 1 else "", int(round(sum(PASS_WORDS) / 2.0 / m)), *PASS_WORDS)]
+    if auto.get("shots"):
+        rules.append("Your [Shot N] lines replace the editor's automatic shot lines, so describe every shot in full.")
+    rules.append("Leave subject_definitions empty: the editor writes a definition line for every reference this pass "
+                 "sends." if auto.get("subjects") else
+                 "subject_definitions: one line per reference this pass sends, for example \"@Mara is the woman in ...\".")
+    rules.append("Leave retention_analysis empty: the editor writes it." if auto.get("retention") else
+                 "retention_analysis: one line per reference with its retention marker, as the guide shows (no speaker "
+                 "IDs).")
+    parts.append("\n".join(rules))
+    parts.append("Instruction: " + (instruction.strip() if isinstance(instruction, str) and instruction.strip() else
+                                    "Write this pass's prompt following the guide."))
+    parts.append("Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
+                 "detailed_description, overall_soundscape, non_diegetic_music.")
+    return "\n\n".join(parts)
+
+
+def pass_sections(data, k=None, _depth=0):
+    """The six sections of one pass's answer, as given (values not yet text), or None when it has none. Takes the
+    sections object itself, {"sections": …}, {"passes": [...]} / [...] (the entry for pass k, or the only one),
+    {"2": …} / {"pass 2": …}, {"prompt": "<labelled text>"} and labelled text ("summary:\\n…")."""
+    if _depth > 4 or data is None:
+        return None
+    again = lambda v: pass_sections(v, k, _depth + 1)  # noqa: E731
+    if isinstance(data, str):
+        return _sections_of(data) or None
+    if isinstance(data, list):
+        items = [v for v in data if isinstance(v, (dict, str))]
+        for v in items:
+            if isinstance(v, dict) and k is not None and any(str(v.get(x, "")).strip() == str(k)
+                                                             for x in ("index", "pass", "n")):
+                return again(v)
+        return again(items[0]) if len(items) == 1 else None
+    if not isinstance(data, dict):
+        return None
+    found = _sections_of(data)
+    if found:
+        return found
+    for key in ("sections", "passes", "pass_prompts", "prompts", "result", "answer"):
+        if isinstance(data.get(key), (dict, list, str)):
+            got = again(data[key])
+            if got:
+                return got
+    numbered = {}
+    for key, value in data.items():
+        m = _PASS_KEY.match(str(key))
+        if m and isinstance(value, (dict, str, list)):
+            numbered.setdefault(int(m.group(1)), value)
+    if numbered:
+        pick = numbered.get(k) if k is not None else None
+        if pick is None and len(numbered) == 1:
+            pick = next(iter(numbered.values()))
+        return again(pick) if pick is not None else None
+    for key in ("prompt", "text", "content"):
+        if isinstance(data.get(key), str):
+            return again(data[key])
+    return None
+
+
+def _pass_parser(k):
+    """parse() for ask(): one pass's sections, from JSON or from labelled text."""
+    def parse(text, info):
+        try:
+            data = json_answer(text, info, "answer for pass {}".format(k), dict)
+            secs = pass_sections(data, k)
+        except LLMError as e:
+            if e.reason != "bad_json":
+                raise
+            secs = None
+        if not secs:
+            secs = pass_sections(text or "", k)  # the six labels as plain text
+            if secs and info.get("finish") == "length":
+                secs = None  # a labelled answer cut off at the budget: not complete
+        if not secs:
+            if info.get("finish") == "length":
+                raise LLMError("The answer for pass {} was cut off at {:,} tokens before it was complete. Raise Max "
+                               "tokens (Global → Prompt rewriter), or set Thinking to Off.".format(
+                                   k, info.get("budget") or 0), "cut")
+            raise LLMError("The answer for pass {} has none of the six sections.".format(k), "bad_json")
+        return secs
+    return parse
+
+
+def _label_tokens(build):
+    """label -> @ token of one pass (the inverse of its tag_map); a video's own sound <Audio N> is its video's token
+    (the continuation clip's is @tail)."""
+    inverse = {}
+    for key, label in (build.get("tag_map") or {}).items():
+        if key.startswith("@"):
+            inverse.setdefault(label, _prompt.tag_token(key[1:]))
+    for k, v in enumerate(build.get("videos") or [], 1):
+        if isinstance(v, dict) and v.get("soundtrack") and v.get("audio_number"):
+            token = "@tail" if v.get("continuation") else inverse.get("<Video {}>".format(k))
+            if token:
+                inverse.setdefault("<Audio {}>".format(v["audio_number"]), token)
+    return inverse
+
+
+def _spoken(text):
+    """Spoken words in <d>…</d> spans, without the [Language] tag, in one line each."""
+    out = []
+    for span in DIALOGUE_RE.findall(text or ""):
+        body = re.sub(r"^\s*\[[^\]]*\]\s*", "", span[3:-4])
+        out.append(" ".join(body.split()))
+    return out
+
+
+def _core(line):
+    return " ".join(str(line or "").split()).rstrip(" .!?…\"'").lower()
+
+
+def tidy_pass(sections, x, build, auto, k=1, known=None, guides=()):
+    """(six sections as text, warnings) of one pass's answer, ready to store as scene.prompt.passes[k-1].sections:
+    - a whole six-section prompt inside one key is split into its sections; a value's own label is dropped;
+    - <Subject N>, <Picture N>, <Video N>, <Audio N> become the @ tokens of this pass's tag_map (the clip's own sound
+      <Audio N> becomes @tail), so the text works when another pass numbers its references differently;
+    - "N/A" in subject_definitions, summary, retention_analysis or detailed_description means empty (the shared text);
+    - the task-type prefix leaves the summary; subject_definitions / retention_analysis are empty when the editor
+      writes them (auto);
+    - detailed_description: "[Shot1]" is "[Shot 1]"; when the answer has one [Shot N] per shot of the pass, the
+      shots are numbered from 1 in order, [Shot 1] has no cut time and every other shot's "At MM:SS.mmm," is its
+      start time in the pass (the timeline's).
+    Warnings: the description's length, spoken lines missing or added, unknown @ names, labels left as written,
+    a [Shot N] count that does not match the pass's shots, cut times moved, a frame guide (pass_guides) not named."""
+    warnings = []
+    out = {key: _prompt.as_text(sections.get(key)).strip() if sections.get(key) is not None else ""
+           for key in _prompt.REF2VA_SECTIONS}
+    for key in _prompt.REF2VA_SECTIONS:
+        found = list(_prompt.SECTION_LABEL.finditer(out[key]))
+        if len(found) >= 2:  # the whole prompt in one key
+            text = out[key]
+            for i, m in enumerate(found):
+                body = text[m.end():found[i + 1].start() if i + 1 < len(found) else len(text)].strip()
+                if m.group(1) == key or not out[m.group(1)].strip():
+                    out[m.group(1)] = body
+        elif len(found) == 1 and found[0].start() == 0 and found[0].group(1) == key:
+            out[key] = out[key][found[0].end():].strip()
+    for key in ("subject_definitions", "summary", "retention_analysis", "detailed_description"):
+        if out[key].strip().lower().rstrip(".") in _EMPTY:
+            out[key] = ""
+    inverse = _label_tokens(build)
+    if inverse:
+        pattern = re.compile("|".join(re.escape(v) for v in sorted(inverse, key=len, reverse=True)))
+        out = {key: pattern.sub(lambda m: inverse[m.group(0)], v) for key, v in out.items()}
+    left = sorted({m.group(0) for v in out.values() for m in _LABEL.finditer(v)})
+    if left:
+        warnings.append("{} left as written (not a reference this pass sends); fixed numbers can point at another "
+                        "reference, so write @ tokens".format(", ".join(left)))
+    out["summary"] = _prompt._strip_task_tags(out["summary"]).strip()
+    if auto.get("subjects"):
+        out["subject_definitions"] = ""
+    if auto.get("retention"):
+        out["retention_analysis"] = ""
+
+    shots = x.get("shots") or []
+    desc = _SHOT_LOOSE.sub(lambda m: "[Shot {}]".format(int(m.group(1))), out["detailed_description"])
+    pre, chunks = _prompt._chunks(desc, _prompt.SHOT_START)
+    if chunks:
+        if shots and len(chunks) == len(shots):
+            numbers = [int(_prompt.SHOT_NUMBER.match(label).group(1)) for label, _ in chunks]
+            if numbers != list(range(1, len(chunks) + 1)):
+                warnings.append("the shots were numbered {} and are numbered from [Shot 1] in the pass".format(
+                    ", ".join("[Shot {}]".format(n) for n in numbers)))
+            moved, lines = [], []
+            for j, (label, chunk) in enumerate(chunks, 1):
+                body = chunk[len(label):].strip()
+                if j == 1:
+                    body = _prompt._drop_cut_lead(body)
+                else:
+                    t = float(shots[j - 1]["t"])
+                    m = _CUT_TIME.match(body)
+                    if m:
+                        said = int(m.group(1)) * 60 + float(m.group(2))
+                        if abs(said - t) > 0.0005:
+                            body = "At {}{}{}".format(spec.fmt_time(t), m.group(3), body[m.end():])
+                            if abs(said - t) > 0.05:
+                                moved.append("[Shot {}] {} -> {}".format(j, spec.fmt_time(said), spec.fmt_time(t)))
+                    else:
+                        body = "At {}, the shot cuts to {}".format(spec.fmt_time(t), _prompt._cut_object(body))
+                lines.append("[Shot {}] {}".format(j, body).strip())
+            if moved:
+                warnings.append("cut times set to the timeline's: " + ", ".join(moved))
+            desc = "\n".join(([pre] if pre else []) + lines)
+        elif shots:
+            warnings.append("the answer has {} [Shot N] line{} for the pass's {} shot{}; they are kept as written".format(
+                len(chunks), "s" if len(chunks) != 1 else "", len(shots), "s" if len(shots) != 1 else ""))
+    elif desc.strip() and shots:
+        warnings.append("the detailed description has no [Shot N] lines")
+    out["detailed_description"] = desc.strip()
+
+    words = len(_prompt.SHOT_NUMBER.sub("", out["detailed_description"]).split())
+    if not words:
+        warnings.append("no detailed description (the shared one is used)")
+    elif words < PASS_WORDS_WARN[0]:
+        warnings.append("the detailed description has {} words; H3's guide asks for {}-{}".format(words, *PASS_WORDS))
+    elif words > PASS_WORDS_WARN[1]:
+        warnings.append("the detailed description has {} words, more than the {}-{} H3's guide asks for".format(
+            words, *PASS_WORDS))
+    said = [_core(s) for s in _spoken(out["detailed_description"])]
+    lines = [_clean_line(d.get("text")) for d in x.get("dialogue") or []]
+    missing = [t for t in lines if _core(t) and not any(_core(t) in s for s in said)]
+    if missing:
+        warnings.append("spoken lines missing or changed: " + " | ".join('"{}"'.format(t) for t in missing))
+    extra = [s for s in _spoken(out["detailed_description"])
+             if _core(s) and not any(_core(t) in _core(s) or _core(s) in _core(t) for t in lines)]
+    if extra:
+        warnings.append("spoken lines that are not this pass's (H3 would say them): " +
+                        " | ".join('"{}"'.format(t) for t in extra))
+    known = set(known or ()) | {_prompt.name_key(key[1:]) for key in (build.get("tag_map") or {}) if key.startswith("@")}
+    unknown = []
+    for v in out.values():
+        for m in _prompt.tag_re().finditer(v):
+            name = m.group(1) or m.group(2)
+            key = _prompt.name_key(name)
+            pos = _prompt.POSSESSIVE.match(name or "")
+            if key not in known and not (pos and _prompt.name_key(pos.group(1)) in known):
+                unknown.append(m.group(0))
+    if unknown:
+        warnings.append("references the scene does not have: " + ", ".join(dict.fromkeys(unknown)))
+    named = {_prompt.name_key(m.group(1) or m.group(2)) for v in out.values() for m in _prompt.tag_re().finditer(v)}
+    for g in guides or ():
+        if _prompt.name_key(g[0][1:]) not in named:
+            warnings.append("the {} {} is not named, so it is only anchored, not sent as a picture".format(g[1], g[0]))
+    return out, warnings
+
+
+async def write_passes(cfg, p, scene, wanted=None, instruction="", progress=None, state=None, plan=None,
+                       builds=None):
+    """Write the six sections of each wanted pass (1-based numbers; None = every pass) of a scene of a normalised
+    project, one request per pass, in order; each request sees the passes written before it in this batch.
+    progress(dict) gets ask()'s events plus pass (number), passes (the scene's count), item / items (place in this
+    batch) and completed (passes done). `state` is filled as the batch goes, so a caller that stops the task still has
+    the passes written so far: {scene_id, pass_count, passes: [{index, start, end, sections}], warnings, tokens, ms};
+    a request that fails after a pass was written ends the batch with error, reason and failed (the pass number)
+    in it, and a warning; one that fails before raises. Returns `state`."""
+    t0 = time.time()
+    state = {} if state is None else state
+    for key, value in (("passes", []), ("warnings", []), ("tokens", 0), ("ms", 0)):
+        state.setdefault(key, value)
+    pr = scene.get("prompt") or {}
+    if pr.get("mode") == "raw":
+        raise ValueError("This scene's prompt is raw text, which every pass gets as it is; switch it to Structured to "
+                         "write each pass")
+    if plan is None or builds is None:
+        plan, builds = scene_builds(p, scene)
+    n = len(plan["passes"])
+    todo = sorted({int(k) for k in wanted}) if wanted else list(range(1, n + 1))
+    bad = [k for k in todo if not 1 <= k <= n]
+    if bad:
+        raise ValueError("pass {} is not in this scene, which is made in {} pass{}".format(
+            ", ".join(str(k) for k in bad), n, "es" if n != 1 else ""))
+    state.update(scene_id=scene["id"], pass_count=n)
+    preset = PRESETS.get(cfg.get("preset"), PRESETS["h3_ref2va"])
+    system = system_prompt(cfg, preset + "\n\n" + PASS_RULES)  # the same for every pass (a server's prefix cache)
+    stored = stored_pass_texts(p, scene, plan)
+    overrides = pr.get("pass_prompts") or {}
+    want = pass_budget(cfg)
+    written = {}
+    for item, k in enumerate(todo, 1):
+        x, b = plan["passes"][k - 1], builds[k - 1]
+        user = pass_request(p, scene, plan, builds, k, written, stored, instruction)
+        step = None
+        if progress:
+            extra = {"pass": k, "passes": n, "item": item, "items": len(todo), "completed": len(state["passes"])}
+            step = (lambda d, e=extra: progress({**d, **e}))
+        info = {}
+        try:
+            secs = await ask(cfg, system, user, parse=_pass_parser(k), max_tokens=want, progress=step, info=info)
+        except (LLMError, NoAnswer) as e:
+            state["tokens"] += int(info.get("tokens") or 0)
+            state["ms"] = int((time.time() - t0) * 1000)
+            if not state["passes"]:
+                raise
+            state.update(error=str(e), reason=e.reason, failed=k)
+            state["warnings"].append("Pass {} was not written: {}".format(k, e))
+            return state
+        state["tokens"] += int(info.get("tokens") or 0)
+        sections, warns = tidy_pass(secs, x, b, pr.get("auto") or {}, k, _scene_tokens(p, scene),
+                                    pass_guides(p, scene, x))
+        override = overrides.get(str(k))
+        if isinstance(override, str) and override.strip():
+            warns.append("its prompt was edited by hand (or by Split), and that prompt is sent instead of these "
+                         "sections; clear it to use them")
+        written[k] = sections
+        state["passes"].append({"index": k, "start": x["start"], "end": x["end"], "sections": sections})
+        state["warnings"] += ["Pass {}: {}".format(k, w) for w in warns]
+        state["ms"] = int((time.time() - t0) * 1000)
+    return state
+
+
 # [OLD 2026-11-03 v0.4.1->v0.4.2] the whole script in one request with max(Max tokens, 6000) tokens and the H3 guides: a long script's answer
 # ran past the budget or the 180 s timeout (see script_part)
 # async def script_to_scenes(cfg, p, script):
@@ -1074,6 +1721,22 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
     #     "character a speaker id S1, S2... Leave timings realistic for the action and lines; when the script gives "
     #     "durations or times, use them.")
     # [/OLD]
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] nothing said how long a shot's text or the summary should be: shots came back as
+    # one short sentence, so each pass of a long scene got 1-2 sentences per shot, far below the 350-500 words of
+    # detailed description H3's guide asks for
+    # lines.append(
+    #     "Return JSON: {\"cast\": [{\"name\", \"kind\": \"character|location|prop\", \"description\", \"speaker\": \"S1\", "
+    #     "\"language\"}], \"scenes\": [{\"title\", \"duration\": seconds (any length), \"summary\", \"soundscape\", \"music\", "
+    #     "\"cast\": [names], \"shots\": [{\"t\": seconds from scene start, \"duration\": seconds, \"camera\", \"text\"}], "
+    #     "\"dialogue\": [{\"speaker\": name, \"t\": seconds, \"text\", \"language\", \"delivery\"}]}]}.\n"
+    #     "In \"cast\" list only characters, locations and props that are not in the existing cast. Give each speaking "
+    #     "character a speaker id S1, S2... Every shot has a duration; a shot's t is the sum of the durations of the shots "
+    #     "before it in the same scene, and the scene's duration is the sum of all its shot durations, so no shot starts "
+    #     "after the scene ends. Leave timings realistic for the action and lines; when the script gives durations or "
+    #     "times, use them (a scene made of several timed rows lasts as long as those rows together).")
+    # [/OLD]
+    # added 2026-11-05 v0.8.0: the same JSON, with 2-4 sentences per shot and the summary as a note on the whole scene
+    # (each pass's own summary and 350-500-word description are written later, by Write prompts: write_passes)
     lines.append(
         "Return JSON: {\"cast\": [{\"name\", \"kind\": \"character|location|prop\", \"description\", \"speaker\": \"S1\", "
         "\"language\"}], \"scenes\": [{\"title\", \"duration\": seconds (any length), \"summary\", \"soundscape\", \"music\", "
@@ -1083,7 +1746,15 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
         "character a speaker id S1, S2... Every shot has a duration; a shot's t is the sum of the durations of the shots "
         "before it in the same scene, and the scene's duration is the sum of all its shot durations, so no shot starts "
         "after the scene ends. Leave timings realistic for the action and lines; when the script gives durations or "
-        "times, use them (a scene made of several timed rows lasts as long as those rows together).")
+        "times, use them (a scene made of several timed rows lasts as long as those rows together).\n"
+        "Each shot's \"text\" is 2-4 English sentences that a video model can film: the composition (shot size, angle, "
+        "foreground and background), each subject's appearance and position in the frame, the action, the camera "
+        "movement (or that the camera holds still) and the sound heard in the shot. Use cast names as written; keep "
+        "spoken words out of \"text\" (they belong in \"dialogue\"). \"camera\" is a few words, such as "
+        "\"Wide · slow push-in\".\n"
+        "Each scene's \"summary\" is a note on the whole scene in 2-4 sentences: setting, time of day and mood, who is "
+        "in it, and what happens from its start to its end. \"soundscape\" is the scene's ambience and physical "
+        "sounds; \"music\" is the score only the audience hears, or empty.")
     lines.append(("Script part:\n" if parts > 1 else "Script:\n") + text)
     user = "\n\n".join(lines)
     icfg = import_cfg(cfg)
@@ -1099,7 +1770,8 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
         return data
 
     info = {}
-    data = await ask(icfg, system_prompt(icfg), user, parse=parse, max_tokens=cfg.get("import_max_tokens", 16384),
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] data = await ask(icfg, system_prompt(icfg), user, parse=parse, max_tokens=cfg.get("import_max_tokens", 16384),
+    data = await ask(icfg, system_prompt(icfg), user, parse=parse, max_tokens=cfg.get("import_max_tokens", IMPORT_MAX_TOKENS),
                      progress=progress, info=info, retry_cut=retry_cut)
     # [OLD 2026-11-03 v0.4.2->v0.4.3] return {"scenes": [s for s in (data.get("scenes") or []) if isinstance(s, dict)],
     # [OLD 2026-11-03 v0.5.1->v0.6.0] wrong types reached the project (a list as a title, text as a time) and /plan failed later
@@ -1150,6 +1822,34 @@ def _items(v):
     return [v]
 
 
+# added 2026-11-05 v0.8.0: a shot answered as separate parts ({"composition", "subject", "action", "sound"}) instead
+# of one "text" is joined in reading order, so none of the 2-4 sentences is lost
+SHOT_PARTS_BEFORE = ("composition", "framing", "subject", "subjects", "appearance", "position")
+SHOT_PARTS_AFTER = ("environment", "lighting", "camera_movement", "movement", "sound", "audio")
+
+
+def _shot_text(sh, body):
+    """The shot's text: `body` (its text, action or description), with the parts written under their own keys before
+    and after it. Without such parts, `body` as it is (the v0.7.0 result). A part of fewer than 3 words (a bare name
+    under "subject") is left out."""
+    def part(key):
+        v = sh.get(key)
+        if not isinstance(v, (str, list)):
+            return ""
+        t = " ".join(_prompt.as_text(v).split())
+        if len(t.split()) < 3 or t in body:
+            return ""
+        return t if t[-1] in ".!?…" else t + "."
+    before = [t for t in (part(k) for k in SHOT_PARTS_BEFORE) if t]
+    after = [t for t in (part(k) for k in SHOT_PARTS_AFTER) if t]
+    if not before and not after:
+        return body
+    main = body.strip()
+    if main and main[-1] not in ".!?…":
+        main += "."
+    return " ".join(x for x in before + [main] + after if x)
+
+
 def coerce_script(data):
     """(scenes, cast, warnings) from a script-import answer, in exactly the shapes the editor reads: text fields are
     text (lists become lines, objects "key: value" lines), times and durations are numbers or left out, shots and
@@ -1195,9 +1895,15 @@ def coerce_script(data):
             if not isinstance(sh, dict):
                 warn("{}, shot {}: not an object, left out".format(where, k))
                 continue
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] one field only: a shot written as "composition", "action", "sound"...
+            # (the parts v0.8.0 asks for) kept only its action
+            # o = {"camera": text(sh.get("camera"), where, "a shot's camera"),
+            #      "text": text(next((sh[x] for x in ("text", "action", "description") if sh.get(x) is not None), ""),
+            #                   where, "a shot's text")}
+            # [/OLD]
             o = {"camera": text(sh.get("camera"), where, "a shot's camera"),
-                 "text": text(next((sh[x] for x in ("text", "action", "description") if sh.get(x) is not None), ""),
-                              where, "a shot's text")}
+                 "text": _shot_text(sh, text(next((sh[x] for x in ("text", "action", "description")
+                                                   if sh.get(x) is not None), ""), where, "a shot's text"))}
             raw_t = next((sh[x] for x in ("t", "time", "start") if sh.get(x) not in (None, "")), None)
             if raw_t is not None:
                 t = _seconds(raw_t)

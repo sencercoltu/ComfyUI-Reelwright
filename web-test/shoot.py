@@ -80,6 +80,17 @@ def main():
         page.wait_for_timeout(500)
         page.screenshot(path=str(SHOTS / "scene_long.png"))
         audit("Scene long")
+        # added 2026-11-05 v0.8.0: a pass tab of the Prompt card, and the shot and dialogue rows
+        page.click("[data-key='ptab-s_07-2']")
+        page.mouse.move(1590, 990)
+        page.wait_for_timeout(400)
+        page.screenshot(path=str(SHOTS / "scene_pass.png"))
+        audit("Scene pass tab")
+        page.evaluate("() => { const c = document.querySelector('.rw-scene-tab .rw-cols'); const card = [...document.querySelectorAll('.rw-card')].find(x => x.querySelector('.rw-card-title')?.textContent === 'Shots'); c.scrollTop += card.getBoundingClientRect().top - c.getBoundingClientRect().top - 8; }")
+        page.wait_for_timeout(300)
+        page.screenshot(path=str(SHOTS / "scene_rows.png"))
+        audit("Scene rows")
+        page.evaluate("document.querySelector('.rw-scene-tab .rw-cols').scrollTop = 0")
 
         page.click(".rw-tab:has-text('Timeline')")
         page.click(".rw-scene:has-text('Insert')")

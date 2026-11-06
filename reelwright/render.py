@@ -23,6 +23,7 @@ import comfy.samplers
 import comfy.utils
 import folder_paths
 import latent_preview
+import node_helpers  # added 2026-11-05 v0.8.0: the latent hand-off adds its guide to the conditioning itself
 import nodes
 # [OLD 2026-11-03 v0.5.1->v0.6.0] imported at load time: without the H3 nodes the whole extension failed to load
 # from comfy_extras.nodes_audio import vae_decode_audio
@@ -47,6 +48,7 @@ from . import assemble, cache, continuity, jobs, media, merge, spec  # jobs: add
 # [OLD 2026-11-03 v0.5.1->v0.6.0] from .analysis import analyze
 # [OLD 2026-11-03 v0.6.0 review] from .analysis import _take_meta, analyze, continues, rekey
 from .analysis import _take_meta, analyze, continues, rekey, short_upstream_tail  # added 2026-11-03 v0.6.0 review
+from .analysis import drift_metrics, long_settings  # added 2026-11-05 v0.8.0: drift meter, Global -> Long scenes
 from .model import project_index, slugify  # slugify: added 2026-11-02 v0.2.0 for take file names
 from .storage import check_slug, write_json  # added 2026-11-03 v0.6.0
 
@@ -57,6 +59,8 @@ TAIL_FRAMES = spec.MIN_PASS_FRAMES  # tail.mp4: the last 124 frames of the scene
 SEED_STEP = 1000003                 # seed offset between takes (unchanged from v0.5.1)
 REF_MAX_FRAMES = int(spec.REF_MEDIA_MAX_SECONDS * spec.FPS)  # at most 15 s of a reference video is decoded
 MAX_VARIANTS = 8
+# added 2026-11-05 v0.8.0: the Global -> Long scenes choices a take records (take["long"])
+LONG_TAKE_KEYS = ("guide_vae", "carry_audio", "seam_video_ref", "handoff", "pass_cache")
 
 
 def h3_available():
@@ -97,6 +101,102 @@ def fit_clip(frame_idx, clip_frames, gen_frames, role="keyframe"):
     return idx, 0, n
 
 
+# ---- long-scene continuity (added 2026-11-05 v0.8.0) ----------------------------------------------------------------
+FOOTAGE_SOURCES = ("prev_scene_last", "prev_scene_tail", "prev_pass_tail")  # guides made from footage (drift meter)
+
+
+def guide_count(n):
+    """Frames MiniMaxH3AddGuide anchors of an n-frame image batch: 1 below 5, else the largest 17k+5 <= n."""
+    n = int(n)
+    return 1 if n < 5 else spec.align_frames_down(n)
+
+
+def latent_count(frames):
+    """Video latents of a 17k+5-frame clip in the H3 VAE: 5k+2 (2 for 5 frames)."""
+    return (int(frames) - 5) // 17 * 5 + 2
+
+
+def latent_frames(t):
+    """Frames of a video latent with t latents (FRAME_PER_TOKEN 1, 4, 4, 4, 4 per block of 5)."""
+    return sum((1, 4, 4, 4, 4)[k % 5] for k in range(int(t)))
+
+
+def latent_guide(g, latent, prev_latent):
+    """The latent hand-off of an overlap guide g (source prev_pass_tail): (the pass before's last latents, None), or
+    (None, why not). Valid only when they are exactly what encoding the overlap frames would give the same latent
+    slots:
+    - the H3 video VAE encodes every 17-frame chunk on its own (causal inside the chunk: the chunk's first latent holds
+      1 frame, the next four hold 4 each; a 5-frame tail chunk keeps 2 latents) and keeps no state between chunks;
+    - a pass has 17m+5 frames and the overlap 17j+5, so the overlap starts on a chunk boundary of the pass before
+      (frame 17(m-j)) and its 5j+2 latents are exactly the pass before's last 5j+2;
+    - an overlap that is not 17j+5 frames would start inside a chunk, where the pass before has no latent that begins
+      with a 1-frame "first" latent (the causal first-latent problem), and the canvas sizes must match.
+    prev_latent: {"video": [1, 24, T, h, w] the pass before's last T latents, "gen_frames": its frames} or None."""
+    if prev_latent is None or prev_latent.get("video") is None:
+        return None, "no latents of the pass before (it came from the pass cache without them)"
+    k = int(g.get("frames") or 0)
+    if k < 5 or k % 17 != 5:
+        return None, "the overlap is {} frames, not 17k+5".format(k)
+    gen = int(prev_latent.get("gen_frames") or 0)
+    if gen < k or gen % 17 != 5:
+        return None, "the pass before has {} frames, not 17m+5 of at least the overlap".format(gen)
+    if int(g.get("frame_idx") or 0) != 0:
+        return None, "the guide is not at frame 0"
+    lat = prev_latent["video"]
+    need = latent_count(k)
+    samples = latent.get("samples") if isinstance(latent, dict) else None
+    if samples is None or not getattr(samples, "is_nested", False) or len(samples.tensors) != 2:
+        return None, "the pass's latent is not a MiniMax H3 AV latent"
+    video = samples.tensors[0]
+    if getattr(lat, "ndim", 0) != 5 or video.ndim != 5 or lat.shape[2] < need:
+        return None, "fewer latents of the pass before were kept than the overlap needs"
+    if lat.shape[1] != video.shape[1] or tuple(lat.shape[3:]) != tuple(video.shape[3:]):
+        return None, "the pass before has another canvas size"
+    if k > latent_frames(video.shape[2]):
+        return None, "the overlap is longer than the pass"
+    return lat[:, :, lat.shape[2] - need:].clone(), None
+
+
+def add_latent_guide(positive, frame_idx, lat):
+    """What MiniMaxH3AddGuide adds for a picture guide, with the latent given instead of VAE-encoded: a keyframe
+    {resolved_frame_index, latent} appended to the conditioning's minimax_keyframes. A sound guide at the same frame
+    is a second keyframe right after it (the packed layout is the same as one keyframe with both)."""
+    keyframes = list(positive[0][1].get("minimax_keyframes", []))
+    keyframes.append({"resolved_frame_index": int(frame_idx), "latent": lat})
+    return node_helpers.conditioning_set_values(positive, {"minimax_keyframes": keyframes})
+
+
+def save_handoff(path, handoff):
+    """The last latents of a pass ({"video": tensor, "gen_frames": n}) next to its pass cache file, written through a
+    temporary name (safetensors, no pickle)."""
+    from safetensors.torch import save_file
+    tmp = "{}.{}.partial".format(path, os.getpid())
+    try:
+        save_file({"video": handoff["video"].detach().to("cpu").contiguous()}, tmp,
+                  metadata={"gen_frames": str(int(handoff["gen_frames"]))})
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def load_handoff(path):
+    """save_handoff's latents, or None when the file is missing or unreadable."""
+    if not os.path.isfile(path):
+        return None
+    try:
+        from safetensors import safe_open
+        with safe_open(path, framework="pt") as f:
+            meta = f.metadata() or {}
+            return {"video": f.get_tensor("video"), "gen_frames": int(meta.get("gen_frames") or 0)}
+    except Exception as e:  # noqa: BLE001 - the hand-off falls back to the decoded frames
+        log.warning("Reelwright: latent hand-off file %s is unreadable (%s)", path, e)
+        return None
+
+
 def _names_code(message, code):
     """added 2026-11-04 v0.6.1: does the message name this asset code as a whole word ("A1" is not in "A10")?"""
     return bool(code) and re.search(r"(?<![\w@]){}(?!\w)".format(re.escape(str(code))), message) is not None
@@ -122,6 +222,20 @@ def _err(e):
     return (str(e) or type(e).__name__).strip()[-600:]
 
 
+def check_guide_vae(vae, name):
+    """added 2026-11-05 v0.8.0: a guide VAE must load as the MiniMax H3 video VAE and have an encoder; anything else
+    would put its latents in another space. Objects without first_stage_model (test stubs) are not checked."""
+    fsm = getattr(vae, "first_stage_model", None)
+    if fsm is None:
+        return
+    if type(fsm).__name__ != "MiniMaxH3VideoVAE":
+        raise RuntimeError("The guide VAE {} is not a MiniMax H3 video VAE ({}). Pick a variant of the H3 video VAE in "
+                           "Global -> Long scenes, or leave it on the video VAE.".format(name, type(fsm).__name__))
+    if getattr(fsm, "encoder", None) is None:
+        raise RuntimeError("The guide VAE {} has no encoder (a decoder-only file). Pick an H3 video VAE file that "
+                           "has one.".format(name))
+
+
 class Models:
     """Loads each model once per run and applies LoRA stacks."""
 
@@ -143,6 +257,19 @@ class Models:
         if name not in self.vaes:
             self.vaes[name] = nodes.VAELoader().load_vae(name)[0]
         return self.vaes[name]
+
+    def encoder_vae(self, settings, guide_vae=""):
+        """added 2026-11-05 v0.8.0: the VAE that encodes a pass's references, guides and continuation clips: Global ->
+        Long scenes -> guide VAE when it is set and is not the scene's video VAE, else the video VAE (wired or file).
+        Loaded once per run through the same cache. It must be a MiniMax H3 video VAE with an encoder (the full file,
+        the int8 one, a LightVAE/encoder-only variant): the same latent space the video VAE decodes."""
+        name = str(guide_vae or "")
+        if not name or name == settings["video_vae"]:
+            return self.vae(settings["video_vae"], "vae")
+        vae = self.vae(name, None)
+        check_guide_vae(vae, name)
+        return vae
+
 
     def model(self, settings):
         loras = tuple(settings["loras"])
@@ -268,6 +395,10 @@ class Renderer:
         self.memory = self.p["global"]["memory"]
         self.run_id = None  # added 2026-11-03 v0.6.0
         self.target_set = set()  # added 2026-11-03 v0.6.0: scenes this run renders
+        # added 2026-11-05 v0.8.0: Global -> Long scenes (guide VAE, carry_audio, seam_video_ref, handoff, pass_cache)
+        self.long = long_settings(self.p)
+        self.footage = []  # added 2026-11-05 v0.8.0: [(source, frame_idx, frames)] the last guide() anchored footage with
+        self.handoff_notes = []  # added 2026-11-05 v0.8.0: [(source, mode, reason)] of the last guide()
 
     # ---- helpers (added 2026-11-03 v0.6.0) ------------------------------------
     def label(self, sid):
@@ -420,10 +551,20 @@ class Renderer:
                                                              else self._asset_path(a["asset"]),
                                                              max_seconds=spec.REF_MEDIA_MAX_SECONDS)
                   for k, a in enumerate(b["audios"])}
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] the video VAE always encoded the references
+        # out = MiniMaxH3ReferenceToVideo.execute(
+        #     clip=self.models.clip(st), prompt=b["prompt"], width=st["width"], height=st["height"],
+        #     length=x["gen_frames"], ref_image_size=st["ref_image_size"],
+        #     vae=self.models.vae(st["video_vae"], "vae"), audio_vae=self.models.vae(st["audio_vae"], "audio_vae"),
+        #     ref_images=images or None, ref_videos=videos or None,
+        #     ref_video_audios=video_audios or None, ref_audios=audios or None)
+        # [/OLD]
+        # added 2026-11-05 v0.8.0: the guide VAE (Global -> Long scenes) encodes them when it is set
         out = MiniMaxH3ReferenceToVideo.execute(
             clip=self.models.clip(st), prompt=b["prompt"], width=st["width"], height=st["height"],
             length=x["gen_frames"], ref_image_size=st["ref_image_size"],
-            vae=self.models.vae(st["video_vae"], "vae"), audio_vae=self.models.vae(st["audio_vae"], "audio_vae"),
+            vae=self.models.encoder_vae(st, self.long["guide_vae"]),
+            audio_vae=self.models.vae(st["audio_vae"], "audio_vae"),
             ref_images=images or None, ref_videos=videos or None,
             ref_video_audios=video_audios or None, ref_audios=audios or None)
         positive, latent = out.result
@@ -460,7 +601,8 @@ class Renderer:
             path = self.store.output_path(rel)
             if not os.path.isfile(path):
                 continue
-            image, audio = media.load_video(path, last_frames=frames)
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] image, audio = media.load_video(path, last_frames=frames)
+            image, audio = media.load_video(path, last_frames=frames, exact=True)  # v0.8.0: a lossless tail exactly
             if image.shape[0] >= frames:
                 break
         if image is None:
@@ -487,7 +629,8 @@ class Renderer:
                 path = None
             if not path or not os.path.isfile(path):
                 continue
-            image, audio = media.load_video(path, last_frames=TAIL_FRAMES)
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] image, audio = media.load_video(path, last_frames=TAIL_FRAMES)
+            image, audio = media.load_video(path, last_frames=TAIL_FRAMES, exact=True)  # v0.8.0: lossless tails exactly
             if best is None or image.shape[0] > best[0].shape[0]:
                 best = (image, audio)
             if image.shape[0] >= TAIL_FRAMES:
@@ -595,11 +738,54 @@ class Renderer:
     #             image=image, audio=audio if g.get("audio") else None).result[0]
     #     return positive
     # [/OLD]
-    def guide(self, scene, sr, n, positive, latent, prev_pass, upstream=None):
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] the video VAE encoded every guide, the overlap guide was always decoded
+    # pixels re-encoded, and the drift meter had nothing to measure
+    # def guide(self, scene, sr, n, positive, latent, prev_pass, upstream=None):
+    #     st = sr["settings"]
+    #     vae = self.models.vae(st["video_vae"], "vae")
+    #     avae = self.models.vae(st["audio_vae"], "audio_vae")
+    #     x = sr["plan"]["passes"][n]
+    #     for g in sr["builds"][n]["guides"]:
+    #         image, audio = None, None
+    #         frame_idx = g["frame_idx"]
+    #         if g["source"] == "prev_scene_last":
+    #             take = upstream or self._upstream_take(sr["index"])
+    #             image = media.load_image(self.store.output_path(take["files"]["last"]))
+    #         elif g["source"] == "prev_scene_tail":
+    #             take = upstream or self._upstream_take(sr["index"])
+    #             image, audio = self._upstream_tail(take, int(g["frames"]))
+    #         elif g["source"] == "prev_pass_tail":
+    #             frames, aud = prev_pass
+    #             image = frames[-g["frames"]:]
+    #             if aud is not None:
+    #                 dur = aud["waveform"].shape[-1] / aud["sample_rate"]
+    #                 audio = media.slice_audio(aud, dur - g["frames"] / spec.FPS, dur)
+    #         elif g["type"] == "image":
+    #             image = media.load_image(self._asset_path(g["asset"]))
+    #         else:
+    #             clip, _ = media.load_video(self._asset_path(g["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS,
+    #                                        max_frames=REF_MAX_FRAMES)
+    #             frame_idx, first, count = fit_clip(g["frame_idx"], clip.shape[0], x["gen_frames"],
+    #                                                self._guide_role(sr, n, g))
+    #             image = clip[first:first + count]
+    #         positive = MiniMaxH3AddGuide.execute(
+    #             positive=positive, latent=latent, frame_idx=frame_idx, vae=vae,
+    #             audio_vae=avae if (g.get("audio") and audio is not None) else None,
+    #             image=image, audio=audio if g.get("audio") else None).result[0]
+    #     return positive
+    # [/OLD]
+    # added 2026-11-05 v0.8.0: guide VAE, latent hand-off, carry_audio (through the build's guide "audio"), drift record
+    def guide(self, scene, sr, n, positive, latent, prev_pass, upstream=None, prev_latent=None):
+        """Anchor the pass's guides with MiniMaxH3AddGuide (the guide VAE encodes them, Global -> Long scenes).
+        With handoff "latent", the guide a pass after an overlap seam gets from the pass before is prev_latent's last
+        latents (_latent_guide; no decode -> encode), its sound (when carried) still goes through AddGuide; when the
+        latents can't be used it falls back to the decoded frames. Sets self.footage [(source, frame_idx, frames
+        anchored)] for the drift meter and self.handoff_notes [{source, mode, reason?}]."""
         st = sr["settings"]
-        vae = self.models.vae(st["video_vae"], "vae")
+        vae = self.models.encoder_vae(st, self.long["guide_vae"])
         avae = self.models.vae(st["audio_vae"], "audio_vae")
         x = sr["plan"]["passes"][n]
+        self.footage, self.handoff_notes = [], []
         for g in sr["builds"][n]["guides"]:
             image, audio = None, None
             frame_idx = g["frame_idx"]
@@ -615,6 +801,20 @@ class Renderer:
                 if aud is not None:
                     dur = aud["waveform"].shape[-1] / aud["sample_rate"]
                     audio = media.slice_audio(aud, dur - g["frames"] / spec.FPS, dur)
+                if self.long["handoff"] == "latent":
+                    lat, why = latent_guide(g, latent, prev_latent)
+                    if lat is not None:
+                        positive = add_latent_guide(positive, frame_idx, lat)
+                        if g.get("audio") and audio is not None:  # the sound is not handed off as latents
+                            positive = MiniMaxH3AddGuide.execute(
+                                positive=positive, latent=latent, frame_idx=frame_idx, vae=None, audio_vae=avae,
+                                image=None, audio=audio).result[0]
+                        self.footage.append((g["source"], frame_idx, image[:guide_count(image.shape[0])]))
+                        self.handoff_notes.append({"source": g["source"], "mode": "latent"})
+                        continue
+                    log.info("Reelwright: %s pass %d: latent hand-off not possible (%s); using the decoded frames",
+                             self.label(self.p["scenes"][sr["index"]]["id"]), n + 1, why)
+                    self.handoff_notes.append({"source": g["source"], "mode": "pixels", "reason": why})
             elif g["type"] == "image":
                 image = media.load_image(self._asset_path(g["asset"]))
             else:
@@ -627,6 +827,8 @@ class Renderer:
                 positive=positive, latent=latent, frame_idx=frame_idx, vae=vae,
                 audio_vae=avae if (g.get("audio") and audio is not None) else None,
                 image=image, audio=audio if g.get("audio") else None).result[0]
+            if g["source"] in FOOTAGE_SOURCES:
+                self.footage.append((g["source"], frame_idx, image[:guide_count(image.shape[0])]))
         return positive
 
     def missing_models(self, targets):
@@ -641,6 +843,10 @@ class Renderer:
             for name, _ in st["loras"]:
                 if name not in folder_paths.get_filename_list("loras"):
                     missing.add("loras/" + name)
+        # added 2026-11-05 v0.8.0: Global -> Long scenes -> guide VAE
+        gv = str(self.long.get("guide_vae") or "")
+        if targets and gv and gv not in folder_paths.get_filename_list("vae"):
+            missing.add("vae/{} (the guide VAE)".format(gv))
         return sorted(missing)
 
     # ---- pre-flight (added 2026-11-03 v0.6.0) -------------------------------
@@ -1082,7 +1288,8 @@ class Renderer:
 
     def _load_pass_file(self, path, x):
         try:
-            frames, audio = media.load_video(path)
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] frames, audio = media.load_video(path)
+            frames, audio = media.load_video(path, exact=True)  # added 2026-11-05 v0.8.0: a lossless pass exactly
         except Exception as e:  # noqa: BLE001 - a damaged cache file is rendered again
             log.warning("Reelwright: pass cache file %s is unreadable (%s); rendering the pass again", path, e)
             return None
@@ -1121,8 +1328,20 @@ class Renderer:
                 return path
         return None
 
-    def _save_pass(self, path, frames, audio, meta):
-        media.save_video_atomic(frames, audio, path, crf=media.PASS_CRF)
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] always CRF 4, no latents kept
+    # def _save_pass(self, path, frames, audio, meta):
+    #     media.save_video_atomic(frames, audio, path, crf=media.PASS_CRF)
+    #     write_json(path[:-4] + ".json", meta)  # written last: a pass counts once both files exist
+    # [/OLD]
+    def _save_pass(self, path, frames, audio, meta, handoff=None):
+        """added 2026-11-05 v0.8.0: Global -> Long scenes -> pass cache "lossless" writes the pass losslessly
+        (media.save_video_lossless); `handoff` (the pass's last latents for the next pass's latent hand-off) is kept as
+        <file key>.latent.safetensors, so a pass read back from the cache hands off the same latents."""
+        lossless = self.long["pass_cache"] == "lossless"
+        media.save_video_atomic(frames, audio, path, crf=media.PASS_CRF, lossless=lossless)
+        if handoff is not None:
+            save_handoff(path[:-4] + ".latent.safetensors", handoff)
+        meta = dict(meta, codec="lossless" if lossless else "near_lossless")
         write_json(path[:-4] + ".json", meta)  # written last: a pass counts once both files exist
 
     def _clean_stale(self, sid):
@@ -1160,9 +1379,81 @@ class Renderer:
             except OSError:
                 pass
 
+    # ---- long-scene continuity (added 2026-11-05 v0.8.0) --------------------------------------------------------
+    def _handoff_need(self, nxt):
+        """Latents the latent guide of pass `nxt` takes from the pass before (5j+2 for a 17j+5-frame overlap), 0 when
+        the hand-off is off or nxt is not joined by an overlap seam."""
+        if self.long["handoff"] != "latent" or not nxt or nxt.get("seam_before") != "overlap":
+            return 0
+        ov = int(nxt.get("overlap_frames") or 0)
+        return latent_count(ov) if ov >= 5 and ov % 17 == 5 else 0
+
+    def _drift(self, n, frames):
+        """Drift entries of pass n (0-based) just generated: each footage guide guide() anchored (self.footage)
+        against the frames the pass made at the same positions."""
+        out = []
+        modes = {h["source"]: h for h in self.handoff_notes or []}
+        for source, idx, guide in self.footage or []:
+            idx, k = int(idx), int(guide.shape[0])
+            try:
+                if tuple(guide.shape[1:3]) != tuple(frames.shape[1:3]):  # another size (an upstream scene's override):
+                    # compared at this pass's size, centre-cropped as MiniMaxH3AddGuide fits it
+                    guide = comfy.utils.common_upscale(guide[..., :3].movedim(-1, 1), int(frames.shape[2]),
+                                                       int(frames.shape[1]), "bilinear", "center").movedim(1, -1)
+                m = drift_metrics(guide, frames[idx:idx + k])
+            except Exception as e:  # noqa: BLE001 - a meter must never stop a render
+                log.warning("Reelwright: drift of pass %d not measured: %s", n + 1, e)
+                continue
+            if not m:
+                continue
+            entry = {"pass": n + 1, "source": source}
+            entry.update(m)
+            if source == "prev_pass_tail":
+                h = modes.get(source) or {"mode": "pixels"}
+                entry["handoff"] = h["mode"]
+                if h.get("reason"):
+                    entry["handoff_reason"] = h["reason"]
+            out.append(entry)
+        self.footage, self.handoff_notes = [], []
+        return out
+
+    def _cached_drift(self, cpath, sr, n, frames, prev_pass):
+        """Drift entries of pass n read from the pass cache: the ones stored when it was rendered, else (an older
+        cache file) measured now against the end of the pass before when it continues from it."""
+        try:
+            with open(cpath[:-4] + ".json", encoding="utf-8") as f:
+                stored = json.load(f).get("drift")
+            if isinstance(stored, list):
+                return [dict(e, pass_cache=True) for e in stored if isinstance(e, dict)]
+        except (OSError, ValueError, AttributeError):
+            pass
+        out = []
+        for g in sr["builds"][n].get("guides") or []:
+            if g.get("source") != "prev_pass_tail" or not prev_pass:
+                continue
+            k = guide_count(min(int(g.get("frames") or 0), int(prev_pass[0].shape[0])))
+            m = drift_metrics(prev_pass[0][-int(g["frames"]):][:k], frames[:k]) if k else None
+            if m:
+                out.append(dict(m, **{"pass": n + 1, "source": "prev_pass_tail", "pass_cache": True}))
+        return out
+
+    def _tail_from_pass(self, x, frames, audio):
+        """The last 124 frames (and sound) of the scene from its last pass in memory, when they all lie past the
+        part the stitch blends with the pass before (the overlap); else None (the tail is read from the joined
+        video)."""
+        ko = int(x["keep_out_frames"])
+        start = int(x["overlap_frames"]) if x.get("seam_before") == "overlap" else int(x["keep_in_frames"])
+        if ko - max(start, int(x["keep_in_frames"])) < TAIL_FRAMES or frames.shape[0] < ko:
+            return None
+        a = media.slice_audio(audio, (ko - TAIL_FRAMES) / spec.FPS, ko / spec.FPS) if audio is not None else None
+        return frames[ko - TAIL_FRAMES:ko].clone(), a
+
     # ---- one take ----------------------------------------------------------
-    def _generate(self, sid, scene, sr, n, encoded, keep_encoded, prev_pass, upstream, seed):
-        """Encode (unless done already), guide, sample and decode one pass: (frames, audio)."""
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] def _generate(self, sid, scene, sr, n, encoded, keep_encoded, prev_pass, upstream, seed):
+    def _generate(self, sid, scene, sr, n, encoded, keep_encoded, prev_pass, upstream, seed, prev_latent=None):
+        """Encode (unless done already), guide, sample and decode one pass: (frames, audio, video latent).
+        added 2026-11-05 v0.8.0: prev_latent (the pass before's last latents, for the latent hand-off) and the sampled
+        video latent [1, 24, T, h, w] as a third value (None when the latent is not an H3 AV latent)."""
         st = sr["settings"]
         n_pass = len(sr["plan"]["passes"])
         if (sid, n) in encoded:
@@ -1171,7 +1462,8 @@ class Renderer:
             self.progress(sid, n + 1, n_pass, "encode")
             # [OLD 2026-11-05 v0.6.1->v0.7.0] positive, latent = self.encode(scene, sr, n)
             positive, latent = self.encode(scene, sr, n, upstream, prev_pass)  # v0.7.0: for the continuation ref
-        positive = self.guide(scene, sr, n, positive, latent, prev_pass, upstream)
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] positive = self.guide(scene, sr, n, positive, latent, prev_pass, upstream)
+        positive = self.guide(scene, sr, n, positive, latent, prev_pass, upstream, prev_latent)
         model = self.models.model(st)
         last_sent = [0.0]
         last_preview = [0.0]  # added 2026-11-02 v0.3.5
@@ -1201,8 +1493,13 @@ class Renderer:
         self.progress(sid, n + 1, n_pass, "decode")
         frames = nodes.VAEDecode().decode(self.models.vae(st["video_vae"], "vae"), samples)[0]
         audio = vae_decode_audio(self.models.vae(st["audio_vae"], "audio_vae"), samples)
-        del samples
-        return frames, audio
+        # added 2026-11-05 v0.8.0: the sampled video latent (render_scene keeps its end for a latent hand-off)
+        lat = samples.get("samples") if isinstance(samples, dict) else None
+        video_latent = lat.tensors[0] if getattr(lat, "is_nested", False) and len(lat.tensors) == 2 else None
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] del samples
+        del samples, lat
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] return frames, audio
+        return frames, audio, video_latent
 
     # [OLD 2026-11-03 v0.5.1->v0.6.0] finished passes were thrown away on Stop or failure, the tail kept
     # max(60, overlap) frames of the last pass only, a drift retake was starred even when it scored worse,
@@ -1363,9 +1660,15 @@ class Renderer:
         t0 = time.time()
         prev_pass, first, tail = None, None, None
         pass_files, sampled, from_cache = [], 0, 0
+        # added 2026-11-05 v0.8.0: latent hand-off, drift meter, lossless tail from memory
+        lossless = self.long["pass_cache"] == "lossless"
+        prev_latent, drift, tail_mem = None, [], None
         for n, x in enumerate(plan["passes"]):
             mm.throw_exception_if_processing_interrupted()
             cpath = os.path.join(pdir, tp["file_keys"][n] + ".mp4")
+            nxt = plan["passes"][n + 1] if n + 1 < n_pass else None  # added 2026-11-05 v0.8.0 (was set further down)
+            need = self._handoff_need(nxt)  # added 2026-11-05 v0.8.0: latents the next pass's latent guide takes
+            keep_lat = None  # added 2026-11-05 v0.8.0
             hit = self._load_pass(cpath, x, st) if cacheable else None
             if hit is None and cacheable:  # a pass an older take kept in its own folder
                 legacy = self._legacy_pass(sid, n, tp)
@@ -1381,16 +1684,32 @@ class Renderer:
                     encoded.pop((sid, n), None)
                 from_cache += 1
                 self.progress(sid, n + 1, n_pass, "reuse", message="pass {} from the pass cache".format(n + 1))
+                # added 2026-11-05 v0.8.0: the drift it was rendered with, and its kept latents for a latent hand-off
+                drift += self._cached_drift(cpath, sr, n, frames, prev_pass)
+                keep_lat = load_handoff(cpath[:-4] + ".latent.safetensors") if need else None
             else:
-                frames, audio = self._generate(sid, scene, sr, n, encoded, keep_encoded, prev_pass, upstream,
-                                               tp["seeds"][n])
+                # [OLD 2026-11-05 v0.7.0->v0.8.0] frames, audio = self._generate(sid, scene, sr, n, encoded, keep_encoded, prev_pass, upstream,
+                # [OLD 2026-11-05 v0.7.0->v0.8.0]                                tp["seeds"][n])
+                frames, audio, lat_full = self._generate(sid, scene, sr, n, encoded, keep_encoded, prev_pass, upstream,
+                                                         tp["seeds"][n], prev_latent)
                 sampled += int(x["gen_frames"])
+                pass_drift = self._drift(n, frames)  # added 2026-11-05 v0.8.0
+                drift += pass_drift
+                if need and lat_full is not None and lat_full.ndim == 5 and lat_full.shape[2] >= need:
+                    keep_lat = {"video": lat_full[:, :, lat_full.shape[2] - need:].clone(),
+                                "gen_frames": int(x["gen_frames"])}
+                del lat_full
                 if cacheable:
                     self.progress(sid, n + 1, n_pass, "save")
+                    # [OLD 2026-11-05 v0.7.0->v0.8.0] self._save_pass(cpath, frames, audio, {
+                    # [OLD 2026-11-05 v0.7.0->v0.8.0]     "key": tp["file_keys"][n], "pass_key": tp["pass_keys"][n], "scene_id": sid, "pass": n + 1,
+                    # [OLD 2026-11-05 v0.7.0->v0.8.0]     "seed": tp["seeds"][n], "frames": int(x["gen_frames"]), "width": st["width"],
+                    # [OLD 2026-11-05 v0.7.0->v0.8.0]     "height": st["height"], "created": int(time.time())})
                     self._save_pass(cpath, frames, audio, {
                         "key": tp["file_keys"][n], "pass_key": tp["pass_keys"][n], "scene_id": sid, "pass": n + 1,
                         "seed": tp["seeds"][n], "frames": int(x["gen_frames"]), "width": st["width"],
-                        "height": st["height"], "created": int(time.time())})
+                        "height": st["height"], "created": int(time.time()),
+                        "drift": pass_drift}, handoff=keep_lat)  # added 2026-11-05 v0.8.0
             if cacheable:
                 pass_files.append(cpath)
             kept, kept_audio = media.trim(frames, audio, x["keep_in_frames"], x["keep_out_frames"])
@@ -1403,7 +1722,11 @@ class Renderer:
                 tail = (kept[-TAIL_FRAMES:].clone(),
                         media.slice_audio(kept_audio, max(0, k - TAIL_FRAMES) / spec.FPS, k / spec.FPS)
                         if kept_audio is not None else None)
-            nxt = plan["passes"][n + 1] if n + 1 < n_pass else None
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] nxt = plan["passes"][n + 1] if n + 1 < n_pass else None  (set at the top now)
+            # added 2026-11-05 v0.8.0: a lossless tail from the last pass in memory when its unblended end holds it
+            if lossless and n_pass > 1 and nxt is None:
+                tail_mem = self._tail_from_pass(x, frames, audio)
+            prev_latent = keep_lat  # added 2026-11-05 v0.8.0: the latent hand-off for the next pass, or None
             # [OLD 2026-11-05 v0.6.1->v0.7.0] only the overlap was kept
             # prev_pass = (frames[-nxt["overlap_frames"]:].clone(), audio) \
             #     if nxt and nxt["seam_before"] == "overlap" else None
@@ -1417,16 +1740,24 @@ class Renderer:
 
         if n_pass > 1:
             self.progress(sid, n_pass, n_pass, "save", message="joining {} passes".format(n_pass))
-            segs = assemble.pass_segments(plan, pass_files, self.p["global"]["long"]["crossfade_frames"])
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] segs = assemble.pass_segments(plan, pass_files, self.p["global"]["long"]["crossfade_frames"])
+            # added 2026-11-05 v0.8.0: carry_audio off crossfades the sound over the whole overlap
+            segs = assemble.pass_segments(plan, pass_files, self.p["global"]["long"]["crossfade_frames"],
+                                          carry_audio=bool(self.long["carry_audio"]))
             # Stop kills ffmpeg (merge.run_ffmpeg polls cancel, which raises ComfyUI's interrupt)
             merge.join(segs, video_path, st["width"], st["height"], audio_fade_frames=0,
                        cancel=lambda: mm.throw_exception_if_processing_interrupted() or False)
-            tail = media.load_video(video_path, last_frames=TAIL_FRAMES)  # across the seams, as the cut shows it
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] tail = media.load_video(video_path, last_frames=TAIL_FRAMES)  # across the seams, as the cut shows it
+            # added 2026-11-05 v0.8.0: with a lossless pass cache, from the last pass in memory when it holds 124
+            # frames past its seam; else across the seams, as the cut shows it
+            tail = tail_mem or media.load_video(video_path, last_frames=TAIL_FRAMES)
         media.frame_to_png(first[0], os.path.join(tdir, "first.png"))
         tail_frames, tail_audio = tail
         media.frame_to_png(tail_frames[-1], os.path.join(tdir, "last.png"))
-        media.save_video(tail_frames, tail_audio, os.path.join(tdir, "tail.mp4"), crf=media.PASS_CRF)
-        del tail, tail_frames, tail_audio
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] media.save_video(tail_frames, tail_audio, os.path.join(tdir, "tail.mp4"), crf=media.PASS_CRF)
+        media.save_video(tail_frames, tail_audio, os.path.join(tdir, "tail.mp4"), crf=media.PASS_CRF,
+                         lossless=lossless)  # added 2026-11-05 v0.8.0: Global -> Long scenes -> pass cache
+        del tail, tail_frames, tail_audio, tail_mem
 
         rel = lambda name: self.store.rel_output(os.path.join(tdir, name))  # noqa: E731
         take = {
@@ -1443,6 +1774,9 @@ class Renderer:
             "prompts": sr["prompts"], "generated_frames": sum(int(x["gen_frames"]) for x in plan["passes"]),
             "sampled_frames": sampled, "cached_passes": from_cache,
             "width": st["width"], "height": st["height"], "steps": st["steps"], "face_score": None,
+            # added 2026-11-05 v0.8.0: drift meter per continuing pass (analysis.drift_metrics) and the long-scene
+            # choices the take was made with
+            "drift": drift, "long": {k: self.long.get(k) for k in LONG_TAKE_KEYS},
         }
         if self.p["global"]["continuity"]["face_check"] and continuity.available():
             # an optional check must not throw away a finished take

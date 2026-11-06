@@ -638,3 +638,14 @@ def test_scene_with_no_frame_of_its_own_is_left_out(harbor, store, roots, tmp_pa
     p["scenes"] = p["scenes"][:3]
     out = assemble.merge_project(analyze(p, store), store)
     assert frame_count(store.output_path(out["files"]["video"])) == round(out["duration"] * 24) == 7
+
+
+def test_subtitle_cue_uses_a_lines_own_duration():
+    """added 2026-11-06 v0.8.0: a dialogue line with a duration is shown that long (clipped by the next line)."""
+    e = [{"start": 0.0, "src_in": 0.0, "src_out": 10.0, "dialogue": [
+        {"t": 1.0, "text": "Hi there", "speaker": "S1"},
+        {"t": 2.0, "text": "Long line here", "duration": 6.5},
+        {"t": 9.5, "text": "x", "duration": None}]}]
+    cues = merge.subtitle_cues(e)
+    assert cues[1] == (2.0, 8.5, "Long line here")
+    assert abs(cues[0][1] - 1.95) < 1e-9  # reading time, cut before the next line

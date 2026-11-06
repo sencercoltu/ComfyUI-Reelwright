@@ -196,6 +196,18 @@ def frame_timeline(segments):
     return rows, cur_f
 
 
+def _audio_lead(seg, k):
+    """added 2026-11-05 v0.8.0: whole frames a segment's sound starts before its picture (its "audio_lead_frames"), at
+    most its in-point; 0 for the first segment, a slate, a muted or silent segment."""
+    if k <= 0 or not seg.get("path") or seg.get("mute") or not seg.get("has_audio", True):
+        return 0
+    try:
+        lead = int(seg.get("audio_lead_frames") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(lead, int(float(seg["in"]) * FPS + 1e-6)))
+
+
 def plan_timeline(segments):
     """Start time of every segment in the output and the total length.
     added 2026-11-03 v0.6.0 review: on the frame grid (frame_timeline), the times the merged file really has."""
@@ -241,12 +253,17 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
     graph = []
     n_in = 0
     fade = audio_fade_frames / FPS
+    # added 2026-11-05 v0.8.0: audio_lead_frames (assemble.pass_segments, a pass whose overlap sound was not anchored):
+    # the segment's sound starts that many frames before its picture, inside the overlap, and crossfades with the sound
+    # before over the transition plus the lead; picture, timing and total length are unchanged
+    leads = [_audio_lead(seg, k) for k, seg in enumerate(segments)]
     for k, seg in enumerate(segments):
         length = seg["out"] - seg["in"]
         if length <= 0:
             raise MergeError("segment {} has no length".format(k))
         n_frames = rows[k][1]  # added 2026-11-03 v0.6.0 review
         length = n_frames / FPS  # added 2026-11-03 v0.6.0 review: its length on the frame grid, for picture and sound
+        alen = length + leads[k] / FPS  # added 2026-11-05 v0.8.0: the sound's length (longer by its lead)
         if seg.get("path"):
             args += ["-i", seg["path"]]
             src = n_in
@@ -283,9 +300,13 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
                 # [OLD 2026-11-03 v0.6.0 review]      "aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration={d}").format(
                 # [OLD 2026-11-03 v0.6.0 review]     s=src, a=_f(seg["in"]), b=_f(seg["out"]), r=AUDIO_RATE, d=_f(length))
                 # added 2026-11-03 v0.6.0 review: the sound of the same frames (length is on the frame grid now)
+                # [OLD 2026-11-05 v0.7.0->v0.8.0] a = ("[{s}:a]atrim=start={a}:end={b},asetpts=PTS-STARTPTS,aresample={r},"
+                # [OLD 2026-11-05 v0.7.0->v0.8.0]      "aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration={d}").format(
+                # [OLD 2026-11-05 v0.7.0->v0.8.0]     s=src, a=_f(seg["in"]), b=_f(seg["in"] + length), r=AUDIO_RATE, d=_f(length))
+                # added 2026-11-05 v0.8.0: from its lead before the picture's in-point (0 frames: as before)
                 a = ("[{s}:a]atrim=start={a}:end={b},asetpts=PTS-STARTPTS,aresample={r},"
                      "aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration={d}").format(
-                    s=src, a=_f(seg["in"]), b=_f(seg["in"] + length), r=AUDIO_RATE, d=_f(length))
+                    s=src, a=_f(seg["in"] - leads[k] / FPS), b=_f(seg["in"] + length), r=AUDIO_RATE, d=_f(alen))
                 if float(seg.get("volume_db") or 0.0):  # added 2026-11-05 v0.7.0: the scene's own sound level
                     a += ",volume={}dB".format(float(seg["volume_db"]))
             else:
@@ -299,7 +320,8 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
             graph.append("color=c=0x15171C:s={}x{}:r={}:d={},trim=end_frame={},format=yuv420p,setsar=1[v{}]".format(
                 width, height, FPS, _f((n_frames + 0.5) / FPS), n_frames, k))
             a = "anullsrc=r={}:cl=stereo,atrim=duration={}".format(AUDIO_RATE, _f(length))
-        a += _edge_afades(seg, length)  # added 2026-11-05 v0.7.0: the scene's own sound fades at its edges
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] a += _edge_afades(seg, length)  # added 2026-11-05 v0.7.0: the scene's own sound fades at its edges
+        a += _edge_afades(seg, alen)  # added 2026-11-05 v0.8.0: the sound's own length (alen == length without a lead)
         # [OLD 2026-11-03 v0.6.0 review] nxt = segments[k + 1]["join"] if k + 1 < len(segments) else None
         nxt = joins[k + 1] if k + 1 < len(segments) else None  # added 2026-11-03 v0.6.0 review: a 0-frame xfade is a cut
         # [OLD 2026-11-02 v0.2.2->v0.3.0] one audio fade for every cut; a segment's "fade" (seconds) now sets the fade at the cut into it
@@ -311,10 +333,15 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
         fin = seg.get("fade", fade)
         fout = segments[k + 1].get("fade", fade) if k + 1 < len(segments) else 0
         # [OLD 2026-11-03 v0.6.0 review] if fin > 0 and k > 0 and seg["join"] == "cut":
-        if fin > 0 and k > 0 and joins[k] == "cut":  # added 2026-11-03 v0.6.0 review: a 0-frame xfade is a cut
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] if fin > 0 and k > 0 and joins[k] == "cut":  # added 2026-11-03 v0.6.0 review: a 0-frame xfade is a cut
+        # [OLD 2026-11-05 v0.7.0->v0.8.0]     a += ",afade=t=in:d={}".format(_f(min(fin, length / 2)))
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] if fout > 0 and nxt == "cut":
+        # [OLD 2026-11-05 v0.7.0->v0.8.0]     a += ",afade=t=out:st={}:d={}".format(_f(length - min(fout, length / 2)), _f(min(fout, length / 2)))
+        # added 2026-11-05 v0.8.0: a cut whose sound crossfades over a lead gets no extra fades
+        if fin > 0 and k > 0 and joins[k] == "cut" and not leads[k]:  # a 0-frame xfade is a cut (v0.6.0 review)
             a += ",afade=t=in:d={}".format(_f(min(fin, length / 2)))
-        if fout > 0 and nxt == "cut":
-            a += ",afade=t=out:st={}:d={}".format(_f(length - min(fout, length / 2)), _f(min(fout, length / 2)))
+        if fout > 0 and nxt == "cut" and not leads[k + 1]:
+            a += ",afade=t=out:st={}:d={}".format(_f(alen - min(fout, length / 2)), _f(min(fout, length / 2)))
         graph.append(a + "[a{}]".format(k))
 
     vcur, acur = "v0", "a0"
@@ -326,7 +353,11 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
             # graph.append("[{}][v{}]concat=n=2:v=1:a=0[vc{}]".format(vcur, k, k))
             # [/OLD]
             graph.append("[{}][v{}]concat=n=2:v=1:a=0,settb=expr=1/{}[vc{}]".format(vcur, k, FPS, k))
-            graph.append("[{}][a{}]concat=n=2:v=0:a=1[ac{}]".format(acur, k, k))
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] graph.append("[{}][a{}]concat=n=2:v=0:a=1[ac{}]".format(acur, k, k))
+            if leads[k]:  # added 2026-11-05 v0.8.0: the picture cuts, the sound crossfades over the lead
+                graph.append("[{}][a{}]acrossfade=d={}[ac{}]".format(acur, k, _f(leads[k] / FPS), k))
+            else:
+                graph.append("[{}][a{}]concat=n=2:v=0:a=1[ac{}]".format(acur, k, k))
         else:
             # [OLD 2026-11-05 v0.6.1->v0.7.0] trans = "fadeblack" if seg["join"] == "dip" else "fade"
             # added 2026-11-05 v0.7.0: the scene's transition (xfade_transition); a custom one carries its expression
@@ -353,7 +384,9 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
             # [OLD 2026-11-05 v0.6.1->v0.7.0]     vcur, k, trans, _f(dur), _f(rows[k][0] / FPS), k))
             graph.append("[{}][{}]xfade=transition={}:duration={}:offset={}[vc{}]".format(  # added 2026-11-05 v0.7.0
                 ina, inb, trans, _f(dur), _f(rows[k][0] / FPS), k))
-            graph.append("[{}][a{}]acrossfade=d={}[ac{}]".format(acur, k, _f(dur), k))
+            # [OLD 2026-11-05 v0.7.0->v0.8.0] graph.append("[{}][a{}]acrossfade=d={}[ac{}]".format(acur, k, _f(dur), k))
+            # added 2026-11-05 v0.8.0: plus the segment's audio lead (0 frames: as before)
+            graph.append("[{}][a{}]acrossfade=d={}[ac{}]".format(acur, k, _f((rows[k][2] + leads[k]) / FPS), k))
         vcur, acur = "vc{}".format(k), "ac{}".format(k)
 
     # added 2026-11-03 v0.5.0: soundtrack tracks. The scenes' sound (the bus built above) is normalised on its own,
@@ -1021,6 +1054,10 @@ def subtitle_cues(entries):
                 continue
             a = e["start"] + times[i] - e["src_in"]
             b = a + max(1.2, 0.6 + 0.07 * len(text))
+            # added 2026-11-06 v0.8.0: a line with its own duration (Scene tab) is shown that long (reading time otherwise)
+            dur = d.get("duration")
+            if isinstance(dur, (int, float)) and not isinstance(dur, bool) and dur > 0:
+                b = a + max(0.3, float(dur))
             if i + 1 < len(lines):
                 b = min(b, e["start"] + times[i + 1] - e["src_in"] - 0.05)
             b = min(b, scene_end)

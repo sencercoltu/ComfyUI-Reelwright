@@ -952,7 +952,13 @@ def main():
         page.wait_for_timeout(400)
         page.click(".rw-tab:has-text('Scene')")
         page.wait_for_timeout(300)
-        lens = page.locator("[data-help='scene.shots.length']").all_inner_texts()
+        # v0.8.0: the length is a field of the row ("for [8.42] s"), "after the end" a note; read both per row
+        shot_lens = lambda: page.evaluate("""() => [...document.querySelectorAll('.rw-shot-row')].filter(r => !r.closest('.rw-pass-pane')).map(r => {
+          const past = r.querySelector("[data-help='scene.shots.length']");
+          if (past) return past.textContent;
+          const end = r.querySelector('.rw-shot-end').textContent.endsWith(' end');
+          return 'for ' + Number(r.querySelector("input[data-key^='shot-len-']").value).toFixed(2) + ' s' + (end ? ' · end' : ''); })""")
+        lens = shot_lens()
         check(lens[:4] == ["for 8.42 s", "for 8.17 s", "for 8.17 s", "for 5.24 s"] and lens[4:] == ["after the end"] * 4, f"shot lengths: {lens}")
         note = page.locator(".rw-overrun")
         check(note.count() == 1 and "4 shots start after the scene ends (30.00 s)" in note.inner_text(), f"overrun note: {note.inner_text() if note.count() else None}")
@@ -961,7 +967,7 @@ def main():
         page.wait_for_timeout(300)
         d = project(page)["scenes"][0]["duration"]
         check(abs(d - 70.25) < 1e-6 and page.locator(".rw-overrun").count() == 0, f"lengthen: {d}")
-        lens = page.locator("[data-help='scene.shots.length']").all_inner_texts()
+        lens = shot_lens()
         check(lens[-1] == "for 8.44 s · end", f"last shot runs to the end: {lens[-1]}")
         page.keyboard.press("Control+z")
         page.wait_for_timeout(300)
@@ -1485,6 +1491,7 @@ def main():
         review_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 review: frontend fixes of the second review
         v061_checks(page, check, saved, shots)  # added 2026-11-04 v0.6.1: frontend fixes of the third review
         v070_checks(page, check, saved, shots)  # added 2026-11-05 v0.7.0: In the cut, Merge card, filmstrip, continuity switch
+        v080_checks(page, check, saved, shots)  # added 2026-11-05 v0.8.0: pass tabs, Write prompts, rows, follow, seams, drift
         browser.close()
     httpd.shutdown()
 
@@ -3140,6 +3147,498 @@ def v070_checks(page, check, saved, shots):
     # v0.7.0 lead review: a crossfade shows no audio fade field (the sound crossfades over it); the migrated value is in the project
     check(page.locator("input[data-key='cut-tr-s_05']").input_value() == "Crossfade" and page.locator("[data-key='cut-frames-s_05']").input_value() == "20"
           and cur()["scenes"][4]["merge"]["audio_frames"] == 9, "an old project's transition is not shown in In the cut")
+
+    load(json.loads(saved))
+    tab("Timeline")
+
+
+# ---- added 2026-11-05 v0.8.0 (F: contract P4) ----
+AUDIT_JS = """async () => {
+  const { HELP } = await import('/web/rw/help.js');
+  const root = document.querySelector('.rw-root');
+  const ids = [...root.querySelectorAll('[data-help]')].map(e => e.dataset.help);
+  const more = [...root.querySelectorAll('[data-more]')].map(e => e.dataset.more);
+  const missing = [...new Set(ids.filter(i => !HELP[i]))];
+  const noMore = [...new Set(more.filter(i => !HELP[i] || !HELP[i].more))];
+  const bare = [...root.querySelectorAll('button, input, select, textarea')]
+    .filter(e => !e.closest('[data-help]') && e.offsetParent !== null && !e.classList.contains('rw-keys')).map(e => e.outerHTML.slice(0, 120));
+  const keys = [...root.querySelectorAll('[data-key]')].map(e => e.dataset.key);
+  const dup = [...new Set(keys.filter((k, i) => keys.indexOf(k) !== i))];
+  return { missing, noMore, bare, dup };
+}"""
+
+
+def v080_checks(page, check, saved, shots):
+    """v0.8.0: the Scene tab's Prompt card (Whole scene + a tab per pass with its own sections, shots and dialogue in scene
+    times, Write this pass, Use the new layout), shot and dialogue rows (start, end, length, camera picker, growing
+    text, seam notes), Write prompts per scene and after an import (progress, Stop, one undo step per scene), the
+    timeline following the playhead (manual scroll pauses it), the long-scene seam settings and drift in the Render tab."""
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    labels = lambda: [x["label"] for x in page.evaluate("window.__editor.store.history()") if x["done"]]
+    scene_of = lambda sid: next(x for x in cur()["scenes"] if x["id"] == sid)
+    active = lambda: page.evaluate("document.activeElement?.dataset?.key || ''")
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def tab(name):
+        page.click(f".rw-tab:has-text('{name}')")
+        page.wait_for_timeout(300)
+
+    def settle():
+        try:
+            page.wait_for_function("document.querySelectorAll('.rw-toast').length === 0", timeout=9000)
+        except Exception:
+            pass
+        page.wait_for_timeout(200)
+
+    def num(k, v):  # type into a keyed number field and commit it with Enter
+        loc = page.locator(f"input[data-key='{k}']")
+        loc.fill("" if v is None else str(v))
+        loc.press("Enter")
+        page.wait_for_timeout(300)
+
+    def pick(k, text):  # type to filter a combobox, Enter picks the first match
+        loc = page.locator(f"input[data-key='{k}']")
+        loc.click()
+        loc.fill(text)
+        page.wait_for_timeout(150)
+        loc.press("Enter")
+        page.wait_for_timeout(300)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    def wait_write(timeout=15000):
+        try:
+            page.wait_for_function("!window.__editor.eph.passWrite?.running", timeout=timeout)
+        except Exception:
+            pass
+        page.wait_for_timeout(250)
+
+    def demo(**ui):
+        q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+        q["soundtrack"] = []
+        q["global"]["merge"]["score"] = {"asset": "", "volume_db": -12, "duck": False}
+        q["ui"].update(ui)
+        return q
+
+    page.evaluate("window.__editor.store.setEph({ toasts: [], promptTabs: {}, passWrite: null, imported: null })")
+    settle()
+
+    # 1. A single-pass scene: no tabs, six sections, Write prompts. A multi-pass scene: Whole scene + a tab per pass.
+    load(demo(tab="scene", selected="s_03"))
+    check(page.locator(".rw-ptabs").count() == 0 and page.locator(".rw-psec").count() == 6, "single-pass scene: no pass tabs, six sections")
+    w = page.locator("[data-key='write-s_03']")
+    check(w.count() == 1 and w.get_attribute("data-help") == "scene.prompt.writeOne", "single-pass scene: Write prompts button")
+    load(demo(tab="scene", selected="s_07"))
+    tabs = [" ".join(t.split()) for t in page.locator(".rw-ptab").all_inner_texts()]
+    check(tabs == ["Whole scene", "Pass 1 · 00:00.000–00:14.375", "Pass 2 · 00:14.375–00:22.000", "Pass 3 · 00:22.000–00:32.000"], f"pass tabs: {tabs}")
+    check(page.locator(".rw-psec").count() == 6 and "not sent" in page.locator(".rw-psec").nth(1).inner_text(), "Whole scene: the summary is the scene note (not sent)")
+    check(page.locator(".rw-ptab .rw-ptab-dot").count() == 2, "tabs of passes with their own text have a dot")
+    page.screenshot(path=str(shots / "v080_prompt_whole.png"))
+    page.click("[data-key='ptab-s_07-3']")
+    page.wait_for_timeout(300)
+    pane = page.locator(".rw-pass-pane")
+    check(pane.count() == 1 and pane.locator(".rw-psec").count() == 6, "pass 3 tab: six sections of its own")
+    ph = lambda key: page.locator(f"textarea[data-key='psec-s_07-3-{key}']").get_attribute("placeholder") or ""
+    check(ph("summary").startswith("Automatic") and ph("overall_soundscape").startswith("Shared: Wind") and ph("non_diegetic_music").startswith("Empty"),
+          f"pass placeholders: {ph('summary')[:30]!r} {ph('overall_soundscape')[:30]!r} {ph('non_diegetic_music')[:20]!r}")
+    rows = pane.locator(".rw-shot-row")
+    check(rows.count() == 1 and rows.first.locator(".rw-shot-label").inner_text() == "[Shot 1]" and "#4" in rows.first.inner_text()
+          and pane.locator("input[data-key='p3-shot-t-h_12']").input_value() == "22", "pass 3 shows its one shot, numbered for the pass, at its scene time")
+    check(pane.locator(".rw-dlg-row").count() == 0 and pane.locator("[data-key='write-s_07-3']").count() == 1, "pass 3: no lines, Write this pass")
+    check(page.evaluate("window.__editor.eph.openPasses.s_07") == 2 and page.locator(".rw-pass-tab.on").inner_text().startswith("Pass 3"), "the preview follows the open pass tab")
+    page.click("[data-key='ptab-s_07-2']")
+    page.wait_for_timeout(300)
+    check(page.locator(".rw-pass-pane .rw-dlg-row").count() == 1 and page.locator("[data-key='p2-dlg-t-d_4']").input_value() == "20.75", "pass 2 shows the line that starts in it")
+    page.mouse.move(5, 5)
+    page.screenshot(path=str(shots / "v080_prompt_pass.png"))
+    audit("Scene tab, pass tab")
+
+    # 2. Typing in a pass section stores scene.prompt.passes for the current layout; one named, coalesced undo step
+    page.click("[data-key='ptab-s_07-3']")
+    page.wait_for_timeout(250)
+    n0 = len(labels())
+    ta = page.locator("textarea[data-key='psec-s_07-3-summary']")
+    ta.click()
+    ta.type("She reaches the door.", delay=10)
+    page.evaluate("window.__editor.store.notify()")
+    page.wait_for_timeout(300)
+    pp = scene_of("s_07")["prompt"]["passes"]
+    check(len(pp) == 3 and pp[2]["sections"]["summary"] == "She reaches the door." and pp[2]["start"] == 22 and pp[2]["end"] == 32
+          and pp[0]["sections"]["summary"].startswith("Mara leaves"), f"pass 3 summary stored: {[(x['start'], x['end'], x['sections']['summary'][:20]) for x in pp]}")
+    check(len(labels()) == n0 + 1 and labels()[-1] == "Pass 3 summary", f"pass section undo step: {labels()[n0:]}")
+    check(active() == "psec-s_07-3-summary", f"pass section keeps focus after a render: {active()}")
+    page.locator(".rw-root").focus()
+    page.click("[data-key='psec-clear-s_07-3-summary']")
+    page.wait_for_timeout(300)
+    check(scene_of("s_07")["prompt"]["passes"][2]["sections"]["summary"] == "" and labels()[-1] == "Pass 3 summary → shared", "Use shared clears the pass's text")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(300)
+    check(scene_of("s_07")["prompt"]["passes"][2]["sections"]["summary"] == "She reaches the door.", "undo brings the pass text back")
+
+    # 3. Pass texts of another layout: a note and "Use the new layout" (one undo step); the tabs show the overlap
+    q = demo(tab="scene", selected="s_07")
+    s7 = next(x for x in q["scenes"] if x["id"] == "s_07")
+    s7["prompt"]["passes"] = [{"start": 0, "end": 16.0, "sections": {"summary": "Old first half."}}, {"start": 16.0, "end": 32.0, "sections": {"summary": "Old second half."}}]
+    load(q)
+    note = page.locator(".rw-layout-note")
+    check(note.count() == 1 and page.locator(".rw-ptab.moved").count() >= 2, f"another layout: note and moved tabs ({note.count()}, {page.locator('.rw-ptab.moved').count()})")
+    # model.passTexts: each stored text goes to the one current pass it overlaps most (pass 2 gets none here)
+    page.click("[data-key='ptab-s_07-3']")
+    page.wait_for_timeout(250)
+    check(page.locator("textarea[data-key='psec-s_07-3-summary']").input_value() == "Old second half.", "pass 3 shows the stored text that overlaps it most")
+    n0 = len(labels())
+    page.click("[data-key='layout-s_07']")
+    page.wait_for_timeout(300)
+    pp = scene_of("s_07")["prompt"]["passes"]
+    check([(x["start"], x["end"]) for x in pp] == [(0, 14.375), (14.375, 22), (22, 32)] and [x["sections"]["summary"] for x in pp] == ["Old first half.", "", "Old second half."],
+          f"Use the new layout: {[(x['start'], x['end'], x['sections']['summary']) for x in pp]}")
+    check(len(labels()) == n0 + 1 and labels()[-1] == "Use the new pass layout" and page.locator(".rw-layout-note").count() == 0, "Use the new layout: one undo step, note gone")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(300)
+    check(page.locator(".rw-layout-note").count() == 1, "undo brings the old layout (and the note) back")
+
+    # 4. Write this pass: progress with the pass number, one undo step "Write pass 2"
+    load(demo(tab="scene", selected="s_07"))
+    page.evaluate("window.__mockFlags.passesMs = 900; window.__mockFlags.passCalls = []")
+    page.click("[data-key='ptab-s_07-2']")
+    page.wait_for_timeout(200)
+    n0 = len(labels())
+    page.click("[data-key='write-s_07-2']")
+    try:
+        page.wait_for_function("document.querySelector('.rw-llm-busy')?.textContent.includes('pass 2 of 3')", timeout=4000)
+    except Exception:
+        pass
+    busy = page.locator(".rw-llm-busy")
+    check(busy.count() == 1 and "pass 2 of 3" in busy.inner_text() and page.locator("[data-key='write-s_07']").is_disabled(), f"write progress: {busy.inner_text() if busy.count() else None}")
+    page.screenshot(path=str(shots / "v080_write_pass.png"))
+    wait_write()
+    pp = scene_of("s_07")["prompt"]["passes"]
+    calls = page.evaluate("window.__mockFlags.passCalls")
+    check(calls[-1]["scene_id"] == "s_07" and calls[-1]["passes"] == [2], f"/llm/passes request: {calls}")
+    check(pp[1]["sections"]["summary"].startswith("Pass 2 of The long walk home") and pp[0]["sections"]["summary"].startswith("Mara leaves") and pp[1]["start"] == 14.375,
+          f"pass 2 written: {[x['sections']['summary'][:24] for x in pp]}")
+    check(len(labels()) == n0 + 1 and labels()[-1] == "Write pass 2", f"write pass undo step: {labels()[n0:]}")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(300)
+    check(scene_of("s_07")["prompt"]["passes"][1]["sections"]["summary"].startswith("The rain starts"), "undo takes the written pass back")
+    settle()
+
+    # 5. Write prompts (every pass) can be stopped (nothing applied), then runs through as one undo step
+    page.evaluate("window.__mockFlags.passesMs = 2400")
+    n0 = len(labels())
+    page.click("[data-key='write-s_07']")
+    try:
+        page.wait_for_function("document.querySelector('.rw-llm-busy')?.textContent.includes('pass 1 of 3')", timeout=4000)
+    except Exception:
+        pass
+    page.click("[data-key='write-stop']")
+    wait_write()
+    check(len(labels()) == n0 and page.evaluate("window.__editor.eph.passWrite.items[0].state") == "stopped", f"Stop: nothing written ({labels()[n0:]})")
+    check(page.evaluate("window.__mockFlags.passCalls.at(-1).passes") is None, "Write prompts asks for every pass")
+    settle()
+    page.evaluate("window.__mockFlags.passesMs = 200")
+    page.click("[data-key='write-s_07']")
+    wait_write()
+    pp = scene_of("s_07")["prompt"]["passes"]
+    check([x["sections"]["summary"][:6] for x in pp] == ["Pass 1", "Pass 2", "Pass 3"] and len(labels()) == n0 + 1 and labels()[-1] == "Write prompts",
+          f"Write prompts: {[x['sections']['summary'][:12] for x in pp]} {labels()[n0:]}")
+    settle()
+
+    # 6. A single-pass scene's Write prompts fills its own sections (it has no tabs)
+    page.evaluate("window.__editor.store.update(p => { p.ui.selected = 's_03'; }, { history: false, plan: false })")
+    page.wait_for_timeout(300)
+    n0 = len(labels())
+    page.click("[data-key='write-s_03']")
+    wait_write()
+    s3 = scene_of("s_03")
+    check(s3["prompt"]["sections"]["summary"].startswith("Pass 1 of The letter") and s3["prompt"].get("passes", []) == [] and labels()[n0:] == ["Write prompts"],
+          f"single-pass Write prompts: {s3['prompt']['sections']['summary'][:30]!r} {labels()[n0:]}")
+    settle()
+
+    # 7. Shot rows: start / end / length in scene time, editable length, camera picker, growing text, seam notes
+    load(demo(tab="scene", selected="s_07"))
+    row = lambda sid: page.locator(f".rw-shot-row:has(input[data-key='shot-t-{sid}'])")
+    check(page.locator("input[data-key='shot-t-h_10']").input_value() == "6" and row("h_10").locator(".rw-shot-end").inner_text().startswith("→ 14.375")
+          and page.locator("input[data-key='shot-len-h_10']").input_value() == "8.375", "shot row: start, end and length in scene time")
+    check(row("h_12").locator(".rw-shot-end").inner_text().endswith("end") and page.locator("input[data-key='shot-len-h_12']").get_attribute("data-help") == "scene.shots.lastLength", "the last shot runs to the end")
+    n0 = len(labels())
+    num("shot-len-h_10", 7)
+    check(abs(scene_of("s_07")["shots"][2]["t"] - 13.0) < 1e-9 and labels()[-1] == "Shot length" and active() == "shot-len-h_10", f"a shot's length moves the next shot: {scene_of('s_07')['shots'][2]['t']} {labels()[-1]} {active()}")
+    num("shot-len-h_12", 12)
+    check(abs(scene_of("s_07")["duration"] - 34.0) < 1e-9 and labels()[-1] == "Last shot length", f"the last shot's length sets the scene length: {scene_of('s_07')['duration']}")
+    page.locator(".rw-root").focus()
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(250)
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(250)
+    check(scene_of("s_07")["duration"] == 32 and scene_of("s_07")["shots"][2]["t"] == 14.375, f"undo the two length edits: {scene_of('s_07')['duration']} {labels()[-2:]}")
+    page.locator(".rw-root").focus()
+    pick("shot-cam-h_10", "pan left")
+    sh = scene_of("s_07")["shots"][1]
+    check(sh["camera"] == "the camera pans left" and labels()[-1] == "Camera move", f"camera picker: {sh['camera']!r} {labels()[-1]}")
+    page.locator("[data-key='shot-amp-h_10'] button:has-text('Large')").click()
+    page.wait_for_timeout(250)
+    page.locator("[data-key='shot-speed-h_10'] button:has-text('Fast')").click()
+    page.wait_for_timeout(250)
+    pick("shot-frame-h_10", "close-up")
+    sh = scene_of("s_07")["shots"][1]
+    check(sh.get("camera_amp") == "large" and sh.get("camera_speed") == "fast" and sh.get("framing") in ("close-up", "medium close-up", "extreme close-up")
+          and labels()[-3:] == ["Camera amplitude", "Camera speed", "Framing"], f"amplitude / speed / framing: {sh.get('camera_amp')} {sh.get('camera_speed')} {sh.get('framing')} {labels()[-3:]}")
+    page.locator(".rw-root").focus()
+    page.evaluate("window.__editor.store.update(p => { p.scenes.find(x => x.id === 's_07').shots[0].camera = ''; }, { history: false })")
+    page.wait_for_timeout(250)
+    check(page.locator("[data-key='shot-amp-h_9'] button").first.is_disabled(), "amplitude needs a camera move")
+    check(page.locator("[data-key='shot-speed-h_11'] button").first.is_disabled(), "a static shot has no amplitude or speed")
+    pick("shot-cam-h_12", "static shot")
+    s12 = scene_of("s_07")["shots"][3]
+    check(s12["camera"] == "the camera holds a static shot" and s12.get("camera_amp") == "" and s12.get("camera_speed") == "", f"switching to Static Shot clears amplitude and speed: {s12}")
+    page.locator(".rw-root").focus()
+    official = page.evaluate("""() => { const el = document.querySelector("input[data-key='shot-cam-h_11']"); el.focus(); const n = document.querySelectorAll('.rw-combo-list .rw-combo-opt').length; el.blur(); return n; }""")
+    page.wait_for_timeout(200)
+    check(official >= 21, f"the camera picker lists H3's 20 moves (and 'no camera move'): {official}")
+    page.locator(".rw-root").focus()
+    box = page.locator("textarea[data-key='shot-text-h_11']")
+    hgt = lambda: page.evaluate("document.querySelector(\"textarea[data-key='shot-text-h_11']\")?.offsetHeight || 0")
+    box.scroll_into_view_if_needed()
+    h0 = hgt()
+    page.focus("textarea[data-key='shot-text-h_11']")
+    page.keyboard.press("Control+End")
+    box.type(" The lamp buzzes and flickers; rain runs down the glass of the shop window behind her while a gull cries somewhere above the harbor wall."
+             " Her breath clouds in the cold air, the scarf flutters, and puddles on the cobbles catch the orange light as the wind turns the rain into slanting lines."
+             " Far off, a boat engine coughs into life and fades again behind the harbor wall.", delay=1)
+    page.wait_for_timeout(200)
+    h1 = hgt()
+    check(h1 > h0 + 8, f"the shot text field grows with its text: {h0} -> {h1}")
+    page.locator(".rw-root").focus()
+    page.wait_for_timeout(250)
+    check(scene_of("s_07")["shots"][2]["text"].endswith("behind the harbor wall.") and labels()[-1] == "Shot text", "shot text stored as one step")
+    check(page.locator(".rw-shot-row .rw-seam-chip").count() == 0, "seams at shot cuts: no shot crosses a seam")
+    dl = page.locator(".rw-dlg-row:has(input[data-key='dlg-t-d_4'])")
+    check(dl.locator(".rw-seam-note").count() == 1 and "00:22.000" in dl.locator(".rw-seam-note").inner_text()
+          and page.locator("input[data-key='dlg-len-d_4']").get_attribute("placeholder") == "2.80", "a line past the seam at 22 s is marked; its length is estimated")
+    num("dlg-len-d_4", 1)
+    check(scene_of("s_07")["dialogue"][0].get("duration") == 1 and labels()[-1] == "Line length" and dl.locator(".rw-seam-note").count() == 0, "a line's own length (and no seam note)")
+    num("dlg-len-d_4", None)
+    check(scene_of("s_07")["dialogue"][0].get("duration") is None and dl.locator(".rw-seam-note").count() == 1, "an empty length is estimated again")
+    page.screenshot(path=str(shots / "v080_rows.png"))
+    page.evaluate("window.__editor.store.update(p => { p.global.long.seam_mode = 'overlap'; }, { history: false })")
+    page.wait_for_timeout(400)
+    chips = page.locator(".rw-card .rw-shot-row .rw-seam-chip")
+    check(chips.count() >= 2 and chips.first.get_attribute("data-help") == "scene.shots.seam", f"overlap seams inside shots are marked: {chips.count()}")
+    audit("Scene tab, rows")
+    page.locator(".rw-root").focus()
+
+    # 8. Write prompts after a script import: the batch, progress, a failed scene and Retry, Stop; one undo step a scene
+    load(demo(tab="global", selected="s_01"))
+    page.evaluate("window.__mockFlags.passesMs = 250; window.__mockFlags.passesFail = ''")
+    rows_txt = "| 01 | 00:01:00 | 8.00 | Verse | Ada lights a candle |\n| 02 | 00:02:00 | 6.00 | Verse | Ada opens the crypt |"
+    page.fill("textarea[data-help='global.script.text']", rows_txt)
+    page.click("button[data-help='global.script.run']")
+    try:
+        page.wait_for_selector("button[data-help='global.script.apply']", timeout=8000)
+    except Exception:
+        pass
+    page.click("button[data-help='global.script.apply']")
+    page.wait_for_timeout(400)
+    ids = [x["id"] for x in cur()["scenes"][-2:]]
+    wb = page.locator("[data-key='write-batch']")
+    check(wb.count() == 1 and wb.inner_text() == "Write prompts for the 2 imported scenes", f"after an import: {wb.inner_text() if wb.count() else None}")
+    page.evaluate("id => { window.__mockFlags.passesFail = id; }", ids[1])
+    n0 = len(labels())
+    wb.click()
+    try:
+        page.wait_for_function("document.querySelector('.rw-write-box')?.textContent.includes('Writing scene 1 of 2')", timeout=4000)
+    except Exception:
+        pass
+    check("Writing scene 1 of 2" in page.locator(".rw-write-box").inner_text(), "batch progress")
+    page.screenshot(path=str(shots / "v080_batch.png"))
+    wait_write()
+    new = labels()[n0:]
+    check(len(new) == 1 and new[0].startswith("Write prompts: ") and page.locator(".rw-write-item.failed").count() == 1, f"batch: one step per written scene, one failed: {new}")
+    page.evaluate("window.__mockFlags.passesFail = ''")
+    page.click("[data-key='write-batch-retry']")
+    wait_write()
+    check(len(labels()) == n0 + 2 and page.locator(".rw-write-item.done").count() == 1 and all(scene_of(i)["prompt"]["sections"]["summary"].startswith("Pass 1 of") for i in ids),
+          f"Retry writes the failed scene: {labels()[n0:]}")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(300)
+    check(not scene_of(ids[1])["prompt"]["sections"]["summary"].startswith("Pass 1 of") and scene_of(ids[0])["prompt"]["sections"]["summary"].startswith("Pass 1 of"), "undo takes back one scene")
+    settle()
+    page.click("[data-key='write-batch-dismiss']")
+    page.wait_for_timeout(200)
+    check(page.locator(".rw-write-box").count() == 0, "Dismiss hides the list")
+    # Stop
+    page.fill("textarea[data-help='global.script.text']", rows_txt)
+    page.click("button[data-help='global.script.run']")
+    try:
+        page.wait_for_selector("button[data-help='global.script.apply']", timeout=8000)
+    except Exception:
+        pass
+    page.click("button[data-help='global.script.apply']")
+    page.wait_for_timeout(400)
+    page.evaluate("window.__mockFlags.passesMs = 2400")
+    n0 = len(labels())
+    page.click("[data-key='write-batch']")
+    page.wait_for_timeout(500)
+    page.click("[data-key='write-batch-stop']")
+    wait_write()
+    check(len(labels()) == n0 and page.locator("[data-key='write-batch-retry']").inner_text() == "Retry 2", f"batch Stop: {labels()[n0:]}")
+    audit("Global tab, batch")
+    settle()
+
+    # 9. Long-scene seam settings (global.long)
+    load(demo(tab="global", selected="s_01"))
+    sw = page.locator("[data-key='long-carry-audio']")
+    check(sw.get_attribute("aria-checked") == "true" and page.locator("[data-key='long-seam-video']").get_attribute("aria-checked") == "true", "seam settings start at their defaults")
+    sw.click()
+    page.wait_for_timeout(250)
+    check(cur()["global"]["long"].get("carry_audio") is False and labels()[-1] == "Picture only across seams", f"carry sound off: {labels()[-1]}")
+    page.locator("[data-key='long-seam-video']").click()
+    page.wait_for_timeout(250)
+    check(cur()["global"]["long"].get("seam_video_ref") is False, "<Video 1> at seams off")
+    page.locator("[data-key='long-handoff'] button:has-text('Latent')").click()
+    page.wait_for_timeout(250)
+    check(cur()["global"]["long"].get("handoff") == "latent" and "experimental" in page.locator(".rw-long-note").inner_text(), "latent hand-off")
+    page.locator("[data-key='long-pass-cache'] button[data-help='global.long.passCache.lossless']").click()
+    page.wait_for_timeout(250)
+    check(cur()["global"]["long"].get("pass_cache") == "lossless" and labels()[-1] == "Lossless pass cache", "lossless pass cache")
+    pick("long-guide-vae", "fp16")
+    check(cur()["global"]["long"].get("guide_vae") == "minimax_h3_video_vae_fp16.safetensors" and labels()[-1] == "Guide VAE", f"guide VAE: {cur()['global']['long'].get('guide_vae')}")
+    page.evaluate("window.__editor.store.update(p => { p.global.continuity.name_continuation = false; }, { history: false })")
+    page.wait_for_timeout(250)
+    check(page.locator("[data-key='long-seam-video']").is_disabled(), "<Video 1> at seams needs Name the continuation")
+    page.screenshot(path=str(shots / "v080_long_settings.png"))
+    audit("Global tab, seams")
+
+    # 10. Drift in the Render tab: per take and pass, and the starred take's light in the table
+    load(demo(tab="render", selected="s_03"))
+    # the takes as the demo makes them (earlier checks deleted or starred some): s_03's three takes with their drift
+    page.evaluate("""() => { const T = window.__mockTakes; window.__keep03 = JSON.parse(JSON.stringify(T.s_03 || null));
+      const d = (a, c, rgb, sh, level) => [{ pass: 1, source: 'prev_scene_tail', frames: 39, anchor_diff: a, color_shift: c, rgb_shift: rgb, sharpness: sh, level }];
+      const tk = (id, drift, extra = {}) => ({ id, key: 'k3' + id, created: 1793560000, quality: 'final', seconds: 8.71, frames: 209, face: {}, files: {}, drift, ...extra });
+      T.s_03 = { starred: 'v3', takes: [tk('v1', d(17.2, 6.1, [5.2, -1.4, -2.9], 0.66, 'bad')), tk('v2', d(9.5, 2.9, [2.1, 0.4, -1.9], 0.88, 'warn')),
+        tk('v3', d(3.1, 1.2, [0.8, -0.3, -0.8], 0.97, 'ok'), { long: { guide_vae: 'minimax_h3_video_vae_fp16.safetensors', carry_audio: true, seam_video_ref: true, handoff: 'pixels', pass_cache: 'lossless' } })] }; }""")
+    page.evaluate("""() => { window.__mockTakes.s_07 = { starred: 'v1', takes: [{ id: 'v1', key: 'k7', created: 1793560100, quality: 'final', seconds: 32, frames: 768, face: {}, files: {},
+      long: { guide_vae: '', carry_audio: false, seam_video_ref: true, handoff: 'latent', pass_cache: 'near_lossless' },
+      drift: [{ pass: 2, source: 'prev_pass_tail', anchor_diff: 4.2, color_shift: 1.1, rgb_shift: [0.5, 0.2, -0.9], sharpness: 0.95, handoff: 'latent' },
+        { pass: 3, source: 'prev_pass_tail', anchor_diff: 9.8, color_shift: 3.3, rgb_shift: [2.1, 0.1, -2.5], sharpness: 0.82, handoff: 'pixels', handoff_reason: 'the passes differ in size' }] }] };
+      window.__editor.actions.refreshTakes(); }""")
+    page.wait_for_timeout(400)
+    page.evaluate("window.__editor.store.setEph({ openTakes: { s_03: true, s_07: true } })")
+    page.wait_for_timeout(300)
+    d3 = page.locator(".rw-takes").first.locator(".rw-drift")
+    leds = page.evaluate("""() => [...document.querySelectorAll('.rw-takes')].map(t => [...t.querySelectorAll('.rw-drift .rw-led')].map(l => l.className.replace('rw-led', '').trim()))""")
+    check(d3.count() == 3 and leds[0] == ["error", "warn", "ok"] and leds[1] == ["ok", "warn"], f"drift lights per take and pass: {leds}")
+    t7 = page.locator(".rw-takes").nth(1).inner_text()
+    check("P3" in t7 and "9.8" in t7 and "picture-only seams · latent hand-off" in t7 and "guide fp16" in page.locator(".rw-takes").first.inner_text(),
+          f"drift numbers per pass and the take's seam settings: {t7[:200]!r}")
+    tip = page.locator(".rw-takes").nth(1).locator(".rw-drift-pass").nth(1).get_attribute("title") or ""
+    check("pixels hand-off (the passes differ in size)" in tip and "b -2.5" in tip, f"drift tooltip: {tip}")
+    trow_led = page.evaluate("""() => [...document.querySelectorAll('.rw-trow')].map(r => r.querySelector("[data-help='render.table.drift']")?.className || '').filter(Boolean)""")
+    check(trow_led == ["rw-led ok", "rw-led warn"], f"the table shows the starred take's worst drift: {trow_led}")
+    page.screenshot(path=str(shots / "v080_drift.png"))
+    audit("Render tab, drift")
+    page.evaluate("delete window.__mockTakes.s_07; if (window.__keep03) window.__mockTakes.s_03 = window.__keep03; window.__editor.actions.refreshTakes()")
+
+    # 11. The timeline follows the playhead while playing; a manual scroll pauses it until play or the middle
+    load(demo(tab="timeline", selected="s_01", zoom=60, playhead=20))
+    page.wait_for_timeout(300)
+    probe = """() => { const el = document.querySelector('.rw-lanes'); const z = window.__editor.project.ui.zoom, t = window.__editor.project.ui.playhead;
+      const half = (el.clientWidth - 150) / 2, max = el.scrollWidth - el.clientWidth;
+      return { sl: el.scrollLeft, want: Math.max(0, Math.min(max, t * z - half)), t, follow: !!document.querySelector("[data-key='tl-follow']"), px: t * z - el.scrollLeft, half }; }"""
+    page.click("button[data-help='timeline.transport.play']")
+    page.wait_for_timeout(1200)
+    a = page.evaluate(probe)
+    page.wait_for_timeout(700)
+    b = page.evaluate(probe)
+    check(abs(a["sl"] - a["want"]) <= 5 and abs(b["sl"] - b["want"]) <= 5 and b["sl"] > a["sl"] + 20 and not b["follow"], f"follow keeps the playhead in the middle: {a} {b}")
+    page.evaluate("() => { const el = document.querySelector('.rw-lanes'); el.scrollLeft = el.scrollLeft - 300; }")
+    page.wait_for_timeout(200)
+    c = page.evaluate(probe)
+    page.wait_for_timeout(700)
+    d = page.evaluate(probe)
+    check(abs(d["sl"] - c["sl"]) < 2 and d["t"] > c["t"] + 0.3 and d["follow"], f"a manual scroll pauses following: {c} {d}")
+    page.screenshot(path=str(shots / "v080_follow_paused.png"))
+    page.click("[data-key='tl-follow']")
+    page.wait_for_timeout(300)
+    e = page.evaluate(probe)
+    check(abs(e["sl"] - e["want"]) <= 5 and not e["follow"], f"Follow resumes it: {e}")
+    # scroll ahead of the playhead: following comes back when the playhead reaches the middle
+    page.evaluate("() => { const el = document.querySelector('.rw-lanes'); el.scrollLeft = el.scrollLeft + 45; }")
+    page.wait_for_timeout(150)
+    f1 = page.evaluate(probe)
+    page.wait_for_timeout(1300)
+    f2 = page.evaluate(probe)
+    check(f1["follow"] and not f2["follow"] and abs(f2["sl"] - f2["want"]) <= 5, f"following resumes when the playhead reaches the middle: {f1} {f2}")
+    # a sideways wheel over the lanes pauses it too; pressing play again resumes it
+    lb = page.locator(".rw-lanes").bounding_box()
+    page.mouse.move(lb["x"] + lb["width"] / 2, lb["y"] + 60)
+    page.mouse.wheel(0, -240)
+    page.wait_for_timeout(300)
+    g = page.evaluate(probe)
+    check(g["follow"], f"the wheel pauses following: {g}")
+    page.click("button[data-help='timeline.transport.play']")  # pause
+    page.wait_for_timeout(150)
+    page.click("button[data-help='timeline.transport.play']")  # play
+    page.wait_for_timeout(500)
+    h2 = page.evaluate(probe)
+    check(abs(h2["sl"] - h2["want"]) <= 5 and not h2["follow"], f"play again follows again: {h2}")
+    audit("Timeline, follow")
+    page.click("button[data-help='timeline.transport.play']")
+    page.wait_for_timeout(200)
+
+    # 300 scenes: following costs no full renders between the rebuilds of the lane window, frames stay smooth
+    big = demo(tab="timeline", selected="s_p0", playhead=300, zoom=100)
+    tmpl = big["scenes"]
+    big["scenes"] = []
+    for i in range(300):
+        sc = json.loads(json.dumps(tmpl[i % len(tmpl)]))
+        sc["id"] = f"s_p{i}"
+        sc["seed_n"] = i
+        for lst in ("refs", "shots", "dialogue"):
+            for x in sc[lst]:
+                x["id"] = f"{x['id']}_{i}"
+        mg = sc.get("merge")
+        if mg:
+            mg["color_ref"] = ""
+            if mg.get("color_match") == "scene":
+                mg["color_match"] = "off"
+        big["scenes"].append(sc)
+    big["scenes"][0]["start"]["mode"] = "fresh"
+    load(big)
+    page.wait_for_timeout(1200)
+    measure = """async ms => { const fr = { gaps: [], renders: 0, last: performance.now() }; let on = true;
+      const off = window.__editor.store.subscribe(() => { fr.renders++; });
+      const tick = now => { if (!on) return; fr.gaps.push(now - fr.last); fr.last = now; requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+      const sl0 = document.querySelector('.rw-lanes').scrollLeft;
+      await new Promise(r => setTimeout(r, ms));
+      on = false; off();
+      const g = fr.gaps.slice(5).sort((a, b) => a - b);
+      return { renders: fr.renders, p95: g[Math.floor(g.length * 0.95)] || 0, frames: g.length, moved: document.querySelector('.rw-lanes').scrollLeft - sl0 }; }"""
+    play = "button[data-help='timeline.transport.play']"
+    page.click(play)
+    page.wait_for_timeout(300)
+    r = page.evaluate(measure, 3000)
+    page.click(play)  # stop
+    page.wait_for_timeout(200)
+    page.click(play)  # play again, then a manual scroll: the same playback without following
+    page.wait_for_timeout(300)
+    page.evaluate("() => { const el = document.querySelector('.rw-lanes'); el.scrollLeft = el.scrollLeft - 500; }")
+    page.wait_for_timeout(300)
+    r0 = page.evaluate(measure, 3000)
+    page.click(play)
+    page.wait_for_timeout(200)
+    print(f"note: 3 s of playback with 300 scenes, following: {r['frames']} frames (p95 {r['p95']:.1f} ms, {r['renders']} renders, scrolled {r['moved']} px);"
+          f" not following: {r0['frames']} frames (p95 {r0['p95']:.1f} ms, {r0['renders']} renders)", flush=True)
+    r = {**r, "sl": r["moved"]}
+    check(r["moved"] > 200 and r0["moved"] == 0 and r["renders"] <= 4 and r["frames"] >= 0.7 * r0["frames"], f"300 scenes: following costs no renders and few frames: {r} vs {r0}")
 
     load(json.loads(saved))
     tab("Timeline")

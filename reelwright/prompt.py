@@ -270,7 +270,10 @@ CONT_CITE = {"picture": "The shot begins from {label}.",
 def continuation_of(p, scene, scene_index, pass_, ctx=None):
     """What this pass sends as reference 1 for the footage it continues from: None, or
     {"kind": "picture"|"video", "source": "prev_scene_last"|"prev_scene_tail"|"prev_pass_tail", "frames": n}
-    (frames: of the clip; 1 for the picture). None when Global -> Continuity -> name_continuation is off."""
+    (frames: of the clip; 1 for the picture). None when Global -> Continuity -> name_continuation is off.
+    added 2026-11-05 v0.8.0: also None for a pass after an overlap seam when Global -> Long scenes -> seam_video_ref is
+    off (model.pass_continuation reads it, default True, so the budget, lint and render agree); the tail clip a
+    continuing scene starts from is still sent."""
     ctx = _ctx(p, ctx)
     mode = _scene_start_mode(ctx, p, scene_index, scene)
     kind = _model.pass_continuation(p, scene_index, pass_, mode)
@@ -1310,6 +1313,38 @@ def _camera_phrase(cam):
     return ("an " if phrase[0].lower() in "aeiou" else "a ") + phrase[0].lower() + phrase[1:]
 
 
+# added 2026-11-05 v0.8.0: H3's camera vocabulary (base-en.txt 4.3: motion type + amplitude + speed, "written as a
+# natural English action within the shot"). A shot that sets a framing (shot size / angle), camera_amp or camera_speed:
+#   [Shot 1] A close-up: The camera pushes in with small amplitude at slow speed. <shot text>
+#   [Shot 2] At 00:05.000, the shot cuts to a close-up: The camera pushes in with small amplitude at slow speed. <text>
+#   without a framing: [Shot 1] The camera pushes in with small amplitude at slow speed. <text>
+#                      [Shot 2] At 00:05.000, the shot cuts to <text>. The camera pushes in with small amplitude ...
+# The camera text may be an official move ("the camera pushes in", model.DEFAULT_CAMERA) or written by hand; amplitude
+# and speed are added to it (model.camera_sentence). A shot without any of the three is written exactly as before.
+def _framed_shot(n, sh, cam, body):
+    """The parts after "[Shot n]" for a shot with framing / camera_amp / camera_speed, else None. cam and body are
+    the shot's camera text and text with this pass's labels."""
+    framing, amp, speed = sh.get("framing") or "", sh.get("camera_amp") or "", sh.get("camera_speed") or ""
+    head = _model.framing_phrase(framing)
+    if not head and amp not in ("small", "large") and speed not in ("slow", "fast"):
+        return None
+    move = _model.camera_sentence(cam, amp, speed)
+    rest = " ".join(x for x in (move, _sentence(body)) if x)
+    parts = []
+    if n == 1:
+        if sh.get("continuing"):
+            parts.append(CONTINUES)
+        if head:
+            parts.append(_sentence(head + (": " + rest if rest else "")))
+        elif rest:
+            parts.append(rest)
+        return parts
+    at = "At {}, the shot cuts to ".format(spec.fmt_time(float(sh["t"])))
+    if head:
+        return [_sentence(at + head + (": " + rest if rest else ""))]
+    return [x for x in (_sentence(at + _lower_lead(body or "a new angle")), move) if x]
+
+
 # [OLD 2026-11-03 v0.5.1->v0.6.0] def shot_descriptions(p, scene, refs, pass_, ids, unknown):
 def shot_descriptions(p, scene, refs, pass_, ids, unknown, ctx=None):  # ctx: added 2026-11-03 v0.6.0
     """[Shot 1] ... / [Shot N] At MM:SS.mmm, the shot cuts to ... with the lines spoken in each shot."""
@@ -1328,10 +1363,18 @@ def shot_parts(p, scene, refs, pass_, ids, unknown, ctx=None, issues=None):  # c
     out = []
     for n, sh in enumerate(shots, 1):
         nxt = shots[n]["t"] if n < len(shots) else None
-        cam, body = sub(sh.get("camera", "")), sub(sh.get("text", ""))
+        # [OLD 2026-11-06 v0.8.0 lead review] cam, body = sub(sh.get("camera", "")), sub(sh.get("text", ""))  ("Tracking Shot" became "A tracking Shot:")
+        # added 2026-11-06 v0.8.0 (lead review): an official move's name is written as its phrase
+        cam, body = sub(_model.official_camera(sh.get("camera", ""))), sub(sh.get("text", ""))
         parts = ["[Shot {}]".format(n)]
         short = _camera_phrase(cam)
-        if n == 1:
+        # added 2026-11-05 v0.8.0: a shot with a framing, camera amplitude or speed is written in the form of H3's
+        # guide (base-en.txt 4.3), see _framed_shot; one without them as before (so its prompt and key stay the same)
+        framed = _framed_shot(n, sh, cam, body)
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] if n == 1:
+        if framed is not None:
+            parts += framed
+        elif n == 1:
             if sh.get("continuing"):
                 parts.append("The shot continues seamlessly from the previous moment.")
             if short:
@@ -1390,6 +1433,45 @@ def _auto_summary(refs, pass_):
     elif c:
         text += " It continues seamlessly from the final frames of {}, the end of {}.".format(c["label"], _cont_before(c))
     return text
+
+
+# ---- the summary of one pass of a multi-pass scene (added 2026-11-05 v0.8.0) ----------------------------------------
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def _first_sentence(text):
+    """The first sentence of a text, on one line, without spoken lines (<d>...</d>)."""
+    text = " ".join(DIALOGUE_SPAN.sub(" ", text or "").split())
+    return SENTENCE_END.split(text, 1)[0].strip() if text else ""
+
+
+def pass_summary(p, scene, refs, pass_, unknown, ctx=None, issues=None):
+    """The automatic summary of one pass of a multi-pass scene whose scene summary is a whole-scene note: the opening
+    of _auto_summary (who is in it, how many shots), this pass's shot flow (the first sentence of each of its shots'
+    text, with this pass's labels), who speaks in it, then _auto_summary's voice, song and continuation sentences.
+    ref-en.txt 3: the summary describes "the main subjects, shot flow, and roles of the reference assets"."""
+    auto = _auto_summary(refs, pass_)
+    shots = len(pass_["shots"]) or 1
+    head = "The target video{} unfolds over {} shot{}.".format(
+        " shows " + _join_and("<Subject {}>".format(s["number"]) for s in refs.subjects) + " and" if refs.subjects
+        else "", shots, "s" if shots > 1 else "")
+    tail = auto[len(head):] if auto.startswith(head) else ""
+    flow = []
+    for sh in pass_["shots"]:
+        first = _first_sentence(substitute(sh.get("text", ""), p, refs, unknown, ctx=ctx, scene=scene, issues=issues))
+        if first:
+            flow.append(_sentence(first))
+    cast = _index(p, ctx)["cast"]
+    sub_of_cast = {s["cast"]: s["number"] for s in refs.subjects if s["cast"]}
+    who = []
+    for d in pass_["dialogue"]:
+        sp = d.get("speaker") or ""
+        name = "<Subject {}>".format(sub_of_cast[sp]) if sp in sub_of_cast else \
+            cast[sp]["name"] if sp in cast else "an off-screen voice"
+        if name not in who:
+            who.append(name)
+    speak = _sentence(_join_and(who) + (" speaks." if len(who) == 1 else " speak.")) if who else ""
+    return " ".join(x for x in [head] + flow + [speak, tail.strip()] if x)
 
 
 # ---- written shot lines and pass prompts (added 2026-11-03 v0.6.0) ------------------------------------------------
@@ -1563,15 +1645,35 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
     override = (pr.get("pass_prompts") or {}).get(str(pass_["index"]), "")
     override = override if isinstance(override, str) else ""
     shots_written = None
+    # added 2026-11-05 v0.8.0: eff = the sections this pass is built from (model.pass_sections: its own text from
+    # scene.prompt.passes where written, else the scene's, shared). A multi-pass scene never sends the scene summary
+    # (it is a whole-scene note): a pass without a summary of its own gets the automatic one; when the scene summary
+    # was written (and so used to be sent to every pass) that is pass_summary, made from this pass's shots and lines
+    eff, rich = None, False
     if override.strip():
         sources = [override]
     elif pr["mode"] == "raw":
         sources = [pr["raw"]]
     else:
-        # only the written shot lines of this pass, and its timeline shots, can name a guide picture or clip
-        shots_written = written_shots(scene, plan, pass_, pr["sections"]["detailed_description"])
-        sources = [v for k, v in pr["sections"].items() if k != "detailed_description"] + [shots_written["text"]]
-        if pr["auto"].get("shots"):
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] every pass was built from the scene's sections
+        # # only the written shot lines of this pass, and its timeline shots, can name a guide picture or clip
+        # shots_written = written_shots(scene, plan, pass_, pr["sections"]["detailed_description"])
+        # sources = [v for k, v in pr["sections"].items() if k != "detailed_description"] + [shots_written["text"]]
+        # if pr["auto"].get("shots"):
+        #     sources += ["{} {}".format(sh.get("camera", ""), sh.get("text", "")) for sh in pass_["shots"]]
+        # [/OLD]
+        ps = _model.pass_sections(p, scene, plan, pass_["index"])
+        eff = dict(pr["sections"])  # keys other than the six stay, as before
+        eff.update(ps["used"])
+        if ps["source"]["detailed_description"] == "pass":  # written for this pass: [Shot N] in its own numbering
+            shots_written = {"text": eff["detailed_description"], "extra": [], "unplaced": []}
+        else:
+            # only the written shot lines of this pass, and its timeline shots, can name a guide picture or clip
+            shots_written = written_shots(scene, plan, pass_, pr["sections"]["detailed_description"])
+        rich = len(plan["passes"]) > 1 and ps["source"]["summary"] != "pass" and \
+            bool(_strip_task_tags(pr["sections"]["summary"]).strip())
+        sources = [v for k, v in eff.items() if k != "detailed_description"] + [shots_written["text"]]
+        if pr["auto"].get("shots") or rich:  # rich: pass_summary quotes the shots
             sources += ["{} {}".format(sh.get("camera", ""), sh.get("text", "")) for sh in pass_["shots"]]
     mentioned = set()
     for t in sources:
@@ -1637,7 +1739,8 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
         # [/OLD]
         # added 2026-11-02 v0.2.0: the six labelled sections of ref-en.txt, always in order.
         # [OLD 2026-11-03 v0.5.1->v0.6.0] sec = {k: substitute(v, p, refs, unknown).strip() for k, v in pr["sections"].items()}
-        sec = {k: sub(v).strip() for k, v in pr["sections"].items() if k != "detailed_description"}
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] sec = {k: sub(v).strip() for k, v in pr["sections"].items() if k != "detailed_description"}
+        sec = {k: sub(v).strip() for k, v in eff.items() if k != "detailed_description"}  # v0.8.0: this pass's own
         sec["detailed_description"] = sub(shots_written["text"]).strip()  # added 2026-11-03 v0.6.0: this pass's lines
         for k in shots_written["extra"]:
             issues.append({"level": "info", "tag": "", "message": "a written [Shot {}] has no shot on the timeline "
@@ -1670,7 +1773,14 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
         #     written = written[lead.end():]  # the task tags are always added below
         # [/OLD]
         written = _strip_task_tags(sec["summary"]).strip()  # the task tags are always added below
-        summary = written or (_auto_summary(refs, pass_) if auto.get("subjects") else "")
+        # [OLD 2026-11-05 v0.7.0->v0.8.0] summary = written or (_auto_summary(refs, pass_) if auto.get("subjects") else "")
+        # added 2026-11-05 v0.8.0: in a multi-pass scene whose summary was written, a pass without a summary of its own
+        # gets one made from its own shots and lines (the scene summary described the whole scene, so every pass
+        # played the whole scene's action); written is "" then (model.pass_sections)
+        if rich:
+            summary = pass_summary(p, scene, refs, pass_, unknown, ctx=ctx, issues=issues)
+        else:
+            summary = written or (_auto_summary(refs, pass_) if auto.get("subjects") else "")
         summary = " ".join(x for x in (tag_line, summary) if x)
         # [OLD 2026-11-03 v0.5.1->v0.6.0] ret = _merge(labelled(retention_analysis(p, scene, refs, pass_), LABEL_START) if auto.get("retention") else [],
         ret = _merge(labelled(retention_analysis(p, scene, refs, pass_, ctx), LABEL_START) if auto.get("retention") else [],

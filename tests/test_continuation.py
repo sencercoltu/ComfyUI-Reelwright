@@ -35,6 +35,18 @@ def _project(raw, on=True):
     return normalize_project(p)
 
 
+def _pass_summaries(p):
+    """v0.8.0: a multi-pass scene no longer sends the scene summary to every pass (it is a whole-scene note). Writing it
+    as each pass's own summary (scene.prompt.passes) gives the prompts of v0.7.0 and before."""
+    for i, s in enumerate(p["scenes"]):
+        plan = plan_scene(p, s, i)
+        if len(plan["passes"]) > 1 and s["prompt"]["sections"]["summary"].strip():
+            s["prompt"]["passes"] = [{"start": x["start"], "end": x["end"],
+                                      "sections": dict(model.empty_sections(), summary=s["prompt"]["sections"]["summary"])}
+                                     for x in plan["passes"]]
+    return p
+
+
 def _files(p, roots):
     for a in p["assets"]:
         path = os.path.join(roots.input, a["file"])
@@ -75,7 +87,10 @@ def _sections(text):
 def test_off_gives_the_v061_builds_and_cache_keys(v061, roots):
     assert model.default_global()["continuity"]["name_continuation"] is True
     for raw, expect in zip(v061["projects"], v061["expect"]):
-        r = _analyze(_project(raw, on=False), roots)
+        # [OLD v0.7.0] r = _analyze(_project(raw, on=False), roots)
+        # v0.8.0: with the scene summary written as each pass's own summary (a multi-pass scene no longer sends the
+        # scene summary), every build and key is v0.6.1's
+        r = _analyze(_pass_summaries(_project(raw, on=False)), roots)
         assert set(r["scenes"]) == set(expect)
         for sid, want in expect.items():
             sr = r["scenes"][sid]
@@ -85,6 +100,47 @@ def test_off_gives_the_v061_builds_and_cache_keys(v061, roots):
             assert sr["pass_keys"] == want["pass_keys"], sid
             assert sr["key"] == want["key"], sid
             assert sr["status"] == want["status"], sid
+
+
+def test_v080_changes_only_the_summary_of_multi_pass_scenes_with_a_written_summary(v061, roots):
+    """added 2026-11-05 v0.8.0: what re-renders after the update (switch off, so only P1 counts): a multi-pass scene
+    whose scene summary was written sends each pass a summary made from its own shots instead, and a guide picture
+    named only in that summary is no longer sent as a reference (s_long pass 3: the letter keyframe @P3, still
+    anchored); every other section, reference and every other scene (single-pass, or multi-pass with an empty
+    summary) keep v0.6.1's build and key."""
+    changed, chained = [], set()
+    for raw, expect in zip(v061["projects"], v061["expect"]):
+        p = _project(raw, on=False)
+        r = _analyze(p, roots)
+        for i, s in enumerate(p["scenes"]):
+            sr, want = r["scenes"][s["id"]], expect[s["id"]]
+            multi = len(sr["builds"]) > 1
+            written = s["prompt"]["mode"] != "raw" and s["prompt"]["sections"]["summary"].strip()
+            for n, (b, was) in enumerate(zip(sr["builds"], want["builds"])):
+                if s["id"] == "s_long" and n == 2:  # the keyframe named only in the scene summary
+                    assert [x["assets"] for x in b["images"]] == [x["assets"] for x in was["images"]][:-1] and \
+                        was["images"][-1]["assets"] == ["a_letter"] and b["guides"] == was["guides"]
+                    continue
+                now, old = _sections(b["prompt"]), _sections(was["prompt"])
+                assert {k: v for k, v in now.items() if k != "summary"} == \
+                    {k: v for k, v in old.items() if k != "summary"}, s["id"]
+                assert {k: b[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")} == \
+                    {k: was[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")}, s["id"]
+            if multi and written:
+                changed.append(s["id"])
+                assert all(_sections(b["prompt"])["summary"] != _sections(w["prompt"])["summary"]
+                           for b, w in zip(sr["builds"], want["builds"])), s["id"]
+                assert sr["key"] != want["key"]
+            elif i > 0 and model.effective_start(p, i) != "fresh" and p["scenes"][i - 1]["id"] in chained:
+                chained.add(s["id"])  # continues from a scene that renders again: same prompts, new key
+                assert [b["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]
+                assert sr["key"] != want["key"], s["id"]
+                continue
+            else:
+                assert sr["pass_keys"] == want["pass_keys"] and sr["key"] == want["key"], s["id"]
+            if multi and written:
+                chained.add(s["id"])
+    assert changed == ["s_long"] and "s_short" in chained
 
 
 def test_on_changes_only_the_passes_that_continue(v061, roots):
@@ -139,7 +195,7 @@ def test_last_frame_start_names_the_frame_as_picture_1(v061):
 
 
 def test_tail_start_names_the_tail_clip_as_video_1_with_its_sound(v061):
-    p = _project(v061["projects"][0])
+    p = _pass_summaries(_project(v061["projects"][0]))  # v0.8.0: the summary as each pass's own
     builds, plan = _builds(p, "s_long")
     b = builds[0]
     assert b["continuation"] == {"kind": "video", "source": "prev_scene_tail", "frames": 124, "label": "<Video 1>",
@@ -165,7 +221,7 @@ def test_tail_start_names_the_tail_clip_as_video_1_with_its_sound(v061):
 
 
 def test_overlap_seams_name_the_end_of_the_pass_before(v061):
-    p = _project(v061["projects"][0])
+    p = _pass_summaries(_project(v061["projects"][0]))  # v0.8.0: the summary as each pass's own
     builds, plan = _builds(p, "s_long")
     assert [x["seam_before"] for x in plan["passes"]] == ["none", "overlap", "overlap"]
     for b in builds[1:]:

@@ -259,6 +259,15 @@ def malformed():
         {"scenes": [{"id": "s_a"}, {"id": "s_b", "transition": {"mode": "", "frames": 30}}, {"id": "s_c"}],
          "global": {"merge": {"hard_cut": "dip", "color_match": True, "color_ref_scene": "s_b"}}},
         {"scenes": [{"id": "s_a"}, {"id": "s_b"}], "global": {"merge": {"color_match": "yes", "hard_cut": 5}}},
+        # added 2026-11-05 v0.8.0 (Agent V): Global -> Long scenes continuity keys, junk and valid
+        {"scenes": [{"duration": 40.0}, {"duration": 30.0, "start": {"mode": "tail"}}],
+         "global": {"long": {"guide_vae": 5, "carry_audio": "no", "seam_video_ref": 0, "handoff": "LATENT",
+                             "pass_cache": None, "seam_mode": "overlap"}}},
+        {"scenes": [{"duration": 40.0}], "global": {"long": {"guide_vae": "h3_full.safetensors", "carry_audio": False,
+                                                             "seam_video_ref": False, "handoff": "latent",
+                                                             "pass_cache": "lossless"}}},
+        {"scenes": [{}], "global": {"long": {"handoff": ["pixels"], "pass_cache": {"x": 1}, "carry_audio": 1.5,
+                                             "seam_video_ref": None, "guide_vae": None}}},
     ]
 
 
@@ -306,8 +315,56 @@ def timing_fixtures():
                           fade_out={"frames": 2 * k, "color": "#0000ff"}, audio_fade_in=k, audio_fade_out=k + 1,
                           volume_db=-3.5, mute=k == 2, color_match=model.COLOR_MATCH_MODES[k % 3],
                           color_ref="s_0", brightness=0.1, contrast=1.2, saturation=0.8)
+    # [OLD 2026-11-05 v0.7.0->v0.8.0] return [harbor_like(), chain(), chain(reanchor=0), tiny, over, mixed, long_cuts, overlap_only, fixed, over_seed,
+    #         random_mode, loop_song, many, v061, merged] + continuation_fixtures()  # continuation: v0.7.0 (Agent A)
+    # v0.8.0 (Agent P): per-pass sections, dialogue lengths, camera fields, <Video 1> at pass seams off
     return [harbor_like(), chain(), chain(reanchor=0), tiny, over, mixed, long_cuts, overlap_only, fixed, over_seed,
-            random_mode, loop_song, many, v061, merged] + continuation_fixtures()  # continuation: v0.7.0 (Agent A)
+            random_mode, loop_song, many, v061, merged] + continuation_fixtures() + v080_fixtures()
+
+
+def v080_fixtures():
+    """added 2026-11-05 v0.8.0 (Agent P): scene.prompt.passes in every state (the current layout, a pass that moved,
+    another layout, junk entries), dialogue lines with and without a duration (CJK, junk values, lines across a seam
+    and past the end), shots with camera_amp / camera_speed / framing (and junk), and Global -> Long scenes ->
+    seam_video_ref off (continuation_fixtures again)."""
+    from reelwright.planner import plan_scene as plan_of
+    p = harbor_like()
+    p["global"]["long"]["seam_mode"] = "overlap"
+    s = p["scenes"][1]  # s_long, 32 s
+    s["shots"] = [{"id": "h_a", "t": 0, "camera": "the camera pushes in", "camera_amp": "small", "camera_speed": "slow",
+                   "framing": "close-up", "text": "@Mara leaves the pier."},
+                  {"id": "h_b", "t": 6, "camera": "Tracking", "camera_amp": "LARGE", "camera_speed": 3,
+                   "framing": "wide shot", "text": "along the seawall"},
+                  {"id": "h_c", "t": 14.375, "camera": "", "camera_amp": "large", "framing": "dutch angle"},
+                  {"id": "h_d", "t": 22, "camera_speed": "fast", "framing": None}]
+    s["dialogue"] = [{"id": "d_1", "speaker": "c_mara", "t": 13.5, "text": "Is anyone still out there tonight, Tom?"},
+                     {"id": "d_2", "speaker": "c_tom", "t": 20.0, "text": "你好，世界！ 今日は。", "duration": "2.5"},
+                     {"id": "d_3", "speaker": "c_tom", "t": 25.0, "text": "— ... !", "duration": 0},
+                     {"id": "d_4", "speaker": "c_mara", "t": 30.5, "text": "one two three four five", "duration": -1},
+                     {"id": "d_5", "speaker": "c_mara", "t": 3.0, "text": "a b", "duration": "x"},
+                     {"id": "d_6", "speaker": "c_mara", "t": 40.0, "text": "after the end", "duration": 1e9}]
+    plan = plan_of(model.normalize_project(p), model.normalize_project(p)["scenes"][1], 1)
+    cur = [{"start": x["start"], "end": x["end"],
+            "sections": {"summary": "pass {} summary".format(x["index"]), "overall_soundscape": " " if x["index"] == 2
+                         else "rain {}".format(x["index"])}} for x in plan["passes"]]
+    s["prompt"] = {"sections": {"summary": "The whole walk home.", "overall_soundscape": "wind"}, "passes": cur}
+    moved = copy.deepcopy(p)
+    moved["scenes"][1]["duration"] = 35.0  # the last pass ends later, so its text is "moved"
+    other = copy.deepcopy(p)
+    other["scenes"][1]["prompt"]["passes"] = [
+        {"start": 0, "end": 16.0, "sections": {"summary": "first half", "detailed_description": "[Shot 1] Rain."}},
+        {"start": "15.5", "end": "32", "sections": {"summary": "second half"}},
+        {"start": 31, "end": 32, "sections": {"non_diegetic_music": "drums"}},
+        None, 5, {"start": 2, "end": 3, "sections": "x"}, {"sections": {"summary": 7, "extra": "kept"}, "extra": 1}]
+    one = copy.deepcopy(p)  # a one-pass scene with texts from another layout
+    one["scenes"][0]["prompt"] = {"passes": [{"start": 0, "end": 4, "sections": {"summary": "a"}},
+                                             {"start": 4, "end": 8, "sections": {"summary": "b"}}]}
+    one["scenes"][1]["prompt"] = {"passes": [{"start": 0, "end": 1, "sections": {"summary": "only"}}]}
+    one["scenes"][1]["duration"] = 6.0
+    seam_off = [copy.deepcopy(x) for x in continuation_fixtures()[:1]]
+    for x in seam_off:
+        x["global"]["long"]["seam_video_ref"] = False
+    return [p, moved, other, one] + seam_off
 
 
 def continuation_fixtures():
@@ -531,3 +588,109 @@ def test_fuzzed_projects_match(tmp_path):
         assert_same(plans, t["plans"], "fuzz[{}].plans".format(k))
         assert_same([{names.get(a, a): b for a, b in model.scene_media_counts(p, s).items()} for s in p["scenes"]],
                     t["budgets"], "fuzz[{}].budgets".format(k))
+
+
+# ---- v0.8.0 (Agent P, contract P1): per-pass sections, dialogue lengths, camera wording ----
+RUNNER_V080 = r"""
+import { pathToFileURL } from "node:url";
+const m = await import(pathToFileURL(process.argv[2]).href);
+let input = "";
+for await (const chunk of process.stdin) input += chunk;
+const req = JSON.parse(input);
+const out = { scenes: [], seconds: req.lines.map(d => m.dialogueSeconds(d)),
+  camera: req.camera.map(([c, a, s]) => m.cameraSentence(c, a, s)), framing: req.framing.map(f => m.framingPhrase(f)),
+  constants: [m.DEFAULT_CAMERA, m.CAMERA_AMPS, m.CAMERA_SPEEDS, m.FRAMINGS, m.FRAMING_PHRASE, m.CAMERA_VERSION] };
+for (const p of req.projects) {
+  out.scenes.push(p.scenes.map((s, i) => {
+    const plan = m.planScene(p, s, i);
+    const n = plan.passes.length;
+    const ks = [...Array(n + 2).keys()];  // 0 and n + 1 are out of range
+    // JS-only edit helpers, on copies
+    const a = structuredClone(s), b = structuredClone(s);
+    m.setPassSection(p, a, plan, n, "summary", "set by hand");
+    m.writePassTexts(p, b, plan, [{ index: 1, sections: { summary: "written", music: "x", detailed_description: 5 } },
+      { index: n + 1, sections: { summary: "beyond" } }, { index: "1", sections: { overall_soundscape: "sea" } }, null]);
+    return { texts: m.passTexts(p, s, plan), relayout: m.relayoutPassTexts(p, s, plan),
+      sections: ks.map(k => m.passSections(p, s, plan, k)), spans: m.dialogueSpans(s, plan),
+      set: a.prompt.passes, write: b.prompt.passes };
+  }));
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+LINES = [{"text": "Is anyone still out there?"}, {"text": ""}, {"text": "你好世界"}, {"text": "你好世界你好世界你好世界"},
+         {"text": "日本語のテキストです。 ok"}, {"text": "한국어 문장입니다"}, {"text": "— ... !!"}, {"text": "a\u00a0b\u3000c"},
+         {"text": "e\u0301te 2024 x_y"}, {"text": "𠀀𠀁 emoji 😀 word"}, {"text": 5}, {"text": None},
+         {"text": "x", "duration": 2.5}, {"text": "x", "duration": "3"}, {"text": "one two", "duration": 0},
+         {"text": "one two", "duration": -2}, {"text": "one two", "duration": "abc"}, {"text": "x", "duration": 1e9},
+         {"text": "x", "duration": True}, None, "text", {"text": " ".join(["word"] * 40)}]
+CAMERAS = ["the camera pushes in", "Wide", "the camera holds a static shot.", "The camera whips left!", "  ", "",
+           None, 5, "...", "slow push-in toward the subject", "ölçek", "𠀀 camera"]
+
+
+def _v080_projects():
+    return [model.normalize_project(p) for p in v080_fixtures() + [harbor_like()]]
+
+
+def test_v080_helpers_match(tmp_path):
+    projects = _v080_projects()
+    camera = [[c, a, s] for c in CAMERAS for a in model.CAMERA_AMPS + ("medium", None)
+              for s in model.CAMERA_SPEEDS + ("normal",)]
+    framing = list(model.FRAMINGS) + ["Close-up", "constructor", None, 3]
+    req = {"projects": projects, "lines": LINES, "camera": camera, "framing": framing}
+    runner = tmp_path / "v080.mjs"
+    runner.write_text(RUNNER_V080)
+    res = subprocess.run([NODE, str(runner), MODEL_JS], input=json.dumps(req), capture_output=True, text=True,
+                         timeout=120)
+    assert res.returncode == 0, res.stderr
+    js = json.loads(res.stdout)
+    assert_same([model.dialogue_seconds(d) for d in LINES], js["seconds"], "dialogue_seconds")
+    assert_same([model.camera_sentence(c, a, s) for c, a, s in camera], js["camera"], "camera_sentence")
+    assert_same([model.framing_phrase(f) for f in framing], js["framing"], "framing_phrase")
+    assert_same([[list(x) for x in model.DEFAULT_CAMERA], list(model.CAMERA_AMPS), list(model.CAMERA_SPEEDS),
+                 list(model.FRAMINGS), model.FRAMING_PHRASE, model.CAMERA_VERSION], js["constants"], "constants")
+    for k, (p, scenes) in enumerate(zip(projects, js["scenes"])):
+        for i, (s, out) in enumerate(zip(p["scenes"], scenes)):
+            where = "project[{}].scene[{}]".format(k, i)
+            plan = plan_scene(p, s, i)
+            n = len(plan["passes"])
+            assert_same(model.pass_texts(p, s, plan), out["texts"], where + ".pass_texts")
+            assert_same(model.relayout_pass_texts(p, s, plan), out["relayout"], where + ".relayout")
+            assert_same([model.pass_sections(p, s, plan, x) for x in range(n + 2)], out["sections"], where + ".sections")
+            assert_same(model.dialogue_spans(s, plan), out["spans"], where + ".spans")
+            # the JS edit helpers lay the list out first, then write
+            want = model.relayout_pass_texts(p, s, plan)
+            want[n - 1]["sections"]["summary"] = "set by hand"
+            assert_same(want, out["set"], where + ".setPassSection")
+            want = model.relayout_pass_texts(p, s, plan)
+            want[0]["sections"].update(summary="written", overall_soundscape="sea")
+            assert_same(want, out["write"], where + ".writePassTexts")
+    # the fixtures cover every case
+    texts = [model.pass_texts(p, s, plan_scene(p, s, i)) for p in projects for i, s in enumerate(p["scenes"])]
+    assert any(t["same"] and t["stored"] for t in texts) and any(t["moved"] for t in texts)
+    assert any(t["unused"] for t in texts) and any(t["same"] and not t["stored"] for t in texts)
+    spans = [x for p in projects for i, s in enumerate(p["scenes"]) for x in model.dialogue_spans(s, plan_scene(p, s, i))]
+    assert any(x["seam"] for x in spans) and any(x["past_end"] for x in spans) and any(x["pass"] is None for x in spans)
+
+
+def test_v080_seam_video_ref_off_budget_matches_the_build():
+    """added 2026-11-05 v0.8.0: with Global -> Long scenes -> seam_video_ref off a pass after an overlap seam sends no
+    <Video 1> (only the anchor), the budget (model.scene_media_counts = model.js sceneBudget) counts it the same way,
+    and the tail clip a continuing scene starts from is still sent."""
+    from reelwright import prompt
+    on = model.normalize_project(continuation_fixtures()[0])
+    off = copy.deepcopy(on)
+    off["global"]["long"]["seam_video_ref"] = False
+    i, s = next((i, s) for i, s in enumerate(off["scenes"]) if s["id"] == "s_long")
+    plan = plan_scene(off, s, i)
+    assert [x["seam_before"] for x in plan["passes"]][1:] == ["overlap"] * (len(plan["passes"]) - 1)
+    for p, later in ((on, "video"), (off, "")):
+        ctx = prompt.prepare(p)
+        builds = [prompt.build_pass(p, p["scenes"][i], i, plan, x, ctx=ctx) for x in plan["passes"]]
+        assert builds[0]["continuation"]["source"] == "prev_scene_tail"
+        for x, b in zip(plan["passes"][1:], builds[1:]):
+            assert (b["continuation"] or {}).get("kind", "") == later
+            assert b["guides"][0]["source"] == "prev_pass_tail"  # anchored either way
+            c = model.scene_media_counts(p, p["scenes"][i], x)
+            assert c["continuation"].startswith("video") if later else c["continuation"] == ""
+            assert c["videos"] == len(b["videos"]) and c["files"] == len(b["images"]) + len(b["videos"]) + len(b["audios"])
