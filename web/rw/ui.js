@@ -506,12 +506,15 @@ export function section({ title, help, actions, children, cls, tint, collapse })
   });
   return h("section", { class: ["rw-card", cls, tint && "rw-card-" + tint, collapse && "foldable", folded && "folded"] },
     h("div", { class: "rw-card-head" },
-      collapse && h("button", { type: "button", class: "rw-fold", help: folded ? "common.expand" : "common.collapse", key: "fold-" + collapse.id,
+      // [OLD 2026-11-06 v0.10.0->v0.10.1] class "rw-fold" was already the Global tab's fold rows (layout clash)
+      // collapse && h("button", { type: "button", class: "rw-fold", help: folded ? "common.expand" : "common.collapse", key: "fold-" + collapse.id,
+      collapse && h("button", { type: "button", class: "rw-card-fold", help: folded ? "common.expand" : "common.collapse", key: "fold-" + collapse.id, // added 2026-11-06 v0.10.1
         "aria-expanded": folded ? "false" : "true", onClick: flip }, icon(folded ? "chevRight" : "chevDown", 13)),
       h("span", { class: ["rw-card-title", collapse && "clickable"], onClick: flip || undefined }, title),
       help && helpButton(help),
       h("span", { class: "rw-flex" }),
-      folded ? (collapse.summary ? h("span", { class: "rw-dim small rw-fold-sum" }, collapse.summary) : null) : actions),
+      // [OLD 2026-11-06 v0.10.0->v0.10.1] folded ? (collapse.summary ? h("span", { class: "rw-dim small rw-fold-sum" }, collapse.summary) : null) : actions),
+      folded ? (collapse.summary ? h("span", { class: "rw-dim small rw-card-fold-sum" }, collapse.summary) : null) : actions), // added 2026-11-06 v0.10.1
     folded ? null : children);
 }
 

@@ -4121,6 +4121,12 @@ def v0100_checks(page, check, saved, shots):
 
     # 9. Global → Project: Export (a .json download), Copy JSON, Import (pasted, a file) with a confirmation, undo
     tab("Global")
+    # added 2026-11-06 v0.10.1: the LLM card's Limits / Script import rows stay full width inside their card (v0.10.0's
+    # card-fold style reused their class name and squeezed them into 20 px, so their labels drifted out of the card)
+    fr = page.evaluate("""() => [...document.querySelectorAll("button.rw-fold[data-help^='global.llm.']")].map(b => {
+      const r = b.getBoundingClientRect(), c = b.closest('.rw-card').getBoundingClientRect(), l = b.querySelector('.rw-fold-label').getBoundingClientRect();
+      return { w: r.width, cw: c.width, inside: r.left >= c.left - 1 && l.left >= c.left && l.right <= c.right, label: l.left - r.left }; })""")
+    check(len(fr) >= 2 and all(x["w"] > x["cw"] * 0.6 and x["inside"] and 0 <= x["label"] < 30 for x in fr), f"Global LLM fold rows in their card: {fr}")
     p0 = cur()
     with page.expect_download() as dl:
         page.click("[data-key='proj-export']")

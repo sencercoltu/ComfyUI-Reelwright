@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.10.1 — 2026-11-06
+
+- **Fixed:** on the Global tab, the LLM card's **Limits** and **Script import** rows were squeezed to a few pixels, so their labels drifted out of the card to the left. The fold arrow that v0.10.0 added to the Scene tab's cards used the same style name as these rows. It has a name of its own now (`.rw-card-fold`, `.rw-card-fold-sum`).
+- Nothing renders again; only the editor's styles changed.
+- **Tests:** `web-test/interact.py` checks that the Global tab's fold rows span their card.
+
 ## v0.10.0 — 2026-11-06
 
 Spoken lines stay in their own pass and are said once. A narrator or character keeps one voice from pass to pass. Subtitles and the monitor's captions follow the speech heard in each take. A project can be exported and imported as JSON. Tooltips show cut-off lines and camera text in full, cards fold away, and any text can be copied with a right-click.

@@ -1002,12 +1002,20 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-ptab.on { color: #fff; background: rgba(167, 139, 250, 0.2); border-color: rgba(167, 139, 250, 0.7); box-shadow: inset 0 2px 0 var(--vid); }
 .rw-pass-tab { height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid #323743; background: #1c1f26; cursor: pointer; font-size: 11px; color: #c3c8d3; }
 .rw-pass-tab.on { border-color: var(--vid); color: #fff; background: rgba(167, 139, 250, 0.2); }
+/* [OLD 2026-11-06 v0.10.0->v0.10.1] these reused .rw-fold / .rw-fold-sum, the Global tab's Limits / Script import rows,
+   and squeezed them into 20 px (their labels drifted out of the card); renamed .rw-card-fold / .rw-card-fold-sum below
 .rw-fold { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin: 0 -2px 0 -4px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text3); cursor: pointer; flex: none; }
 .rw-fold:hover { background: var(--raise); color: var(--text); }
 .rw-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rw-fold-sum { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+[/OLD] */
+/* added 2026-11-06 v0.10.1: the card fold chevron and its summary, with names of their own */
+.rw-card-fold { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin: 0 -2px 0 -4px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text3); cursor: pointer; flex: none; }
+.rw-card-fold:hover { background: var(--raise); color: var(--text); }
+.rw-card-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rw-card-fold-sum { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
 .rw-card-title.clickable { cursor: pointer; }
 .rw-card.folded { padding-top: 8px; padding-bottom: 8px; }
-.rw-fold-sum { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
 .rw-copy-buf { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; }
 .rw-tip-detail { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rw-tip-help { margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(0, 0, 0, 0.14); color: #3b404c; }
