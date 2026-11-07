@@ -5,6 +5,7 @@
 import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, dot, confirmDialog } from "../ui.js";
 import { rw } from "../api.js";
 import { newJob, jobLine } from "../llmjob.js"; // added 2026-11-03 v0.4.2
+import { jobText } from "../llmjob.js"; // added 2026-11-06 v0.10.2: progress lines updated in place
 import {
   ASPECTS, START_MODES, STABLE_LANGUAGES, OVERRIDE_KEYS, adaptCanvas, newId, slugify, defaultScene, effective, FPS,
   sceneIndex, // added 2026-11-02 v0.3.1
@@ -811,7 +812,9 @@ function writeBatchBox(ctx) {
       !run.running && retry.length > 0 && button({ label: `Retry ${retry.length}`, icon: "refresh", small: true, key: "write-batch-retry", help: "global.script.writeRetry",
         onClick: () => start(retry.filter(x => scenes.some(s => s.id === x.sid)).map(x => ({ sid: x.sid, passes: x.passes || null }))) }),
       !run.running && dismiss),
-    run.running && h("div", { class: "rw-dim small mono", help: "scene.prompt.writeProgress" }, (d?.pass ? `pass ${d.pass}${d.passes ? " of " + d.passes : ""} · ` : "") + jobLine(d)),
+    // [OLD 2026-11-06 v0.10.1->v0.10.2] run.running && h("div", { class: "rw-dim small mono", help: "scene.prompt.writeProgress" }, (d?.pass ? `pass ${d.pass}${d.passes ? " of " + d.passes : ""} · ` : "") + jobLine(d)),
+    run.running && jobText(run.job, d, { tag: "div", class: "rw-dim small mono", help: "scene.prompt.writeProgress", // added 2026-11-06 v0.10.2: updated in place
+      fmt: x => (x?.pass ? `pass ${x.pass}${x.passes ? " of " + x.passes : ""} · ` : "") + jobLine(x) }),
     run.items.map(x => h("div", { class: ["rw-write-item", x.state], help: "global.script.writeItem" },
       h("span", { class: "st mono" }, mark[x.state] || "·"),
       h("span", { class: "rw-ellipsis" }, `${num(x.sid)} · ${title(x.sid)}`),
@@ -903,13 +906,16 @@ function partsView(ctx, draft) {
   const rows = draft.parts.map((p, i) => {
     const first = (p.blocks[0] || "").split("\n")[0];
     const status = p.status === "done" ? `✓ ${p.scenes.length} scene${p.scenes.length === 1 ? "" : "s"} · ≈${n(p.tokens)} tokens · ${Math.round((p.ms || 0) / 1000)} s${p.attempts > 1 ? ` · ${p.attempts} tries` : ""}`
-      : p.status === "run" ? jobLine(ctx.eph.llmJobs[draft.job])
+      : p.status === "run" ? "" // added 2026-11-06 v0.10.2: a running part's line is a jobText (below), updated in place
+      // [OLD 2026-11-06 v0.10.1->v0.10.2] : p.status === "run" ? jobLine(ctx.eph.llmJobs[draft.job])
       : p.status === "failed" ? p.error
       : p.status === "stopped" ? "stopped" : "waiting";
     return h("div", { class: ["rw-script-part", p.status], help: "global.script.part" },
       h("span", { class: "mono rw-dim" }, many ? `Part ${i + 1}` : "Script"),
       h("span", { class: "rw-ellipsis rw-dim small mono", title: first }, first.length > 48 ? first.slice(0, 47) + "…" : first),
-      h("span", { class: ["small", p.status === "failed" ? "rw-c-err" : p.status === "done" ? "rw-c-aud" : "rw-dim"] }, status));
+      // [OLD 2026-11-06 v0.10.1->v0.10.2] h("span", { class: ["small", p.status === "failed" ? "rw-c-err" : p.status === "done" ? "rw-c-aud" : "rw-dim"] }, status));
+      p.status === "run" ? jobText(draft.job, ctx.eph.llmJobs[draft.job], { class: "small rw-dim" }) // added 2026-11-06 v0.10.2
+        : h("span", { class: ["small", p.status === "failed" ? "rw-c-err" : p.status === "done" ? "rw-c-aud" : "rw-dim"] }, status));
   });
   const show = many || draft.parts.some(p => p.status !== "done");
   return h("div", { class: "rw-script-parts" },

@@ -49,6 +49,7 @@ tip("footer.issues", "The first issue in the project, or confirmation that every
 tip("footer.output", "Output size and quality from the Global tab. H3 always renders 24 fps video with 32 kHz stereo audio.");
 tip("footer.status", "How many scenes have a matching take on disk, are stale (changed since their take) or have never been rendered.");
 tip("footer.running", "The scene, pass and sampling step being rendered right now.");
+tip("footer.merging", "A merge is running: one you started, or the one after a render (Render → Merge → Merge after each render). Render → Stop merging stops it."); // added 2026-11-06 v0.10.2
 // [OLD 2026-11-03 v0.4.3->v0.5.0] tip("footer.length", "Number of scenes, total timeline length, and the length of the final cut after continuation overlaps are trimmed.");
 tip("footer.length", "Number of scenes, timeline length and the length of the final cut. They match: a scene that continues the one before starts inside it, over the frames it repeats, so the timeline already is the cut.");
 // [OLD 2026-11-03 v0.5.1->v0.6.0] tip("footer.save", "Edits are written into the workflow immediately and autosaved to output/reelwright/<project>/ every few seconds.");

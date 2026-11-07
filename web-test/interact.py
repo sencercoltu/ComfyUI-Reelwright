@@ -1494,6 +1494,7 @@ def main():
         v080_checks(page, check, saved, shots)  # added 2026-11-05 v0.8.0: pass tabs, Write prompts, rows, follow, seams, drift
         v090_checks(page, check, saved, shots)  # added 2026-11-06 v0.9.0: Timeline panels, captions, volume; Scene lists; asset groups
         v0100_checks(page, check, saved, shots)  # added 2026-11-06 v0.10.0: speech-timed captions, tooltips, folds, seam fixes, rewriter per pass, copy, import/export, voices
+        v0102_checks(page, check, saved, shots)  # added 2026-11-06 v0.10.2: merge and LLM progress without rebuilding the tab; tooltips survive a rebuild
         browser.close()
     httpd.shutdown()
 
@@ -4199,6 +4200,129 @@ def v0100_checks(page, check, saved, shots):
 
     load(json.loads(saved))
     tab("Timeline")
+
+
+def v0102_checks(page, check, saved, shots):
+    """v0.10.2: a merge's progress events (ffmpeg, twice a second) and an LLM request's progress events rewrite their
+    percentages and progress lines in place instead of rebuilding the tab (Sencer: the tab rebuilt every ~600 ms, its
+    tooltips blinked and its text fields flickered); events of LLM jobs this
+    page did not make are ignored; a tooltip stays up when a re-render replaces the hovered element by its copy."""
+    emit = lambda ev, d: page.evaluate("([e, d]) => window.__host.emit(e, d)", [ev, d])
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["soundtrack"] = []
+    q["ui"].update(tab="scene", selected="s_03")
+    load(q)
+    page.evaluate("""() => { window.__rb = 0; window.__rbObs = new MutationObserver(() => window.__rb++);
+      window.__rbObs.observe(document.querySelector('.rw-body'), { childList: true }); }""")
+    rebuilds = lambda: page.evaluate("window.__rb")
+
+    def settle():
+        """wait until earlier checks' toasts are gone and their autosave has answered (each rebuilds the tab once), and
+        the tab has not been rebuilt for 700 ms (a load's plan answer rebuilds it)"""
+        page.wait_for_function("() => !(window.__editor.eph.toasts || []).length && window.__editor.eph.saveState !== 'pending'", timeout=12000)
+        last, quiet = rebuilds(), 0
+        for _ in range(40):
+            page.wait_for_timeout(100)
+            now = rebuilds()
+            quiet = quiet + 100 if now == last else 0
+            last = now
+            if quiet >= 700:
+                return
+
+    # 1. a merge after a render: start rebuilds once (the footer and buttons show it), progress events only rewrite
+    emit("reelwright.merge", {"slug": "harbor_lights", "job": "merge-r9", "phase": "start"})
+    settle()
+    r0 = rebuilds()
+    foot = page.locator(".rw-footer [data-help='footer.merging']")
+    check(foot.count() == 1, "the footer shows a running merge")
+    for k in range(1, 7):
+        emit("reelwright.merge", {"slug": "harbor_lights", "job": "merge-r9", "phase": "progress", "percent": k * 10.4})
+        page.wait_for_timeout(120)
+    pct = foot.locator(".rw-merge-pct").inner_text()
+    check(rebuilds() == r0 and pct == "62%" and abs(page.evaluate("window.__editor.eph.merge.percent") - 62.4) < 1e-6,
+          f"merge progress in place: {rebuilds() - r0} rebuilds, footer {pct!r}")
+    page.click(".rw-tab:has-text('Render')")
+    page.wait_for_timeout(300)
+    emit("reelwright.merge", {"slug": "harbor_lights", "job": "merge-r9", "phase": "progress", "percent": 71.2})
+    page.wait_for_timeout(150)
+    labels = page.locator("button[data-help='render.merge.run'], button[data-help='app.merge']").all_inner_texts()
+    check(labels and all("Merging… 71%" in x for x in labels), f"the Render tab's merge buttons follow it: {labels}")
+    page.click(".rw-tab:has-text('Scene')")
+    page.wait_for_timeout(300)
+    r1 = rebuilds()
+    emit("reelwright.merge", {"slug": "harbor_lights", "job": "merge-r9", "phase": "end", "files": {"video": "reelwright/harbor_lights/cut/harbor_lights_cut.mp4"}, "duration": 80})
+    page.wait_for_timeout(250)
+    check(rebuilds() == r1 + 1 and page.locator(".rw-footer [data-help='footer.merging']").count() == 0, "the end of the merge rebuilds once and clears the footer")
+
+    # 2. LLM progress: this page's job rewrites its progress line in place; another tab's job is ignored
+    job = page.evaluate("async () => { const m = await import('/web/rw/llmjob.js'); return m.newJob('rewrite'); }")
+    page.evaluate("j => window.__editor.store.setEph({ rewrite: { scene_id: 's_03', pass: -1, busy: true, job: j } })", job)
+    page.wait_for_timeout(250)
+    line = page.locator(f".rw-llm-busy [data-llm-job='{job}']")
+    check(line.count() == 1 and "sending" in line.inner_text(), f"the rewriter's progress line: {line.all_inner_texts()}")
+    settle()
+    r2 = rebuilds()
+    for k in range(1, 6):
+        emit("reelwright.llm", {"job": job, "phase": "writing", "tokens": 100 * k, "reasoning": 0, "elapsed": k, "budget": 4096})
+        emit("reelwright.llm", {"job": "rewrite-elsewhere-x1", "phase": "writing", "tokens": 5, "elapsed": k})
+        page.wait_for_timeout(100)
+    txt = line.inner_text()
+    check(rebuilds() == r2 and "≈500 tokens of 4,096" in txt and "rewrite-elsewhere-x1" not in page.evaluate("Object.keys(window.__editor.eph.llmJobs)"),
+          f"LLM progress in place: {rebuilds() - r2} rebuilds, {txt!r}")
+    page.evaluate("window.__editor.store.setEph({ rewrite: null })")
+    page.wait_for_timeout(200)
+
+    # 2b. ComfyUI's api.fetchApi aborts a request after 60 s unless it gets timeoutMs: null (Sencer: "Propose scenes"
+    # timed out after 60 s while tokens were arriving, with the stall timeout at 120 s). LLM and other long routes wait;
+    # quick ones keep ComfyUI's timeout. A request the browser loses anyway is stopped on the server (it kept sending
+    # progress events for nobody), and the message says what happened.
+    lost = page.evaluate("""async () => {
+      const host = window.__host, orig = host.fetchApi, sent = [];
+      host.fetchApi = (route, opts) => {
+        sent.push([route, opts && "timeoutMs" in opts ? opts.timeoutMs : "default", opts?.body || ""]);
+        if (route === "/reelwright/llm/rewrite") return Promise.reject(new DOMException("Fetch timeout", "TimeoutError"));
+        if (route === "/reelwright/plan") return Promise.reject(new TypeError("Failed to fetch"));
+        return orig(route, opts);
+      };
+      const { rw } = await import('/web/rw/api.js');
+      const out = {};
+      try { await rw.rewrite(window.__editor.store.project, "s_03", "", "rewrite-lost-1"); } catch (e) { out.llm = [e.message, e.reason]; }
+      try { await rw.plan(window.__editor.store.project); } catch (e) { out.plan = [e.message, e.reason]; }
+      await rw.scriptParts("INT. CRYPT - NIGHT. Ada waits.", 3000);
+      await new Promise(r => setTimeout(r, 50));
+      host.fetchApi = orig;
+      out.cancels = sent.filter(x => x[0] === "/reelwright/llm/cancel").map(x => x[2]);
+      out.timeouts = Object.fromEntries(sent.map(x => [x[0], x[1]]));
+      return out;
+    }""")
+    tm = lost.get("timeouts", {})
+    check(tm.get("/reelwright/llm/rewrite") is None and tm.get("/reelwright/llm/script/parts") is None and tm.get("/reelwright/plan") == "default"
+          and tm.get("/reelwright/llm/cancel") == "default", f"LLM requests wait past ComfyUI's 60 s fetch timeout, quick ones keep it: {tm}")
+    check(lost.get("llm") and "the browser stopped waiting for the answer (Fetch timeout)" in lost["llm"][0] and "stopped on the server" in lost["llm"][0]
+          and lost["llm"][1] == "lost" and len(lost["cancels"]) == 1 and "rewrite-lost-1" in lost["cancels"][0],
+          f"a lost LLM request is stopped on the server and says so: {lost}")
+    check(lost.get("plan") and "connection to ComfyUI was lost" in lost["plan"][0] and "Failed to fetch" in lost["plan"][0] and "server" not in lost["plan"][0],
+          f"a lost request that is not an LLM request cancels nothing: {lost.get('plan')}")
+
+    # 3. a tooltip stays up while the tab is rebuilt under the mouse
+    page.hover("[data-key='fold-shots']")
+    page.wait_for_timeout(600)
+    tip_on = lambda: page.evaluate("document.querySelector('.rw-tip').classList.contains('on')")
+    shown = tip_on()
+    page.evaluate("""() => { window.__tipOff = 0; const t = document.querySelector('.rw-tip');
+      window.__tipObs = new MutationObserver(() => { if (!t.classList.contains('on')) window.__tipOff++; }); window.__tipObs.observe(t, { attributes: true });
+      window.__loop = setInterval(() => window.__editor.store.notify(), 300); }""")
+    page.wait_for_timeout(1600)
+    off = page.evaluate("() => { clearInterval(window.__loop); window.__tipObs.disconnect(); return window.__tipOff; }")
+    check(shown and off == 0 and tip_on(), f"the tooltip stays up through re-renders: shown {shown}, hidden {off} times")
+    page.mouse.move(5, 5)
+    page.evaluate("window.__rbObs.disconnect()")
+    load(json.loads(saved))
 
 
 if __name__ == "__main__":

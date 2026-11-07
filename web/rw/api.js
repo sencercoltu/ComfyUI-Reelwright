@@ -7,6 +7,13 @@ export function setHost(h) {
   host = h;
 }
 
+// added 2026-11-07 v0.10.2: ComfyUI's api.fetchApi (newer frontends) aborts a request after 60 s ("Fetch timeout")
+// unless it is given timeoutMs: null. That cut LLM answers off while their tokens were still arriving, whatever
+// Global → Limits said. These routes do long work whose limits live on the server (the LLM stall timeout and give-up,
+// ffmpeg, face checks), so they wait for the answer; the other routes keep ComfyUI's timeout. Older frontends and the
+// test harness ignore the option.
+export const LONG_ROUTE = /^\/reelwright\/(llm\/(?!cancel\b)|merge(?!\/cancel)|upload|import|continuity\/|cast\/export|beats|soundtrack\/excerpt|speech|voice_from_take|waveform|filmstrip|storage\/repair|promote_frame)/;
+
 async function req(method, route, body, form) {
   const opts = { method };
   if (form) opts.body = form;
@@ -14,7 +21,23 @@ async function req(method, route, body, form) {
     opts.headers = { "Content-Type": "application/json" };
     opts.body = JSON.stringify(body);
   }
-  const res = await host.fetchApi(route, opts);
+  if (LONG_ROUTE.test(route)) opts.timeoutMs = null; // added 2026-11-07 v0.10.2
+  // [OLD 2026-11-07 v0.10.2] const res = await host.fetchApi(route, opts);  (a request the browser lost kept running on the server)
+  // added 2026-11-07 v0.10.2: a request the browser gives up on (a timeout, a dropped connection) may go on on the
+  // server; an LLM request then kept sending progress events for nobody until it ended. Stop it there, and say what
+  // happened instead of a bare "Failed to fetch" / "Fetch timeout".
+  let res;
+  try { res = await host.fetchApi(route, opts); }
+  catch (err) {
+    const llm = route.startsWith("/reelwright/llm/") && route !== "/reelwright/llm/cancel" && body?.job;
+    if (llm) req("POST", "/reelwright/llm/cancel", { job: body.job }).catch(() => {});
+    const why = err?.message || String(err);
+    const lost = new Error((err?.name === "TimeoutError" ? `the browser stopped waiting for the answer (${why})` : `the connection to ComfyUI was lost before the answer came (${why})`) +
+      (llm ? ". The request was stopped on the server too; try again." : ""));
+    lost.reason = "lost";
+    lost.cause = err;
+    throw lost;
+  }
   let data = null;
   try { data = await res.json(); } catch { data = null; }
   // [OLD 2026-11-03 v0.4.1->v0.4.2] if (!res.ok) throw new Error(data?.error || data?.message || `${res.status} ${res.statusText}`);
@@ -109,7 +132,8 @@ export const rw = {
   // lines [{id, t, duration}] -> {lines: [{id, t, end, matched, planned}], segments}
   speech: (file, lines, start, end) => req("POST", "/reelwright/speech", { file, lines, ...(start !== undefined ? { start } : {}), ...(end !== undefined ? { end } : {}) }),
   async waveform(file, per_second = 50) {
-    const res = await host.fetchApi(`/reelwright/waveform?file=${q(file)}&per_second=${per_second}`, { method: "GET" });
+    // [OLD 2026-11-07 v0.10.2] const res = await host.fetchApi(`/reelwright/waveform?file=${q(file)}&per_second=${per_second}`, { method: "GET" });
+    const res = await host.fetchApi(`/reelwright/waveform?file=${q(file)}&per_second=${per_second}`, { method: "GET", timeoutMs: null }); // added 2026-11-07 v0.10.2: no 60 s cut-off (LONG_ROUTE)
     if (!res.ok) throw new Error(`waveform ${res.status}`);
     return { peaks: new Uint8Array(await res.arrayBuffer()), perSecond: Number(res.headers.get("X-Per-Second")) || per_second,
       duration: Number(res.headers.get("X-Duration")) || 0 };

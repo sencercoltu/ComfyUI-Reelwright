@@ -15,6 +15,12 @@ const STATUS = {
   missing: ["empty", "not rendered"], queued: ["busy", "queued"], rendering: ["busy", "rendering"], error: ["err", "failed"], unknown: ["empty", "unknown"],
 };
 
+// added 2026-11-06 v0.10.2: "Merging… 43%"; editor.js rewrites the .rw-merge-pct part on each progress event, so a
+// running merge no longer rebuilds the tab twice a second
+function mergingLabel(res) {
+  return ["Merging… ", h("span", { class: "rw-merge-pct" }, res?.percent ? Math.round(res.percent) + "%" : "")];
+}
+
 function scopeBar(ctx) {
   const p = ctx.p;
   const s = ctx.scene;
@@ -703,7 +709,8 @@ function takesTable(ctx) {
         help: "app.merge", disabled: merging || nReady === 0 || (p.global.merge.missing === "block" && nReady < p.scenes.length), onClick: () => ctx.actions.merge() }),
       [/OLD] */
       // added 2026-11-03 v0.6.0: the Merge card's options (draft, range, stems) apply here too; Stop while merging
-      button({ label: merging ? `Merging… ${res.percent ? Math.round(res.percent) + "%" : ""}` : `${mergeOpts(ctx).draft ? "Draft merge" : "Merge"} ${nReady}/${p.scenes.length}`, icon: "merge", small: true, variant: "accent-ghost",
+      // [OLD 2026-11-06 v0.10.1->v0.10.2] button({ label: merging ? `Merging… ${res.percent ? Math.round(res.percent) + "%" : ""}` : `${mergeOpts(ctx).draft ? "Draft merge" : "Merge"} ${nReady}/${p.scenes.length}`, icon: "merge", small: true, variant: "accent-ghost",
+      button({ label: merging ? mergingLabel(res) : `${mergeOpts(ctx).draft ? "Draft merge" : "Merge"} ${nReady}/${p.scenes.length}`, icon: "merge", small: true, variant: "accent-ghost", // added 2026-11-06 v0.10.2: the percentage updates in place
         help: "app.merge", disabled: merging || nReady === 0 || (p.global.merge.missing === "block" && nReady < p.scenes.length), onClick: () => runMerge(ctx) }),
       merging && button({ label: "Stop", icon: "stop", small: true, variant: "danger-ghost", help: "render.merge.stop", onClick: () => ctx.actions.cancelMerge() }),
     ],
@@ -915,7 +922,8 @@ function mergeCard(ctx) {
         icon: "merge", variant: "primary", help: "render.merge.run", disabled: res?.phase === "start" || res?.phase === "progress" || (m.missing === "block" && nReady < p.scenes.length) || nReady === 0,
         onClick: () => ctx.actions.merge() }),
       [/OLD] */
-      button({ label: merging ? `Merging… ${res.percent ? Math.round(res.percent) + "%" : ""}`
+      // [OLD 2026-11-06 v0.10.1->v0.10.2] button({ label: merging ? `Merging… ${res.percent ? Math.round(res.percent) + "%" : ""}`
+      button({ label: merging ? mergingLabel(res) // added 2026-11-06 v0.10.2: the percentage updates in place
         : `${mo.draft ? "Draft merge" : "Merge"} ${m.missing === "skip" && !locked ? readyRange : nRange} scene${(m.missing === "skip" && !locked ? readyRange : nRange) === 1 ? "" : "s"}${mo.range ? ` (${String(lo + 1).padStart(2, "0")}–${String(hi + 1).padStart(2, "0")})` : ""} · ${fmtTime(cutLen)}`,
         icon: "merge", variant: "primary", help: "render.merge.run", disabled: merging || (m.missing === "block" && readyRange < nRange) || readyRange === 0,
         onClick: () => runMerge(ctx) }),

@@ -6,6 +6,7 @@ import { rw, setHost } from "./api.js";
 import { createStore, withProjectId } from "./store.js";
 import * as M from "./model.js"; // added 2026-11-03 v0.6.0: model APIs that may not exist yet (nextSeedN, migrateScore)
 import { newJob } from "./llmjob.js"; // added 2026-11-03 v0.6.0: merge job ids
+import { ownJobs, jobLine } from "./llmjob.js"; // added 2026-11-06 v0.10.2: LLM progress in place, own jobs only
 import { installTooltips } from "./tooltip.js";
 /* [OLD 2026-11-02 v0.1.0->v0.2.0] comboState is needed for the render guard
 import { h, icon, button } from "./ui.js";
@@ -774,6 +775,8 @@ export function mountEditor(container, host) {
     );
   }
 
+  // added 2026-11-06 v0.10.2: the percentage of a running merge, as the Render tab's buttons and the footer show it
+  function mergePct(d) { return d?.percent ? Math.round(d.percent) + "%" : ""; }
   function renderFooter() {
     const p = store.project;
     const g = p.global;
@@ -800,6 +803,9 @@ export function mountEditor(container, host) {
         ? `On disk ${st.cached} · Stale ${st.stale} · Pending ${st.pending}` : "Render status unavailable"),
       running ? h("span", { class: "rw-foot-item rw-c-pic", help: "footer.running" },
         `Rendering ${p.scenes.find(s => s.id === running.scene_id)?.title || ""} · pass ${running.pass}/${running.passes} · ${running.phase} ${running.step ? running.step + "/" + running.steps : ""}`) : "",
+      // added 2026-11-06 v0.10.2: a merge is running (one started here or elsewhere, or the one after a render)
+      ["start", "progress"].includes(store.eph.merge?.phase) ? h("span", { class: "rw-foot-item rw-c-accent", help: "footer.merging" },
+        icon("merge", 12), " Merging ", h("span", { class: "rw-merge-pct mono" }, mergePct(store.eph.merge))) : "",
       h("span", { class: "rw-flex" }),
       h("span", { class: "rw-foot-item mono", help: "footer.length" }, `${p.scenes.length} scenes · ${fmtTime(total)} · cut ${fmtTime(assembledDuration(p))}`),
       h("span", { class: "rw-foot-sep" }),
@@ -1187,11 +1193,24 @@ export function mountEditor(container, host) {
   // added 2026-11-03 v0.4.2: progress of LLM requests (Import, Rewrite, Split), at most four redraws a second
   const lastLlmRender = { at: 0 };
   // [OLD 2026-11-03 v0.5.1->v0.6.0] host.on("reelwright.llm", d => {
+  /* [OLD 2026-11-06 v0.10.1->v0.10.2] every event (about two a second while a model writes, from any job of any
+     browser tab) rebuilt the whole tab: its tooltips restarted and its text fields flickered
   on("reelwright.llm", d => {
     if (!d?.job) return;
     store.eph.llmJobs[d.job] = d;
     const now = Date.now();
     if (now - lastLlmRender.at > 250 || d.phase !== "writing") { lastLlmRender.at = now; store.notify(); }
+  });
+  [/OLD] */
+  // added 2026-11-06 v0.10.2: only jobs made on this page; the progress lines that show the job (llmjob.jobText) are
+  // rewritten in place, and nothing else is rebuilt. A tab drawn later reads eph.llmJobs.
+  on("reelwright.llm", d => {
+    if (!d?.job || !ownJobs.has(d.job)) return;
+    store.eph.llmJobs[d.job] = d;
+    for (const el of root.querySelectorAll("[data-llm-job]")) {
+      if (el.dataset.llmJob !== d.job) continue;
+      try { el.textContent = (el.__rwJobText || jobLine)(d); } catch { /* keep the old text */ }
+    }
   });
   // added 2026-11-02 v0.3.5: the latest latent preview, shown only in the Render tab's run banner
   /* [OLD 2026-11-02 v0.3.6->v0.3.7] only the backend's reelwright.preview events were shown
@@ -1396,6 +1415,16 @@ export function mountEditor(container, host) {
       const stopped = (own && mergeCancelRequested) || d.cancelled;
       store.setEph({ merge: { ...d, phase: stopped ? "cancelled" : "error" } });
       if (!own && !stopped) actions.toast("Merge failed: " + String(d.error).split("\n").filter(Boolean).slice(-1)[0], "error");
+      return;
+    }
+    // added 2026-11-06 v0.10.2: ffmpeg reports a merge's progress twice a second, and each event rebuilt the whole tab
+    // (behind the Scene tab a long merge made its tooltips restart and its text fields flicker). A progress event of
+    // the merge already shown only rewrites the percentages in place.
+    const prev = store.eph.merge;
+    if (d.phase === "progress" && (prev?.phase === "start" || prev?.phase === "progress") && (prev.job ?? null) === (d.job ?? null)) {
+      store.eph.merge = d;
+      const pct = mergePct(d);
+      for (const el of root.querySelectorAll(".rw-merge-pct")) el.textContent = pct;
       return;
     }
     store.setEph({ merge: d });

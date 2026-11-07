@@ -108,7 +108,11 @@ export function installTooltips(root) {
     clearTimeout(timer);
     tip.classList.remove("on");
     current = null;
+    waiting = null; // added 2026-11-06 v0.10.2
   }
+  // added 2026-11-06 v0.10.2: an element and its copy after a re-render (see pointerover)
+  let waiting = null; // the element whose tooltip waits for DELAY
+  const sameAs = (a, b) => !!a && !!b && a.dataset.help === b.dataset.help && a.dataset.key === b.dataset.key && a.dataset.detail === b.dataset.detail;
 
   function openPopover(id, target) {
     const entry = HELP[id];
@@ -134,6 +138,8 @@ export function installTooltips(root) {
     pop.classList.remove("on");
   }
 
+  /* [OLD 2026-11-06 v0.10.1->v0.10.2] a re-render that replaced the hovered element hid the tooltip and started its
+     delay again, so while something redrew the tab the tooltip blinked
   root.addEventListener("pointerover", e => {
     // [OLD 2026-11-06 v0.9.0->v0.10.0] const t = e.target.closest?.("[data-help]");
     const t = e.target.closest?.("[data-help], [data-detail]"); // added 2026-11-06 v0.10.0
@@ -141,6 +147,24 @@ export function installTooltips(root) {
     clearTimeout(timer);
     tip.classList.remove("on");
     timer = setTimeout(() => show(t), DELAY);
+  });
+  [/OLD] */
+  // added 2026-11-06 v0.10.2: when a re-render puts a copy of the hovered element (same help, key and detail) under the
+  // mouse, the tooltip stays on the copy, and a tooltip still waiting for its delay goes on waiting
+  root.addEventListener("pointerover", e => {
+    const t = e.target.closest?.("[data-help], [data-detail]");
+    if (!t || !root.contains(t) || t === current || t === waiting) return;
+    if (current && !current.isConnected && sameAs(t, current) && tip.classList.contains("on")) {
+      current = t;
+      place(tip, t, t.classList.contains("rw-q") ? "right" : "below");
+      return;
+    }
+    if (waiting && !waiting.isConnected && sameAs(t, waiting)) { waiting = t; return; }
+    clearTimeout(timer);
+    tip.classList.remove("on");
+    current = null;
+    waiting = t;
+    timer = setTimeout(() => { const x = waiting; waiting = null; if (x?.isConnected) show(x); }, DELAY);
   });
   root.addEventListener("pointerout", e => {
     // [OLD 2026-11-06 v0.9.0->v0.10.0] const t = e.target.closest?.("[data-help]");

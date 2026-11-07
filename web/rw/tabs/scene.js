@@ -10,6 +10,7 @@ import { seamFixes, seamFixTime } from "../passes.js"; // added 2026-11-06 v0.10
 import { TRANSITIONS, DIRECTIONS, DIRECTED, mergeOf, ensureMerge, mergeDefaults, joinOf, transitionLabel } from "../cut.js";
 import { rw, viewURL } from "../api.js";
 import { newJob, jobLine } from "../llmjob.js"; // added 2026-11-03 v0.4.2
+import { jobText } from "../llmjob.js"; // added 2026-11-06 v0.10.2: progress lines updated in place
 import { codeEditor } from "../codeedit.js";
 // added 2026-11-05 v0.8.0: per-pass prompt texts, dialogue lengths, pass seams, the camera picker, "Write prompts"
 import {
@@ -696,10 +697,15 @@ function passPane(ctx, s, plan, pt, k, { cands, write, busy }) {
 function writeRow(ctx, run, plan) {
   const d = ctx.eph.llmJobs[run.job];
   const it = run.items[run.at];
+  /* [OLD 2026-11-06 v0.10.1->v0.10.2] the text was fixed at render time (each LLM event rebuilt the tab)
   const total = d?.passes || it?.passes?.length || plan.passes.length;
   const which = d?.pass ? `pass ${d.pass} of ${total} · ` : "";
+  [/OLD] */
+  // added 2026-11-06 v0.10.2: editor.js rewrites the line on each progress event of the job
+  const line = x => "Writing " + (x?.pass ? `pass ${x.pass} of ${x?.passes || it?.passes?.length || plan.passes.length} · ` : "") + jobLine(x);
   return h("div", { class: "rw-row rw-llm-busy", help: "scene.prompt.writeProgress" },
-    h("span", { class: "rw-dim small mono grow" }, "Writing " + which + jobLine(d)),
+    // [OLD 2026-11-06 v0.10.1->v0.10.2] h("span", { class: "rw-dim small mono grow" }, "Writing " + which + jobLine(d)),
+    jobText(run.job, d, { fmt: line, class: "rw-dim small mono grow" }), // added 2026-11-06 v0.10.2
     button({ label: run.stop ? "Stopping…" : "Stop", icon: "close", small: true, key: "write-stop", help: "scene.prompt.writeStop", disabled: !!run.stop, onClick: () => stopWrite(ctx) }));
 }
 
@@ -1404,7 +1410,8 @@ function rewriteCard(ctx, s) {
 // added 2026-11-03 v0.4.2: what a running LLM request is doing, and a button to stop it
 function llmBusyRow(ctx, job, stopHelp) {
   return h("div", { class: "rw-row rw-llm-busy" },
-    h("span", { class: "rw-dim small mono grow", help: "global.llm.progress" }, jobLine(ctx.eph.llmJobs[job])),
+    // [OLD 2026-11-06 v0.10.1->v0.10.2] h("span", { class: "rw-dim small mono grow", help: "global.llm.progress" }, jobLine(ctx.eph.llmJobs[job])),
+    jobText(job, ctx.eph.llmJobs[job], { class: "rw-dim small mono grow", help: "global.llm.progress" }), // added 2026-11-06 v0.10.2: updated in place
     button({ label: "Stop", icon: "close", small: true, help: stopHelp, onClick: () => rw.llmCancel(job).catch(() => {}) }));
 }
 

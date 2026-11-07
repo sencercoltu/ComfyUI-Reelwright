@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.10.2 — 2026-11-07
+
+- **Fixed: LLM requests failed after 60 s with "Fetch timeout"** even while tokens were still arriving (Propose scenes, Write prompts, Rewrite, Split, Describe). The limit was not Reelwright's: newer ComfyUI frontends end every request after 60 s unless the caller turns that off. Reelwright now turns it off for its long requests (LLM, merge, upload, speech timing, waveforms, filmstrips, face checks). Their limits are the ones on the server: Global → Prompt rewriter → Limits (Stall timeout, Give up after) for the LLM.
+- **A request the browser loses is stopped on the server.** Before, after a "Fetch timeout" or a dropped connection, the LLM kept writing an answer nobody would read, and its progress rebuilt the editor's tab twice a second until it ended. The message now says what happened ("the browser stopped waiting for the answer…", "the connection to ComfyUI was lost…") instead of a bare "Fetch timeout" or "Failed to fetch".
+- **Fixed: the editor rebuilt its tab about twice a second while a merge or an LLM request ran,** even behind a tab that shows neither. Tooltips appeared and vanished, and text fields (a shot's text) flickered.
+  - A merge's progress (ffmpeg reports it twice a second) now only rewrites its percentage on the Render tab's merge buttons, in place. The footer now shows "Merging N%" on every tab.
+  - An LLM request's progress (Write prompts, Rewrite, Split, Import) only rewrites its progress line, in place.
+  - Progress of LLM requests started in another browser tab or by another client is ignored; before, it rebuilt every open editor.
+- **Tooltips stay up** when the tab is rebuilt under the mouse (for example when a render's phase changes). Before, the tooltip hid and waited for its delay again.
+- Nothing renders again; only the editor changed.
+- **For developers:** `llmjob.ownJobs` (the job ids made on this page), `llmjob.jobText(job, d, {tag, fmt, ...props})` (a progress element that `editor.js` updates on each `reelwright.llm` event), `.rw-merge-pct`, `api.LONG_ROUTE` (the routes sent with `timeoutMs: null`); a lost request throws an error with `reason: "lost"`. `web-test/interact.py` runs `v0102_checks()`.
+
 ## v0.10.1 — 2026-11-06
 
 - **Fixed:** on the Global tab, the LLM card's **Limits** and **Script import** rows were squeezed to a few pixels, so their labels drifted out of the card to the left. The fold arrow that v0.10.0 added to the Scene tab's cards used the same style name as these rows. It has a name of its own now (`.rw-card-fold`, `.rw-card-fold-sum`).
