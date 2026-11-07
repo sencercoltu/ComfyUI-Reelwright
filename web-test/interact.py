@@ -1495,6 +1495,7 @@ def main():
         v090_checks(page, check, saved, shots)  # added 2026-11-06 v0.9.0: Timeline panels, captions, volume; Scene lists; asset groups
         v0100_checks(page, check, saved, shots)  # added 2026-11-06 v0.10.0: speech-timed captions, tooltips, folds, seam fixes, rewriter per pass, copy, import/export, voices
         v0102_checks(page, check, saved, shots)  # added 2026-11-06 v0.10.2: merge and LLM progress without rebuilding the tab; tooltips survive a rebuild
+        v0103_checks(page, check, saved, shots)  # added 2026-11-07 v0.10.3: Global → Project → New project
         browser.close()
     httpd.shutdown()
 
@@ -4322,6 +4323,97 @@ def v0102_checks(page, check, saved, shots):
     check(shown and off == 0 and tip_on(), f"the tooltip stays up through re-renders: shown {shown}, hidden {off} times")
     page.mouse.move(5, 5)
     page.evaluate("window.__rbObs.disconnect()")
+    load(json.loads(saved))
+
+
+
+def v0103_checks(page, check, saved, shots):
+    """v0.10.3: Global → Project → New project… (Sencer: "add a button to project to start a new project"). The node
+    gets an empty project in a new untitled-xxxx folder as one undo step, keeping this project's Global settings or
+    taking the default profile's; the current project is saved to its folder first; nothing starts while a render runs."""
+    import os, re
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    proj = lambda: page.evaluate("window.__editor.project")
+    modal = page.locator(".rw-modal")
+    toasts = lambda: " | ".join(page.locator(".rw-toast").all_inner_texts())
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"]["tab"] = "global"
+    q["global"]["llm"]["base_url"] = "http://llm.local:30000/v1"
+    q["global"]["llm"]["timeout_s"] = 333
+    q["global"]["merge"]["color_ref_scene"] = q["scenes"][1]["id"]
+    load(q)
+    page.evaluate("window.__mockProfiles.profiles = []; window.__mockProfiles.default = ''")
+    old = proj()
+    btn = page.locator("[data-key='proj-new']")
+    check(btn.count() == 1 and "New project" in btn.inner_text(), "the Project card has a New project button")
+
+    # 1. a render running: nothing starts
+    page.evaluate("window.__editor.store.setEph({ running: true })")
+    page.wait_for_timeout(150)
+    btn.click()
+    page.wait_for_timeout(300)
+    check(modal.count() == 0 and "is rendering" in toasts() and proj()["project_id"] == old["project_id"], f"no new project while a render runs: {toasts()!r}")
+    page.evaluate("window.__editor.store.setEph({ running: false })")
+    page.wait_for_timeout(150)
+
+    # 2. Cancel changes nothing
+    btn.click()
+    modal.wait_for(timeout=3000)
+    text = modal.inner_text()
+    check("Start a new project?" in text and old["name"] in text and old["slug"] in text and "Ctrl+Z" in text and "Use profile" not in text,
+          f"the dialog names the project, its folder and Ctrl+Z: {text[:300]!r}")
+    modal.locator("button:has-text('Cancel')").click()
+    page.wait_for_timeout(250)
+    check(modal.count() == 0 and proj()["project_id"] == old["project_id"], "Cancel keeps the project")
+
+    # 3. New project, after the pending autosave of the old one
+    page.evaluate("window.__editor.store.update(p => { p.name = p.name + ' (last edit)'; }, { label: 'Rename' })")
+    page.wait_for_timeout(100)
+    pending = page.evaluate("window.__editor.eph.saveState")
+    page.evaluate("window.__mockFlags.autosaves.length = 0")
+    btn.click()
+    modal.wait_for(timeout=3000)
+    shots and page.screenshot(path=os.path.join(shots, "v0103_new_project_dialog.png"))
+    modal.locator("button:has-text('New project')").click()
+    page.wait_for_timeout(600)
+    n = proj()
+    saves = page.evaluate("window.__mockFlags.autosaves.map(a => a.slug)")
+    check(pending == "pending" and saves[:1] == [old["slug"]], f"the old project is saved to its folder first: state {pending}, saves {saves}")
+    check(n["name"] == "Untitled" and re.match(r"^untitled-[a-z0-9]{4}$", n["slug"] or "") and n["project_id"] != old["project_id"]
+          and len(n["scenes"]) == 1 and not n["cast"] and not n["assets"] and not n["soundtrack"] and not n["markers"] and n["ui"]["selected"] == n["scenes"][0]["id"],
+          f"an empty project in a new folder: {n['name']!r} {n['slug']!r}, {len(n['scenes'])} scenes, {len(n['cast'])} cast, {len(n['assets'])} assets")
+    check(n["global"]["llm"]["base_url"] == "http://llm.local:30000/v1" and n["global"]["llm"]["timeout_s"] == 333 and n["global"]["merge"]["color_ref_scene"] == "",
+          f"it keeps the Global settings, without the old scene reference: {n['global']['llm'].get('timeout_s')}, {n['global']['merge'].get('color_ref_scene')!r}")
+    check(page.locator(".rw-tab.on").inner_text().strip().lower().startswith("timeline") and "Ctrl+Z brings" in toasts(), f"the Timeline shows the new project: {toasts()!r}")
+    page.wait_for_timeout(4600)  # the new project's autosave goes to its own folder
+    saves = page.evaluate("window.__mockFlags.autosaves.map(a => a.slug)")
+    check(n["slug"] in saves and saves.count(old["slug"]) == 1, f"the new project autosaves into its own folder: {saves}")
+
+    # 4. Ctrl+Z brings the old project back, in one step
+    page.evaluate("window.__editor.store.undo()")
+    page.wait_for_timeout(300)
+    b = proj()
+    check(b["project_id"] == old["project_id"] and b["slug"] == old["slug"] and len(b["scenes"]) == len(old["scenes"]) and b["name"].endswith("(last edit)"),
+          f"Ctrl+Z brings the old project back: {b['name']!r} {b['slug']!r}")
+
+    # 5. with a default profile: its Global settings
+    page.evaluate("""() => { const g = JSON.parse(JSON.stringify(window.__editor.project.global)); g.llm.timeout_s = 777; g.llm.base_url = 'http://profile.llm:1/v1';
+      window.__mockProfiles.profiles = [{ id: 'pr_1', name: 'RTX draft', global: g }]; window.__mockProfiles.default = 'pr_1'; }""")
+    page.click(".rw-tab:has-text('Global')")
+    page.wait_for_timeout(300)
+    btn.click()
+    modal.wait_for(timeout=3000)
+    check(modal.locator("button:has-text('Use profile')").count() == 1 and "RTX draft" in modal.inner_text(), "the dialog offers the default profile")
+    modal.locator("button:has-text('Use profile')").click()
+    page.wait_for_timeout(500)
+    n2 = proj()
+    check(n2["global"]["llm"]["timeout_s"] == 777 and n2["global"]["llm"]["base_url"] == "http://profile.llm:1/v1" and n2["slug"] != n["slug"] and n2["project_id"] != old["project_id"],
+          f"Use profile takes the profile's Global settings: {n2['global']['llm'].get('timeout_s')} in {n2['slug']}")
+    page.evaluate("window.__mockProfiles.profiles = []; window.__mockProfiles.default = ''")
     load(json.loads(saved))
 
 

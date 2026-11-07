@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.10.3 — 2026-11-07
+
+- **New project** (Global → Project → **New project…**): replaces the project in this node with an empty one (one scene) in a new folder of its own (`untitled-xxxx`, which follows the name you give it until something is rendered). You confirm first, and it is one undo step.
+  - Nothing is deleted. The current project is saved to its folder first and stays there with its uploads and renders; Ctrl+Z brings it back to this node. To keep a copy as a file too, Export it first.
+  - The new project keeps this project's Global settings (models, quality, LLM, merge), or takes your default profile's (**Use profile “…”** in the dialog, when you have one). Cast, assets, scenes, markers and the soundtrack start empty.
+  - Not while a render, a merge or Write prompts runs: stop it or let it finish first.
+- Nothing renders again; only the editor changed.
+- **For developers:** `global.js` `newProject(ctx)`; `web-test/interact.py` runs `v0103_checks()`.
+
 ## v0.10.2 — 2026-11-07
 
 - **Fixed: LLM requests failed after 60 s with "Fetch timeout"** even while tokens were still arriving (Propose scenes, Write prompts, Rewrite, Split, Describe). The limit was not Reelwright's: newer ComfyUI frontends end every request after 60 s unless the caller turns that off. Reelwright now turns it off for its long requests (LLM, merge, upload, speech timing, waveforms, filmstrips, face checks). Their limits are the ones on the server: Global → Prompt rewriter → Limits (Stall timeout, Give up after) for the LLM.

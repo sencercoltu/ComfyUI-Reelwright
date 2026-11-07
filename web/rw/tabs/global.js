@@ -18,6 +18,7 @@ import { runWrite, stopWrite } from "../passes.js"; // added 2026-11-05 v0.8.0: 
 import { choiceDialog, copyWithToast } from "../ui.js";
 import { normalizeProject } from "../model.js";
 import { withProjectId } from "../store.js";
+import { defaultProject, normalizeGlobal, migrateScore } from "../model.js"; // added 2026-11-07 v0.10.3: New project
 
 const DTYPES = ["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"];
 
@@ -177,6 +178,60 @@ export async function importProject(ctx, text, source = "Pasted JSON") {
   ctx.actions.toast(`Imported “${q.name}” (${n(q.scenes.length, "scene")}). Ctrl+Z brings the previous project back.`, "ok");
   return true;
 }
+// added 2026-11-07 v0.10.3: New project (Sencer: "add a button to project to start a new project"). This node gets an
+// empty project (one scene) in a folder of its own, untitled-xxxx, as one undo step. Nothing is deleted: the current
+// project stays in its folder (project.json, uploads, renders; saved there first) and Ctrl+Z brings it back to this
+// node. The new project keeps this project's Global settings, or takes the default profile's.
+export async function newProject(ctx) {
+  const cur = ctx.store.project;
+  if (ctx.eph.running || ["start", "progress"].includes(ctx.eph.merge?.phase) || ctx.eph.passWrite?.running) {
+    ctx.actions.toast(`“${cur.name}” is rendering, merging or writing prompts. Stop it or let it finish, then start a new project.`, "warn");
+    return false;
+  }
+  const r = await ctx.actions.loadProfiles();
+  const prof = r?.profiles?.find(x => x.id === r.default) || null;
+  let tag = "";
+  while (tag.length < 4) tag += Math.random().toString(36).slice(2).replace(/[^a-z0-9]/g, "");
+  const slug = "untitled-" + tag.slice(0, 4);
+  const message = `“${cur.name}” is replaced in this node by an empty project with one scene, in a new folder ${slug}.\n\n`
+    + `Nothing is deleted: “${cur.name}” stays in its folder ${cur.slug} (its project.json, uploads and renders), and Ctrl+Z brings it back to this node.\n\n`
+    + (prof ? `The new project keeps this project's Global settings (models, quality, LLM, merge), or takes them from your default profile “${prof.name}”.`
+      : "The new project keeps this project's Global settings (models, quality, LLM, merge).");
+  const choice = await choiceDialog(ctx.root, {
+    title: "Start a new project?", message, help: "global.project.new", cancelValue: "cancel", focus: "keep",
+    choices: [{ value: "cancel", label: "Cancel" },
+      ...(prof ? [{ value: "profile", label: `Use profile “${prof.name}”`, help: "global.project.new.profile" }] : []),
+      { value: "keep", label: "New project", variant: "primary", help: "global.project.new.keep" }],
+  });
+  if (choice !== "keep" && choice !== "profile") return false;
+  // the current project's last edits reach its folder before it leaves this node
+  const st = ctx.store.eph.saveState;
+  if (st === "conflict") {
+    ctx.actions.toast(`“${cur.name}” is not saved: its folder ${cur.slug} holds another project. Choose a folder for it first (Folder, above).`, "error");
+    return false;
+  }
+  if (st === "pending" || st === "offline") {
+    const s = await ctx.store.saveNow();
+    if (!s?.ok) {
+      if (!s?.conflict) ctx.actions.toast(`Could not save “${cur.name}” to its folder first (${s?.error || "no answer"}). Nothing changed: try again, or Export it first.`, "error");
+      return false;
+    }
+  }
+  const q = defaultProject("Untitled");
+  q.slug = slug;
+  q.global = structuredClone(choice === "profile" ? prof.global : ctx.store.project.global);
+  if (choice === "profile") migrateScore(q); // a profile from before v0.5.0 names a score: a soundtrack track, as Apply profile does
+  else if (q.global?.merge?.score) q.global.merge.score.asset = ""; // an asset of the old project
+  q.global = normalizeGlobal(q.global, q);
+  if (q.global.merge) q.global.merge.color_ref_scene = ""; // a scene of the old project
+  q.scenes = [defaultScene(q, { title: "Scene 1", start: { mode: "fresh", overlap_frames: 39 } })]; // with these Global defaults
+  q.ui.selected = q.scenes[0].id;
+  ctx.store.replaceProject(q, { label: `New project (was “${cur.name}”)` });
+  ctx.store.setEph({ fresh: false, projImport: false, projImportText: "", ...(choice === "profile" ? { profileSel: prof.id } : {}) });
+  ctx.actions.toast(`New project in folder ${slug}${choice === "profile" ? ` with profile “${prof.name}”` : ""}. Ctrl+Z brings “${cur.name}” back.`, "ok");
+  return true;
+}
+
 function projectIO(ctx) {
   const p = ctx.p;
   const open = !!ctx.eph.projImport;
@@ -191,6 +246,7 @@ function projectIO(ctx) {
     } });
   return h("div", { class: "rw-io" },
     h("div", { class: "rw-io-row" },
+      button({ label: "New project…", icon: "plus", small: true, help: "global.project.new", key: "proj-new", onClick: () => newProject(ctx) }), // added 2026-11-07 v0.10.3
       button({ label: "Export", icon: "download", small: true, help: "global.project.export", key: "proj-export", onClick: () => {
         downloadText(exportName(p), projectText(ctx.p));
         ctx.actions.toast(`Saved ${exportName(p)} to your downloads.`, "ok");
