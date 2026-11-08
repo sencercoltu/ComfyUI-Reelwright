@@ -884,8 +884,14 @@ def scene_context(p, scene):
             #                                       c["description"], c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
             # [OLD 2026-11-03 v0.5.1->v0.6.0] people.append("@{} - {} ({}){}".format(c["name"] if " " not in c["name"] else "{" + c["name"] + "}",
             #                                       cast_description(c, idx_assets)[0], c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
+            # [OLD 2026-11-08 v0.10.3->v0.11.0] people.append("{} - {} ({}){}".format(_prompt.tag_token(c["name"]), cast_description(c, idx_assets)[0],
+            # [OLD 2026-11-08 v0.10.3->v0.11.0]                                     c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
+            # added 2026-11-08 v0.11.0: a prop that is part of a character is said to be so (not a separate thing)
+            owner = cast.get(_model.part_owner(c, cast)) if hasattr(_model, "part_owner") else None
+            kind = "part of {}'s body or look, not a separate person or object".format(
+                _prompt.tag_token(owner["name"])) if owner else c["kind"]
             people.append("{} - {} ({}){}".format(_prompt.tag_token(c["name"]), cast_description(c, idx_assets)[0],
-                                                c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
+                                                kind, ", speaker " + c["speaker"] if c["speaker"] else ""))
     shots = ["{:.2f}s {} | {}".format(float(s["t"]), s["camera"], s["text"]) for s in scene["shots"]]
     lines = ["{:.2f}s {}: <d>[{}] {}</d>".format(float(d["t"]), cast.get(d["speaker"], {}).get("name", "?"),
                                                d["language"], d["text"]) for d in scene["dialogue"]]

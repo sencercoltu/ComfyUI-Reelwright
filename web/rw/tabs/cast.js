@@ -10,6 +10,7 @@ import { rw, viewURL } from "../api.js";
 // [OLD 2026-11-03 v0.4.0->v0.4.1] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription } from "../model.js";
 import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription, sheetGrid, anchorPixels, sheetURL, castPacks } from "../model.js";
 import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
+import { partOwner } from "../model.js"; // added 2026-11-08 v0.11.0: a prop that is part of a character
 import { describeBox } from "./assets.js"; // added 2026-11-02 v0.2.0: describe from anchors
 
 const KINDS = [["character", "Characters"], ["location", "Locations"], ["prop", "Props"]];
@@ -94,7 +95,9 @@ function list(ctx, sel) {
         /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are assigned per clip now
         h("span", { class: "grow" }, h("b", null, c.name), h("span", { class: "rw-dim small" }, `${c.speaker ? c.speaker + " · " : ""}${scenes} scene${scenes === 1 ? "" : "s"} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}`)));
         [/OLD] */
-        h("span", { class: "grow" }, h("b", null, c.name), h("span", { class: "rw-dim small" }, `${scenes} scene${scenes === 1 ? "" : "s"} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}`)));
+        // [OLD 2026-11-08 v0.10.3->v0.11.0] h("span", { class: "grow" }, h("b", null, c.name), h("span", { class: "rw-dim small" }, `${scenes} scene${scenes === 1 ? "" : "s"} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}`)));
+        // added 2026-11-08 v0.11.0: a prop that is part of a character says whose
+        h("span", { class: "grow" }, h("b", null, c.name), h("span", { class: "rw-dim small" }, `${partOf(p, c) ? `part of ${partOf(p, c).name} · ` : ""}${scenes} scene${scenes === 1 ? "" : "s"} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}`)));
       }),
       p.cast.every(c => c.kind !== kind) && h("div", { class: "rw-dim small" }, "None yet."))),
   }), h("div", { class: "rw-dim small", help: "cast.bible" }, "Tag an entry in any scene and its anchors, description, voice and LoRA come with it."));
@@ -227,6 +230,7 @@ function profileCard(ctx, c) {
     children: [
       field("Name", text({ value: c.name, key: "cast-name-" + c.id, help: "cast.name", onChange: v => edit(x => { x.name = v; }) }), { help: "cast.name" }),
       field("Kind", segmented({ small: true, value: c.kind, help: "cast.kind", options: KINDS.map(([k]) => k), onChange: v => edit(x => { x.kind = v; }) }), { help: "cast.kind" }),
+      partOfField(ctx, c, edit), // added 2026-11-08 v0.11.0: a prop that is part of a character; a character's parts
       /* [OLD 2026-11-02 v0.1.0->v0.2.0] H3's guide numbers speakers S1, S2… by speaking order in each clip, so the prompt builder assigns them
       c.kind === "character" && field("Speaker ID", text({ value: c.speaker, key: "cast-spk-" + c.id, mono: true, width: "70px", help: "cast.speaker", onChange: v => edit(x => { x.speaker = v.toUpperCase(); }) }), { help: "cast.speaker" }),
       [/OLD] */
@@ -281,6 +285,54 @@ function profileCard(ctx, c) {
   });
 }
 
+// added 2026-11-08 v0.11.0: a prop can be part of a character (a beer belly, a tattoo, a prosthetic arm). H3 puts every
+// subject in the shot as a separate thing, so a prop of its own showing a body part became a second person (Sencer).
+// A part's pictures and description go into its character's subject in the scenes where both are in the cast.
+function partOf(p, c) {
+  const id = partOwner(c, new Map(p.cast.map(x => [x.id, x])));
+  return id ? findCast(p, id) : null;
+}
+function partOfField(ctx, c, edit) {
+  const p = ctx.p;
+  if (c.kind === "prop") {
+    const chars = p.cast.filter(x => x.kind === "character" && x.id !== c.id).map(x => ({ value: x.id, label: x.name || "Unnamed" }));
+    const owner = partOf(p, c);
+    const alone = owner ? p.scenes.filter(s => s.cast.some(e => e.id === c.id) && !s.cast.some(e => e.id === owner.id) && !s.dialogue.some(d => d.speaker === owner.id)).length : 0;
+    return h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.partOf" }, "Part of"),
+      h("div", { class: "grow rw-col-tight" },
+        select({ options: chars, value: owner ? c.part_of : "", placeholder: "nobody: a thing of its own", key: "cast-part-" + c.id, help: "cast.partOf",
+          onChange: v => edit(x => { x.part_of = v; }) }),
+        h("div", { class: "small rw-dim", help: "cast.partOf" }, owner
+          ? `Its pictures and description go into ${owner.name}'s subject, in the scenes where both are in the cast. Write @${c.name.includes(" ") ? "{" + c.name + "}" : c.name} for “${owner.name}'s ${c.name}”.`
+          : chars.length ? "A thing of its own in the shot (a cup, a car). For something that belongs to a character's body or look (a belly, a tattoo, a scar), pick the character."
+            : "A thing of its own in the shot. Add a character to make this prop part of them."),
+        alone ? h("div", { class: "small rw-c-warn", help: "cast.partOf" }, `${alone} scene${alone === 1 ? " has" : "s have"} it without ${owner.name}: it is left out there.`) : null));
+  }
+  if (c.kind !== "character") return null;
+  const parts = p.cast.filter(x => partOf(p, x)?.id === c.id);
+  return parts.length ? field("Parts", h("span", { class: "rw-row wrap" }, parts.map(x => button({ label: x.name || "Unnamed", icon: "cast", small: true, variant: "ghost",
+    help: "cast.parts", key: "cast-partlink-" + x.id, onClick: () => ctx.store.setEph({ selectedCast: x.id }) }))), { help: "cast.parts" }) : null;
+}
+
+// added 2026-11-08 v0.11.0: pictures of an outfit (or a prop's variant): sent with the anchors in the scenes that pick
+// it, as the same subject (a look: other clothes, a beard, a belly). Before, only a project file could hold them.
+function outfitPictures(ctx, c, o, editO) {
+  const p = ctx.p;
+  const pics = o.assets.map(id => findAsset(p, id)).filter(a => a?.kind === "image");
+  const images = p.assets.filter(a => a.kind === "image" && !o.assets.includes(a.id) && !c.anchors.includes(a.id))
+    .map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) }));
+  return h("div", { class: "rw-outfit-pics", help: "cast.outfits.pictures" },
+    pics.map(a => h("div", { class: "rw-anchor sm" },
+      h("img", { src: viewURL(a.file, "input"), alt: a.name }),
+      h("span", { class: "rw-anchor-label" }, h("b", { class: "mono rw-c-pic" }, a.code)),
+      h("button", { type: "button", class: "rw-anchor-x", "aria-label": "Remove picture", help: "cast.outfits.pictureRemove", key: "outfit-pic-x-" + o.id + "-" + a.id,
+        onClick: () => editO(o.id, y => { y.assets = y.assets.filter(z => z !== a.id); }) }, icon("close", 11)))),
+    h("div", { class: "rw-col-tight grow" },
+      images.length ? select({ options: images, value: "", placeholder: "+ Add picture…", key: "outfit-pic-add-" + o.id, help: "cast.outfits.pictureAdd",
+        onChange: v => { if (v) editO(o.id, y => { if (!y.assets.includes(v)) y.assets.push(v); }); } }) : null,
+      h("div", { class: "rw-dim small" }, pics.length ? `Sent with the anchors in scenes that pick “${o.name || "this"}”.` : "No pictures of its own: the anchors show this look.")));
+}
+
 // added 2026-11-03 v0.6.0: delete an outfit; scenes that wore it fall back to the default outfit (their entry's outfit
 // becomes "", which follows the default), so no scene keeps pointing at an outfit that is gone
 export function removeOutfit(ctx, c, o) {
@@ -323,8 +375,11 @@ function outfitsCard(ctx, c) {
         select({ options: VISUAL_RETENTION, value: o.retention, key: "outfit-ret-" + o.id, mono: true, help: "cast.outfits.retention", onChange: v => editO(o.id, y => { y.retention = v; }) }),
         button({ icon: "trash", small: true, variant: "ghost", help: "cast.outfits.remove", onClick: () => removeOutfit(ctx, c, o) })),
       // [OLD 2026-11-03 v0.6.0 review] keepChips({ values: o.keep, help: "cast.outfits.keep", onChange: v => editO(o.id, y => { y.keep = v; }) })))
-      keepChips({ values: o.keep, help: "cast.outfits.keep", key: "outfit-keep-" + o.id, onChange: v => editO(o.id, y => { y.keep = v; }) }))) // added 2026-11-03 v0.6.0 review: key
-      : h("div", { class: "rw-empty sm", help: "cast.outfits" }, "One look everywhere. Add outfits when the character changes clothes."),
+      // [OLD 2026-11-08 v0.10.3->v0.11.0] keepChips({ values: o.keep, help: "cast.outfits.keep", key: "outfit-keep-" + o.id, onChange: v => editO(o.id, y => { y.keep = v; }) }))) // added 2026-11-03 v0.6.0 review: key
+      keepChips({ values: o.keep, help: "cast.outfits.keep", key: "outfit-keep-" + o.id, onChange: v => editO(o.id, y => { y.keep = v; }) }), // added 2026-11-03 v0.6.0 review: key
+      outfitPictures(ctx, c, o, editO))) // added 2026-11-08 v0.11.0: the outfit's own pictures
+      // [OLD 2026-11-08 v0.10.3->v0.11.0] : h("div", { class: "rw-empty sm", help: "cast.outfits" }, "One look everywhere. Add outfits when the character changes clothes."),
+      : h("div", { class: "rw-empty sm", help: "cast.outfits" }, c.kind === "character" ? "One look everywhere. Add an outfit when the character's look changes: other clothes, a beard, a belly." : "One look everywhere. Add a variant when it changes."), // added 2026-11-08 v0.11.0
   });
 }
 

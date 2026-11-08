@@ -424,21 +424,30 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
     guided = guided_refs(pass_)
     speaking = {d.get("speaker") for d in pass_["dialogue"]}
 
-    speakers = [d["speaker"] for d in scene["dialogue"] if d.get("speaker")]
-    cast_entries = list(scene["cast"])
-    for sp in speakers:
-        if sp in cast and not any(c["id"] == sp for c in cast_entries):
-            cast_entries.append({"id": sp, "outfit": ""})
-
+    # [OLD 2026-11-08 v0.10.3->v0.11.0] every cast member was a subject of its own (model.scene_people now folds a
+    # prop that is part of a character into that character's subject)
+    # speakers = [d["speaker"] for d in scene["dialogue"] if d.get("speaker")]
+    # cast_entries = list(scene["cast"])
+    # for sp in speakers:
+    #     if sp in cast and not any(c["id"] == sp for c in cast_entries):
+    #         cast_entries.append({"id": sp, "outfit": ""})
+    #
+    # # added 2026-11-03 v0.4.1: anchors first, so "auto" packing can count every picture of the pass
+    # entries = []
+    # for entry in (e for e in cast_entries if e["id"] in cast):
+    #     c = cast[entry["id"]]
+    #     outfit = next((o for o in c["outfits"] if o["id"] == (entry.get("outfit") or c["default_outfit"])), None)
+    #     anchor_ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image"]
+    #     if outfit:
+    #         anchor_ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in anchor_ids]
+    #     entries.append((entry, c, outfit, anchor_ids))
+    # [/OLD]
     # added 2026-11-03 v0.4.1: anchors first, so "auto" packing can count every picture of the pass
-    entries = []
-    for entry in (e for e in cast_entries if e["id"] in cast):
-        c = cast[entry["id"]]
-        outfit = next((o for o in c["outfits"] if o["id"] == (entry.get("outfit") or c["default_outfit"])), None)
-        anchor_ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image"]
-        if outfit:
-            anchor_ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in anchor_ids]
-        entries.append((entry, c, outfit, anchor_ids))
+    # added 2026-11-08 v0.11.0: a character's pictures include its parts' (model.scene_people); parts_of: their records
+    people = _model.scene_people(p, scene, idx)[0]
+    entries = [(x["entry"], x["cast"], x["outfit"], x["ids"]) for x in people]
+    parts_of = {x["cast"]["id"]: x["parts"] for x in people}
+    own_of = {x["cast"]["id"]: set(x["own"]) for x in people}
     # [OLD 2026-11-03 v0.5.1->v0.6.0] a mentioned guide picture counted in every pass
     # unpacked = len({a for *_, ids in entries for a in ids}) + len(
     #     {r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
@@ -477,8 +486,21 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
         # refs.subjects.append({"cast": c["id"], "number": n + 1, "outfit": outfit,
         #                       "pictures": list(range(first_pic, len(refs.images) + 1))})
         # [/OLD]
+        # [OLD 2026-11-08 v0.10.3->v0.11.0] refs.subjects.append({"cast": c["id"], "ref": None, "asset": None, "number": n + 1, "outfit": outfit,
+        # [OLD 2026-11-08 v0.10.3->v0.11.0]                       "pictures": list(range(first_pic, len(refs.images) + 1)), "videos": []})
+        pics = list(range(first_pic, len(refs.images) + 1))
+        # added 2026-11-08 v0.11.0: the character's parts in this scene, each with the pictures that show only it
+        # (none when the character's pictures are packed into one sheet, or the picture is the character's own too)
+        own = own_of.get(c["id"], set())
+        parts = []
+        for part in parts_of.get(c["id"], []):
+            shown = [] if len(pics) == 1 and len(anchor_ids) > 1 else \
+                [first_pic + anchor_ids.index(a) for a in part["ids"] if a not in own and a in anchor_ids]
+            parts.append({"cast": part["cast"]["id"], "outfit": part["outfit"], "pictures": sorted(set(shown))})
         refs.subjects.append({"cast": c["id"], "ref": None, "asset": None, "number": n + 1, "outfit": outfit,
-                              "pictures": list(range(first_pic, len(refs.images) + 1)), "videos": []})
+                              "pictures": pics, "videos": []})
+        if parts:  # only then, so a scene without parts keeps its build (and cache key) exactly
+            refs.subjects[-1]["parts"] = parts
         # [OLD 2026-11-03 v0.4.3->v0.5.0] if c.get("voice") in assets and assets[c["voice"]]["kind"] == "audio":
         # [OLD 2026-11-03 v0.5.1->v0.6.0] if c.get("voice") in assets and assets[c["voice"]]["kind"] == "audio" and not song:  (a voice went to every pass, spoken or not)
         # added 2026-11-03 v0.6.0: a voice reference only goes to the passes where that character speaks (the
@@ -746,6 +768,19 @@ def resolve_tag(name, braced, p, refs, ctx, scene=None):
         return "the soundtrack", "info", "@{}: this pass gets no part of the soundtrack (less than 2 s of it plays " \
                                          "here), so it is written as “the soundtrack”".format(name)
     c = ctx["cast_by_key"].get(name_key(name))
+    # added 2026-11-08 v0.11.0: a prop that is part of a character is "<Subject N>'s <name>" of that character
+    owner = _model.part_owner(c, idx["cast"]) if c and hasattr(_model, "part_owner") else ""
+    if owner:
+        subject = next((s["number"] for s in refs.subjects if s["cast"] == owner), None)
+        oname = idx["cast"][owner]["name"]
+        if subject:
+            words = "<Subject {}>'s {}".format(subject, c["name"])
+            if any(x["cast"] == c["id"] for s in refs.subjects for x in s.get("parts") or []):
+                return words, None, None
+            return words, "info", "@{} is part of {} but not in this scene's cast, so its pictures are not sent " \
+                                  "(add it to the scene to send them)".format(name, oname)
+        return c["name"], "warn", "@{} is part of {}, who is not in this scene's cast, so it is written as the name " \
+                                  "“{}”".format(name, oname, c["name"])
     if c:
         subject = next((s["number"] for s in refs.subjects if s["cast"] == c["id"]), None)
         if subject:
@@ -1057,12 +1092,16 @@ def _appears(p, refs, pass_, subj, ctx=None):  # ctx: added 2026-11-03 v0.6.0
     #     match = lambda m: (m.group(2) or "").upper() == code
     # [/OLD]
     if subj["cast"]:
-        name = name_key(idx["cast"][subj["cast"]]["name"])
+        # [OLD 2026-11-08 v0.10.3->v0.11.0] name = name_key(idx["cast"][subj["cast"]]["name"])
+        # added 2026-11-08 v0.11.0: naming one of the character's parts (@{Beer belly}) names the character too
+        names = {name_key(idx["cast"][subj["cast"]]["name"])} | {
+            name_key(idx["cast"][x["cast"]]["name"]) for x in subj.get("parts") or [] if x["cast"] in idx["cast"]}
 
         def match(m):
             said = m.group(1) if m.group(1) is not None else m.group(2)
             base = POSSESSIVE.match(said) if m.group(2) else None
-            return name_key(said) == name or bool(base and name_key(base.group(1)) == name)
+            # [OLD 2026-11-08 v0.10.3->v0.11.0] return name_key(said) == name or bool(base and name_key(base.group(1)) == name)
+            return name_key(said) in names or bool(base and name_key(base.group(1)) in names)
     else:
         code = idx["assets"][subj["asset"]]["code"].upper()
 
@@ -1135,11 +1174,22 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
             desc, _ = cast_description(c, assets)
             bits = [c["name"]] + ([desc] if desc else [])
             text = "{} is {}".format(head, ", ".join(bits))
-            if src:
-                text += ", shown in " + src
+            # [OLD 2026-11-08 v0.10.3->v0.11.0] if src:
+            # [OLD 2026-11-08 v0.10.3->v0.11.0]     text += ", shown in " + src
+            # added 2026-11-08 v0.11.0: the pictures that show only a part are named with the part, below
+            parts = s.get("parts") or []
+            only_parts = {k for x in parts for k in x["pictures"]}
+            own_src = _labels("Picture", [k for k in s["pictures"] if k not in only_parts]) or \
+                _labels("Video", s["videos"])
+            if own_src:
+                text += ", shown in " + own_src
             o = s["outfit"]
+            # [OLD 2026-11-08 v0.10.3->v0.11.0] if o and o.get("name") and o["name"].strip().lower() != "default":
+            # [OLD 2026-11-08 v0.10.3->v0.11.0]     text += ", wearing " + o["name"].strip()
             if o and o.get("name") and o["name"].strip().lower() != "default":
-                text += ", wearing " + o["name"].strip()
+                text += ", " + outfit_words(o["name"])  # added 2026-11-08 v0.11.0: "with …" names read as written
+            for x in parts:  # added 2026-11-08 v0.11.0: props that are part of this character
+                text += ", " + part_words(cast[x["cast"]], assets, x["pictures"])
             lines.append(text + ".")
         else:
             a = assets[s["asset"]]
@@ -1196,6 +1246,27 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
     return lines
 
 
+# added 2026-11-08 v0.11.0: outfit and part wording in a character's subject line
+OUTFIT_AS_IS = re.compile(r"^(?:with|in|without|wearing|holding|carrying)\b", re.I)
+
+
+def outfit_words(name):
+    """", wearing <name>" for an outfit's name, unless the name says how already ("with a big beer belly", "in a
+    wheelchair", "wearing a grey suit"): then it is written as it is."""
+    name = " ".join(str(name or "").split())
+    return name if OUTFIT_AS_IS.match(name) else "wearing " + name
+
+
+def part_words(part, assets, pictures):
+    """"with <name> (<description>) shown in <Picture k>" for a prop that is part of a character; the description is
+    the prop's own or its first described anchor's (cast_description). No pictures: the character's pictures (one
+    sheet) or none show it on its own."""
+    desc, _ = cast_description(part, assets)
+    name = " ".join(str(part.get("name") or "").split()) or "a part"
+    text = "with " + name + (" ({})".format(desc) if desc and name_key(desc) != name_key(name) else "")
+    return text + (" shown in " + _labels("Picture", pictures) if pictures else "")
+
+
 # [OLD 2026-11-03 v0.5.1->v0.6.0] def retention_analysis(p, scene, refs, pass_):
 #     idx = project_index(p)
 # [/OLD]
@@ -1215,8 +1286,18 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):  # ctx: added 2026-11-0
             ret = _retention(r, a)
             keep = _keep(r, a) or DEFAULT_KEEP.get(a.get("category"), ["overall look"])
         # [OLD 2026-11-03 v0.5.1->v0.6.0] lines.append("<Subject {}> ({}): {} - {}.".format(s["number"], _appears(p, refs, pass_, s), ret, _keep_phrase(keep, ret)))
-        lines.append("<Subject {}> ({}): {} - {}.".format(s["number"], _appears(p, refs, pass_, s, ctx), ret,
-                                                          _keep_phrase(keep, ret)))
+        # [OLD 2026-11-08 v0.11.0] lines.append("<Subject {}> ({}): {} - {}.".format(s["number"], _appears(p, refs, pass_, s, ctx), ret,
+        # [OLD 2026-11-08 v0.11.0]                                                   _keep_phrase(keep, ret)))
+        # added 2026-11-08 v0.11.0: each part of the character keeps what its variant (or a prop's default) says
+        extra = ""
+        for x in s.get("parts") or []:
+            po = x.get("outfit") or {}
+            pret = po.get("retention") or "fully_preserved"
+            pkeep = list(po.get("keep") or DEFAULT_KEEP["prop"])
+            extra += "; its {}: {} - {}".format(" ".join(str(idx["cast"][x["cast"]].get("name") or "part").split()),
+                                                pret, _keep_phrase(pkeep, pret))
+        lines.append("<Subject {}> ({}): {} - {}{}.".format(s["number"], _appears(p, refs, pass_, s, ctx), ret,
+                                                            _keep_phrase(keep, ret), extra))
     for k, img in enumerate(refs.images, 1):
         if img["cast"] or any(k in s["pictures"] for s in refs.subjects):
             continue

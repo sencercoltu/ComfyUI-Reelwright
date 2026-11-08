@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.11.0 — 2026-11-08
+
+- **Part of: a prop that belongs to a character's body or look** (Cast → a prop → **Part of**). Sencer: "I add me as a character and a big beer belly as a prop: there are two people in the shot." Every cast member in a scene was a subject of its own, and H3 puts each subject in the shot as a separate thing, so a picture of a belly became a second person.
+  - Pick the character, and in scenes where both are in the cast, the prop's pictures and description go into the character's subject: "<Subject 1> is Mara, …, with Beer belly (a big round beer belly) shown in <Picture 3>". The retention line adds the prop's own ("its Beer belly: fully_preserved - shape, colour, and details are retained").
+  - `@{Beer belly}` in a shot is written "<Subject 1>'s Beer belly". Naming it counts as the character appearing in that shot.
+  - A part in a scene without its character is left out; the Scene tab's cast card and the Issues list say so. A character's profile lists its parts; the story bible says "part of Mara".
+  - The prompt rewriter and Write prompts are told that the prop is part of the character, not a separate person or object.
+  - When a part changes the body, give the character an outfit with retention partially_preserved keeping face and hair, so the anchors' body does not win.
+- **Outfit pictures** (Cast → Outfits, or a prop's Variants → **+ Add picture…**): pictures of one look (other clothes, a beard, a belly), sent with the anchors in the scenes that pick that outfit, as the same subject. The renderer always supported them; only a project file could set them before.
+- **Outfit names that say how** are written as they are: "with a big beer belly", "in a wheelchair", "holding a cane" (names starting with with, in, without, wearing, holding or carrying). Other names are still "wearing <name>".
+- **Renders again:** only scenes that use a part, or an outfit whose name starts with one of those words (its subject line changed). Other scenes keep their takes.
+- **For developers:** cast `part_of` (normalised as text; `model.part_owner` / `model.js partOwner` decide whether it applies: a prop, part of an existing character, not itself). `model.scene_people` / `model.js scenePeople` (now exported) list what a scene's cast sends, with parts folded in, for `prompt.collect_refs` and the reference budget; subjects carry `parts`. `prompt.outfit_words`, `prompt.part_words`. New `tests/test_cast_parts.py`; parity fixtures include parts; `web-test/interact.py` runs `v0110_checks()`.
+
 ## v0.10.3 — 2026-11-07
 
 - **New project** (Global → Project → **New project…**): replaces the project in this node with an empty one (one scene) in a new folder of its own (`untitled-xxxx`, which follows the name you give it until something is rendered). You confirm first, and it is one undo step.

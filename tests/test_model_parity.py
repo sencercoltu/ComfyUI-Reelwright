@@ -139,16 +139,21 @@ def harbor_like():
         {"id": "a_amb", "kind": "audio", "name": "rain", "file": "x/rain.wav", "duration": 6.0},
         {"id": "a_song", "kind": "audio", "name": "song", "file": "x/song.wav", "duration": 40.0},
         {"id": "a_nofile", "kind": "audio", "name": "lost", "file": "", "duration": 30.0},
+        {"id": "a_belly", "kind": "image", "name": "belly", "file": "x/belly.png"},  # added 2026-11-08 v0.11.0
     ]
     p["cast"] = [
         {"id": "c_mara", "name": "Mara", "speaker": "S1", "anchors": ["a_front", "a_side"], "voice": "a_voice",
          "pack_sheet": "auto", "outfits": [{"id": "o_coat", "name": "coat", "assets": ["a_coat", "a_coat"]}],
          "default_outfit": "o_coat"},
         {"id": "c_tom", "name": "Tom O'Brien", "speaker": "S2", "anchors": ["a_letter"], "voice": "a_voice2"},
+        # added 2026-11-08 v0.11.0: a prop that is part of Mara (one picture she sends already), and one part of nobody
+        {"id": "c_belly", "name": "Beer belly", "kind": "prop", "part_of": "c_mara", "anchors": ["a_belly", "a_front"]},
+        {"id": "c_badge", "name": "Badge", "kind": "prop", "part_of": "c_badge", "anchors": ["a_letter"]},
     ]
     p["scenes"] = [
         {"id": "s_one", "title": "Harbor", "duration": 8.0, "seed_n": 0,
-         "cast": [{"id": "c_mara"}], "refs": [{"id": "r_amb", "asset": "a_amb", "role": "reference"}],
+         # [OLD 2026-11-08 v0.11.0] "cast": [{"id": "c_mara"}], "refs": [{"id": "r_amb", "asset": "a_amb", "role": "reference"}],
+         "cast": [{"id": "c_belly"}, {"id": "c_mara"}, {"id": "c_badge"}], "refs": [{"id": "r_amb", "asset": "a_amb", "role": "reference"}],
          "dialogue": [{"id": "d_neg", "speaker": "c_mara", "t": -0.5, "text": "early"},
                       {"id": "d_end", "speaker": "c_mara", "t": 8.0 - 0.4 / 24, "text": "last half frame"}],
          "shots": [{"t": -1}, {"t": 2.0}]},
@@ -166,7 +171,8 @@ def harbor_like():
          "dialogue": [{"id": "d_1", "speaker": "c_mara", "t": 3.0, "text": "a"},
                       {"id": "d_2", "speaker": "c_tom", "t": 28.0, "text": "b"}]},
         {"id": "s_short", "title": "Hand", "duration": 2.5, "start": {"mode": "fresh"},
-         "trim": {"keep": "custom", "in": 1.208}, "seed_n": 2},
+         "trim": {"keep": "custom", "in": 1.208}, "seed_n": 2,
+         "cast": [{"id": "c_belly"}]},  # added 2026-11-08 v0.11.0: a part without its character is left out
         {"id": "s_mid", "title": "Middle", "duration": 3.1, "trim": {"keep": "middle"}, "start": {"mode": "fresh"},
          "seed_n": 7},
         {"id": "s_end", "title": "End keep", "duration": 1.0, "trim": {"keep": "end"}, "start": {"mode": "last_frame"},
@@ -198,7 +204,9 @@ def malformed():
         {"scenes": [None]},
         {"scenes": [], "global": "x"},
         {"scenes": [1, "two", None, {"refs": {}, "prompt": "text", "start": "tail", "duration": "abc"}],
-         "soundtrack": 5, "cast": [{"name": 5}, None, "c_x"], "assets": {}, "markers": "m", "ui": 3},
+         # [OLD 2026-11-08 v0.11.0] "soundtrack": 5, "cast": [{"name": 5}, None, "c_x"], "assets": {}, "markers": "m", "ui": 3},
+         "soundtrack": 5, "cast": [{"name": 5, "part_of": 7}, None, "c_x", {"kind": "prop", "part_of": None}],  # v0.11.0: part_of
+         "assets": {}, "markers": "m", "ui": 3},
         {"scenes": [{"id": "s_a", "duration": "12.5"}, {"id": "s_a", "duration": -3}, {"id": "s_a", "duration": 1e9},
                     {"id": "s a!", "duration": None}, {"id": 7, "duration": True}, {"id": "", "duration": [1]}]},
         {"name": None, "slug": "My Film", "scenes": [{"title": 12.5, "color": [], "notes": {}, "lock": "yes",

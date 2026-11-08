@@ -540,6 +540,10 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-sheet img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
 .rw-outfit { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--panel2); }
 .rw-outfit .rw-input { flex: 1 1 auto; }
+/* added 2026-11-08 v0.11.0: an outfit's own pictures (Cast tab) */
+.rw-outfit-pics { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.rw-anchor.sm { width: 64px; }
+.rw-anchor.sm img { border-radius: 6px; }
 .rw-appear-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
 .rw-appear { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .rw-appear-thumb { height: 64px; border-radius: 6px; border: 1px solid var(--line3); background: #232731 center / cover; display: flex; align-items: flex-start; padding: 4px; cursor: pointer; }

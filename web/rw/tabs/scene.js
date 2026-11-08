@@ -35,6 +35,7 @@ import {
   soundtrackLocked, // added 2026-11-05 v0.7.0: transitions play as dips while a soundtrack sets the timing
 } from "../model.js";
 import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
+import { partOwner } from "../model.js"; // added 2026-11-08 v0.11.0: a prop that is part of a character
 
 // added 2026-11-03 v0.6.0: a render step changes nothing on this tab (status changes come with a full render), so
 // progress events no longer rebuild it
@@ -1532,8 +1533,14 @@ function castCard(ctx, s) {
           [/OLD] */
           (() => {
             const d = castDescription(p, c);
+            // added 2026-11-08 v0.11.0: a part says whose; without its character in the scene it is left out
+            const owner = findCast(p, partOwner(c, new Map(p.cast.map(x => [x.id, x]))));
+            const ownerHere = owner && (inScene.has(owner.id) || s.dialogue.some(x => x.speaker === owner.id));
             return h("div", { class: "grow", style: { "min-width": "0" } }, h("b", null, c.name),
-              h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`),
+              // [OLD 2026-11-08 v0.10.3->v0.11.0] h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`),
+              owner ? h("div", { class: ["small", ownerHere ? "rw-dim" : "rw-c-warn"], help: "scene.cast.part" },
+                ownerHere ? `part of ${owner.name}: in ${owner.name}'s subject · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}` : `part of ${owner.name}, who is not in this scene: left out`)
+                : h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`),
               h("div", { class: "rw-dim small rw-ellipsis", help: "scene.cast.description", title: d.text }, d.text ? (d.asset ? `from ${d.asset.code}: ${d.text}` : d.text) : "No description"));
           })(),
           // [OLD 2026-11-03 v0.5.1->v0.6.0] c.outfits.length > 0 && select({ options: c.outfits.map(o => ({ value: o.id, label: o.name })), value: sc.outfit || c.default_outfit, help: "scene.cast.outfit",

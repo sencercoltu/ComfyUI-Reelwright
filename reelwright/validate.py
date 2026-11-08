@@ -318,6 +318,12 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             issues.append(_issue("error", "{}: duration must be above 0".format(name), sid))
         if i == 0 and s["start"]["mode"] != "fresh":
             issues.append(_issue("info", "{}: the first scene always starts fresh".format(name), sid))
+        # added 2026-11-08 v0.11.0: a prop that is part of a character is left out of a scene its character is not in
+        if hasattr(_model, "scene_people"):
+            for part, owner in _model.scene_people(p, s, idx)[1]:
+                issues.append(_issue("warn", "{}: {} is part of {}, who is not in this scene, so it is left out (add {} "
+                                             "to the scene, or clear its Part of)".format(name, part["name"], owner["name"],
+                                                                                       owner["name"]), sid))
         if plan["kind"] == "long":
             issues.append(_issue("info", "{}: split into {} passes".format(name, len(plan["passes"])), sid))
             seam_hint = _cut_seam_hint(p, s, plan, name)  # added 2026-11-05 v0.8.0 (Agent V)

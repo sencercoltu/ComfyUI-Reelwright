@@ -709,6 +709,7 @@ function normCast(c, lang) {
   c.kind = CAST_KINDS.includes(c.kind) ? c.kind : "character";
   // [OLD 2026-11-06 v0.9.0->v0.10.0] for (const k of ["name", "speaker", "description", "default_outfit", "voice"]) textField(c, k, "");
   for (const k of ["name", "speaker", "description", "default_outfit", "voice", "voice_desc"]) textField(c, k, ""); // added 2026-11-06 v0.10.0: voice_desc
+  textField(c, "part_of", ""); // added 2026-11-08 v0.11.0: a prop that is part of this character (see partOwner)
   textField(c, "language", lang);
   c.anchors = texts(c.anchors);
   // v0.4.1: true (one sheet), false (separate pictures) or "auto" (see prompt.py)
@@ -1352,6 +1353,16 @@ export function sceneAutoPacks(project, scene) {
   return !!first && passContinuation(project, i, first) === "picture" && sp.unpacked + 1 > MAX_REF_IMAGES;
 }
 
+// added 2026-11-08 v0.11.0: a prop can be part of a character (Cast → Prop → Part of), as model.part_owner: its pictures
+// and description go into that character's subject instead of a subject of its own. The character's id, or "".
+export function partOwner(c, castById) {
+  if (!c || c.kind !== "prop") return "";
+  const owner = castById.get(c.part_of || "");
+  return owner && owner.kind === "character" && owner.id !== c.id ? owner.id : "";
+}
+
+/* [OLD 2026-11-08 v0.10.3->v0.11.0] every cast member counted on its own (a prop that is part of a character now folds
+   into that character, as model.scene_people)
 // added 2026-11-03 v0.6.0: the cast a scene sends, as prompt.collect_refs / model.scene_media_counts: its cast list
 // plus speakers missing from it, each with its anchor pictures and outfit pictures; autoPack: "auto" sheets pack.
 function scenePeople(project, scene) {
@@ -1368,6 +1379,38 @@ function scenePeople(project, scene) {
     if (outfit) ids.push(...outfit.assets.filter(a => assets.get(a)?.kind === "image" && !ids.includes(a)));
     people.push({ c, ids });
   }
+[/OLD] */
+// added 2026-11-03 v0.6.0: the cast a scene sends, as prompt.collect_refs / model.scene_media_counts: its cast list
+// plus speakers missing from it, each with its anchor pictures and outfit pictures; autoPack: "auto" sheets pack.
+// added 2026-11-08 v0.11.0: as model.scene_people: a part's pictures join its character's (after the character's own,
+// each once); a part whose character is not in the scene is left out (leftOut: [{ part, owner }]).
+export function scenePeople(project, scene) {
+  const assets = new Map(project.assets.map(a => [a.id, a]));
+  const cast = new Map(project.cast.map(c => [c.id, c]));
+  const entries = [...scene.cast];
+  for (const d of scene.dialogue) if (cast.has(d.speaker) && !entries.some(e => e.id === d.speaker)) entries.push({ id: d.speaker, outfit: "" });
+  const present = new Set(entries.filter(e => cast.has(e.id)).map(e => e.id));
+  const people = [], parts = new Map(), leftOut = [];
+  for (const e of entries) {
+    const c = cast.get(e.id);
+    if (!c) continue;
+    const outfit = c.outfits.find(o => o.id === (e.outfit || c.default_outfit));
+    const ids = c.anchors.filter(a => assets.get(a)?.kind === "image");
+    if (outfit) ids.push(...outfit.assets.filter(a => assets.get(a)?.kind === "image" && !ids.includes(a)));
+    const owner = partOwner(c, cast);
+    if (owner) {
+      if (present.has(owner)) { if (!parts.has(owner)) parts.set(owner, []); parts.get(owner).push({ c, outfit, ids }); }
+      else leftOut.push({ part: c, owner: cast.get(owner) });
+      continue;
+    }
+    people.push({ c, ids, own: ids.slice(), parts: [] });
+  }
+  for (const x of people) {
+    for (const part of parts.get(x.c.id) || []) {
+      x.parts.push(part);
+      x.ids = x.ids.concat(part.ids.filter(a => !x.ids.includes(a)));
+    }
+  }
   const anchors = new Set(people.flatMap(x => x.ids));
   const refPics = new Set(scene.refs.filter(r => r.role === "reference" && assets.get(r.asset)?.kind === "image").map(r => r.asset));
   /* [OLD 2026-11-05 v0.6.1->v0.7.0] no unpacked count
@@ -1377,7 +1420,8 @@ function scenePeople(project, scene) {
   // added 2026-11-05 v0.7.0: unpacked (pictures before packing) for sceneBudget's continuation picture
   const unpacked = anchors.size + [...refPics].filter(a => !anchors.has(a)).length;
   const autoPack = unpacked > MAX_REF_IMAGES;
-  return { people, autoPack, assets, unpacked };
+  // [OLD 2026-11-08 v0.10.3->v0.11.0] return { people, autoPack, assets, unpacked };
+  return { people, autoPack, assets, unpacked, leftOut }; // added 2026-11-08 v0.11.0: leftOut
 }
 export function castPacks(project, scene, c) {
   const n = c.anchors.filter(id => findAsset(project, id)?.kind === "image").length;

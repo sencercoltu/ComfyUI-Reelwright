@@ -1496,6 +1496,7 @@ def main():
         v0100_checks(page, check, saved, shots)  # added 2026-11-06 v0.10.0: speech-timed captions, tooltips, folds, seam fixes, rewriter per pass, copy, import/export, voices
         v0102_checks(page, check, saved, shots)  # added 2026-11-06 v0.10.2: merge and LLM progress without rebuilding the tab; tooltips survive a rebuild
         v0103_checks(page, check, saved, shots)  # added 2026-11-07 v0.10.3: Global → Project → New project
+        v0110_checks(page, check, saved, shots)  # added 2026-11-08 v0.11.0: Cast → Part of; outfit pictures
         browser.close()
     httpd.shutdown()
 
@@ -4414,6 +4415,104 @@ def v0103_checks(page, check, saved, shots):
     check(n2["global"]["llm"]["timeout_s"] == 777 and n2["global"]["llm"]["base_url"] == "http://profile.llm:1/v1" and n2["slug"] != n["slug"] and n2["project_id"] != old["project_id"],
           f"Use profile takes the profile's Global settings: {n2['global']['llm'].get('timeout_s')} in {n2['slug']}")
     page.evaluate("window.__mockProfiles.profiles = []; window.__mockProfiles.default = ''")
+    load(json.loads(saved))
+
+
+
+def v0110_checks(page, check, saved, shots):
+    """v0.11.0: Cast → a prop → Part of (Sencer: a beer belly prop became a second person in the shot) and outfit
+    pictures. A part's pictures join its character's in the reference budget (one subject); the Cast and Scene tabs
+    say whose part it is and warn where its character is missing; outfits get + Add picture."""
+    import os
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def pick(k, text):  # type to filter a combobox, Enter picks the first match
+        loc = page.locator(f"input[data-key='{k}']")
+        loc.click()
+        loc.fill(text)
+        page.wait_for_timeout(150)
+        loc.press("Enter")
+        page.wait_for_timeout(300)
+
+    proj = lambda: page.evaluate("window.__editor.project")
+    cast_of = lambda cid: next(c for c in proj()["cast"] if c["id"] == cid)
+    budget = lambda i: page.evaluate("""async i => { const m = await import('/web/rw/model.js'); const p = window.__editor.project;
+      return m.sceneBudget(p, p.scenes[i]).pictures; }""", i)
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["cast"].append({"id": "c_belly", "kind": "prop", "name": "Beer belly", "description": "a big round beer belly", "anchors": ["a_p6"],
+                      "pack_sheet": False, "outfits": [], "default_outfit": "", "voice": "", "language": "English", "lora": {"name": "", "strength": 0.8}})
+    q["scenes"][0]["cast"] = [{"id": "c_mara", "outfit": ""}, {"id": "c_belly", "outfit": ""}]
+    q["scenes"][0]["dialogue"] = []
+    q["scenes"][0]["refs"] = []
+    q["scenes"][1]["cast"] = [{"id": "c_belly", "outfit": ""}]
+    q["scenes"][1]["dialogue"] = []
+    q["cast"][0]["anchors"] = ["a_p1", "a_p7"]  # Mara: two anchors in one sheet
+    q["ui"].update(tab="cast")
+    load(q)
+    page.evaluate("window.__editor.store.setEph({ selectedCast: 'c_belly' })")
+    page.wait_for_timeout(300)
+    before = budget(0)
+
+    # 1. Part of: pick Mara
+    part = page.locator("input[data-key='cast-part-c_belly']")
+    check(part.count() == 1, "a prop has a Part of field")
+    pick("cast-part-c_belly", "Mara")
+    hint = " ".join(page.locator(".rw-field:has(input[data-key='cast-part-c_belly']) .small").all_inner_texts())
+    check(cast_of("c_belly")["part_of"] == "c_mara" and "go into Mara's subject" in hint and "@{Beer belly}" in hint
+          and "1 scene has it without Mara" in hint, f"Part of Mara is stored and explained: {cast_of('c_belly')['part_of']!r} / {hint!r}")
+    item = page.locator(".rw-bible-item:has-text('Beer belly')").inner_text()
+    check("part of Mara" in item, f"the story bible says whose part it is: {item!r}")
+    after = budget(0)
+    check(before == 2 and after == 1, f"the part's picture joins Mara's sheet in the reference budget: {before} -> {after} pictures")
+    shots and page.screenshot(path=os.path.join(shots, "v0110_part_of.png"))
+
+    # 2. Mara lists her parts; a click opens the prop
+    page.evaluate("window.__editor.store.setEph({ selectedCast: 'c_mara' })")
+    page.wait_for_timeout(300)
+    link = page.locator("button[data-key='cast-partlink-c_belly']")
+    check(link.count() == 1, "the character's profile lists its parts")
+    link.click()
+    page.wait_for_timeout(300)
+    check(page.evaluate("window.__editor.eph.selectedCast") == "c_belly", "a click on a part opens it")
+
+    # 3. the Scene tab says whose part it is, and warns where the character is missing
+    page.evaluate("window.__editor.store.update(p => { p.ui.selected = p.scenes[0].id; p.ui.tab = 'scene'; }, { history: false })")
+    page.wait_for_timeout(400)
+    row = page.locator("[data-help='scene.cast.part']")
+    check(row.count() == 1 and "in Mara's subject" in row.inner_text() and "rw-c-warn" not in (row.get_attribute("class") or ""),
+          f"the Scene tab shows the part in Mara's subject: {row.all_inner_texts()}")
+    page.evaluate("window.__editor.store.update(p => { p.ui.selected = p.scenes[1].id; }, { history: false })")
+    page.wait_for_timeout(400)
+    row = page.locator("[data-help='scene.cast.part']")
+    check(row.count() == 1 and "not in this scene: left out" in row.inner_text() and "rw-c-warn" in (row.get_attribute("class") or ""),
+          f"a scene with the part but not Mara warns: {row.all_inner_texts()}")
+    sp = page.evaluate("""async () => { const m = await import('/web/rw/model.js'); const p = window.__editor.project;
+      const r = m.scenePeople(p, p.scenes[1]); return [r.people.length, r.leftOut.map(x => x.part.id + '>' + x.owner.id)]; }""")
+    check(sp == [0, ["c_belly>c_mara"]], f"the part is left out of that scene: {sp}")
+
+    # 4. clear Part of: a thing of its own again
+    page.evaluate("window.__editor.store.update(p => { p.ui.tab = 'cast'; }, { history: false }); window.__editor.store.setEph({ selectedCast: 'c_belly' })")
+    page.wait_for_timeout(300)
+    pick("cast-part-c_belly", "nobody")
+    check(cast_of("c_belly")["part_of"] == "" and budget(0) == 2, f"Part of cleared: {cast_of('c_belly')['part_of']!r}, {budget(0)} pictures")
+
+    # 5. outfit pictures: add and remove
+    page.evaluate("window.__editor.store.setEph({ selectedCast: 'c_mara' })")
+    page.wait_for_timeout(300)
+    add = page.locator("input[data-key='outfit-pic-add-o_navy']")
+    check(add.count() == 1, "an outfit has + Add picture")
+    pick("outfit-pic-add-o_navy", "P6")
+    o = next(x for x in cast_of("c_mara")["outfits"] if x["id"] == "o_navy")
+    thumbs = page.locator(".rw-outfit:has(input[data-key='outfit-pic-add-o_navy']) .rw-anchor.sm")
+    check(o["assets"] == ["a_p6"] and thumbs.count() == 1, f"the picture joins the outfit: {o['assets']}, {thumbs.count()} thumbnails")
+    check(budget(0) == 2, f"the outfit's picture goes into Mara's sheet (still one picture for her, one for the belly): {budget(0)}")
+    page.locator("button[data-key='outfit-pic-x-o_navy-a_p6']").click()
+    page.wait_for_timeout(300)
+    o = next(x for x in cast_of("c_mara")["outfits"] if x["id"] == "o_navy")
+    check(o["assets"] == [], f"the picture is removed from the outfit: {o['assets']}")
     load(json.loads(saved))
 
 

@@ -633,6 +633,7 @@ def _norm_cast(c, lang):
     # added 2026-11-06 v0.10.0: voice_desc: how the voice sounds ("a deep, warm male voice, slow and measured")
     for k in ("name", "speaker", "description", "default_outfit", "voice", "voice_desc"):
         _text_field(c, k, "")
+    _text_field(c, "part_of", "")  # added 2026-11-08 v0.11.0: a prop that is part of this character (see part_owner)
     _text_field(c, "language", lang)
     c["anchors"] = _texts(c.get("anchors"))
     # v0.4.1: True (one sheet), False (separate pictures) or "auto" (a sheet only when the pass would not fit H3's 9
@@ -904,6 +905,67 @@ def cast_description(c, assets):
         if a and a.get("kind") == "image" and d:
             return d, aid
     return "", None
+
+
+# added 2026-11-08 v0.11.0: a prop can be part of a character (Cast -> Prop -> Part of): a beer belly, a tattoo, a
+# prosthetic arm. Every cast member in a scene used to be a <Subject N> of its own, and H3 puts each subject in the
+# shot as a separate thing (Sencer: a picture of a beer belly became a second person). A part's pictures and
+# description now go into its character's subject. It counts in a scene only when the prop is in the scene's cast
+# and so is its character (in the cast list or speaking); without the character it is left out (validate warns).
+def part_owner(c, cast):
+    """The id of the character that prop `c` is part of, or "" (not a prop, no part_of, or part_of is not a character
+    in `cast`, a dict id -> cast member)."""
+    if not isinstance(c, dict) or c.get("kind") != "prop":
+        return ""
+    owner = cast.get(c.get("part_of") or "")
+    if isinstance(owner, dict) and owner.get("kind") == "character" and owner.get("id") != c.get("id"):
+        return owner["id"]
+    return ""
+
+
+def cast_pictures(c, entry, assets):
+    """(outfit, picture ids) a cast member sends in a scene: its anchor pictures, then the pictures of the outfit the
+    scene entry gives it (else its default outfit) that are not anchors already. Images only."""
+    outfit = next((o for o in c["outfits"] if o["id"] == ((entry or {}).get("outfit") or c["default_outfit"])), None)
+    ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image"]
+    if outfit:
+        ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in ids]
+    return outfit, ids
+
+
+def scene_people(p, scene, idx=None):
+    """The cast a scene sends, as prompt.collect_refs and scene_media_counts use it: its cast list plus the speakers
+    missing from it, in that order. Returns (people, left_out):
+    people: [{"entry", "cast", "outfit", "own", "ids", "parts"}], one per cast member that is no part. own: its
+    pictures (cast_pictures); ids: own, then the pictures of its parts in this scene that are not in it yet. parts:
+    [{"entry", "cast", "outfit", "ids"}] (ids: all of that part's pictures).
+    left_out: [(part, owner)] for the props in the scene that are part of a character who is not in it."""
+    idx = idx or project_index(p)
+    assets, cast = idx["assets"], idx["cast"]
+    entries = list(scene["cast"])
+    for d in scene["dialogue"]:  # a speaker who is not in the scene's cast list still gets anchors
+        if d.get("speaker") in cast and not any(e["id"] == d["speaker"] for e in entries):
+            entries.append({"id": d["speaker"], "outfit": ""})
+    present = {e["id"] for e in entries if e["id"] in cast}
+    people, parts, left_out = [], {}, []
+    for e in entries:
+        c = cast.get(e["id"])
+        if not c:
+            continue
+        outfit, ids = cast_pictures(c, e, assets)
+        owner = part_owner(c, cast)
+        if owner:
+            if owner in present:
+                parts.setdefault(owner, []).append({"entry": e, "cast": c, "outfit": outfit, "ids": ids})
+            else:
+                left_out.append((c, cast[owner]))
+            continue
+        people.append({"entry": e, "cast": c, "outfit": outfit, "own": ids, "ids": ids, "parts": []})
+    for x in people:
+        for part in parts.get(x["cast"]["id"], []):
+            x["parts"].append(part)
+            x["ids"] = x["ids"] + [a for a in part["ids"] if a not in x["ids"]]
+    return people, left_out
 
 
 def scene_seed(p, scene, scene_index, take_number=0):
@@ -1205,20 +1267,24 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
         return out
     idx = project_index(p)
     assets, cast = idx["assets"], idx["cast"]
-    entries = list(scene["cast"])
-    for d in scene["dialogue"]:  # a speaker who is not in the scene's cast list still gets anchors
-        if d.get("speaker") in cast and not any(e["id"] == d["speaker"] for e in entries):
-            entries.append({"id": d["speaker"], "outfit": ""})
-    people = []
-    for e in entries:
-        c = cast.get(e["id"])
-        if not c:
-            continue
-        outfit = next((o for o in c["outfits"] if o["id"] == (e.get("outfit") or c["default_outfit"])), None)
-        ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image"]
-        if outfit:
-            ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in ids]
-        people.append((c, ids))
+    # [OLD 2026-11-08 v0.10.3->v0.11.0] every cast member counted on its own (scene_people now folds a prop that is
+    # part of a character into that character)
+    # entries = list(scene["cast"])
+    # for d in scene["dialogue"]:  # a speaker who is not in the scene's cast list still gets anchors
+    #     if d.get("speaker") in cast and not any(e["id"] == d["speaker"] for e in entries):
+    #         entries.append({"id": d["speaker"], "outfit": ""})
+    # people = []
+    # for e in entries:
+    #     c = cast.get(e["id"])
+    #     if not c:
+    #         continue
+    #     outfit = next((o for o in c["outfits"] if o["id"] == (e.get("outfit") or c["default_outfit"])), None)
+    #     ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image"]
+    #     if outfit:
+    #         ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in ids]
+    #     people.append((c, ids))
+    # [/OLD]
+    people = [(x["cast"], x["ids"]) for x in scene_people(p, scene, idx)[0]]  # added 2026-11-08 v0.11.0
     anchors = {a for _, ids in people for a in ids}
     ref_pics = {r["asset"] for r in scene["refs"]
                 if r["role"] == "reference" and r["asset"] in assets and assets[r["asset"]]["kind"] == "image"}

@@ -463,7 +463,12 @@ tip("cast.promote.scene", "Scene whose starred take provides the frame.");
 // [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now: more("cast.profile", "Profile", "Name, speaker ID, description, voice, language and identity LoRA. The description is written into the subject definitions of every scene this entry is in.", "Details of this entry.");
 more("cast.profile", "Profile", "Name, description, voice, language and identity LoRA. The description is written into the subject definitions of every scene this entry is in; Describe from anchors can draft it with a vision LLM.", "Details of this entry.");
 tip("cast.name", "Name; in prompts write @Name, or @{Two Words} when it has spaces.");
-tip("cast.kind", "Character, location or prop.");
+// [OLD 2026-11-08 v0.10.3->v0.11.0] tip("cast.kind", "Character, location or prop.");
+// added 2026-11-08 v0.11.0: a prop can be part of a character
+tip("cast.kind", "Character, location or prop. A prop is a thing of its own in the shot, unless it is part of a character (Part of).");
+more("cast.partOf", "Part of", "Pick the character this prop belongs to when it is part of their body or look: a beer belly, a tattoo, a scar, a prosthetic arm. In scenes where both are in the cast, its pictures and description go into the character's subject (\"<Subject 1> is Mara, …, with Beer belly (a big round beer belly) shown in <Picture 3>\"), and @{Beer belly} in a shot is written as \"<Subject 1>'s Beer belly\".\n\nNobody: the prop is a subject of its own, which H3 puts in the shot as a separate thing (a cup, a car). A prop of its own showing a body part becomes a second person.\n\nA part in a scene without its character is left out (the Issues list says so). When a part changes the body, give the character an outfit with retention partially_preserved keeping face and hair, so the anchors' body does not win.", "The character whose body or look this prop is part of.");
+tip("cast.parts", "Props that are part of this character. Click one to open it.");
+tip("scene.cast.part", "This prop is part of a character: its pictures and description go into that character's subject. Without the character in the scene it is left out.");
 // [OLD 2026-11-02 v0.1.0->v0.2.0] speaker field removed from the UI: tip("cast.speaker", "Speaker ID used in dialogue: <Subject n> (S1). Keep it stable.");
 tip("cast.speaker", "Older projects stored a fixed speaker ID here. H3's guide numbers speakers by speaking order in each clip, so the prompt builder now assigns S1, S2… itself.");
 // [OLD 2026-11-02 v0.3.3->v0.3.4] tip("cast.description", "Short visual description written into every scene's subject definitions.");
@@ -485,10 +490,16 @@ tip("cast.lora", "Identity LoRA, added automatically to every scene this entry a
 tip("cast.lora.strength", "Strength of the identity LoRA.");
 tip("cast.export", "Copy the anchors and starred frames of this entry into a folder ready for ai-toolkit LoRA training.");
 tip("cast.delete", "Delete this entry and remove it from every scene.");
-more("cast.outfits", "Outfits", "Looks this character wears. Each outfit has its own retention (for example partially_preserved keeping face and hair) so the face stays while the clothes change. Pick the outfit per scene in the Scene tab.", "Different looks for this entry.");
+// [OLD 2026-11-08 v0.10.3->v0.11.0] more("cast.outfits", "Outfits", "Looks this character wears. Each outfit has its own retention (for example partially_preserved keeping face and hair) so the face stays while the clothes change. Pick the outfit per scene in the Scene tab.", "Different looks for this entry.");
+// added 2026-11-08 v0.11.0: outfit pictures; looks other than clothes
+more("cast.outfits", "Outfits", "Looks this character wears: other clothes, a beard, a belly. Pick the outfit per scene in the Scene tab.\n\nEach outfit has its own retention (for example partially_preserved keeping face and hair) so the face stays while the look changes, and can have pictures of its own: they are sent with the anchors in the scenes that pick it, as the same subject.\n\nThe name goes into the subject line as \"wearing <name>\"; a name that starts with with, in, without, wearing, holding or carrying is written as it is (\"with a big beer belly\"). An outfit named Default adds nothing.", "Different looks of this character, each with its own retention and pictures.");
 tip("cast.outfits.add", "Add an outfit or variant.");
 tip("cast.outfits.default", "Default outfit for new scenes.");
-tip("cast.outfits.name", "Outfit name.");
+// [OLD 2026-11-08 v0.10.3->v0.11.0] tip("cast.outfits.name", "Outfit name.");
+tip("cast.outfits.name", "Outfit name. Written as \"wearing <name>\", or as it is when it starts with with, in, without, wearing, holding or carrying.");  // added 2026-11-08 v0.11.0
+tip("cast.outfits.pictures", "Pictures of this look, sent with the anchors in the scenes that pick it.");
+tip("cast.outfits.pictureAdd", "Add a picture of this look.");
+tip("cast.outfits.pictureRemove", "Remove this picture from the outfit (the asset stays in the project).");
 tip("cast.outfits.retention", "How strictly the anchors are followed with this outfit.");
 tip("cast.outfits.keep", "Features to keep with this outfit (face, hair …). Press Enter to add.");
 // [OLD 2026-11-03 v0.5.1->v0.6.0] tip("cast.outfits.remove", "Delete this outfit.");  (scenes that wore it are changed too)
