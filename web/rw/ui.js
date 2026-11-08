@@ -114,6 +114,7 @@ const ICONS = {
   tag: '<path d="M2.5 3.5v4l6 6 5-5-6-6h-4a1 1 0 0 0-1 1z"/><circle cx="5.5" cy="5.5" r="1"/>', // added 2026-11-06 v0.9.0: asset tags
   file: '<path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/>',
   history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.3 2.6v2.6h2.6M8 5v3.2l2.2 1.4"/>', // added 2026-11-03 v0.6.0
+  expand: '<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>', // added 2026-11-12 v0.13.0: full screen
 };
 
 export function icon(name, size = 14) {

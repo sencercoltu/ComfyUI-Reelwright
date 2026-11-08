@@ -1030,6 +1030,28 @@ async def _llm_job(job, coro):
         LLM_CANCELLED.discard(task)
 
 
+# added 2026-11-12 v0.13.0: Chat tab: a general question to the configured LLM, with the conversation so far. Progress
+# events carry the answer as it comes ("text"); Stop is /reelwright/llm/cancel with the same job id.
+@routes.post("/reelwright/llm/chat")
+@json_route
+async def llm_chat(request):
+    b = await body_of(request)
+    cfg = _cfg(normalize_project(b.get("project") or {}))
+    msgs = b.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        raise ValueError("messages must be a non-empty list")
+    if not all(isinstance(m, dict) and m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)
+               for m in msgs):
+        raise ValueError("each message must be {role: user|assistant, content: text}")
+    if msgs[-1]["role"] != "user" or not msgs[-1]["content"].strip():
+        raise ValueError("the last message must be the user's question")
+    if sum(len(m["content"]) for m in msgs) > llm.CHAT_MAX_CHARS:
+        raise ValueError("the conversation is too long; clear it and start again")
+    job = _job_id(b)
+    return await _llm_job(job, llm.chat_turn(cfg, [{"role": m["role"], "content": m["content"]} for m in msgs],
+                                             progress=_llm_progress(job)))
+
+
 @routes.post("/reelwright/llm/cancel")
 @json_route
 async def llm_cancel(request):

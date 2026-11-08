@@ -103,7 +103,8 @@ for (const [k, t] of Object.entries({
 more("timeline.bin", "Asset bin", "All project assets, grouped by kind. Drag one onto a scene block on the timeline to add it to that scene with its default role and retention; drop it where you want a keyframe to land.\n\nDrop files from your computer on the bin to upload them. Double-click an asset to open it in the Assets tab.", "Project assets. Drag onto a scene to use them.");
 tip("timeline.bin.upload", "Upload images, videos or audio into input/reelwright/<project>/. Each file gets a code such as P3 or A2.");
 tip("timeline.bin.item", "Drag onto a scene to add it as a reference. Double-click to edit its defaults.");
-tip("timeline.monitor", "Plays the starred take of the scene under the playhead, or shows a storyboard picture when the scene has not been rendered.");
+// [OLD 2026-11-12 v0.12.0->v0.13.0] tip("timeline.monitor", "Plays the starred take of the scene under the playhead, or shows a storyboard picture when the scene has not been rendered.");
+tip("timeline.monitor", "Plays the starred take of the scene under the playhead, or shows a storyboard picture when the scene has not been rendered. A take rendered while the film plays takes over at the same moment. Double-click (or F) for full screen.");  // added 2026-11-12 v0.13.0
 tip("timeline.monitor.format", "Output size and frame rate from the Global tab.");
 tip("timeline.monitor.take", "Showing the starred take. STALE means the scene changed since it was rendered.");
 tip("timeline.monitor.storyboard", "Not rendered yet: showing the first picture reference or anchor as a storyboard.");
@@ -473,6 +474,21 @@ tip("cast.name", "Name; in prompts write @Name, or @{Two Words} when it has spac
 tip("cast.kind", "Character, location or prop. A prop is a thing of its own in the shot, unless it is part of a character (Part of).");
 more("cast.partOf", "Part of", "Pick the character this prop belongs to when it is part of their body or look: a beer belly, a tattoo, a scar, a prosthetic arm. In scenes where both are in the cast, its pictures and description go into the character's subject (\"<Subject 1> is Mara, …, with Beer belly (a big round beer belly) shown in <Picture 3>\"), and @{Beer belly} in a shot is written as \"<Subject 1>'s Beer belly\".\n\nNobody: the prop is a subject of its own, which H3 puts in the shot as a separate thing (a cup, a car). A prop of its own showing a body part becomes a second person.\n\nA part in a scene without its character is left out (the Issues list says so). When a part changes the body, give the character an outfit with retention partially_preserved keeping face and hair, so the anchors' body does not win.", "The character whose body or look this prop is part of.");
 tip("cast.parts", "Props that are part of this character. Click one to open it.");
+// added 2026-11-12 v0.13.0: Chat tab
+more("tab.chat", "Chat", "Ask the LLM set in Global → Prompt rewriter general questions. The tab shows while an LLM base URL is set (this project's, or the one stored on the server).\n\nNothing from this project is sent: only your questions and the answers so far, with a short note that you are in Reelwright. The answer appears as it is written; Stop ends it and keeps what came. The conversation stays in this editor until you clear it or reload ComfyUI.\n\nIt uses the same model, Max tokens, Thinking and Limits as the rewriter (Global → Prompt rewriter).", "Ask the LLM general questions.");
+tip("chat.log", "The conversation. Select text to copy it, or use the copy button under an answer.");
+tip("chat.live", "The answer as the LLM writes it.");
+tip("chat.input", "Your question. Enter sends it, Shift+Enter starts a new line.");
+tip("chat.send", "Send the question (Enter).");
+tip("chat.stop", "Stop the answer; what came so far is kept.");
+tip("chat.clear", "Start a new conversation (the LLM forgets this one).");
+tip("chat.copy", "Copy this answer as text.");
+tip("chat.retry", "Ask the question again.");
+tip("chat.model", "The model and server the questions go to (Global → Prompt rewriter).");
+// added 2026-11-12 v0.13.0: the monitor full screen
+more("timeline.fullscreen", "Full screen", "Show the monitor full screen: the takes, captions and badges as in the panel, with a bar for play/pause, the time, the scene and exit.\n\nThis button, a double-click on the monitor, or F switches it on. In full screen, click the picture or press Space to play or pause, ← / → to step, and Esc (or the × button) to come back.", "Show the monitor full screen (F, or double-click it).");
+tip("timeline.fullscreen.play", "Play or pause (Space, or click the picture).");
+tip("timeline.fullscreen.exit", "Leave full screen (Esc).");
 tip("scene.cast.part", "This prop is part of a character: its pictures and description go into that character's subject. Without the character in the scene it is left out.");
 // [OLD 2026-11-02 v0.1.0->v0.2.0] speaker field removed from the UI: tip("cast.speaker", "Speaker ID used in dialogue: <Subject n> (S1). Keep it stable.");
 tip("cast.speaker", "Older projects stored a fixed speaker ID here. H3's guide numbers speakers by speaking order in each clip, so the prompt builder now assigns S1, S2… itself.");

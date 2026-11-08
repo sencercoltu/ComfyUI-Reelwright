@@ -1034,3 +1034,41 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-io { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line2); }
 .rw-io-panel { display: flex; flex-direction: column; gap: 6px; }
 .rw-hidden-file { display: none; }
+
+/* added 2026-11-12 v0.13.0: Chat tab */
+.rw-chat { display: flex; flex-direction: column; gap: 10px; height: 100%; max-width: 980px; margin: 0 auto; padding: 12px; box-sizing: border-box; }
+.rw-chat-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.rw-chat-head .rw-ellipsis { min-width: 0; }
+.rw-chat-log { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); }
+.rw-chat-empty { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; max-width: 420px; color: var(--text3); }
+.rw-chat-msg { display: flex; flex-direction: column; gap: 4px; max-width: 86%; }
+.rw-chat-msg.me { align-self: flex-end; align-items: flex-end; }
+.rw-chat-msg.ai { align-self: flex-start; }
+.rw-chat-bubble { padding: 9px 12px; border-radius: 10px; background: var(--raise); color: var(--text); line-height: 1.5; font-size: 13px; overflow-wrap: anywhere; user-select: text; }
+.rw-chat-msg.me .rw-chat-bubble { background: var(--accent-soft); border: 1px solid rgba(255, 107, 74, 0.35); }
+.rw-chat-msg.err .rw-chat-bubble { display: none; }
+.rw-chat-bubble p { margin: 0 0 8px; white-space: pre-wrap; }
+.rw-chat-bubble > :last-child { margin-bottom: 0; }
+.rw-chat-bubble ul, .rw-chat-bubble ol { margin: 0 0 8px; padding-left: 20px; }
+.rw-chat-bubble li { margin: 2px 0; }
+.rw-chat-bubble code { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; background: var(--panel2); padding: 1px 4px; border-radius: 4px; }
+.rw-chat-code { font-family: var(--mono); margin: 0 0 8px; padding: 8px 10px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.45; white-space: pre; }
+.rw-chat-code code { background: none; padding: 0; }
+.rw-chat-h { font-weight: 600; margin: 4px 0 6px; }
+.rw-chat-live { color: var(--text2); }
+.rw-chat-foot { display: flex; align-items: center; gap: 6px; font-size: 11px; min-height: 22px; width: 100%; }
+.rw-chat-send { display: flex; gap: 8px; align-items: flex-end; }
+.rw-chat-input { flex: 1 1 auto; resize: vertical; min-height: 56px; max-height: 240px; }
+
+/* added 2026-11-12 v0.13.0: the monitor full screen (timeline.js enterFull) */
+.rw-mon-fs { display: none; }
+.rw-mon-fs:fullscreen { display: flex; flex-direction: column; width: 100%; height: 100%; background: #000; outline: none; }
+.rw-mon-fs:-webkit-full-screen { display: flex; flex-direction: column; width: 100%; height: 100%; background: #000; outline: none; } /* a rule of its own: browsers that do not know it drop only this one */
+.rw-mon-fs > .rw-mon { flex: 1 1 auto; width: 100%; height: auto; min-height: 0; max-width: none; aspect-ratio: auto; border: 0; border-radius: 0; background: #000; cursor: pointer; }
+.rw-mon-fs > .rw-mon .rw-mon-video, .rw-mon-fs > .rw-mon .rw-mon-img { background: #000; }
+.rw-mon-fs > .rw-mon .rw-mon-cap { font-size: 22px; }
+.rw-mon-fsbar { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: #0b0c0f; color: var(--text2); font-size: 13px; }
+.rw-mon-fsbtn { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--raise); color: var(--text); cursor: pointer; }
+.rw-mon-fsbtn:hover { background: var(--raise2); }
+.rw-mon-fstitle { min-width: 0; color: var(--text3); }
+.rw-mon-away { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--dim); cursor: pointer; }

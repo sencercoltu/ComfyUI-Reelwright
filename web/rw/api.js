@@ -94,6 +94,9 @@ export const rw = {
   scriptParts: (script, part_chars) => req("POST", "/reelwright/llm/script/parts", { script, part_chars }),
   scriptPart: (project, body) => req("POST", "/reelwright/llm/script", { project, ...body }),
   llmCancel: job => req("POST", "/reelwright/llm/cancel", { job }),
+  // added 2026-11-12 v0.13.0: Chat tab: messages [{role: "user"|"assistant", content}] -> {reply, ms, model, tokens, reasoning}
+  // or {cancelled: true}; reelwright.llm progress events for `job` carry the text so far
+  llmChat: (project, messages, job) => req("POST", "/reelwright/llm/chat", { project, messages, job }),
   // added 2026-11-05 v0.8.0: write the sections of a scene's passes (null = all), one LLM request per pass, with
   // reelwright.llm progress events for `job` and Stop (llmCancel) -> {passes: [{index, start, end, sections}], warnings}
   llmPasses: (project, scene_id, passes, job, instruction = "") => req("POST", "/reelwright/llm/passes",

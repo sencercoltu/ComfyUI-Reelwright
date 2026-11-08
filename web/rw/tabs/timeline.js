@@ -235,14 +235,51 @@ function monitorOf(ctx) {
   badgeBR.style.display = "none";
   const el = h("div", { class: "rw-mon", help: "timeline.monitor" }, video, img, empty, h("div", { class: "rw-mon-safe" }), badgeTL, badgeTR, badgeBL, badgeBR, caption);
   const m = ctx.monitor = { el, video, img, empty, badgeTL, badgeTR, badgeBL, badgeBR, caption, capKey: null, sceneId: null, src: "" };
+  // added 2026-11-12 v0.13.0: full screen (Sencer: "add option to go full screen for preview video"). The monitor moves
+  // into m.fs, a box in the editor's root that re-renders never replace (the tab's own panels are rebuilt on every
+  // render, which would end full screen), with a bar: play/pause, time, scene, exit. Double-click or F toggles it;
+  // in full screen a click plays or pauses and Esc comes back.
+  m.fsPlay = h("button", { type: "button", class: "rw-mon-fsbtn", help: "timeline.fullscreen.play", onClick: e => { e.stopPropagation(); togglePlay(ctx); } });
+  m.fsTime = h("span", { class: "mono rw-mon-fstime" });
+  m.fsTitle = h("span", { class: "rw-mon-fstitle rw-ellipsis" });
+  m.fsBar = h("div", { class: "rw-mon-fsbar" }, m.fsPlay, m.fsTime, m.fsTitle, h("span", { class: "rw-flex" }),
+    h("button", { type: "button", class: "rw-mon-fsbtn", help: "timeline.fullscreen.exit", onClick: e => { e.stopPropagation(); exitFull(ctx); } }, icon("close", 16)));
+  m.fs = h("div", { class: "rw-mon-fs", tabindex: "-1", help: "timeline.fullscreen" });
+  m.fsPlaying = null;
+  el.addEventListener("dblclick", e => { e.preventDefault(); toggleFull(ctx); });
+  el.addEventListener("click", () => { if (ctx.monFull) togglePlay(ctx); });
+  const onFs = () => {
+    if (!ctx.root.isConnected) { document.removeEventListener("fullscreenchange", onFs); document.removeEventListener("webkitfullscreenchange", onFs); return; }
+    if ((document.fullscreenElement || document.webkitFullscreenElement) === m.fs) return;
+    if (ctx.monFull) { ctx.monFull = false; ctx.render(); } // the next render puts the monitor back in its panel
+  };
+  document.addEventListener("fullscreenchange", onFs);
+  document.addEventListener("webkitfullscreenchange", onFs);
 
   m.show = (scene, local) => {
     const take = ctx.starredTake(scene.id);
     const src = take?.files?.video ? viewURL(take.files.video) : "";
     if (m.sceneId !== scene.id || m.src !== src) {
+      // added 2026-11-12 v0.13.0: a new take of the scene that is playing (a render finished while the film played):
+      // it takes over at the same moment and keeps playing (before, the monitor stopped on its first frame)
+      const resume = ctx.eph.playing && m.sceneId === scene.id && !!src;
       m.sceneId = scene.id;
       m.src = src;
-      if (src) { video.src = src; video.style.display = ""; img.style.display = "none"; empty.style.display = "none"; }
+      // [OLD 2026-11-12 v0.12.0->v0.13.0] if (src) { video.src = src; video.style.display = ""; img.style.display = "none"; empty.style.display = "none"; }
+      if (src) {
+        video.src = src; video.style.display = ""; img.style.display = "none"; empty.style.display = "none";
+        if (resume) {
+          const go = () => {
+            if (!ctx.eph.playing || m.src !== src) return;
+            const st = sceneStarts(ctx.p).starts[scene.id];
+            const at = st === undefined ? local : ctx.p.ui.playhead - st;
+            try { video.currentTime = Math.max(0, Math.min(at, scene.duration)); } catch { /* not seekable yet */ }
+            applyVolume(ctx);
+            video.play().catch(() => {});
+          };
+          if (video.readyState >= 1) go(); else video.addEventListener("loadedmetadata", go, { once: true });
+        }
+      }
       else {
         video.removeAttribute("src"); video.load(); video.style.display = "none";
         const sb = storyboardImage(ctx, scene);
@@ -276,6 +313,7 @@ function monitorOf(ctx) {
   // added 2026-11-06 v0.9.0: the frame count and the caption at `local` (scene time). Cheap: the DOM is touched only
   // when the text changes. Off with the transport's CC button (ui.captions).
   m.overlay = (scene, local) => {
+    if (ctx.monFull) fullBar(ctx, scene); // added 2026-11-12 v0.13.0
     const idx = sceneIndex(ctx.p, scene.id) + 1;
     const bl = `${String(idx).padStart(2, "0")} · f ${Math.min(framesOf(local), framesOf(scene.duration))} / ${framesOf(scene.duration)}`;
     if (badgeBL.textContent !== bl) badgeBL.textContent = bl;
@@ -291,6 +329,49 @@ function monitorOf(ctx) {
     caption.style.display = "";
   };
   return m;
+}
+
+// added 2026-11-12 v0.13.0: the monitor full screen (see monitorOf)
+function enterFull(ctx) {
+  const m = monitorOf(ctx);
+  if (ctx.monFull) return;
+  const req = m.fs.requestFullscreen || m.fs.webkitRequestFullscreen;
+  if (!req) { ctx.actions.toast("This browser cannot show the monitor full screen.", "warn"); return; }
+  if (!m.fs.isConnected) ctx.root.appendChild(m.fs);
+  m.fs.replaceChildren(m.el, m.fsBar);
+  ctx.monFull = true;
+  m.fsPlaying = null;
+  let res;
+  try { res = req.call(m.fs); } catch (err) { res = Promise.reject(err); }
+  Promise.resolve(res).then(() => { m.fs.focus({ preventScroll: true }); }, () => {
+    if (!ctx.monFull) return;
+    ctx.monFull = false;
+    ctx.actions.toast("The browser did not allow full screen.", "warn");
+    ctx.render();
+  });
+  fullBar(ctx, sceneAt(ctx.p, ctx.p.ui.playhead));
+  ctx.render();
+}
+function exitFull(ctx) {
+  const m = ctx.monitor;
+  if (!m) return;
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  if ((document.fullscreenElement || document.webkitFullscreenElement) === m.fs && exit) exit.call(document);
+  else if (ctx.monFull) { ctx.monFull = false; ctx.render(); }
+}
+export function toggleFull(ctx) {
+  if (ctx.monFull) exitFull(ctx); else enterFull(ctx);
+}
+function fullBar(ctx, scene) {
+  const m = ctx.monitor;
+  if (m.fsPlaying !== !!ctx.eph.playing) {
+    m.fsPlaying = !!ctx.eph.playing;
+    m.fsPlay.replaceChildren(icon(m.fsPlaying ? "pause" : "play", 16));
+  }
+  const t = `${fmtTime(ctx.p.ui.playhead)} / ${fmtTime(sceneStarts(ctx.p).total)}`;
+  if (m.fsTime.textContent !== t) m.fsTime.textContent = t;
+  const title = `${String(sceneIndex(ctx.p, scene.id) + 1).padStart(2, "0")} · ${scene.title}`;
+  if (m.fsTitle.textContent !== title) m.fsTitle.textContent = title;
 }
 
 // added 2026-11-06 v0.10.0: the lines of a scene timed to the speech of its starred take (POST /reelwright/speech, the
@@ -587,6 +668,7 @@ export function onKey(ctx, e) {
   if (letter(e, "i")) { ctx.store.setEph({ loop: { in: p.ui.playhead, out: Math.max(p.ui.playhead + 0.5, ctx.eph.loop?.out ?? sceneStarts(p).total) } }); return true; } // added 2026-11-04 v0.6.1
   if (letter(e, "o")) { ctx.store.setEph({ loop: { in: Math.min(ctx.eph.loop?.in ?? 0, p.ui.playhead - 0.5), out: p.ui.playhead } }); return true; } // added 2026-11-04 v0.6.1
   if (letter(e, "m")) { addMarker(ctx); return true; } // added 2026-11-04 v0.6.1
+  if (letter(e, "f")) { toggleFull(ctx); return true; } // added 2026-11-12 v0.13.0: the monitor full screen
   if (k === "+" || k === "=") { setZoom(ctx, zoomOf(ctx) * 1.25); return true; }
   if (k === "-") { setZoom(ctx, zoomOf(ctx) / 1.25); return true; }
   // added 2026-11-03 v0.6.0: Delete removes what the inspector shows: a marker, a soundtrack track, else the scene
@@ -921,6 +1003,8 @@ function renderTransport(ctx) {
     ctx.eph.playing && ctx.play && ctx.play.follow === false && button({ label: "Follow", icon: "eye", small: true, variant: "accent-ghost", key: "tl-follow",
       help: "timeline.follow", extra: null, onClick: () => resumeFollow(ctx) }),
     h("span", { class: "rw-flex" }),
+    // added 2026-11-12 v0.13.0: the monitor full screen (also: double-click it, or F)
+    button({ icon: "expand", small: true, variant: ctx.monFull ? "accent-ghost" : "ghost", key: "tl-full", help: "timeline.fullscreen", onClick: () => toggleFull(ctx) }),
     // added 2026-11-06 v0.9.0: captions on/off, and the monitor's volume (the merge never reads either)
     button({ label: "CC", small: true, variant: p.ui.captions === false ? "ghost" : "accent-ghost", key: "tl-cc", help: "timeline.captions",
       onClick: () => { ctx.store.update(q => { q.ui.captions = q.ui.captions === false; }, { history: false, plan: false, autosave: false }); } }),
@@ -1966,7 +2050,10 @@ export function render(ctx) {
   // added 2026-11-06 v0.9.0: three panels. The bar between the monitor and the inspector sets the monitor's share of
   // the width (ui.tl_mon, 0.15–0.85); the bar under them sets their height (ui.tl_top, px). Double-click a bar to
   // reset it. Sizes are kept in the project like the zoom (no undo step).
-  const monCol = h("div", { class: "rw-mon-col rw-panel", style: { width: (uiNum(p, "tl_mon", MON_SHARE, 0.15, 0.85) * 100).toFixed(2) + "%" } }, m.el, renderTransport(ctx));
+  // [OLD 2026-11-12 v0.12.0->v0.13.0] const monCol = h("div", { class: "rw-mon-col rw-panel", style: { width: (uiNum(p, "tl_mon", MON_SHARE, 0.15, 0.85) * 100).toFixed(2) + "%" } }, m.el, renderTransport(ctx));
+  // added 2026-11-12 v0.13.0: while the monitor is full screen it stays in its full-screen box; the panel says so
+  const monEl = ctx.monFull ? h("div", { class: "rw-mon rw-mon-away", help: "timeline.fullscreen", onClick: () => toggleFull(ctx) }, icon("expand", 18), h("span", null, "Full screen · Esc to come back")) : m.el;
+  const monCol = h("div", { class: "rw-mon-col rw-panel", style: { width: (uiNum(p, "tl_mon", MON_SHARE, 0.15, 0.85) * 100).toFixed(2) + "%" } }, monEl, renderTransport(ctx));
   const top = h("div", { class: "rw-tl-top", style: { height: Math.round(uiNum(p, "tl_top", TOP_H, TOP_MIN, 4000)) + "px" } });
   // a redraw while dragging (a render's progress, an autosave) puts new panels on screen: the bars work on those
   const live = (el, sel) => (el.isConnected ? el : ctx.root.querySelector(sel)) || el;

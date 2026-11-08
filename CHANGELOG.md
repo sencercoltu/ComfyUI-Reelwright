@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.13.0 — 2026-11-12
+
+- **Chat tab:** ask the LLM general questions. The tab shows only while an LLM is set (a base URL in Global → Prompt rewriter, or the one stored on the server).
+  - The answer appears as it is written, with lists, code and bold drawn as they come. **Stop** keeps what came so far; an error offers **Retry**; **Clear** starts a new conversation. Enter sends, Shift+Enter starts a new line.
+  - Only your questions and the answers so far are sent, with a short note that you are in Reelwright; nothing from the project. It uses the rewriter's model, Max tokens, Thinking and Limits.
+  - The conversation stays in this editor until you clear it or reload ComfyUI.
+- **A take rendered while the film plays keeps playing.** When a render finishes for the scene that is playing in the monitor, the new take takes over at the same moment instead of stopping on its first frame.
+- **Full screen monitor:** the new button in the monitor's transport, a double-click on the monitor, or F. Captions and badges show as in the panel, with a bar for play/pause, the time, the scene and exit. In full screen, click the picture or press Space to play or pause, ← / → to step, Esc to come back. Full screen survives a render's progress updates.
+- Nothing renders again; only the editor and a new backend route changed (restart ComfyUI for the Chat tab).
+- **For developers:** `POST /reelwright/llm/chat` (`llm.chat_turn`, `llm.CHAT_SYSTEM`); `llm.chat()` takes `history` and `with_text` (progress events with the text so far). `tabs/chat.js` (`enabled`, `markdown`, `visibleText`); `TABS.<id>.when` hides a tab (`ctx.tabShown`); an element of a job can draw its progress itself (`el.__rwJobRender`). `timeline.js toggleFull`; icon `expand`. `web-test/interact.py` runs `v0130_checks()`.
+
 ## v0.12.0 — 2026-11-12
 
 - **Pose references** (Scene → References → role **pose**). Sencer: "can we add reference assets, so the real characters can use the same pose as from a given picture?"

@@ -870,3 +870,33 @@ def test_script_import_asks_for_fuller_shots_and_a_scene_note():
     # the default budget per part is bigger, in Python and in the editor's model
     assert llm.resolve({"base_url": "x:1/v1"}, {"base_url": "", "model": "", "api_key": ""})["import_max_tokens"] == 24576
     assert default_project("Demo")["global"]["llm"]["import_max_tokens"] == 24576 == llm.IMPORT_MAX_TOKENS
+
+
+# ---- added 2026-11-12 v0.13.0: Chat tab ---------------------------------------------------------------------------
+
+def test_chat_turn_sends_the_conversation_and_streams_the_text():
+    seen, events = [], []
+
+    async def handler(request):
+        seen.append(await request.json())
+        return await stream_response(request, sse(("", "hmm"), ("Paris ", ""), ("is the ", ""), ("capital.", "")), delay=0.3)
+
+    async def go(cfg):
+        msgs = [{"role": "user", "content": "Capital of Italy?"}, {"role": "assistant", "content": "Rome."},
+                {"role": "user", "content": "And of France?"}]
+        return await llm.chat_turn(cfg, msgs, progress=events.append)
+    out = run_app(go, handler)
+    assert out["reply"] == "Paris is the capital." and out["model"] == "stub" and out["tokens"] == 3 and out["reasoning"]
+    sent = seen[0]["messages"]
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]
+    assert sent[0]["content"] == llm.CHAT_SYSTEM and sent[-1]["content"] == "And of France?" and sent[2]["content"] == "Rome."
+    texts = [e.get("text") for e in events]
+    assert texts[0] == "" and texts[-1] == "Paris is the capital." and any(t and t != texts[-1] for t in texts[1:-1])
+    # other requests carry no text in their progress (only the Chat tab asks for it)
+    events.clear()
+
+    async def go2(cfg):
+        return await llm.chat(cfg, "sys", "user", progress=events.append)
+    run_app(go2, handler)
+    assert all("text" not in e for e in events)
+

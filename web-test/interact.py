@@ -1498,6 +1498,7 @@ def main():
         v0103_checks(page, check, saved, shots)  # added 2026-11-07 v0.10.3: Global → Project → New project
         v0110_checks(page, check, saved, shots)  # added 2026-11-08 v0.11.0: Cast → Part of; outfit pictures
         v0120_checks(page, check, saved, shots)  # added 2026-11-12 v0.12.0: pose references
+        v0130_checks(page, check, saved, shots)  # added 2026-11-12 v0.13.0: Chat tab; a new take keeps playing; full screen
         browser.close()
     httpd.shutdown()
 
@@ -4573,6 +4574,144 @@ def v0120_checks(page, check, saved, shots):
     # 2. a character not in the scene
     pick("ref-cast-r_pose", "Keeper")
     check(ref()["cast"] == "c_keeper" and any("is not in this scene, so it is not sent" in t for t in note()), f"another scene's character warns: {note()}")
+    load(json.loads(saved))
+
+
+
+def v0130_checks(page, check, saved, shots):
+    """v0.13.0 (Sencer): a Chat tab for general questions, shown only while an LLM is set; a take rendered while the film
+    plays takes over at the same moment and keeps playing; the monitor can go full screen (and survives re-renders)."""
+    import os
+    import subprocess
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    tabs = lambda: page.locator(".rw-tab").all_inner_texts()
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="chat")
+    load(q)
+    page.wait_for_timeout(300)
+
+    # 1. the Chat tab shows while an LLM base URL is set (the mock server has one), and hides without one
+    check(any(t.strip().startswith("Chat") for t in tabs()) and page.locator(".rw-chat").count() == 1, f"the Chat tab shows with an LLM: {tabs()}")
+    page.evaluate("""() => { const e = window.__editor; e.__llmWas = JSON.stringify(e.eph.llm); e.store.setEph({ llm: { ...e.eph.llm, base_url: '' } });
+      e.store.update(p => { p.global.llm.base_url = ''; }, { history: false }); }""")
+    page.wait_for_timeout(300)
+    on = page.locator(".rw-tab.on").inner_text()
+    check(not any(t.strip().startswith("Chat") for t in tabs()) and page.locator(".rw-chat").count() == 0 and "Timeline" in on,
+          f"without an LLM the tab is hidden and the Timeline shows: {tabs()} / on {on!r}")
+    page.evaluate("() => { const e = window.__editor; e.store.setEph({ llm: JSON.parse(e.__llmWas) }); }")
+    page.wait_for_timeout(300)
+    check(page.locator(".rw-chat").count() == 1, "the server's base URL alone brings the tab back")
+
+    # 2. ask: the question, the answer streaming in, then Markdown
+    page.evaluate("window.__mockChat.length = 0")
+    box = page.locator("textarea[data-key='chat-input']")
+    box.click()
+    box.fill("SLOW what is a dolly zoom?")
+    box.press("Enter")
+    page.wait_for_timeout(700)
+    live = page.locator(".rw-chat-live")
+    mid = live.inner_text() if live.count() else ""
+    check(page.locator(".rw-chat-msg.me").count() == 1 and live.count() == 1 and "Answer" in mid and box.input_value() == "",
+          f"the question shows and the answer streams in: {page.locator('.rw-chat-msg.me').count()} {live.count()} {mid!r} {box.input_value()!r}")
+    page.wait_for_timeout(3000)
+    ai = page.locator(".rw-chat-msg.ai").last
+    check(ai.locator("b").count() >= 1 and ai.locator("li").count() == 2 and ai.locator("pre code").count() == 1 and "qwen3" in ai.inner_text(),
+          f"the answer is shown with its Markdown: {ai.inner_text()[:160]!r}")
+    box.fill("and a second one")
+    box.press("Enter")
+    page.wait_for_timeout(900)
+    calls = page.evaluate("window.__mockChat")
+    check(len(calls) == 2 and calls[1]["roles"] == ["user", "assistant", "user"], f"the conversation goes with each question: {calls}")
+    # the draft survives a re-render while typing
+    box.fill("half a quest")
+    page.evaluate("window.__editor.store.notify()")
+    page.wait_for_timeout(200)
+    check(box.input_value() == "half a quest", f"the draft survives a re-render: {box.input_value()!r}")
+
+    # 3. Stop keeps what came; an error offers Retry; Clear empties
+    box.fill("SLOW tell me a long story")
+    box.press("Enter")
+    page.wait_for_timeout(900)
+    page.locator("button[data-key='chat-stop']").click()
+    page.wait_for_timeout(600)
+    last = page.locator(".rw-chat-msg.ai").last
+    check("stopped" in last.inner_text() and "Answer" in last.inner_text(), f"Stop keeps the answer so far: {last.inner_text()[:120]!r}")
+    box.fill("please FAIL")
+    box.press("Enter")
+    page.wait_for_timeout(600)
+    err = page.locator(".rw-chat-msg.err")
+    check(err.count() == 1 and "No answer" in err.inner_text() and err.locator("button:has-text('Retry')").count() == 1, f"an error offers Retry: {err.all_inner_texts()}")
+    n = len(page.evaluate("window.__mockChat"))
+    err.locator("button:has-text('Retry')").click()
+    page.wait_for_timeout(600)
+    check(len(page.evaluate("window.__mockChat")) == n + 1 and page.locator(".rw-chat-msg.err").count() == 1, "Retry asks again (one error shown)")
+    shots and page.screenshot(path=os.path.join(shots, "v0130_chat.png"))
+    page.locator("button[data-key='chat-clear']").click()
+    page.wait_for_timeout(300)
+    check(page.locator(".rw-chat-msg").count() == 0 and page.locator(".rw-chat-empty").count() == 1, "Clear starts a new conversation")
+
+    # 4. a take rendered while the film plays takes over at the same moment and keeps playing (WebM clips, served here)
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots")
+    os.makedirs(d, exist_ok=True)
+    for name, color in (("rw_take_a.webm", "red"), ("rw_take_b.webm", "blue")):
+        path = os.path.join(d, name)
+        if not os.path.exists(path):
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c={color}:s=160x90:r=24:d=10",
+                            "-c:v", "libvpx", "-b:v", "200k", path], check=True)
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="timeline", playhead=0.5)
+    load(q)
+    # blob URLs: seekable (the test server answers no Range requests, so its files would always start at 0)
+    page.evaluate("""async () => {
+      const host = window.__host, orig = host.apiURL.bind(host);
+      host.__origApiURL = orig;
+      const blobs = {};
+      for (const n of ['rw_take_a.webm', 'rw_take_b.webm']) blobs[n] = URL.createObjectURL(await (await fetch('/web-test/shots/' + n)).blob());
+      host.apiURL = path => { const m = /filename=(rw_take_[ab][.]webm)/.exec(path); return m ? blobs[m[1]] : orig(path); };
+      const e = window.__editor, s = e.project.scenes[0];
+      const t = { ...e.eph.takes.scenes[s.id].takes[0], id: 'va', files: { ...e.eph.takes.scenes[s.id].takes[0].files, video: 'reelwright/x/rw_take_a.webm' } };
+      e.store.setEph({ takes: { ...e.eph.takes, scenes: { ...e.eph.takes.scenes, [s.id]: { starred: 'va', takes: [t] } } } });
+    }""")
+    page.wait_for_timeout(800)
+    page.locator("[data-help='timeline.transport.play']").first.click()
+    page.wait_for_timeout(1200)
+    vid = lambda: page.evaluate("() => { const v = document.querySelector('.rw-mon-video'); return { src: v.currentSrc || v.src, paused: v.paused, t: v.currentTime, playing: window.__editor.eph.playing }; }")
+    a = vid()
+    page.evaluate("""() => {
+      const e = window.__editor, s = e.project.scenes[0], cur = e.eph.takes.scenes[s.id];
+      const t = { ...cur.takes[0], id: 'vb', files: { ...cur.takes[0].files, video: 'reelwright/x/rw_take_b.webm' } };
+      e.store.setEph({ takes: { ...e.eph.takes, scenes: { ...e.eph.takes.scenes, [s.id]: { starred: 'vb', takes: [...cur.takes, t] } } } });
+    }""")
+    page.wait_for_timeout(1500)
+    b = vid()
+    check(a["src"].startswith("blob:") and not a["paused"] and b["src"].startswith("blob:") and b["src"] != a["src"] and not b["paused"]
+          and b["playing"] and b["t"] > a["t"] + 1.0, f"the new take plays on from the same moment: {a} -> {b}")
+
+    # 5. full screen: the monitor moves into its own box, survives re-renders, and comes back
+    page.locator("button[data-key='tl-full']").click()
+    page.wait_for_timeout(600)
+    fs = lambda: page.evaluate("() => { const f = document.fullscreenElement; return { fs: !!f && f.classList.contains('rw-mon-fs'), mon: !!(f && f.querySelector('.rw-mon .rw-mon-video')), away: document.querySelectorAll('.rw-mon-away').length }; }")
+    st = fs()
+    check(st == {"fs": True, "mon": True, "away": 1}, f"the monitor goes full screen, the panel says so: {st}")
+    page.evaluate("window.__editor.store.notify()")
+    page.wait_for_timeout(300)
+    check(fs()["fs"] and fs()["mon"] and not vid()["paused"], f"full screen survives a re-render and keeps playing: {fs()} {vid()}")
+    bar = page.locator(".rw-mon-fsbar").inner_text()
+    check("/" in bar and "01 ·" in bar, f"the bar shows time and scene: {bar!r}")
+    shots and page.screenshot(path=os.path.join(shots, "v0130_fullscreen.png"))
+    page.locator("[data-help='timeline.fullscreen.exit']").click()
+    page.wait_for_timeout(600)
+    st = fs()
+    inpanel = page.evaluate("!!document.querySelector('.rw-mon-col .rw-mon .rw-mon-video')")
+    check(not st["fs"] and st["away"] == 0 and inpanel and not vid()["paused"], f"leaving full screen puts the monitor back, still playing: {st} {vid()}")
+    page.evaluate("""() => { const host = window.__host; if (host.__origApiURL) host.apiURL = host.__origApiURL; }""")
+    page.keyboard.press("Space") if False else None
+    page.evaluate("() => { const e = window.__editor; if (e.eph.playing) document.querySelector(\"[data-help='timeline.transport.play']\").click(); }")
+    page.wait_for_timeout(300)
     load(json.loads(saved))
 
 

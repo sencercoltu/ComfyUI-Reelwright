@@ -547,6 +547,8 @@ if (typeof window !== "undefined") window.__mockProfiles = profileStore;
 // added 2026-11-03 v0.4.2: a fake LLM request that sends reelwright.llm progress events and can be cancelled
 const llmLive = {};
 const llmCancelled = new Set();
+const chatCalls = []; // added 2026-11-12 v0.13.0: what /reelwright/llm/chat was sent
+if (typeof window !== "undefined") window.__mockChat = chatCalls;
 const failedOnce = new Set();
 export const scriptCalls = [];
 // [OLD 2026-11-05 v0.7.0->v0.8.0] async function llmWork(job, ms, tokens) {
@@ -612,7 +614,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-07 v0.10.2->v0.10.3] case "/reelwright/info": return json({ version: "0.10.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-08 v0.10.3->v0.11.0] case "/reelwright/info": return json({ version: "0.10.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-12 v0.11.0->v0.12.0] case "/reelwright/info": return json({ version: "0.11.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    case "/reelwright/info": return json({ version: "0.12.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-12 v0.12.0->v0.13.0] case "/reelwright/info": return json({ version: "0.12.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.13.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -803,6 +806,26 @@ async function route(path, opts = {}) {
     // added 2026-11-03 v0.4.2: script import in parts. Table rows become one scene each; a part containing CUT is
     // "cut off" while it can still be split; a part containing FAILONCE fails the first time it is sent.
     case "/reelwright/llm/script/parts": return json(mockSplit(body.script || "", body.part_chars || 0));
+    // added 2026-11-12 v0.13.0: Chat tab: the answer streams in reelwright.llm events ("text"); "FAIL" in the question fails
+    case "/reelwright/llm/chat": {
+      const msgs = body.messages || [];
+      const q = String(msgs[msgs.length - 1]?.content || "");
+      chatCalls.push({ n: msgs.length, roles: msgs.map(m => m.role), q });
+      if (q.includes("FAIL")) return json({ error: "No answer from http://llm.local:30000/v1 for 120 s.", reason: "stall" }, 502);
+      const answer = `**Answer** to “${q}” (turn ${Math.ceil(msgs.length / 2)}):\n\n- first point\n- second point\n\n\`\`\`js\nconsole.log("hi");\n\`\`\``;
+      const job = body.job;
+      const send = d => { for (const cb of listeners["reelwright.llm"] || []) cb({ job, budget: 2048, input: 120, ...d }); };
+      llmLive[job] = true;
+      send({ phase: "waiting", elapsed: 0, tokens: 0, reasoning: 0, text: "" });
+      const steps = q.includes("SLOW") ? 12 : 4;
+      for (let i = 1; i <= steps; i++) {
+        await new Promise(r => setTimeout(r, q.includes("SLOW") ? 250 : 60));
+        if (llmCancelled.has(job)) { delete llmLive[job]; llmCancelled.delete(job); return json({ cancelled: true }); }
+        send({ phase: "writing", elapsed: i * 0.1, tokens: i * 5, reasoning: 0, text: answer.slice(0, Math.round(answer.length * i / steps)) });
+      }
+      delete llmLive[job];
+      return json({ reply: answer, ms: 240, model: "qwen3-32b-instruct", tokens: 20, reasoning: false });
+    }
     case "/reelwright/llm/cancel": { const live = !!llmLive[body.job]; if (live) llmCancelled.add(body.job); return json({ ok: true, cancelled: live }); }
     case "/reelwright/llm/script": {
       const text = body.script || "";

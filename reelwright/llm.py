@@ -522,18 +522,30 @@ def _split_reasoning(content, reasoning):
     return content.strip(), (reasoning + "".join(inline)).strip()
 
 
-async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None, progress=None):
+# [OLD 2026-11-12 v0.12.0->v0.13.0] async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None, progress=None):
+# added 2026-11-12 v0.13.0: history (earlier turns of the Chat tab, [{role: user|assistant, content}], sent between the
+# system prompt and `user`) and with_text (progress events carry the answer so far, "text", four times a second)
+async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None, progress=None, history=None,
+               with_text=False):
     """Stream one chat completion. timeout: a fixed aiohttp timeout (Test connection); otherwise no data for
     cfg timeout_s seconds, or cfg max_wait_s in all, ends the request. progress(dict) gets the running counts about
     twice a second. Servers that ignore "stream" and answer with one JSON body work too."""
     # `user` may be a list of OpenAI content parts (text + image_url) for vision models (added 2026-11-02 v0.2.0)
     want = max_tokens or cfg["max_tokens"]
+    history = [m for m in history or [] if isinstance(m, dict) and m.get("role") in ("user", "assistant")]  # v0.13.0
+    counted = "\n".join([str(m.get("content") or "") for m in history] + [user]) if history else user  # v0.13.0
     if timeout is None:
-        limit, est, ctx = await budget(cfg, system, user, want)
+        # [OLD 2026-11-12 v0.12.0->v0.13.0] limit, est, ctx = await budget(cfg, system, user, want)
+        limit, est, ctx = await budget(cfg, system, counted, want)
     else:
-        limit, est, ctx = want, estimate_tokens(system) + estimate_tokens(user), None
+        # [OLD 2026-11-12 v0.12.0->v0.13.0] limit, est, ctx = want, estimate_tokens(system) + estimate_tokens(user), None
+        limit, est, ctx = want, estimate_tokens(system) + estimate_tokens(counted), None
+    # [OLD 2026-11-12 v0.12.0->v0.13.0] body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit, "stream": True,
+    # [OLD 2026-11-12 v0.12.0->v0.13.0]         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit, "stream": True,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+            "messages": [{"role": "system", "content": system}] +
+                        [{"role": m["role"], "content": str(m.get("content") or "")} for m in history] +
+                        [{"role": "user", "content": user}]}
     if cfg.get("thinking") == "off":
         # Qwen3-style chat templates (SGLang, vLLM) skip the think block with this
         body["chat_template_kwargs"] = {"enable_thinking": False}
@@ -546,10 +558,16 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
 
     def report(phase, force=False):
         now = time.time()
-        if progress and (force or now - state["last"] >= 0.5):
+        # [OLD 2026-11-12 v0.12.0->v0.13.0] if progress and (force or now - state["last"] >= 0.5):
+        if progress and (force or now - state["last"] >= (0.25 if with_text else 0.5)):
             state["last"] = now
-            progress({"phase": phase, "tokens": state["tokens"], "reasoning": state["reasoning"], "chars": state["chars"],
-                      "elapsed": round(now - t0, 1), "budget": limit, "input": est, "context": ctx})
+            # [OLD 2026-11-12 v0.12.0->v0.13.0] progress({"phase": phase, "tokens": state["tokens"], "reasoning": state["reasoning"], "chars": state["chars"],
+            # [OLD 2026-11-12 v0.12.0->v0.13.0]           "elapsed": round(now - t0, 1), "budget": limit, "input": est, "context": ctx})
+            d = {"phase": phase, "tokens": state["tokens"], "reasoning": state["reasoning"], "chars": state["chars"],
+                 "elapsed": round(now - t0, 1), "budget": limit, "input": est, "context": ctx}
+            if with_text:  # added 2026-11-12 v0.13.0: the answer so far (an inline <think> block shows as it comes)
+                d["text"] = "".join(content)
+            progress(d)
 
     report("waiting", force=True)
     try:
@@ -635,6 +653,23 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
     if not text and require_text:
         raise no_answer(why, finish, limit)
     return text, ms, model
+
+
+# added 2026-11-12 v0.13.0: the Chat tab (general questions to the configured LLM, not about a scene)
+CHAT_SYSTEM = ("You are a helpful assistant inside Reelwright, a timeline editor in ComfyUI that makes films of any length "
+               "with MiniMax H3 reference-to-video generation. Answer the user's questions directly and concisely, about "
+               "anything they ask. Use Markdown for lists, tables and code.")
+CHAT_MAX_CHARS = 400_000  # a whole conversation, as sent
+
+
+async def chat_turn(cfg, messages, progress=None):
+    """One answer of the Chat tab: messages [{role: "user"|"assistant", content}] (the last one the user's). Returns
+    {reply, ms, model, tokens, reasoning (True when the model thought first)}. One attempt; the editor offers a retry."""
+    info = {}
+    text, ms, model = await chat(cfg, CHAT_SYSTEM, messages[-1]["content"], history=messages[:-1], info=info,
+                                 progress=progress, with_text=True)
+    return {"reply": text, "ms": ms, "model": model, "tokens": info.get("tokens", 0),
+            "reasoning": bool(info.get("reasoning_chars"))}
 
 
 async def ask(cfg, system, user, parse=None, max_tokens=None, progress=None, info=None, retry_cut=True):

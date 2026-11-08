@@ -700,3 +700,41 @@ def test_speech_and_voice_from_take_routes(api, store, roots):
     assert os.path.isfile(os.path.join(roots.input, a["file"]))
     assert s6 == 400 and "at least 2" in short["error"]
     assert s7 == 400
+
+
+# added 2026-11-12 v0.13.0: Chat tab route: checks the conversation, answers with the reply, Stop cancels it
+def test_llm_chat_route(api, monkeypatch):
+    run, routes, events = api
+    seen = []
+
+    async def fake_turn(cfg, msgs, progress=None):
+        seen.append(msgs)
+        progress({"phase": "writing", "tokens": 2, "text": "ok"})
+        await asyncio.sleep(0.4)
+        return {"reply": "ok:" + msgs[-1]["content"], "ms": 400, "model": "m", "tokens": 2, "reasoning": False}
+    monkeypatch.setattr(routes.llm, "chat_turn", fake_turn)
+    monkeypatch.setattr(routes, "_cfg", lambda p: {"base_url": "http://x", "model": "m"})
+    max_chars = routes.llm.CHAT_MAX_CHARS
+
+    async def go(c):
+        out = []
+        for body in ({}, {"messages": []}, {"messages": [{"role": "system", "content": "x"}]},
+                     {"messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]},
+                     {"messages": [{"role": "user", "content": "  "}]}, {"messages": [{"role": "user", "content": 5}]},
+                     {"messages": [{"role": "user", "content": "x" * (max_chars + 1)}]}):
+            out.append(await post(c, "/reelwright/llm/chat", body))
+        out.append(await post(c, "/reelwright/llm/chat", {"messages": [{"role": "user", "content": "hi"}], "job": "chat-1",
+                                                          "extra": 1}))
+        task = asyncio.ensure_future(post(c, "/reelwright/llm/chat", {"messages": [{"role": "user", "content": "slow"}],
+                                                                       "job": "chat-2"}))
+        await asyncio.sleep(0.15)
+        cancel = await post(c, "/reelwright/llm/cancel", {"job": "chat-2"})
+        out.append(cancel)
+        out.append(await task)
+        return out
+    res = run(go)
+    assert all(status == 400 and data.get("error") for status, data in res[:7]), res[:7]
+    assert res[7] == (200, {"reply": "ok:hi", "ms": 400, "model": "m", "tokens": 2, "reasoning": False})
+    assert res[8][1]["cancelled"] is True and res[9] == (200, {"cancelled": True})
+    assert seen[0] == [{"role": "user", "content": "hi"}]
+    assert ("reelwright.llm", {"phase": "writing", "tokens": 2, "text": "ok", "job": "chat-1"}) in events

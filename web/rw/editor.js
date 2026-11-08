@@ -34,6 +34,7 @@ import * as castTab from "./tabs/cast.js";
 import * as renderTab from "./tabs/render.js";
 import * as globalTab from "./tabs/global.js";
 import * as filesTab from "./tabs/files.js"; // added 2026-11-03 v0.4.0
+import * as chatTab from "./tabs/chat.js"; // added 2026-11-12 v0.13.0: general questions to the LLM
 // [OLD 2026-11-02 v0.3.8->v0.3.9] import { createPreviewView } from "./preview.js"; // added 2026-11-02 v0.3.8
 import { createPreviewView, imageBlob } from "./preview.js"; // added 2026-11-02 v0.3.8; imageBlob added v0.3.9
 
@@ -45,6 +46,8 @@ const TABS = {
   render: { label: "Render", icon: "render", mod: renderTab },
   files: { label: "Files", icon: "disk", mod: filesTab }, // added 2026-11-03 v0.4.0: disk use and deleting
   global: { label: "Global", icon: "global", mod: globalTab },
+  // added 2026-11-12 v0.13.0: shown only while an LLM base URL is set (when: chatTab.enabled)
+  chat: { label: "Chat", icon: "dialogue", mod: chatTab, when: ctx => chatTab.enabled(ctx) },
 };
 
 const PENDING = new Set(["stale", "pending", "missing", "queued"]);
@@ -737,9 +740,15 @@ export function mountEditor(container, host) {
   }
   ctx.pendingCount = pendingCount;
 
+  // added 2026-11-12 v0.13.0: a tab with a `when` shows only while it holds (Chat: an LLM is set); the tab shown when the
+  // project's tab is hidden is the Timeline
+  const tabShown = id => !!TABS[id] && (!TABS[id].when || TABS[id].when(ctx));
+  const currentTabId = () => (tabShown(store.project.ui.tab) ? store.project.ui.tab : "timeline");
+  ctx.tabShown = tabShown;
   function renderTabbar() {
     const p = store.project;
-    const active = p.ui.tab;
+    // [OLD 2026-11-12 v0.12.0->v0.13.0] const active = p.ui.tab;
+    const active = currentTabId();
     const idx = Math.max(0, sceneIndex(p, ctx.scene?.id)) + 1;
     const pend = pendingCount();
     const issues = allIssues();
@@ -750,7 +759,8 @@ export function mountEditor(container, host) {
     };
     tabbar.replaceChildren(
       h("div", { class: "rw-brand", help: "app.brand" }, icon("clapper", 15), h("b", null, "Reelwright"), h("span", { class: "mono rw-dim" }, "v" + VERSION)),
-      ...Object.entries(TABS).map(([id, t]) => h("button", {
+      // [OLD 2026-11-12 v0.12.0->v0.13.0] ...Object.entries(TABS).map(([id, t]) => h("button", {
+      ...Object.entries(TABS).filter(([id]) => tabShown(id)).map(([id, t]) => h("button", {
         type: "button", class: ["rw-tab", id === active && "on"], help: "tab." + id,
         onClick: () => actions.setTab(id),
       }, icon(t.icon, 15), t.label, counts[id] !== undefined && counts[id] !== "" && h("span", { class: ["rw-tab-count mono", id === "render" && pend ? "warn" : id === "scene" && "accent"] }, counts[id]))),
@@ -973,7 +983,8 @@ export function mountEditor(container, host) {
     const helpPos = helpId ? [...root.querySelectorAll(`${focused.tagName}[data-help="${CSS.escape(helpId)}"]`)].indexOf(focused) : -1;
 
     renderTabbar();
-    const tab = TABS[store.project.ui.tab] || TABS.timeline;
+    // [OLD 2026-11-12 v0.12.0->v0.13.0] const tab = TABS[store.project.ui.tab] || TABS.timeline;
+    const tab = TABS[currentTabId()]; // added 2026-11-12 v0.13.0: a hidden tab shows the Timeline
     body.replaceChildren(tab.mod.render(ctx));
     bodyTab = store.project.ui.tab; // added 2026-11-03 v0.6.0 review
     bodyVersion = typeof store.project.__rwv === "number" ? store.project.__rwv : -2; // added 2026-11-03 v0.6.0 review
@@ -1086,7 +1097,8 @@ export function mountEditor(container, host) {
     // duplicates a scene, Cmd+← and Alt+← go back again, Ctrl+J opens the downloads)
     if (!plainKey(e)) return;
     if (e.key === "?") { e.preventDefault(); tips.openPopover("tab." + store.project.ui.tab, root.querySelector(".rw-tab.on") || root); return; }
-    const tab = TABS[store.project.ui.tab];
+    // [OLD 2026-11-12 v0.12.0->v0.13.0] const tab = TABS[store.project.ui.tab];
+    const tab = TABS[currentTabId()]; // added 2026-11-12 v0.13.0
     if (tab.mod.onKey?.(ctx, e)) { e.preventDefault(); return; }
     if (timeline.sceneKeys(ctx, e)) e.preventDefault();
   });
@@ -1177,7 +1189,8 @@ export function mountEditor(container, host) {
     if (d.phase === "error") actions.toast(`${titleOf(d.scene_id)} failed${d.message ? ": " + d.message : ""}. Scenes that don't depend on it keep rendering.`, "error");
     let changed = !prev || prev.phase !== d.phase || prev.pass !== d.pass || final || lastProgressScene !== d.scene_id;
     lastProgressScene = d.scene_id;
-    const tab = TABS[store.project.ui.tab] || TABS.timeline;
+    // [OLD 2026-11-12 v0.12.0->v0.13.0] const tab = TABS[store.project.ui.tab] || TABS.timeline;
+    const tab = TABS[currentTabId()]; // added 2026-11-12 v0.13.0
     if (tab.mod.onProgress) {
       try { tab.mod.onProgress(ctx, d); } catch (err) { console.warn("Reelwright: onProgress failed", err); changed = true; }
       if (changed) { lastProgressRender.at = Date.now(); store.notify(); } else footerSoon();
@@ -1209,7 +1222,9 @@ export function mountEditor(container, host) {
     store.eph.llmJobs[d.job] = d;
     for (const el of root.querySelectorAll("[data-llm-job]")) {
       if (el.dataset.llmJob !== d.job) continue;
-      try { el.textContent = (el.__rwJobText || jobLine)(d); } catch { /* keep the old text */ }
+      // [OLD 2026-11-12 v0.12.0->v0.13.0] try { el.textContent = (el.__rwJobText || jobLine)(d); } catch { /* keep the old text */ }
+      // added 2026-11-12 v0.13.0: an element can draw the event itself (the Chat tab's answer, as Markdown)
+      try { if (el.__rwJobRender) el.__rwJobRender(el, d); else el.textContent = (el.__rwJobText || jobLine)(d); } catch { /* keep the old text */ }
     }
   });
   // added 2026-11-02 v0.3.5: the latest latent preview, shown only in the Render tab's run banner
@@ -1569,6 +1584,12 @@ export function mountEditor(container, host) {
   if (hasInitial) { store.refreshPlan(); actions.refreshTakes(); }
   actions.refreshModels();
   actions.refreshInfo();
+  // added 2026-11-12 v0.13.0: the LLM settings stored on the server (its base URL shows the Chat tab); the Global tab
+  // loaded them only when it was opened
+  if (!store.eph.llm) {
+    store.eph.llm = {};
+    rw.llmSettings().then(st => { if (!destroyed) store.setEph({ llm: { ...store.eph.llm, ...st } }); }).catch(() => {});
+  }
 
   return {
     root,
