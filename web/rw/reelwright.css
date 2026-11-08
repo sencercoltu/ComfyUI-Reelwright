@@ -469,7 +469,8 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-opt.on.o-tail { border-color: var(--vid); background: rgba(167, 139, 250, 0.07); } .rw-opt.on.o-tail .rw-radio { border-color: var(--vid); }
 .rw-tasks { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .rw-psec { display: flex; flex-direction: column; gap: 4px; }
-.rw-psec-head { display: flex; align-items: center; gap: 10px; font-size: 10.5px; }
+/* [OLD 2026-11-12 v0.13.0->v0.13.1] .rw-psec-head { display: flex; align-items: center; gap: 10px; font-size: 10.5px; } */
+.rw-psec-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 10.5px; } /* added 2026-11-12 v0.13.1: more labels (which passes use it, shot lines) wrap */
 .rw-psec-head .rw-toggle-row { font-size: 10.5px; }
 .rw-psec-head .rw-toggle { transform: scale(0.85); }
 .rw-list-row.shot .rw-input, .rw-list-row.dlg .rw-input { height: 28px; }
@@ -1072,3 +1073,11 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-mon-fsbtn:hover { background: var(--raise2); }
 .rw-mon-fstitle { min-width: 0; color: var(--text3); }
 .rw-mon-away { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--dim); cursor: pointer; }
+
+/* added 2026-11-12 v0.13.1: drag a scene to move it in the order (timeline.js sceneDrag) */
+.rw-root.rw-scene-moving, .rw-root.rw-scene-moving * { cursor: grabbing !important; user-select: none; }
+.rw-scene.dragging { z-index: 5; opacity: 0.8; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5); pointer-events: none; }
+.rw-scene-drop { position: absolute; top: 2px; height: 80px; width: 0; margin-left: -1px; border-left: 3px solid var(--accent); border-radius: 2px; z-index: 6; pointer-events: none; }
+.rw-scene-drop.same { border-left-color: var(--dim); opacity: 0.7; }
+.rw-scene-drop-label { position: absolute; left: 6px; top: 26px; padding: 3px 7px; border-radius: 5px; background: #eceef2; color: #14161b; font-size: 10.5px; white-space: nowrap; }
+.rw-scene-drop.same .rw-scene-drop-label { background: #3a3f4b; color: #d6d9e0; }

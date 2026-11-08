@@ -1447,6 +1447,10 @@ function lanesPointerdown(ctx, e) {
   if (e.button !== 0 || !(e.target instanceof Element) || e.target.closest(LANE_CONTROLS)) return;
   e.rwOwned = true; // the editor root stops it there, so Nodes 2.0 doesn't start dragging the whole node
   const t = e.target;
+  // added 2026-11-12 v0.13.1: a sideways drag on a scene block moves the scene in the order (sceneDrag); a drag that
+  // starts mostly up or down still pans, and so does Alt + drag
+  const block = !e.altKey && ctx.p.scenes.length > 1 ? t.closest(".rw-scene[data-sid]") : null;
+  if (block) { sceneDrag(ctx, e, block.dataset.sid); return; }
   const empty = !!t.closest(".rw-ruler-lane") || t.matches(".rw-lane-body, .rw-lane, .rw-lanes-inner, .rw-lanes");
   const el0 = e.currentTarget;
   const x0 = e.clientX, y0 = e.clientY, sl0 = el0.scrollLeft, st0 = el0.scrollTop;
@@ -1471,6 +1475,105 @@ function lanesPointerdown(ctx, e) {
       const ruler = ctx.root.querySelector(".rw-ruler-lane");
       if (ruler) setPlayhead(ctx, (ev.clientX - ruler.getBoundingClientRect().left) / sc / zoomOf(ctx));
     }
+  });
+}
+
+// added 2026-11-12 v0.13.1: drag a scene block left or right to move the scene in the order (Sencer: "I should be able
+// to reorganise scenes, move/drag them left/right"). The block follows the pointer and a marker with a label shows
+// where it lands: before the first scene whose middle is right of the pointer. The release moves it there
+// (actions.moveSceneTo, one undo step). Esc cancels; near the lanes' edges the timeline scrolls. A drag that starts
+// mostly up or down pans the lanes as before. The release after a move is no click (and no double-click).
+const DRAG_EDGE = 48; // client px from the lanes' edge where a scene drag scrolls the timeline
+function sceneDrag(ctx, e, sid) {
+  const p0 = ctx.p;
+  const i0 = sceneIndex(p0, sid);
+  if (i0 < 0) return;
+  const sc = scaleOf(ctx), z = zoomOf(ctx);
+  const { starts, visible } = sceneStarts(p0);
+  const others = p0.scenes.filter(s => s.id !== sid);
+  const lanes0 = e.currentTarget;
+  const lanesEl = () => { const el = ctx.root.querySelector(".rw-lanes"); return el && el.isConnected ? el : lanes0; };
+  const laneEl = () => ctx.root.querySelector(".rw-lane-body.scenes");
+  const blockSel = `.rw-scene[data-sid="${CSS.escape(sid)}"]`;
+  const x0 = e.clientX, y0 = e.clientY, sl0 = lanesEl().scrollLeft, st0 = lanesEl().scrollTop;
+  let mode = null, to = i0, last = null, raf = 0, cancelled = false;
+  const marker = h("div", { class: "rw-scene-drop", help: "timeline.scene" }, h("span", { class: "rw-scene-drop-label mono" }));
+  const label = marker.firstChild;
+  const title = s => `${String(sceneIndex(p0, s.id) + 1).padStart(2, "0")} ${s.title}`;
+  const place = ev => {
+    const lanes = lanesEl(), lane = laneEl();
+    const block = ctx.root.querySelector(blockSel);
+    if (block) { block.style.transform = `translateX(${(ev.clientX - x0) / sc + (lanes.scrollLeft - sl0)}px)`; block.classList.add("dragging"); }
+    if (!lane) return;
+    const tp = (ev.clientX - lane.getBoundingClientRect().left) / sc / z;
+    to = others.filter(o => (visible[o.id] + starts[o.id] + o.duration) / 2 < tp).length;
+    const at = to === 0 ? visible[others[0].id] : starts[others[to - 1].id] + others[to - 1].duration;
+    if (marker.parentNode !== lane) lane.append(marker); // a render replaced the lane
+    marker.style.left = at * z + "px";
+    marker.classList.toggle("same", to === i0);
+    label.textContent = to === i0 ? "stays here" : `→ ${to + 1} of ${p0.scenes.length} · ${to === 0 ? "first" : "after " + title(others[to - 1])}`;
+  };
+  // scroll while the pointer is near the left (past the lane heads) or right edge of the lanes
+  const edgeScroll = () => {
+    raf = 0;
+    if (mode !== "move" || cancelled || !last) return;
+    const lanes = lanesEl();
+    const r = lanes.getBoundingClientRect();
+    const left = r.left + HEAD_W * sc;
+    const v = last.clientX < left + DRAG_EDGE ? -(left + DRAG_EDGE - last.clientX) : last.clientX > r.right - DRAG_EDGE ? last.clientX - (r.right - DRAG_EDGE) : 0;
+    if (!v) return;
+    const before = lanes.scrollLeft;
+    lanes.scrollLeft += Math.max(-24, Math.min(24, v / 2)) / sc;
+    if (lanes.scrollLeft !== before) place(last);
+    raf = requestAnimationFrame(edgeScroll);
+  };
+  const cleanup = () => {
+    window.removeEventListener("keydown", onKey, true);
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    marker.remove();
+    const block = ctx.root.querySelector(blockSel);
+    if (block) { block.style.transform = ""; block.classList.remove("dragging"); }
+    ctx.root.classList.remove("rw-scene-moving", "rw-panning");
+  };
+  const onKey = ev => {
+    if (ev.key !== "Escape" || !mode) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    cancelled = true;
+    cleanup();
+  };
+  window.addEventListener("keydown", onKey, true);
+  trackDrag(ev => {
+    if (cancelled) return;
+    const dx = ev.clientX - x0, dy = ev.clientY - y0;
+    if (!mode) {
+      if (Math.hypot(dx, dy) < 5) return;
+      mode = Math.abs(dy) > Math.abs(dx) * 1.5 ? "pan" : "move";
+      pauseFollow(ctx);
+      if (mode === "pan") ctx.root.classList.add("rw-panning");
+      else { ctx.root.classList.add("rw-scene-moving"); ctx.root.querySelector(blockSel)?.classList.add("dragging"); }
+    }
+    if (mode === "pan") {
+      const el = lanesEl();
+      el.scrollLeft = sl0 - dx / sc;
+      el.scrollTop = st0 - dy / sc;
+      return;
+    }
+    last = ev;
+    place(ev);
+    if (!raf) raf = requestAnimationFrame(edgeScroll);
+  }, ev => {
+    const moved = !!mode;
+    const commit = mode === "move" && !cancelled && ev?.type === "pointerup" && to !== i0;
+    cleanup();
+    if (moved) {
+      const kill = ce => { ce.stopPropagation(); ce.preventDefault(); };
+      for (const type of ["click", "dblclick"]) window.addEventListener(type, kill, { capture: true, once: true });
+      setTimeout(() => { for (const type of ["click", "dblclick"]) window.removeEventListener(type, kill, true); }, 0);
+    }
+    if (commit) ctx.actions.moveSceneTo(sid, to);
+    else if (mode === "move" && !cancelled && ctx.p.ui.selected !== sid) ctx.actions.select(sid);
   });
 }
 

@@ -506,16 +506,31 @@ def main():
         page.mouse.up()
         page.wait_for_timeout(300)
         check(abs((sl() - s0) - 200) < 3 and ph() == t1 and project(page)["ui"]["selected"] == sel, f"pan: scroll {s0}->{sl()}, playhead {ph()} vs {t1}")
-        # a drag that starts on a scene block pans too and does not select it
+        # [OLD 2026-11-12 v0.13.0->v0.13.1] a sideways drag on a scene block moves the scene now (v0131_checks); Alt + drag pans
+        # # a drag that starts on a scene block pans too and does not select it
+        # bb = box(".rw-scene", 5)
+        # s0 = sl()
+        # page.mouse.move(bb["x"] + 30, bb["y"] + 40)
+        # page.mouse.down()
+        # page.mouse.move(bb["x"] + 130, bb["y"] + 40, steps=6)
+        # page.mouse.up()
+        # page.wait_for_timeout(300)
+        # s1, sel1, ph1 = sl(), project(page)["ui"]["selected"], ph()
+        # check(abs((s0 - s1) - 100) < 3 and sel1 == sel, f"drag on a scene block did not pan or selected it: scroll {s0}->{s1}, selected {sel1} vs {sel}, playhead {ph1}")
+        # [/OLD]
+        # added 2026-11-12 v0.13.1: Alt + drag on a scene block pans and neither selects nor moves it
         bb = box(".rw-scene", 5)
-        s0 = sl()
+        s0, order0 = sl(), [x["id"] for x in project(page)["scenes"]]
         page.mouse.move(bb["x"] + 30, bb["y"] + 40)
+        page.keyboard.down("Alt")
         page.mouse.down()
         page.mouse.move(bb["x"] + 130, bb["y"] + 40, steps=6)
         page.mouse.up()
+        page.keyboard.up("Alt")
         page.wait_for_timeout(300)
         s1, sel1, ph1 = sl(), project(page)["ui"]["selected"], ph()
-        check(abs((s0 - s1) - 100) < 3 and sel1 == sel, f"drag on a scene block did not pan or selected it: scroll {s0}->{s1}, selected {sel1} vs {sel}, playhead {ph1}")
+        check(abs((s0 - s1) - 100) < 3 and sel1 == sel and [x["id"] for x in project(page)["scenes"]] == order0,
+              f"Alt + drag on a scene block did not pan, or selected or moved it: scroll {s0}->{s1}, selected {sel1} vs {sel}, playhead {ph1}")
         # the playhead label scrubs
         hb = box(".rw-playhead-label")
         check(hb is not None, f"playhead label not visible (tab {page.inner_text('.rw-tab.on')})")
@@ -1499,6 +1514,7 @@ def main():
         v0110_checks(page, check, saved, shots)  # added 2026-11-08 v0.11.0: Cast → Part of; outfit pictures
         v0120_checks(page, check, saved, shots)  # added 2026-11-12 v0.12.0: pose references
         v0130_checks(page, check, saved, shots)  # added 2026-11-12 v0.13.0: Chat tab; a new take keeps playing; full screen
+        v0131_checks(page, check, saved, shots)  # added 2026-11-12 v0.13.1: what a duplicated scene keeps; drag scenes to reorder
         browser.close()
     httpd.shutdown()
 
@@ -1754,8 +1770,22 @@ def f2a_checks(page, check, saved, shots):
     page.mouse.down()
     page.mouse.move(bx["x"] + 30 + 3 * z * sc, bx["y"] + bx["height"] / 2, steps=6)
     page.wait_for_timeout(200)
+    # [OLD 2026-11-12 v0.13.0->v0.13.1] read at once: a render that lands during the drag (the autosave's "Saving…") replaces
+    # the clip, and its tip comes back with the next pointer move, so the check failed when the timing fell that way
+    # n_stale = page.locator(".rw-scene.rw-stale-preview").count()
+    # tip = page.locator(".rw-track-clip[data-tid='t_song'] .rw-drag-tip").first.inner_text()
+    # [/OLD]
+    # added 2026-11-12 v0.13.1: a pointer keeps moving while it drags; nudge it until the tip is there (at most ~1 s)
+    tip = ""
+    for k in range(5):
+        page.mouse.move(bx["x"] + 30 + 3 * z * sc + (k % 2), bx["y"] + bx["height"] / 2)
+        page.wait_for_timeout(200)
+        tl = page.locator(".rw-track-clip[data-tid='t_song'] .rw-drag-tip")
+        tip = tl.first.inner_text() if tl.count() else ""
+        if "render again" in tip:
+            break
+    page.mouse.move(bx["x"] + 30 + 3 * z * sc, bx["y"] + bx["height"] / 2)
     n_stale = page.locator(".rw-scene.rw-stale-preview").count()
-    tip = page.locator(".rw-track-clip[data-tid='t_song'] .rw-drag-tip").first.inner_text()
     page.screenshot(path=str(shots / "v060_stale_preview.png"))
     page.mouse.up()
     page.wait_for_timeout(300)
@@ -4712,6 +4742,152 @@ def v0130_checks(page, check, saved, shots):
     page.keyboard.press("Space") if False else None
     page.evaluate("() => { const e = window.__editor; if (e.eph.playing) document.querySelector(\"[data-help='timeline.transport.play']\").click(); }")
     page.wait_for_timeout(300)
+    load(json.loads(saved))
+
+
+def v0131_checks(page, check, saved, shots):
+    """v0.13.1 (Sencer): "when duplicating a scene, whatever I write in sections, the source scene is rendered": the copy
+    keeps its shots, spoken lines, pass texts and hand-edited prompts, which win over the sections; the editor now says
+    so (toast on Duplicate, which passes use a shared section, the shot lines, a single-pass hand-edited prompt).
+    "I should be able to reorganise scenes, move/drag them left/right": drag a scene block to a new place."""
+    import os
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    proj = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    order = lambda: [s["id"] for s in proj()["scenes"]]
+    scene_of = lambda sid: next(x for x in proj()["scenes"] if x["id"] == sid)
+    toasts = lambda: " | ".join(page.locator(".rw-toast").all_inner_texts())
+
+    def tab(name):
+        page.click(f".rw-tab:has-text('{name}')")
+        page.wait_for_timeout(300)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="timeline", selected="s_03", zoom=13)
+    load(q)
+
+    # 1. Duplicate says what the copy keeps that decides what H3 gets
+    page.evaluate("window.__editor.store.setEph({ toasts: [], promptTabs: {} })")
+    page.evaluate("window.__editor.actions.duplicateScene('s_03')")
+    page.wait_for_timeout(300)
+    check("keeps 2 shots, 1 spoken line" in toasts() and "renders the same scene" in toasts(), f"Duplicate names what the copy keeps: {toasts()!r}")
+    copy_id = proj()["ui"]["selected"]
+    check(copy_id != "s_03" and order().index(copy_id) == order().index("s_03") + 1, f"the copy is selected after the original: {copy_id} {order()}")
+
+    # 2. the Prompt card: the copy's shot lines, a shared section the passes override, a single-pass hand-edited prompt
+    tab("Scene")
+    chip = page.locator("[data-help='scene.prompt.shotLines']")
+    check(chip.count() == 1 and "2 shot lines, 1 spoken line" in chip.inner_text(), f"the description shows the shot lines that go with it: {chip.all_inner_texts()}")
+    page.evaluate("window.__editor.actions.select('s_07', 'scene')")
+    page.wait_for_timeout(400)
+    use = page.locator("[data-help='scene.prompt.sharedUse']").all_inner_texts()
+    check(any("used by passes 2, 3" in u and "pass 1 has its own" in u for u in use) and any("used by passes 1, 3" in u and "pass 2 has its own" in u for u in use),
+          f"Whole scene says which passes use each shared section: {use}")
+    shots and page.screenshot(path=os.path.join(shots, "v0131_shared.png"))
+    audit("Prompt card, shared use")
+    page.click("button[data-key='shared-all-s_07-detailed_description']")
+    page.wait_for_timeout(400)
+    pas = scene_of("s_07")["prompt"]["passes"]
+    use = page.locator("[data-help='scene.prompt.sharedUse']").all_inner_texts()
+    check(all(not (x["sections"].get("detailed_description") or "").strip() for x in pas) and len(use) == 1 and "pass 2 has its own" in use[0],
+          f"Use in every pass clears the passes' own description: {[x['sections'].get('detailed_description', '')[:20] for x in pas]} {use}")
+    page.evaluate("window.__editor.store.update(p => { p.scenes.find(s => s.id === 's_07').prompt.pass_prompts = { '3': 'HAND THREE' }; })")
+    page.wait_for_timeout(400)
+    use = page.locator("[data-help='scene.prompt.sharedUse']").all_inner_texts()
+    check(any("used by pass 1 · pass 2 has its own, pass 3 edited by hand" in u for u in use) and any("used by passes 1, 2 · pass 3 edited by hand" in u for u in use),
+          f"a hand-edited pass is named too: {use}")
+    page.evaluate("window.__editor.store.update(p => { p.scenes.find(s => s.id === 's_01').prompt.pass_prompts = { '1': 'HAND ONE' }; })")
+    page.evaluate("window.__editor.actions.select('s_01', 'scene')")
+    page.wait_for_timeout(400)
+    note = page.locator(".rw-note:has-text('edited by hand')")
+    ed = page.locator("[data-key='pass-s_01-1']")
+    check(note.count() == 1 and ed.count() == 1, f"a single-pass scene says its prompt is edited by hand and shows it: {note.count()} {ed.count()}")
+    page.click("button[data-key='hand-auto-s_01']")
+    page.wait_for_timeout(400)
+    check("1" not in scene_of("s_01")["prompt"]["pass_prompts"] and page.locator(".rw-note:has-text('edited by hand')").count() == 0 and page.locator("[data-key='pass-s_01-1']").count() == 0,
+          f"Use the sections drops it: {scene_of('s_01')['prompt']['pass_prompts']}")
+
+    # 3. drag a scene block to a new place in the order
+    load(q)
+    page.evaluate("window.__editor.store.setEph({ toasts: [] })")
+    tab("Timeline")
+    box = lambda sid: page.locator(f".rw-scene[data-sid='{sid}']").bounding_box()
+    before = order()
+    a, b = box("s_01"), box("s_02")
+    x, y = a["x"] + 30, a["y"] + 40
+    page.mouse.move(x, y)
+    page.mouse.down()
+    tx = b["x"] + b["width"] - 6
+    for k in range(1, 9):
+        page.mouse.move(x + (tx - x) * k / 8, y + 2)
+        page.wait_for_timeout(30)
+    mid = page.evaluate("() => { const m = document.querySelector('.rw-scene-drop'); const b = document.querySelector(\".rw-scene[data-sid='s_01']\"); return { label: m ? m.textContent : null, drag: !!b && b.classList.contains('dragging'), moving: document.querySelector('.rw-root').classList.contains('rw-scene-moving') }; }")
+    check(mid["label"] and "2 of 8" in mid["label"] and "after 02 Mara on the pier" in mid["label"] and mid["drag"] and mid["moving"], f"while dragging, the block follows and the marker says where: {mid}")
+    shots and page.screenshot(path=os.path.join(shots, "v0131_drag.png"))
+    page.mouse.up()
+    page.wait_for_timeout(400)
+    now = order()
+    sc = proj()["scenes"]
+    check(now[:3] == ["s_02", "s_01", "s_03"] and sc[0]["start"]["mode"] == "fresh" and proj()["ui"]["selected"] == "s_01"
+          and page.locator(".rw-scene-drop").count() == 0 and not page.evaluate("document.querySelector('.rw-root').classList.contains('rw-scene-moving')"),
+          f"the release moves the scene there; the new first scene starts fresh: {now[:4]} {sc[0]['start']['mode']}")
+    labels = [x["label"] for x in page.evaluate("window.__editor.store.history()") if x["done"]]
+    check(labels[-1:] == ["Move scene"], f"one undo step: {labels[-3:]}")
+    page.evaluate("document.querySelector('.rw-root').focus()")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(400)
+    check(order() == before, f"Ctrl+Z puts it back: {order()[:4]}")
+    # drag s_03 to the front: before the first scene
+    a, f = box("s_03"), box("s_01")
+    x, y = a["x"] + 20, a["y"] + 40
+    page.mouse.move(x, y)
+    page.mouse.down()
+    for k in range(1, 9):
+        page.mouse.move(x + (f["x"] + 5 - x) * k / 8, y)
+        page.wait_for_timeout(30)
+    page.mouse.up()
+    page.wait_for_timeout(400)
+    check(order()[:3] == ["s_03", "s_01", "s_02"] and scene_of("s_03")["start"]["mode"] == "fresh", f"a scene dragged to the front comes first: {order()[:4]}")
+    page.evaluate("document.querySelector('.rw-root').focus()")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(400)
+    # Esc cancels; a small wiggle is a click; a drag up or down pans
+    a, b = box("s_01"), box("s_02")
+    x, y = a["x"] + 30, a["y"] + 40
+    page.mouse.move(x, y)
+    page.mouse.down()
+    for k in range(1, 6):
+        page.mouse.move(x + (b["x"] + b["width"] - 6 - x) * k / 5, y)
+        page.wait_for_timeout(30)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(100)
+    gone = page.evaluate("() => !document.querySelector('.rw-scene-drop') && !document.querySelector('.rw-scene.dragging')")
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    check(order() == before and gone, f"Esc cancels the drag: {order()[:4]} {gone}")
+    a = box("s_02")
+    page.mouse.click(a["x"] + 30, a["y"] + 40)
+    page.wait_for_timeout(300)
+    check(order() == before and proj()["ui"]["selected"] == "s_02", f"a click still selects: {proj()['ui']['selected']}")
+    a = box("s_04")
+    x, y = a["x"] + 30, a["y"] + 40
+    page.mouse.move(x, y)
+    page.mouse.down()
+    for k in range(1, 6):
+        page.mouse.move(x + 3 * k, y + 14 * k)
+        page.wait_for_timeout(30)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    check(order() == before, f"a drag up or down pans and moves no scene: {order()[:4]}")
+    audit("timeline after drags")
     load(json.loads(saved))
 
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.13.1 — 2026-11-12
+
+- **A duplicated scene and its sections.** Sencer: "when duplicating a scene, whatever I write in sections, the source scene is rendered." The copy is a full copy, and the sections are only part of what H3 gets. These are kept from the original and decide what happens on screen whatever the sections say:
+  - its **shots and spoken lines**: with "auto shots + dialogue" on, each becomes a [Shot N] line after the description, and in a scene of several passes they also make each pass's summary;
+  - its **pass texts** (Write prompts): a pass with its own text for a section uses that instead of the Whole scene text;
+  - a **hand-edited prompt** (What H3 receives): that pass uses neither.
+  Nothing was rendered from the wrong scene. Now the editor says what is in play:
+  - **Duplicate** tells you what the copy keeps ("The copy keeps 2 shots, 1 spoken line: change them too, or it renders the same scene").
+  - On the **Whole scene** tab, each shared section says which passes use it ("used by passes 2, 3 · pass 1 has its own", or "not used · …"). **Use in every pass** clears that section in the passes that have their own, so they all use this text.
+  - The detailed description shows the shot lines that go with it ("+ 2 shot lines, 1 spoken line from the scene").
+  - A single-pass scene whose prompt is edited by hand says so above the sections, with **Use the sections**, and What H3 receives shows the hand-edited text in an editor. Before, it showed it as the normal prompt, with no sign it was hand-edited.
+- **Drag scenes to reorder them.** Sencer: "I should be able to reorganise scenes, move/drag them left/right." Drag a scene block left or right on the Timeline: the block follows the pointer and a marker shows where it lands ("→ 2 of 8 · after 02 Mara on the pier"). Release to move it there; Ctrl+Z undoes it, Esc cancels. Near the edge of the lanes the timeline scrolls. A drag that starts mostly up or down still pans, and Alt + drag pans in any direction. As with Move left / right, the scene that ends up first starts fresh, and moving a scene can make the scenes that continue from it stale.
+- Nothing renders again; editor only (no restart needed).
+- **For developers:** `actions.moveSceneTo(id, index)`; `editor.js copyKeeps(scene)`; `scene.js sharedUse`, `shotLines`; `timeline.js sceneDrag` (`.rw-scene-drop`, `.rw-scene.dragging`, `.rw-root.rw-scene-moving`). `web-test/interact.py` runs `v0131_checks()`; the v0.3.3 check now pans with Alt + drag.
+
 ## v0.13.0 — 2026-11-12
 
 - **Chat tab:** ask the LLM general questions. The tab shows only while an LLM is set (a base URL in Global → Prompt rewriter, or the one stored on the server).

@@ -114,6 +114,27 @@ function cloneScenes(p, scenes) {
   return made;
 }
 
+// added 2026-11-12 v0.13.1: what a duplicated scene keeps that decides what H3 gets besides its sections: shot and
+// dialogue lines (with "auto shots + dialogue"), pass texts from Write prompts, hand-edited pass prompts, Raw mode.
+// Editing only the copy's sections left all of these as they were, so it rendered the original scene again.
+export function copyKeeps(s) {
+  const out = [];
+  const t = x => String(x ?? "").trim();
+  const pr = s?.prompt || {};
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  if (pr.mode === "raw") { if (t(pr.raw)) out.push("its Raw prompt"); return out; }
+  if (pr.auto?.shots !== false) {
+    const shots = (s.shots || []).filter(x => t(x.text) || t(x.camera)).length;
+    const lines = (s.dialogue || []).filter(x => t(x.text)).length;
+    if (shots) out.push(plural(shots, "shot", "shots"));
+    if (lines) out.push(plural(lines, "spoken line", "spoken lines"));
+  }
+  if ((Array.isArray(pr.passes) ? pr.passes : []).some(x => x && Object.values(x.sections || {}).some(v => t(v)))) out.push("its pass texts");
+  const hand = Object.values(pr.pass_prompts || {}).filter(v => t(v)).length;
+  if (hand) out.push(hand === 1 ? "a hand-edited prompt" : `${hand} hand-edited pass prompts`);
+  return out;
+}
+
 // added 2026-11-02 v0.2.2: ComfyUI handles some events before they reach the editor. With "Nodes 2.0"
 // (Vue nodes) on, a right-click inside the node opened the node's own menu (Delete removes the whole node)
 // and the mouse wheel zoomed the canvas instead of scrolling lists. Window capture listeners run before
@@ -337,6 +358,8 @@ export function mountEditor(container, host) {
         p.ui.selected = s.id;
       }, { label: "Add scene" });
     },
+    /* [OLD 2026-11-12 v0.13.0->v0.13.1] no word on what the copy keeps: its shots, pass texts and hand-edited prompts
+       still decide what H3 gets, so editing only its sections rendered the original scene again (reported by Sencer)
     // added 2026-11-03 v0.6.0: new ids and a fresh seed number for the copy
     duplicateScene(id) {
       store.update(p => {
@@ -347,6 +370,24 @@ export function mountEditor(container, host) {
         p.scenes.splice(i + 1, 0, copy);
         p.ui.selected = copy.id;
       }, { label: "Duplicate scene" });
+    },
+    [/OLD] */
+    // added 2026-11-03 v0.6.0: new ids and a fresh seed number for the copy
+    // added 2026-11-12 v0.13.1: a toast names what the copy keeps that wins over its sections (copyKeeps)
+    duplicateScene(id) {
+      let made = null;
+      store.update(p => {
+        const i = sceneIndex(p, id);
+        if (i < 0) return;
+        const [copy] = cloneScenes(p, [p.scenes[i]]);
+        copy.title = copy.title + " (copy)";
+        p.scenes.splice(i + 1, 0, copy);
+        p.ui.selected = copy.id;
+        made = copy;
+      }, { label: "Duplicate scene" });
+      if (!made) return;
+      const keeps = copyKeeps(made);
+      actions.toast(keeps.length ? `Duplicated. The copy keeps ${keeps.join(", ")}: change ${keeps.length > 1 ? "them" : "it"} too, or it renders the same scene.` : "Duplicated.", keeps.length ? "info" : "ok");
     },
     // added 2026-11-03 v0.6.0: paste: copies of `scenes` (plain scene objects) after `afterId` (or at the end), with
     // new ids and fresh seed numbers; the first copy is selected. Returns the new ids.
@@ -455,6 +496,24 @@ export function mountEditor(container, host) {
         p.scenes[0].start.mode = "fresh";
       // [OLD 2026-11-03 v0.5.1->v0.6.0] });
       }, { label: "Move scene" });
+    },
+    // added 2026-11-12 v0.13.1: put a scene at position `to` (0-based, in the order without it), e.g. a drag on the
+    // timeline (Sencer: "I should be able to reorganise scenes, move/drag them left/right"). One undo step; the first
+    // scene starts fresh, as with Move left / right. Returns true when the order changed.
+    moveSceneTo(id, to) {
+      const i = sceneIndex(store.project, id);
+      const n = store.project.scenes.length;
+      const j = Math.max(0, Math.min(n - 1, Math.round(Number(to) || 0)));
+      if (i < 0 || i === j) return false;
+      store.update(p => {
+        const k = sceneIndex(p, id);
+        if (k < 0) return;
+        const [s] = p.scenes.splice(k, 1);
+        p.scenes.splice(Math.min(j, p.scenes.length), 0, s);
+        p.scenes[0].start.mode = "fresh";
+        p.ui.selected = id;
+      }, { label: "Move scene" });
+      return true;
     },
     /* [OLD 2026-11-03 v0.5.1->v0.6.0] the second half starts from the first half's last frame, so in the cut it began one frame early and the film lost a frame
     splitScene(id, at) {

@@ -525,6 +525,8 @@ function promptCard(ctx, s) {
   const autoT = (k, label) => toggle({ value: s.prompt.auto[k], label, help: "scene.prompt.auto." + k, key: `auto-${k}-${s.id}`,
     onChange: v => ctx.actions.editScene(s.id, sc => { sc.prompt.auto[k] = v; }, { label: (v ? "Automatic " : "No automatic ") + label.replace(/^auto /, "") }) });
   // the scene's own sections; in a multi-pass scene the summary is the whole-scene note
+  /* [OLD 2026-11-12 v0.13.0->v0.13.1] "shared by every pass" even when the passes had their own text for the section
+     (Write prompts), so an edit here changed nothing H3 gets; a single-pass scene never said its prompt was edited by hand
   const sectionEditor = k => h("div", { class: "rw-psec" },
     h("div", { class: "rw-psec-head" }, h("span", { class: "mono rw-dim", help: "scene.prompt.section." + k }, SECTION_LABEL[k]),
       multi && k === "summary" && h("span", { class: "rw-psec-src note", help: "scene.prompt.sceneNote" }, "whole-scene note · not sent"),
@@ -532,6 +534,20 @@ function promptCard(ctx, s) {
       k === "subject_definitions" && autoT("subjects", "auto from cast"),
       k === "retention_analysis" && autoT("retention", "auto from refs"),
       k === "detailed_description" && autoT("shots", "auto shots + dialogue")),
+  [/OLD] */
+  // added 2026-11-12 v0.13.1: which passes use a shared section (sharedUse), and the shot lines H3 gets with the
+  // description (shotLines); a duplicated scene keeps both from the scene it was copied from
+  const use = multi ? sharedUse(s, plan, pt) : null;
+  const lines = shotLines(s);
+  const sectionEditor = k => h("div", { class: "rw-psec" },
+    h("div", { class: "rw-psec-head" }, h("span", { class: "mono rw-dim", help: "scene.prompt.section." + k }, SECTION_LABEL[k]),
+      multi && k === "summary" && h("span", { class: "rw-psec-src note", help: "scene.prompt.sceneNote" }, "whole-scene note · not sent"),
+      multi && k !== "summary" && sharedLabel(ctx, s, use, k),
+      k === "detailed_description" && lines && h("span", { class: "rw-psec-src", help: "scene.prompt.shotLines" }, lines),
+      k === "subject_definitions" && autoT("subjects", "auto from cast"),
+      k === "retention_analysis" && autoT("retention", "auto from refs"),
+      k === "detailed_description" && autoT("shots", "auto shots + dialogue"),
+      multi && k !== "summary" && sharedAllButton(ctx, s, use, k)),
     codeEditor({ value: s.prompt.sections[k], help: multi && k === "summary" ? "scene.prompt.sceneNote" : "scene.prompt.section." + k, minRows: k === "detailed_description" ? 4 : 2,
       placeholder: multi && k === "summary" ? "The whole scene in a few sentences: a note for you and the LLM. Each pass gets its own summary." : placeholderFor(k),
       ...input((sc, v) => { sc.prompt.sections[k] = v; }, `sec-${s.id}-${k}`, multi && k === "summary" ? "Scene note" : `Prompt ${SECTION_NAME[k]}`) }));
@@ -549,7 +565,8 @@ function promptCard(ctx, s) {
   if (raw) {
     body = codeEditor({ value: s.prompt.raw, help: "scene.prompt.rawEditor", minRows: 10, maxHeight: 420, placeholder: "Write the whole prompt. Refer to assets as @P1, cast as @Mara, the previous tail as @tail.", ...input((sc, v) => { sc.prompt.raw = v; }, `raw-${s.id}`, "Raw prompt") });
   } else if (!multi) {
-    body = [singlePassNote(ctx, s, pt), SECTION_KEYS.map(sectionEditor)];
+    // [OLD 2026-11-12 v0.13.0->v0.13.1] body = [singlePassNote(ctx, s, pt), SECTION_KEYS.map(sectionEditor)];
+    body = [singlePassNote(ctx, s, pt), handEditedNote(ctx, s), SECTION_KEYS.map(sectionEditor)]; // added 2026-11-12 v0.13.1
   } else {
     const ownDot = k => SECTION_KEYS.some(key => pt.texts[k][key].trim());
     body = [
@@ -627,6 +644,65 @@ function singlePassNote(ctx, s, pt) {
     } }),
     button({ label: "Drop them", small: true, variant: "ghost", key: `onepass-drop-${s.id}`, help: "scene.prompt.onePassDrop", onClick: () => {
       ctx.actions.editScene(s.id, sc => { sc.prompt.passes = []; }, { label: "Drop pass texts" });
+      ctx.root.focus?.({ preventScroll: true });
+    } }));
+}
+
+// ---- added 2026-11-12 v0.13.1: what really reaches H3 from the Prompt card (Sencer: a duplicated scene rendered the
+// original whatever he wrote in its sections). A pass uses a shared section only when it has no text of its own for it
+// and its prompt is not edited by hand (model.pass_sections, prompt.build_pass); the shots and spoken lines become
+// [Shot N] lines after the description while "auto shots + dialogue" is on.
+
+// {hand: [1-based passes edited by hand], own: {section: [1-based passes with their own text]}, n}
+export function sharedUse(s, plan, pt) {
+  const n = plan.passes.length;
+  const pp = s.prompt.pass_prompts || {};
+  const hand = plan.passes.map((_, k) => k + 1).filter(k => String(pp[String(k)] ?? "").trim());
+  const own = {};
+  for (const key of SECTION_KEYS) own[key] = plan.passes.map((_, k) => k + 1).filter(k => !hand.includes(k) && String(pt.texts[k - 1]?.[key] ?? "").trim());
+  return { hand, own, n };
+}
+
+const passList = ks => (ks.length === 1 ? "pass " : "passes ") + ks.join(", ");
+
+// the label of a shared section on the Whole scene tab
+function sharedLabel(ctx, s, use, key) {
+  const own = use.own[key], hand = use.hand;
+  const users = Array.from({ length: use.n }, (_, k) => k + 1).filter(k => !own.includes(k) && !hand.includes(k));
+  if (users.length === use.n) return h("span", { class: "rw-psec-src", help: "scene.prompt.shared" }, "shared by every pass");
+  const why = [own.length && `${passList(own)} ${own.length === 1 ? "has" : "have"} its own`, hand.length && `${passList(hand)} edited by hand`].filter(Boolean).join(", ");
+  return h("span", { class: ["rw-psec-src", !users.length && "note"], help: "scene.prompt.sharedUse" },
+    users.length ? `used by ${passList(users)} · ${why}` : `not used · ${why}`);
+}
+
+// "Use in every pass" (the end of the section's head) when passes have their own text for it
+function sharedAllButton(ctx, s, use, key) {
+  const own = use.own[key];
+  if (!own.length) return null;
+  return button({ label: "Use in every pass", small: true, variant: "ghost", key: `shared-all-${s.id}-${key}`, help: "scene.prompt.sharedAll",
+    onClick: () => {
+      ctx.actions.editScene(s.id, (sc, q) => { for (const k of own) setPassSection(sc, q, k - 1, key, ""); }, { label: `Shared ${SECTION_NAME[key]} in every pass` });
+      ctx.root.focus?.({ preventScroll: true });
+    } });
+}
+
+// "+ 3 shot lines, 2 spoken lines" (the Shots and Dialogue cards) when auto shots + dialogue is on, else ""
+export function shotLines(s) {
+  if (s.prompt.mode === "raw" || s.prompt.auto?.shots === false) return "";
+  const t = x => String(x ?? "").trim();
+  const shots = (s.shots || []).filter(x => t(x.text) || t(x.camera)).length;
+  const lines = (s.dialogue || []).filter(x => t(x.text)).length;
+  const bits = [shots && `${shots} shot line${shots === 1 ? "" : "s"}`, lines && `${lines} spoken line${lines === 1 ? "" : "s"}`].filter(Boolean);
+  return bits.length ? "+ " + bits.join(", ") + " from the scene" : "";
+}
+
+// a single-pass scene whose prompt is edited by hand (What H3 receives): the sections are not used
+function handEditedNote(ctx, s) {
+  if (!String(s.prompt.pass_prompts?.["1"] ?? "").trim()) return null;
+  return h("div", { class: "rw-note warn rw-layout-note", help: "scene.preview.override" }, icon("warn", 12),
+    h("span", { class: "grow" }, "This scene's prompt is edited by hand (What H3 receives), so the sections below are not used."),
+    button({ label: "Use the sections", small: true, variant: "warn-ghost", key: `hand-auto-${s.id}`, help: "scene.prompt.passAuto", onClick: () => {
+      ctx.actions.editScene(s.id, sc => { delete sc.prompt.pass_prompts["1"]; }, { label: "Automatic prompt" });
       ctx.root.focus?.({ preventScroll: true });
     } }));
 }
@@ -1211,7 +1287,8 @@ function previewCard(ctx, s) {
           // added 2026-11-06 v0.10.0: a single prompt (no pass head) gets its copy button here
           !(shownPasses.length > 1 || (prompts.length > 1 && tab >= 0)) && prompts[i] ? h("div", { class: "rw-h3-copy" },
             copyButton({ label: "Copy prompt", text: () => prompts[i], key: `h3copy-${s.id}-${i + 1}`, help: "scene.preview.copy", what: "prompt" })) : null,
-          long && own
+          // [OLD 2026-11-12 v0.13.0->v0.13.1] long && own  (a single-pass scene showed a hand-edited prompt as plain text, with no sign it was one)
+          own && (long || String(overrides[String(i + 1)]).trim() !== "") // added 2026-11-12 v0.13.1
             ? codeEditor({ value: overrides[String(i + 1)], help: "scene.preview.override", minRows: 6, maxHeight: 300, key: `pass-${s.id}-${i + 1}`, candidates: tagCandidates(ctx.p),
               onInput: v => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts[String(i + 1)] = v; }, { coalesce: `pass-${s.id}-${i + 1}`, render: false }),
               onChange: () => ctx.store.notify() })
