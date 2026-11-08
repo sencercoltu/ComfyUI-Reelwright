@@ -873,8 +873,17 @@ def scene_context(p, scene):
             # refs.append("@{} {} ({}, {}{})".format(a["code"], a["name"] or a["file"], a["kind"], r["role"],
             #                                      ", at {:.2f}s".format(r["time"]) if r["role"] == "keyframe" else ""))
             desc = (a.get("description") or "").strip()
-            refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], r["role"],
-                                                   ", at {:.2f}s".format(r["time"]) if r["role"] == "keyframe" else "",
+            # [OLD 2026-11-12 v0.11.0->v0.12.0] refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], r["role"],
+            # [OLD 2026-11-12 v0.11.0->v0.12.0]                                        ", at {:.2f}s".format(r["time"]) if r["role"] == "keyframe" else "",
+            # [OLD 2026-11-12 v0.11.0->v0.12.0]                                        " - " + desc if desc else ""))
+            # added 2026-11-12 v0.12.0: a pose reference says whose pose it is, and that only the pose is used
+            role = r["role"]
+            if role == "pose":
+                who = cast.get(r.get("cast") or "")
+                role = "pose for {}: only the body pose is used, the person in it does not appear".format(
+                    _prompt.tag_token(who["name"]) if who else "nobody yet")
+            refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], role,
+                                                   ", at {:.2f}s".format(r["time"]) if r["role"] in ("keyframe", "pose") else "",
                                                    " - " + desc if desc else ""))
     people = []
     for e in scene["cast"]:

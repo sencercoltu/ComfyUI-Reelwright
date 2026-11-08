@@ -140,6 +140,7 @@ def harbor_like():
         {"id": "a_song", "kind": "audio", "name": "song", "file": "x/song.wav", "duration": 40.0},
         {"id": "a_nofile", "kind": "audio", "name": "lost", "file": "", "duration": 30.0},
         {"id": "a_belly", "kind": "image", "name": "belly", "file": "x/belly.png"},  # added 2026-11-08 v0.11.0
+        {"id": "a_pose", "kind": "image", "name": "pose", "file": "x/pose.png"},  # added 2026-11-12 v0.12.0
     ]
     p["cast"] = [
         {"id": "c_mara", "name": "Mara", "speaker": "S1", "anchors": ["a_front", "a_side"], "voice": "a_voice",
@@ -166,7 +167,14 @@ def harbor_like():
                   {"id": "r_first", "asset": "a_front", "role": "first_frame"},
                   {"id": "r_last", "asset": "a_side", "role": "last_frame"},
                   {"id": "r_amb2", "asset": "a_amb", "role": "reference"},
-                  {"id": "r_amb3", "asset": "a_amb", "role": "reference"}],
+                  # [OLD 2026-11-12 v0.12.0] {"id": "r_amb3", "asset": "a_amb", "role": "reference"}],
+                  {"id": "r_amb3", "asset": "a_amb", "role": "reference"},
+                  # added 2026-11-12 v0.12.0: pose references: Mara in pass 2, Tom (only speaks here) at the very end,
+                  # one for nobody of this scene, one on a sound (no picture)
+                  {"id": "r_pose", "asset": "a_pose", "role": "pose", "cast": "c_mara", "time": 20.0},
+                  {"id": "r_pose_end", "asset": "a_pose", "role": "pose", "cast": "c_tom", "time": 99.0},
+                  {"id": "r_pose_x", "asset": "a_belly", "role": "pose", "cast": "c_nobody", "time": 1.0},
+                  {"id": "r_pose_snd", "asset": "a_amb", "role": "pose", "cast": "c_mara", "time": 1.0}],
          "shots": [{"t": 0}, {"t": 6}, {"t": 14.375}, {"t": 22}],
          "dialogue": [{"id": "d_1", "speaker": "c_mara", "t": 3.0, "text": "a"},
                       {"id": "d_2", "speaker": "c_tom", "t": 28.0, "text": "b"}]},
@@ -218,8 +226,10 @@ def malformed():
         {"scenes": [{
             "shots": [{"t": 5, "id": "h_1"}, {"t": "2", "id": "h_1"}, {"t": "abc"}, None, {"t": -1, "camera": 3}],
             "dialogue": [{"t": 4, "speaker": 5}, {"t": 1, "id": "d"}, {"t": 1, "id": "d"}, "x"],
+            # [OLD 2026-11-12 v0.12.0] "refs": [{"id": "r", "asset": 3, "role": "x", "time": "1.5", "keep": ["a", 1, None, {}],
+            # [OLD 2026-11-12 v0.12.0]           "soundtrack": 1}, {"id": "r"}, 7],
             "refs": [{"id": "r", "asset": 3, "role": "x", "time": "1.5", "keep": ["a", 1, None, {}],
-                      "soundtrack": 1}, {"id": "r"}, 7],
+                      "soundtrack": 1}, {"id": "r"}, 7, {"role": "pose", "cast": 5, "time": "x"}],  # v0.12.0: pose
             "cast": ["c_1", {"id": 2, "outfit": None}, 3, None],
             "prompt": {"mode": "weird", "auto": "x", "sections": {"summary": 5, "extra": "keep"},
                        "pass_prompts": {"1": "a", "2": 3, "3": None, "4": ["x"]}},

@@ -36,6 +36,7 @@ import {
 } from "../model.js";
 import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
 import { partOwner } from "../model.js"; // added 2026-11-08 v0.11.0: a prop that is part of a character
+import { scenePeople } from "../model.js"; // added 2026-11-12 v0.12.0: the characters a pose reference can be for
 
 // added 2026-11-03 v0.6.0: a render step changes nothing on this tab (status changes come with a full render), so
 // progress events no longer rebuild it
@@ -1484,12 +1485,17 @@ function refsCard(ctx, s) {
               a.kind === "video" && toggle({ value: r.soundtrack, label: "soundtrack", help: "scene.refs.soundtrack", onChange: v => edit(r.id, x => { x.soundtrack = v; }) })),
               [/OLD] */
               // added 2026-11-03 v0.6.0: keys by reference id
-              select({ options: roles, value: r.role, help: "scene.refs.role", key: `ref-role-${r.id}`, onChange: v => edit(r.id, x => { x.role = v; }) }),
-              r.role === "keyframe" && number({ value: Number(r.time.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "80px", unit: "s", help: "scene.refs.time", key: `ref-t-${r.id}`, onChange: v => edit(r.id, x => { x.time = v ?? 0; }) }),
+              // [OLD 2026-11-12 v0.11.0->v0.12.0] select({ options: roles, value: r.role, help: "scene.refs.role", key: `ref-role-${r.id}`, onChange: v => edit(r.id, x => { x.role = v; }) }),
+              // [OLD 2026-11-12 v0.11.0->v0.12.0] r.role === "keyframe" && number({ value: Number(r.time.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "80px", unit: "s", help: "scene.refs.time", key: `ref-t-${r.id}`, onChange: v => edit(r.id, x => { x.time = v ?? 0; }) }),
+              // added 2026-11-12 v0.12.0: a pose reference picks its character (the first one of the scene to start with)
+              select({ options: roles, value: r.role, help: "scene.refs.role", key: `ref-role-${r.id}`, onChange: v => edit(r.id, x => { x.role = v; if (v === "pose" && !x.cast) x.cast = sceneChars(p, s)[0]?.id || ""; }) }),
+              r.role === "pose" && poseCast(ctx, s, r, edit),
+              (r.role === "keyframe" || r.role === "pose") && number({ value: Number(r.time.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "80px", unit: "s", help: r.role === "pose" ? "scene.refs.poseTime" : "scene.refs.time", key: `ref-t-${r.id}`, onChange: v => edit(r.id, x => { x.time = v ?? 0; }) }),
               r.role === "reference" && select({ options: retentionOptions(a.kind), value: ret, help: "scene.refs.retention", mono: true, key: `ref-ret-${r.id}`, onChange: v => edit(r.id, x => { x.retention = v === a.defaults.retention ? "" : v; }) }),
               a.kind === "video" && toggle({ value: r.soundtrack, label: "soundtrack", help: "scene.refs.soundtrack", key: `ref-snd-${r.id}`, onChange: v => edit(r.id, x => { x.soundtrack = v; }) })),
             // [OLD 2026-11-03 v0.6.0 review] r.role === "reference" && keepChips({ values: r.keep.length ? r.keep : a.defaults.keep, help: "scene.refs.keep", onChange: v => edit(r.id, x => { x.keep = v; }) }),
             r.role === "reference" && keepChips({ values: r.keep.length ? r.keep : a.defaults.keep, help: "scene.refs.keep", key: `ref-keep-${r.id}`, onChange: v => edit(r.id, x => { x.keep = v; }) }), // added 2026-11-03 v0.6.0 review: key
+            r.role === "pose" && poseNote(p, s, r, a), // added 2026-11-12 v0.12.0
             // added 2026-11-02 v0.3.4: the asset's description as it is used here (edit it in the Assets tab)
             a.kind !== "audio" && h("button", { type: "button", class: ["rw-ref-desc link rw-ellipsis", !a.description && "empty"], help: "scene.refs.description",
               title: a.description || "", onClick: () => { ctx.store.setEph({ selectedAsset: a.id }); ctx.actions.setTab("assets"); } },
@@ -1497,10 +1503,37 @@ function refsCard(ctx, s) {
       }),
       addable.length ? h("div", { class: "rw-row" }, select({ options: addable, value: "", placeholder: "+ Add a reference…", help: "scene.refs.add", onChange: v => {
         const a = findAsset(p, v);
-        if (a) ctx.actions.editScene(s.id, sc => { sc.refs.push({ id: newId("r"), asset: a.id, role: a.defaults.role, time: 0, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack }); });
+        // [OLD 2026-11-12 v0.11.0->v0.12.0] if (a) ctx.actions.editScene(s.id, sc => { sc.refs.push({ id: newId("r"), asset: a.id, role: a.defaults.role, time: 0, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack }); });
+        // added 2026-11-12 v0.12.0: cast (a pose picture's default role starts it with the scene's first character)
+        const role = a && a.defaults.role === "pose" && a.kind !== "image" ? "reference" : a?.defaults.role; // only a picture poses
+        if (a) ctx.actions.editScene(s.id, sc => { sc.refs.push({ id: newId("r"), asset: a.id, role, time: 0, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack, cast: role === "pose" ? sceneChars(p, s)[0]?.id || "" : "" }); });
       } })) : h("div", { class: "rw-dim small" }, "Upload assets in the Assets tab first."),
     ],
   });
+}
+
+// added 2026-11-12 v0.12.0: pose references (role "pose"): a picture whose body pose one character of the scene takes,
+// in the shot at its time. The prompt cites it in that character's line and transfers only the pose (Sencer: "so the
+// real characters can use the same pose as from a given picture").
+function sceneChars(p, s) {
+  return scenePeople(p, s).people.map(x => x.c).filter(c => c.kind === "character");
+}
+function poseCast(ctx, s, r, edit) {
+  const p = ctx.p;
+  const here = sceneChars(p, s);
+  const others = p.cast.filter(c => c.kind === "character" && !here.some(x => x.id === c.id));
+  const options = [...here.map(c => ({ value: c.id, label: c.name || "Unnamed" })), ...others.map(c => ({ value: c.id, label: `${c.name || "Unnamed"} (not in this scene)` }))];
+  return select({ options, value: r.cast || "", placeholder: "+ Whose pose?", help: "scene.refs.poseCast", key: `ref-cast-${r.id}`, width: "170px", onChange: v => edit(r.id, x => { x.cast = v; }) });
+}
+function poseNote(p, s, r, a) {
+  const c = p.cast.find(x => x.id === r.cast && x.kind === "character");
+  const here = c && sceneChars(p, s).some(x => x.id === c.id);
+  const shot = s.shots.filter(x => Number(x.t) <= Number(r.time) + 1e-6).length || 1;
+  const tag = n => n && /^[\p{L}\p{N}_'’-]+$/u.test(n) ? "@" + n : `@{${n}}`;
+  if (a.kind !== "image") return h("div", { class: "small rw-c-warn", help: "scene.refs.pose" }, "Only a picture can be a pose reference: this one is not sent.");
+  if (!c) return h("div", { class: "small rw-c-warn", help: "scene.refs.pose" }, "Pick whose pose it is. Until then it is not sent.");
+  if (!here) return h("div", { class: "small rw-c-warn", help: "scene.refs.pose" }, `${c.name} is not in this scene, so it is not sent. Add ${c.name} under Cast.`);
+  return h("div", { class: "small rw-dim", help: "scene.refs.pose" }, `${c.name} takes this pose in shot ${shot}; only the pose is used, the person in the picture does not appear. Say it in the shot, e.g. “${tag(c.name)} strikes the pose from @${a.code}”.`);
 }
 
 function castCard(ctx, s) {

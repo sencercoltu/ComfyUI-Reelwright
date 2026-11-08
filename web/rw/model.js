@@ -9,7 +9,8 @@ export const STABLE_LANGUAGES = ["Arabic", "Chinese", "English", "French", "Germ
   "Japanese", "Korean", "Portuguese", "Russian", "Spanish"];
 export const VISUAL_RETENTION = ["fully_preserved", "partially_preserved", "attribute_transfer", "weak_reference"];
 export const AUDIO_RETENTION = ["fully_copy", "partially_copy", "reference", "weak_reference"];
-export const ROLES = ["reference", "first_frame", "last_frame", "keyframe"];
+// [OLD 2026-11-12 v0.11.0->v0.12.0] export const ROLES = ["reference", "first_frame", "last_frame", "keyframe"];
+export const ROLES = ["reference", "first_frame", "last_frame", "keyframe", "pose"]; // v0.12.0: pose (poseRefs)
 export const START_MODES = ["fresh", "last_frame", "tail"];
 // added 2026-11-05 v0.8.0: Global -> Long scenes -> hand-off and pass cache (model.py LONG_HANDOFF / LONG_PASS_CACHE)
 export const LONG_HANDOFF = ["pixels", "latent"];
@@ -749,6 +750,7 @@ function normScene(s, d, lang, usedIds) {
     textField(r, "asset", "");
     r.role = ROLES.includes(r.role) ? r.role : "reference";
     r.time = num(r.time, 0);
+    textField(r, "cast", ""); // added 2026-11-12 v0.12.0: the character a pose reference is for
     textField(r, "retention", "");
     r.keep = texts(r.keep);
     r.soundtrack = flag(r.soundtrack, false);
@@ -1423,6 +1425,29 @@ export function scenePeople(project, scene) {
   // [OLD 2026-11-08 v0.10.3->v0.11.0] return { people, autoPack, assets, unpacked };
   return { people, autoPack, assets, unpacked, leftOut }; // added 2026-11-08 v0.11.0: leftOut
 }
+// added 2026-11-12 v0.12.0: pose references, as model.pose_refs: a picture whose body pose one character of the scene
+// takes in the shot at its time; it goes to the pass whose span holds that time. [{ r, a, c }]
+export function poseInPass(t, pass, duration) {
+  const s = Number(pass.start), e = Number(pass.end);
+  return (s <= t && t < e) || (t >= e && e >= Number(duration) - 1e-6);
+}
+export function poseTime(r, scene) {
+  return Math.min(Math.max(Number(r.time) || 0, 0), Number(scene.duration));
+}
+export function poseRefs(project, scene, pass = null, people = null) {
+  const assets = new Map(project.assets.map(a => [a.id, a]));
+  if (!people) people = scenePeople(project, scene).people;
+  const chars = new Map(people.filter(x => x.c.kind === "character").map(x => [x.c.id, x.c]));
+  const out = [];
+  for (const r of scene.refs) {
+    if (r.role !== "pose") continue;
+    const a = assets.get(r.asset), c = chars.get(r.cast || "");
+    if (!a || a.kind !== "image" || !c) continue;
+    if (pass && !poseInPass(poseTime(r, scene), pass, scene.duration)) continue;
+    out.push({ r, a, c });
+  }
+  return out;
+}
 export function castPacks(project, scene, c) {
   const n = c.anchors.filter(id => findAsset(project, id)?.kind === "image").length;
   if (n < 2) return false;
@@ -1508,7 +1533,12 @@ export function sceneBudget(project, scene, pass = null, continuation = true) {
   const { people, assets, unpacked } = scenePeople(project, scene);
   const idx = project.scenes.findIndex(x => x.id === scene.id);
   const cont = continuation ? passContinuation(project, idx < 0 ? null : idx, pass) : "";
-  const autoPack = unpacked + (cont === "picture" ? 1 : 0) > MAX_REF_IMAGES;
+  // [OLD 2026-11-12 v0.11.0->v0.12.0] const autoPack = unpacked + (cont === "picture" ? 1 : 0) > MAX_REF_IMAGES;
+  // added 2026-11-12 v0.12.0: the pose pictures of this pass count too (model.scene_media_counts)
+  const posePics = [...new Set(poseRefs(project, scene, pass, people).map(x => x.a.id))];
+  const anchorIds = new Set(people.flatMap(x => x.ids));
+  const refPicIds = new Set(scene.refs.filter(r => r.role === "reference" && assets.get(r.asset)?.kind === "image").map(r => r.asset));
+  const autoPack = unpacked + posePics.filter(a => !anchorIds.has(a) && !refPicIds.has(a)).length + (cont === "picture" ? 1 : 0) > MAX_REF_IMAGES;
   const song = passSoundtrack(project, timing(project).starts[scene.id] ?? 0, pass);
   const speaking = new Set((pass.dialogue || []).map(d => d.speaker));
   const b = { pictures: 0, videos: 0, videoSeconds: 0, audio: 0, audioSeconds: 0, files: 0, song: !!song };
@@ -1520,6 +1550,7 @@ export function sceneBudget(project, scene, pass = null, continuation = true) {
     const v = assets.get(c.voice);
     if (v && v.kind === "audio" && !song && speaking.has(c.id)) sounds.push(v);
   }
+  for (const a of posePics) if (!sent.has(a)) { sent.add(a); b.pictures++; } // added 2026-11-12 v0.12.0
   for (const r of scene.refs) {
     const a = assets.get(r.asset);
     if (!a || r.role !== "reference") continue;

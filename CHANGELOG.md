@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.12.0 — 2026-11-12
+
+- **Pose references** (Scene → References → role **pose**). Sencer: "can we add reference assets, so the real characters can use the same pose as from a given picture?"
+  - Add a picture under References, set its role to **pose**, pick whose pose it is (it starts with the scene's first character) and when (the shot at that time).
+  - Only the pose is used. The character's subject line cites the picture ("<Subject 1> is Mara, …, whose pose in [Shot 2] comes from <Picture 3>"), and its retention line says "attribute_transfer - the body pose is transferred to <Subject 1>; the person, clothing and setting in <Picture 3> do not appear". This is how MiniMax's Ref2VA guide words a characteristic taken from one reference for another subject. The picture is never a subject of its own, so the person in it is not put in the shot.
+  - It goes only to the pass whose time span holds its time, and takes one of the 9 picture slots there (the budget meter counts it).
+  - It is not sent when it names no character, its character is not in the scene, or it is not a picture. The reference and the Issues list say so.
+  - Say what happens in the shot text too, for example "@Mara strikes the pose from @P3". H3 follows the pose from the prompt, not as an exact skeleton; a clear, full-body picture works best.
+  - Assets → Defaults → Role can be **pose**, so such a picture starts as a pose reference when you add it.
+  - The prompt rewriter and Write prompts are told that only the body pose is used.
+- Nothing renders again: scenes without pose references keep their prompts and takes.
+- **For developers:** role `pose` in `spec.ROLES` / `model.js ROLES`; scene refs get `cast` (text). `model.pose_refs(p, scene, pass_, people, idx)` / `model.js poseRefs` (+ `pose_in_pass`, `pose_time`); `prompt.collect_refs` sends them after the cast's pictures (`img["pose"]` = the character), subjects get `poses` only when they have any; `prompt.pose_words`. New `tests/test_pose_refs.py`; parity fixtures include pose references; `web-test/interact.py` runs `v0120_checks()`.
+
 ## v0.11.0 — 2026-11-08
 
 - **Part of: a prop that belongs to a character's body or look** (Cast → a prop → **Part of**). Sencer: "I add me as a character and a big beer belly as a prop: there are two people in the shot." Every cast member in a scene was a subject of its own, and H3 puts each subject in the shot as a separate thing, so a picture of a belly became a second person.

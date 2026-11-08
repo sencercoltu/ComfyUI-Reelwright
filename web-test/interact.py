@@ -1497,6 +1497,7 @@ def main():
         v0102_checks(page, check, saved, shots)  # added 2026-11-06 v0.10.2: merge and LLM progress without rebuilding the tab; tooltips survive a rebuild
         v0103_checks(page, check, saved, shots)  # added 2026-11-07 v0.10.3: Global → Project → New project
         v0110_checks(page, check, saved, shots)  # added 2026-11-08 v0.11.0: Cast → Part of; outfit pictures
+        v0120_checks(page, check, saved, shots)  # added 2026-11-12 v0.12.0: pose references
         browser.close()
     httpd.shutdown()
 
@@ -4513,6 +4514,65 @@ def v0110_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
     o = next(x for x in cast_of("c_mara")["outfits"] if x["id"] == "o_navy")
     check(o["assets"] == [], f"the picture is removed from the outfit: {o['assets']}")
+    load(json.loads(saved))
+
+
+
+def v0120_checks(page, check, saved, shots):
+    """v0.12.0: Scene → References → role "pose" (Sencer: "reference assets, so the real characters can use the same
+    pose as from a given picture"). Picking the role starts it with the scene's first character, shows whose pose it
+    is and when, counts it in the reference budget of its pass only, and warns when it cannot be sent."""
+    import os
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def pick(k, text):
+        loc = page.locator(f"input[data-key='{k}']")
+        loc.click()
+        loc.fill(text)
+        page.wait_for_timeout(150)
+        loc.press("Enter")
+        page.wait_for_timeout(300)
+
+    ref = lambda: next(r for r in page.evaluate("window.__editor.project")["scenes"][0]["refs"] if r["id"] == "r_pose")
+    note = lambda: page.locator("[data-help='scene.refs.pose']").all_inner_texts()
+    budgets = lambda: page.evaluate("""async () => { const m = await import('/web/rw/model.js'); const p = window.__editor.project; const s = p.scenes[0];
+      return m.planScene(p, s, 0).passes.map(x => m.sceneBudget(p, s, x).pictures); }""")
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    s0 = q["scenes"][0]
+    s0["duration"] = 30.0  # several passes
+    s0["cast"] = [{"id": "c_mara", "outfit": ""}]
+    s0["dialogue"] = []
+    s0["shots"] = [{"id": "h_a", "t": 0, "camera": "Wide", "text": "Mara walks"}, {"id": "h_b", "t": 20, "camera": "Medium", "text": "@Mara lands"}]
+    s0["refs"] = [{"id": "r_pose", "asset": "a_p5", "role": "reference", "time": 0, "retention": "", "keep": [], "soundtrack": False}]
+    q["ui"].update(tab="scene", selected=s0["id"])
+    load(q)
+    as_ref = budgets()
+
+    # 1. role pose: Mara by default, a time, the note
+    pick("ref-role-r_pose", "pose")
+    r = ref()
+    check(r["role"] == "pose" and r["cast"] == "c_mara", f"the pose starts with the scene's character: {r['role']} {r['cast']!r}")
+    check(page.locator("input[data-key='ref-cast-r_pose']").count() == 1 and page.locator("[data-key='ref-t-r_pose']").count() == 1,
+          "a pose reference shows whose pose and when")
+    check(any("Mara takes this pose in shot 1" in t and "@P5" in t for t in note()), f"the note says who, when and how to name it: {note()}")
+    page.evaluate("window.__editor.store.update(p => { p.scenes[0].refs[0].time = 21; }, { history: false })")
+    page.wait_for_timeout(300)
+    check(any("in shot 2" in t for t in note()), f"the note follows the time: {note()}")
+    posed = budgets()
+    page.evaluate("window.__editor.store.update(p => { p.scenes[0].refs[0].cast = ''; }, { history: false })")
+    page.wait_for_timeout(300)
+    nobody = budgets()
+    check(len(posed) > 1 and sum(posed) - sum(nobody) == 1 and posed[-1] - nobody[-1] == 1 and sum(as_ref) - sum(nobody) == len(posed),
+          f"the pose takes a picture slot only in its pass (as a plain reference it went to every pass): {as_ref} / {posed} / {nobody}")
+    check(any("Pick whose pose it is" in t for t in note()), f"without a character it warns: {note()}")
+    shots and page.screenshot(path=os.path.join(shots, "v0120_pose_ref.png"))
+
+    # 2. a character not in the scene
+    pick("ref-cast-r_pose", "Keeper")
+    check(ref()["cast"] == "c_keeper" and any("is not in this scene, so it is not sent" in t for t in note()), f"another scene's character warns: {note()}")
     load(json.loads(saved))
 
 

@@ -448,16 +448,22 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
     entries = [(x["entry"], x["cast"], x["outfit"], x["ids"]) for x in people]
     parts_of = {x["cast"]["id"]: x["parts"] for x in people}
     own_of = {x["cast"]["id"]: set(x["own"]) for x in people}
+    poses = _model.pose_refs(p, scene, pass_, people, idx) if hasattr(_model, "pose_refs") else []  # added 2026-11-12 v0.12.0
     # [OLD 2026-11-03 v0.5.1->v0.6.0] a mentioned guide picture counted in every pass
     # unpacked = len({a for *_, ids in entries for a in ids}) + len(
     #     {r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
     #      (r["role"] == "reference" or assets[r["asset"]]["code"].upper() in mentioned_codes)} -
     #     {a for *_, ids in entries for a in ids})
     # [/OLD]
+    # [OLD 2026-11-12 v0.11.0->v0.12.0] unpacked = len({a for *_, ids in entries for a in ids}) + len(
+    # [OLD 2026-11-12 v0.11.0->v0.12.0]     {r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
+    # [OLD 2026-11-12 v0.11.0->v0.12.0]      (r["role"] == "reference" or (r["id"] in guided and assets[r["asset"]]["code"].upper() in mentioned_codes))} -
+    # [OLD 2026-11-12 v0.11.0->v0.12.0]     {a for *_, ids in entries for a in ids})
+    # added 2026-11-12 v0.12.0: + the pose pictures of this pass
     unpacked = len({a for *_, ids in entries for a in ids}) + len(
-        {r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
-         (r["role"] == "reference" or (r["id"] in guided and assets[r["asset"]]["code"].upper() in mentioned_codes))} -
-        {a for *_, ids in entries for a in ids})
+        ({r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
+          (r["role"] == "reference" or (r["id"] in guided and assets[r["asset"]]["code"].upper() in mentioned_codes))} |
+         {a["id"] for _, a, _ in poses}) - {a for *_, ids in entries for a in ids})
     # [OLD 2026-11-05 v0.6.1->v0.7.0] auto_pack = unpacked > spec.MAX_REF_IMAGES
     auto_pack = unpacked + (1 if cont and cont["kind"] == "picture" else 0) > spec.MAX_REF_IMAGES  # v0.7.0: + it
 
@@ -509,11 +515,17 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
             refs.audios.append({"asset": c["voice"], "ref": None, "cast": c["id"]})
     if song:
         refs.audios.append({"asset": None, "ref": None, "cast": None, "song": song})
+    # added 2026-11-12 v0.12.0: pose pictures, after the cast's; never subjects (cited in their character's line)
+    for r, a, c in poses:
+        if not any(a["id"] in img["assets"] for img in refs.images):
+            refs.images.append({"assets": [a["id"]], "cast": None, "ref": r["id"], "pose": c["id"]})
 
     guide_only = {"first_frame", "last_frame", "keyframe"}
     for r in scene["refs"]:
         a = assets.get(r["asset"])
         if not a:
+            continue
+        if r["role"] == "pose":  # added 2026-11-12 v0.12.0: sent above (model.pose_refs), or not at all
             continue
         if r["role"] in guide_only:
             # [OLD 2026-11-03 v0.5.1->v0.6.0] a guide picture named anywhere in the scene's text went to every pass; a guide clip never
@@ -544,6 +556,15 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
         refs.videos[0]["soundtrack"] = sum(1 for v in refs.videos if v["soundtrack"]) + len(refs.audios) < \
             spec.MAX_REF_AUDIOS
     refs.number()
+    # added 2026-11-12 v0.12.0: each character's poses in this pass: the picture and the shot (only when it has any,
+    # so other builds and their cache keys stay as they were)
+    for r, a, c in poses:
+        subj = next((x for x in refs.subjects if x["cast"] == c["id"]), None)
+        k = refs.picture_of_asset.get(a["id"])
+        if subj and k:
+            t = _model.pose_time(r, scene) - float(pass_["start"])
+            subj.setdefault("poses", []).append({"ref": r["id"], "picture": k,
+                                                 "shot": _shot_index(pass_["shots"], t) if pass_["shots"] else 1})
     if cont:  # added 2026-11-05 v0.7.0
         first = refs.images[0] if cont["kind"] == "picture" else refs.videos[0]
         refs.continuation = dict(cont, label="<{} 1>".format("Picture" if cont["kind"] == "picture" else "Video"),
@@ -1190,6 +1211,8 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
                 text += ", " + outfit_words(o["name"])  # added 2026-11-08 v0.11.0: "with …" names read as written
             for x in parts:  # added 2026-11-08 v0.11.0: props that are part of this character
                 text += ", " + part_words(cast[x["cast"]], assets, x["pictures"])
+            if s.get("poses"):  # added 2026-11-12 v0.12.0: as ref-en.txt 2.1 ("whose walking motion comes from <Video 1>")
+                text += ", " + pose_words(s["poses"])
             lines.append(text + ".")
         else:
             a = assets[s["asset"]]
@@ -1201,6 +1224,8 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
                 lines.append("{} is {}.".format(head, phrase.format(src=src)))
     for k, img in enumerate(refs.images, 1):
         if img["cast"] or any(k in s["pictures"] for s in refs.subjects):
+            continue
+        if img.get("pose"):  # added 2026-11-12 v0.12.0: cited in its character's line
             continue
         if img.get("continuation"):  # added 2026-11-05 v0.7.0: the last frame of the scene before
             lines.append(continuation_definition(refs.continuation))
@@ -1244,6 +1269,14 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
             desc = (a.get("description") or "").strip().rstrip(".")
             lines.append("<Audio {}> is {}.".format(n, desc or AUDIO_PHRASE.get(a.get("category"), "the audio reference")))
     return lines
+
+
+# added 2026-11-12 v0.12.0: a character's pose references in this pass
+def pose_words(poses):
+    """"whose pose in [Shot 2] comes from <Picture 4>" (and "in [Shot 3] from <Picture 5>" for more)."""
+    bits = ["in [Shot {}] {}from <Picture {}>".format(x["shot"], "comes " if i == 0 else "", x["picture"])
+            for i, x in enumerate(sorted(poses, key=lambda x: (x["shot"], x["picture"])))]
+    return "whose pose " + _join_and(bits)
 
 
 # added 2026-11-08 v0.11.0: outfit and part wording in a character's subject line
@@ -1300,6 +1333,14 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):  # ctx: added 2026-11-0
                                                             _keep_phrase(keep, ret), extra))
     for k, img in enumerate(refs.images, 1):
         if img["cast"] or any(k in s["pictures"] for s in refs.subjects):
+            continue
+        if img.get("pose"):  # added 2026-11-12 v0.12.0: the pose goes to the character, nothing else of the picture
+            subj = next((x for x in refs.subjects if x["cast"] == img["pose"]), None)
+            pose = next((x for x in (subj or {}).get("poses") or [] if x["picture"] == k), None)
+            if subj and pose:
+                lines.append("<Picture {k}> (pose of <Subject {n}> in [Shot {sh}]): attribute_transfer - the body pose "
+                             "is transferred to <Subject {n}>; the person, clothing and setting in <Picture {k}> do not "
+                             "appear.".format(k=k, n=subj["number"], sh=pose["shot"]))
             continue
         if img.get("continuation"):  # added 2026-11-05 v0.7.0
             lines += continuation_retention(refs.continuation)

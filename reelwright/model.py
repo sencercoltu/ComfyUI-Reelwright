@@ -690,6 +690,7 @@ def _norm_scene(s, d, lang, used_ids):
         _text_field(r, "asset", "")
         r["role"] = r["role"] if r.get("role") in spec.ROLES else "reference"
         r["time"] = spec.num(r.get("time"), 0.0)
+        _text_field(r, "cast", "")  # added 2026-11-12 v0.12.0: the character a pose reference is for
         _text_field(r, "retention", "")
         r["keep"] = _texts(r.get("keep"))
         r["soundtrack"] = spec.flag(r.get("soundtrack"), False)
@@ -966,6 +967,45 @@ def scene_people(p, scene, idx=None):
             x["parts"].append(part)
             x["ids"] = x["ids"] + [a for a in part["ids"] if a not in x["ids"]]
     return people, left_out
+
+
+# added 2026-11-12 v0.12.0: a pose reference (scene reference, role "pose"): a picture whose body pose one character of
+# the scene takes, in the shot at its time. It is cited in that character's subject line ("whose pose in [Shot 2]
+# comes from <Picture 4>") and analysed as attribute_transfer, as MiniMax's Ref2VA guide does for a characteristic
+# transferred from one reference to another subject; it is never a subject of its own (H3 would put the person in it
+# in the shot). It goes to the pass whose time span holds its time, like a keyframe.
+def pose_in_pass(t, pass_, duration):
+    """Does scene time t fall in this pass (start <= t < end; a time at or after the end of the last pass counts for
+    it)? Overlapping passes both hold the overlap."""
+    s, e = float(pass_["start"]), float(pass_["end"])
+    return s <= t < e or (t >= e and e >= float(duration) - 1e-6)
+
+
+def pose_time(r, scene):
+    """A pose reference's time, kept inside the scene."""
+    return min(max(float(r.get("time") or 0.0), 0.0), float(scene["duration"]))
+
+
+def pose_refs(p, scene, pass_=None, people=None, idx=None):
+    """The pose references a scene sends: [(ref, asset, character)] where the asset is a picture and the character is
+    one the scene sends (scene_people, not a part). pass_: only those whose time falls in that pass. people: the
+    first result of scene_people when you have it."""
+    idx = idx or project_index(p)
+    if people is None:
+        people = scene_people(p, scene, idx)[0]
+    chars = {x["cast"]["id"]: x["cast"] for x in people if x["cast"].get("kind") == "character"}
+    out = []
+    for r in scene["refs"]:
+        if r.get("role") != "pose":
+            continue
+        a = idx["assets"].get(r.get("asset"))
+        c = chars.get(r.get("cast") or "")
+        if not a or a["kind"] != "image" or not c:
+            continue
+        if pass_ is not None and not pose_in_pass(pose_time(r, scene), pass_, scene["duration"]):
+            continue
+        out.append((r, a, c))
+    return out
 
 
 def scene_seed(p, scene, scene_index, take_number=0):
@@ -1284,15 +1324,21 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
     #         ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in ids]
     #     people.append((c, ids))
     # [/OLD]
-    people = [(x["cast"], x["ids"]) for x in scene_people(p, scene, idx)[0]]  # added 2026-11-08 v0.11.0
+    # [OLD 2026-11-12 v0.11.0->v0.12.0] people = [(x["cast"], x["ids"]) for x in scene_people(p, scene, idx)[0]]  # added 2026-11-08 v0.11.0
+    recs = scene_people(p, scene, idx)[0]  # added 2026-11-12 v0.12.0: the records, for pose_refs
+    people = [(x["cast"], x["ids"]) for x in recs]
     anchors = {a for _, ids in people for a in ids}
     ref_pics = {r["asset"] for r in scene["refs"]
                 if r["role"] == "reference" and r["asset"] in assets and assets[r["asset"]]["kind"] == "image"}
+    # added 2026-11-12 v0.12.0: the pose pictures of this pass, after the cast's pictures (prompt.collect_refs)
+    pose_pics = list(dict.fromkeys(a["id"] for _, a, _ in pose_refs(p, scene, pass_, recs, idx)))
     # added 2026-11-05 v0.7.0: the continuation reference of this pass; a picture counts for "auto" packing
     i = next((k for k, s in enumerate(p["scenes"]) if s["id"] == scene["id"]), None)
     cont = pass_continuation(p, i, pass_, mode) if continuation else ""
     # [OLD 2026-11-05 v0.6.1->v0.7.0] auto_pack = len(anchors) + len(ref_pics - anchors) > spec.MAX_REF_IMAGES
-    auto_pack = len(anchors) + len(ref_pics - anchors) + (1 if cont == "picture" else 0) > spec.MAX_REF_IMAGES
+    # [OLD 2026-11-12 v0.11.0->v0.12.0] auto_pack = len(anchors) + len(ref_pics - anchors) + (1 if cont == "picture" else 0) > spec.MAX_REF_IMAGES
+    auto_pack = len(anchors) + len((ref_pics | set(pose_pics)) - anchors) + (1 if cont == "picture" else 0) > \
+        spec.MAX_REF_IMAGES
     if starts is None:
         starts = scene_starts(p)[0]
     song = _soundtrack.pass_soundtrack(p, starts.get(scene["id"], 0.0), pass_)
@@ -1307,6 +1353,10 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
         v = assets.get(c.get("voice"))
         if v and v["kind"] == "audio" and not song and c["id"] in speaking:
             sounds.append(v)
+    for aid in pose_pics:  # added 2026-11-12 v0.12.0
+        if aid not in sent:
+            sent.add(aid)
+            out["pictures"] += 1
     for r in scene["refs"]:
         a = assets.get(r["asset"])
         if not a or r["role"] != "reference":

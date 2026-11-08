@@ -318,6 +318,19 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             issues.append(_issue("error", "{}: duration must be above 0".format(name), sid))
         if i == 0 and s["start"]["mode"] != "fresh":
             issues.append(_issue("info", "{}: the first scene always starts fresh".format(name), sid))
+        # added 2026-11-12 v0.12.0: a pose reference goes out only with a picture and a character of this scene
+        if hasattr(_model, "pose_refs"):
+            sent = {r["id"] for r, _, _ in _model.pose_refs(p, s, None, None, idx)}
+            for r in s["refs"]:
+                a = assets.get(r.get("asset"))
+                if r.get("role") != "pose" or r["id"] in sent or not a:
+                    continue
+                c = cast.get(r.get("cast") or "")
+                why = ("it is not a picture" if a["kind"] != "image" else
+                       "it names no character (pick one under References)" if not c or c["kind"] != "character" else
+                       "{} is not in this scene".format(c["name"]))
+                issues.append(_issue("warn", "{}: {} is a pose reference but {}, so it is not sent".format(
+                    name, a["code"], why), sid))
         # added 2026-11-08 v0.11.0: a prop that is part of a character is left out of a scene its character is not in
         if hasattr(_model, "scene_people"):
             for part, owner in _model.scene_people(p, s, idx)[1]:
