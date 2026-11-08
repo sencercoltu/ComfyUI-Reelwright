@@ -209,6 +209,12 @@ class PassRefs:
         # added 2026-11-02 v0.2.0: reference assets that define reusable visible content are
         # <Subject N> in H3's Ref2VA guide; @P2 then resolves to that subject.
         self.subject_of_asset = {}
+        # added 2026-11-12 v0.14.0: the same video or audio asset can be sent as several clips (a reference each, with
+        # its own From / To): the label of each reference, and the reference whose clip a duplicate one shares
+        self.video_of_ref = {}
+        self.audio_of_ref = {}
+        self.subject_of_ref = {}
+        self.ref_alias = {}
         self.song_number = None  # added 2026-11-03 v0.5.0: <Audio N> of the soundtrack segment
         self.guided = set()  # added 2026-11-03 v0.6.0: ids of the scene refs that guide this pass
         # added 2026-11-05 v0.7.0: the footage this pass continues from, sent as reference 1 (see continuation_of):
@@ -227,6 +233,8 @@ class PassRefs:
             # [OLD 2026-11-05 v0.6.1->v0.7.0] self.video_of_asset.setdefault(v["asset"], k)
             if v.get("asset"):  # added 2026-11-05 v0.7.0: the continuation clip is no asset
                 self.video_of_asset.setdefault(v["asset"], k)
+                if v.get("ref"):  # added 2026-11-12 v0.14.0
+                    self.video_of_ref.setdefault(v["ref"], k)
         for a in self.audios:
             audio_n += 1
             # [OLD 2026-11-03 v0.4.3->v0.5.0] self.audio_of_asset.setdefault(a["asset"], audio_n)
@@ -234,10 +242,20 @@ class PassRefs:
                 self.song_number = audio_n
             else:
                 self.audio_of_asset.setdefault(a["asset"], audio_n)
+                if a.get("ref"):  # added 2026-11-12 v0.14.0
+                    self.audio_of_ref.setdefault(a["ref"], audio_n)
 
     @property
     def file_count(self):
         return len(self.images) + len(self.videos) + len(self.audios)
+
+
+# added 2026-11-12 v0.14.0: model.clip_key of an entry already in refs.videos / refs.audios (a voice sample or a
+# reference that is not trimmed has no in / out: the whole file)
+def _clip_key_of(entry, a):
+    if "in" in entry:
+        return (a["id"], entry["in"], entry["out"])
+    return (a["id"], 0.0, None)
 
 
 # added 2026-11-03 v0.6.0
@@ -512,7 +530,7 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
         # added 2026-11-03 v0.6.0: a voice reference only goes to the passes where that character speaks (the
         # reference budget counts it the same way, model.scene_media_counts / model.js sceneBudget)
         if c.get("voice") in assets and assets[c["voice"]]["kind"] == "audio" and not song and c["id"] in speaking:
-            refs.audios.append({"asset": c["voice"], "ref": None, "cast": c["id"]})
+            refs.audios.append({"asset": c["voice"], "ref": None, "cast": c["id"]})  # a whole file (clip_key: start 0, no end)
     if song:
         refs.audios.append({"asset": None, "ref": None, "cast": None, "song": song})
     # added 2026-11-12 v0.12.0: pose pictures, after the cast's; never subjects (cited in their character's line)
@@ -546,10 +564,30 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
             if any(a["id"] in img["assets"] for img in refs.images):
                 continue
             refs.images.append({"assets": [a["id"]], "cast": None, "ref": r["id"]})
-        elif a["kind"] == "video":
-            refs.videos.append({"asset": a["id"], "soundtrack": bool(r.get("soundtrack")), "ref": r["id"]})
-        elif a["kind"] == "audio" and not any(x["asset"] == a["id"] for x in refs.audios):
-            refs.audios.append({"asset": a["id"], "ref": r["id"], "cast": None})
+        # [OLD 2026-11-12 v0.13.1->v0.14.0] a reference sent its asset from the start; an audio asset went once
+        # elif a["kind"] == "video":
+        #     refs.videos.append({"asset": a["id"], "soundtrack": bool(r.get("soundtrack")), "ref": r["id"]})
+        # elif a["kind"] == "audio" and not any(x["asset"] == a["id"] for x in refs.audios):
+        #     refs.audios.append({"asset": a["id"], "ref": r["id"], "cast": None})
+        # [/OLD]
+        # added 2026-11-12 v0.14.0: each reference sends its clip (From / To, model.ref_clip). Every video reference is
+        # a <Video k> of its own, as before; an audio reference that repeats a clip already sent (the same asset and
+        # range, or a cast voice sample: the whole file) shares its label, as an audio asset did before. A trimmed
+        # clip carries in / out / seconds in the build, so references that are not trimmed keep their builds and keys.
+        elif a["kind"] in ("video", "audio"):
+            if a["kind"] == "audio":
+                key = _model.clip_key(r, a)
+                same = next((x for x in refs.audios if x.get("asset") == a["id"] and _clip_key_of(x, a) == key), None)
+                if same:
+                    if same.get("ref"):
+                        refs.ref_alias[r["id"]] = same["ref"]
+                    continue
+            entry = {"asset": a["id"], "soundtrack": bool(r.get("soundtrack")), "ref": r["id"]} if a["kind"] == "video" \
+                else {"asset": a["id"], "ref": r["id"], "cast": None}
+            if _model.ref_trimmed(r):
+                c = _model.ref_clip(r, a)
+                entry.update({"in": c["start"], "out": c["end"], "seconds": c["seconds"]})
+            (refs.videos if a["kind"] == "video" else refs.audios).append(entry)
     refs.guided = guided  # added 2026-11-03 v0.6.0
     # added 2026-11-05 v0.7.0: the continuation clip brings its sound when an audio slot is free
     if cont and cont["kind"] == "video":
@@ -589,11 +627,25 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
             continue
         a = assets[v["asset"]]
         # [OLD 2026-11-03 v0.5.1->v0.6.0] if a.get("category") not in SUBJECT_VIDEO_CATEGORIES or a["id"] in refs.subject_of_asset:  (guide clips are no subjects)
-        if v.get("guide") or a.get("category") not in SUBJECT_VIDEO_CATEGORIES or a["id"] in refs.subject_of_asset:
+        # [OLD 2026-11-12 v0.13.1->v0.14.0] if v.get("guide") or a.get("category") not in SUBJECT_VIDEO_CATEGORIES or a["id"] in refs.subject_of_asset:
+        # [OLD 2026-11-12 v0.13.1->v0.14.0]     continue
+        # added 2026-11-12 v0.14.0: each clip of a motion or style video is a subject of its own (a second clip of the
+        # same video used to be named as a camera reference); @V1 stays the first one
+        if v.get("guide") or a.get("category") not in SUBJECT_VIDEO_CATEGORIES:
+            continue
+        twin = next((s for s in refs.subjects if s.get("asset") == a["id"] and not s["cast"] and s["videos"] and
+                     _clip_key_of(refs.videos[s["videos"][0] - 1], a) == _clip_key_of(v, a)), None)
+        if twin:  # the same clip again: the same subject, shown in both
+            twin["videos"].append(k)
+            if v.get("ref"):
+                refs.subject_of_ref[v["ref"]] = twin["number"]
             continue
         refs.subjects.append({"cast": None, "ref": v["ref"], "asset": a["id"], "number": len(refs.subjects) + 1,
                               "outfit": None, "pictures": [], "videos": [k]})
-        refs.subject_of_asset[a["id"]] = refs.subjects[-1]["number"]
+        # [OLD 2026-11-12 v0.13.1->v0.14.0] refs.subject_of_asset[a["id"]] = refs.subjects[-1]["number"]
+        refs.subject_of_asset.setdefault(a["id"], refs.subjects[-1]["number"])  # added 2026-11-12 v0.14.0
+        if v.get("ref"):
+            refs.subject_of_ref[v["ref"]] = refs.subjects[-1]["number"]
 
     # guides
     i = pass_["index"]
@@ -683,6 +735,9 @@ def mentioned_codes(text):
             base = POSSESSIVE.match(m.group(2))
             if base:
                 out.add(base.group(1).upper())
+            nth = NTH_CLIP.fullmatch(m.group(2))  # added 2026-11-12 v0.14.0: @V1.2 names V1
+            if nth:
+                out.add(nth.group(1).upper())
     return out
 
 
@@ -732,10 +787,40 @@ def _voice_words(a, c):
     return "{}'s voice".format(c.get("name") or "the character")
 
 
+# added 2026-11-12 v0.14.0: "@V1.2" names the second reference of V1 in the scene (model.ref_tokens)
+NTH_CLIP = re.compile(r"([PVA]\d+)\.(\d+)", re.I)
+
+
+def _nth_clip(name, refs, scene, idx):
+    """(text, level, message) for "@V1.2" style names, or None when the name is no such tag."""
+    m = NTH_CLIP.fullmatch(name)
+    a = idx["codes"].get(m.group(1).upper()) if m else None
+    if not a:
+        return None
+    n = int(m.group(2))
+    ids = _model.media_ref_ids(scene, a["id"]) if a["kind"] in ("video", "audio") else []
+    words = _asset_words(a)
+    if not 1 <= n <= len(ids):
+        if a["kind"] not in ("video", "audio"):
+            why = "only video and audio references are numbered like this"
+        else:
+            why = "this scene has {} reference{} of {}".format(len(ids), "" if len(ids) == 1 else "s", a["code"])
+        return words, "warn", "@{}: {}, so it is written as “{}”".format(name, why, words)
+    rid = ids[n - 1]
+    rid = refs.ref_alias.get(rid, rid)
+    for table, label in ((refs.subject_of_ref, "Subject"), (refs.video_of_ref, "Video"), (refs.audio_of_ref, "Audio")):
+        if rid in table:
+            return "<{} {}>".format(label, table[rid]), None, None
+    return words, "info", "@{} is not sent with this pass, so it names it in words: “{}”".format(name, words)
+
+
 def resolve_tag(name, braced, p, refs, ctx, scene=None):
     """(text, level, message) for one tag in this pass: level None when it resolves to a label; otherwise the
     words written instead and why. text None means the tag stays as typed."""
     idx = ctx["index"]
+    nth = None if braced or idx["codes"].get(name.upper()) else _nth_clip(name, refs, scene, idx)  # added 2026-11-12 v0.14.0
+    if nth:
+        return nth
     a = None if braced else idx["codes"].get(name.upper())
     if a:
         if a["id"] in refs.subject_of_asset:
@@ -1261,7 +1346,8 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
                          "soundtrack.".format(refs.song_number))
             continue
         a = assets[au["asset"]]
-        n = refs.audio_of_asset[au["asset"]]
+        # [OLD 2026-11-12 v0.13.1->v0.14.0] n = refs.audio_of_asset[au["asset"]]
+        n = refs.audio_of_ref.get(au.get("ref")) or refs.audio_of_asset[au["asset"]]  # added 2026-11-12 v0.14.0: each clip its own
         if au["cast"]:
             spk = " ({})".format(ids[au["cast"]]) if au["cast"] in ids else ""
             lines.append("<Audio {}> is the voice-timbre reference for <Subject {}>{}.".format(n, sub_of_cast.get(au["cast"], "?"), spk))
@@ -1383,7 +1469,8 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):  # ctx: added 2026-11-0
                          "and beat.".format(refs.song_number, ret, _keep_phrase(["its vocals, rhythm and beat"], ret)))
             continue
         a = assets[au["asset"]]
-        n = refs.audio_of_asset[au["asset"]]
+        # [OLD 2026-11-12 v0.13.1->v0.14.0] n = refs.audio_of_asset[au["asset"]]
+        n = refs.audio_of_ref.get(au.get("ref")) or refs.audio_of_asset[au["asset"]]  # added 2026-11-12 v0.14.0: each clip its own
         if au["cast"]:
             lines.append("<Audio {}>: reference - the voice timbre and delivery of <Subject {}> follow <Audio {}> "
                          "without copying the original signal.".format(n, sub_of_cast.get(au["cast"], "?"), n))
@@ -1969,6 +2056,15 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
         tag_map["@" + idx["assets"][aid]["code"]] = "<Video {}>".format(k)
     for aid, k in refs.audio_of_asset.items():
         tag_map["@" + idx["assets"][aid]["code"]] = "<Audio {}>".format(k)
+    # added 2026-11-12 v0.14.0: "@V1.2" and so on for the scene's further clips of an asset that this pass sends
+    for rid, tok in _model.ref_tokens(p, scene, idx).items():
+        if "." not in tok:
+            continue
+        r2 = refs.ref_alias.get(rid, rid)
+        for table, label in ((refs.subject_of_ref, "Subject"), (refs.video_of_ref, "Video"), (refs.audio_of_ref, "Audio")):
+            if r2 in table:
+                tag_map[tok] = "<{} {}>".format(label, table[r2])
+                break
     if refs.song_number:  # added 2026-11-03 v0.5.0
         tag_map["@soundtrack"] = "<Audio {}>".format(refs.song_number)
     if refs.continuation:  # added 2026-11-05 v0.7.0: so the rewriter turns the label back into @tail
@@ -1980,7 +2076,8 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
     for s in refs.subjects:
         if s["cast"]:
             tag_map["@" + idx["cast"][s["cast"]]["name"]] = "<Subject {}>".format(s["number"])
-        else:
+        # [OLD 2026-11-12 v0.13.1->v0.14.0] else:
+        elif refs.subject_of_asset.get(s["asset"]) == s["number"]:  # added 2026-11-12 v0.14.0: @V1 is the first clip
             tag_map["@" + idx["assets"][s["asset"]]["code"]] = "<Subject {}>".format(s["number"])
 
     # [OLD 2026-11-03 v0.5.1->v0.6.0] return {"prompt": text, "tags": tags, "tag_map": tag_map, "unknown": sorted(set(unknown)),

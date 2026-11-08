@@ -23,6 +23,7 @@ import {
   sceneAt, sceneOverlapAt, tailOverlapFrames, soundtrackLocked,
   effectiveStart, MAX_SCENE_SECONDS, // added 2026-11-03 v0.6.0 review: rollLengths
   dialogueSeconds, SECTION_KEYS, // added 2026-11-06 v0.9.0: captions and the inspector's summary
+  refClip, refTrimmed, refTokens, // added 2026-11-12 v0.14.0: reference clips on the lanes
 } from "../model.js";
 import { passLayout, passTextsOf } from "../passes.js"; // added 2026-11-06 v0.9.0: the pass at the playhead
 // [OLD 2026-11-06 v0.8.0->v0.9.0] import { uploadFiles } from "./assets.js";  (only the asset bin used it)
@@ -929,7 +930,12 @@ function refChips(ctx, s) {
     if (!a) continue;
     const kind = a.kind === "image" ? "pic" : a.kind === "video" ? "vid" : "aud";
     const what = r.role === "keyframe" ? `keyframe @ ${fmtTime(r.time)}` : r.role === "reference" ? (r.retention || a.defaults.retention) : r.role;
-    out.push(chip({ code: a.code, label: (a.name || "").slice(0, 18) + " · " + what, kind, help: "timeline.chip.ref" }));
+    // [OLD 2026-11-12 v0.13.1->v0.14.0] out.push(chip({ code: a.code, label: (a.name || "").slice(0, 18) + " · " + what, kind, help: "timeline.chip.ref" }));
+    // added 2026-11-12 v0.14.0: a clip shows its tag (V1.2) and the part of the file
+    const tok = (refTokens(p, s)[r.id] || "@" + a.code).slice(1);
+    const c = a.kind !== "image" && refTrimmed(r) ? refClip(r, a) : null;
+    const part = c ? ` · ${fmtTime(c.start, false)}–${c.end !== null ? fmtTime(c.end, false) : "end"}` : "";
+    out.push(chip({ code: tok, label: (a.name || "").slice(0, 18) + part + " · " + what, kind, help: "timeline.chip.ref" }));
   }
   // [OLD 2026-11-03 v0.5.1->v0.6.0] if (s.start.mode === "tail") out.push(chip({ code: "TAIL", label: `${s.start.overlap_frames} f of previous`, kind: "vid", help: "scene.start.tail" }));
   // added 2026-11-03 v0.6.0: the overlap it really gets (capped by both scenes' lengths), or that it is re-anchored
@@ -1195,7 +1201,9 @@ function renderLanes(ctx) {
     if (!near(x00, s.duration * z)) return; // added 2026-11-03 v0.6.0: far from the view
     // added 2026-11-03 v0.6.0: how it really starts (a re-anchored tail continues from the last frame only)
     const eff = si === 0 ? "fresh" : ov(s, si) * FPS > 1.5 ? "tail" : ov(s, si) > 0 ? "last_frame" : "fresh";
-    const picItems = [], audItems = [];
+    // [OLD 2026-11-12 v0.13.1->v0.14.0] const picItems = [], audItems = [];
+    const picItems = [], audItems = [], vidItems = []; // added 2026-11-12 v0.14.0: video clips in rows too
+    const tokens = refTokens(p, s); // added 2026-11-12 v0.14.0
     const anchored = s.cast.map(sc => findCast(p, sc.id)).filter(c => c?.anchors.length);
     if (anchored.length) picItems.push({ left: x0 + 3, width: w - 6, cls: "pic soft", label: anchored.map(c => c.name).join(" · ") + " · anchors", help: "timeline.lane.castAnchors", onClick: selectScene(s.id) });
     for (const sc of s.cast) {
@@ -1217,11 +1225,26 @@ function renderLanes(ctx) {
           const left = Math.min(x00 + t * z + 8, x0 + w - 40);
           picItems.push({ left, width: Math.max(34, Math.min(110, x0 + w - 3 - left)), cls: "pic", code: a.code, label: r.role === "keyframe" ? "@ " + fmtTime(r.time) : r.role.replace("_", " "), help: "timeline.lane.keyframe." + r.role, onClick: selectScene(s.id) });
         }
+      /* [OLD 2026-11-12 v0.13.1->v0.14.0] the whole file's length, every video bar on one row
       } else if (a.kind === "video") {
         vids.append(bar({ left: x0 + 3, width: Math.min(w - 6, (a.duration || 2) * z), cls: "vid", code: a.code, label: `${a.name || ""} · ${a.category || r.role}`, help: "timeline.lane.vidRef", onClick: selectScene(s.id) }));
         if (r.soundtrack) audItems.push({ left: x0 + 3, width: Math.min(w - 6, (a.duration || 2) * z), cls: "aud soft", code: a.code, label: "soundtrack", help: "timeline.lane.soundtrack", onClick: selectScene(s.id) });
       } else {
         audItems.push({ left: x0 + 3, width: Math.min(w - 6, (a.duration || 2) * z), cls: "aud", code: a.code, label: `${a.name || ""} · ${ret}`, help: "timeline.lane.audRef", onClick: selectScene(s.id) });
+      }
+      [/OLD] */
+      // added 2026-11-12 v0.14.0: each reference as its clip (From / To): its length, its @ tag and the part of the file
+      } else {
+        const c = refClip(r, a);
+        const len = Math.min(w - 6, Math.max(1, (c.seconds ?? 2) * z));
+        const tok = (tokens[r.id] || "@" + a.code).slice(1);
+        const part = refTrimmed(r) ? ` · ${fmtTime(c.start, false)}–${c.end !== null ? fmtTime(c.end, false) : "end"}` : "";
+        if (a.kind === "video") {
+          vidItems.push({ left: x0 + 3, width: len, cls: "vid", code: tok, label: `${a.name || ""}${part} · ${a.category || r.role}`, help: "timeline.lane.vidRef", onClick: selectScene(s.id) });
+          if (r.soundtrack) audItems.push({ left: x0 + 3, width: len, cls: "aud soft", code: tok, label: "its sound", help: "timeline.lane.soundtrack", onClick: selectScene(s.id) });
+        } else {
+          audItems.push({ left: x0 + 3, width: len, cls: "aud", code: tok, label: `${a.name || ""}${part} · ${ret}`, help: "timeline.lane.audRef", onClick: selectScene(s.id) });
+        }
       }
     }
     // [OLD 2026-11-03 v0.5.1->v0.6.0] if (s.start.mode === "last_frame") pics.append(diamond(x0, "pic", "timeline.lane.lastFrameAuto", true));
@@ -1232,6 +1255,7 @@ function renderLanes(ctx) {
     if (eff === "tail") vids.append(bar({ left: x00, width: ov(s, si) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
     placeRows(picItems, 2).forEach(it => pics.append(bar({ ...it, rows: 2 })));
     placeRows(audItems, 2).forEach(it => auds.append(bar({ ...it, rows: 2 })));
+    placeRows(vidItems, 2).forEach(it => vids.append(bar({ ...it, rows: 2 }))); // added 2026-11-12 v0.14.0
     s.shots.forEach((sh, k) => {
       // [OLD 2026-11-05 v0.7.0->v0.8.0] if (!sh.camera) return;
       if (!sh.camera && !sh.framing) return; // added 2026-11-05 v0.8.0: a framing alone is shown too

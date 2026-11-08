@@ -37,6 +37,8 @@ import {
 import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
 import { partOwner } from "../model.js"; // added 2026-11-08 v0.11.0: a prop that is part of a character
 import { scenePeople } from "../model.js"; // added 2026-11-12 v0.12.0: the characters a pose reference can be for
+import { refClip, refTrimmed, refTokens, snapFrame } from "../model.js"; // added 2026-11-12 v0.14.0: clips of video / audio references
+import { copyWithToast } from "../ui.js"; // added 2026-11-12 v0.14.0: copy a clip's @ tag
 
 // added 2026-11-03 v0.6.0: a render step changes nothing on this tab (status changes come with a full render), so
 // progress events no longer rebuild it
@@ -506,7 +508,8 @@ const SECTION_NAME = {
 
 function promptCard(ctx, s) {
   const p = ctx.p;
-  const cands = tagCandidates(p);
+  // [OLD 2026-11-12 v0.13.1->v0.14.0] const cands = tagCandidates(p);
+  const cands = tagCandidates(p, s); // added 2026-11-12 v0.14.0: with @V1.2 ...
   const tasks = derivedTasks(p, s);
   const raw = s.prompt.mode === "raw";
   const plan = passLayout(p, s);
@@ -992,7 +995,7 @@ function shotRow(ctx, s, sh, i, { plan, lens, prefix = "", label, sceneNumber, c
       seg("speed", sh.camera_speed, [["slow", "Slow"], ["", "Normal"], ["fast", "Fast"]], "Camera speed", "scene.shots.speed"),
       select({ options: framingOptions(), value: sh.framing || "", key: key("frame"), help: "scene.shots.framing", width: "136px", placeholder: "any framing",
         onChange: v => edit(x => { x.framing = v; }, "Framing") })),
-    codeEditor({ value: sh.text, key: key("text"), help: "scene.shots.text", candidates: tagCandidates(p), placeholder: "What happens in this shot: subject, action, sound. Use @tags for cast and assets.",
+    codeEditor({ value: sh.text, key: key("text"), help: "scene.shots.text", candidates: tagCandidates(p, s), /* v0.14.0: with the scene's @V1.2 ... */ placeholder: "What happens in this shot: subject, action, sound. Use @tags for cast and assets.",
       minRows: 2, maxHeight: 220, cls: "sans",
       onInput: v => ctx.actions.editScene(s.id, sc => { const x = sc.shots.find(q => q.id === sh.id); if (x) x.text = v; }, { coalesce: key("text"), render: false, label: "Shot text" }),
       onChange: () => ctx.store.notify() }));
@@ -1169,7 +1172,7 @@ function dialogueRow(ctx, s, d, { plan, prefix = "" }) {
         onChange: e => edit(x => { x.delivery = e.target.value; }, "Line delivery") }),
       h("span", { class: "rw-flex" }),
       button({ icon: "trash", small: true, variant: "ghost", help: "scene.dialogue.remove", key: key("del-btn"), onClick: () => ctx.actions.editScene(s.id, sc => { sc.dialogue = sc.dialogue.filter(x => x.id !== d.id); }, { label: "Remove line" }) })),
-    codeEditor({ value: d.text, key: key("text"), help: "scene.dialogue.text", candidates: tagCandidates(p), placeholder: "The spoken line, word for word.",
+    codeEditor({ value: d.text, key: key("text"), help: "scene.dialogue.text", candidates: tagCandidates(p, s), /* v0.14.0: with the scene's @V1.2 ... */ placeholder: "The spoken line, word for word.",
       minRows: 1, maxHeight: 160, cls: "sans",
       onInput: v => ctx.actions.editScene(s.id, sc => { const x = sc.dialogue.find(q => q.id === d.id); if (x) x.text = v; }, { coalesce: key("text"), render: false, label: "Line text" }),
       onChange: () => ctx.store.notify() }),
@@ -1289,7 +1292,7 @@ function previewCard(ctx, s) {
             copyButton({ label: "Copy prompt", text: () => prompts[i], key: `h3copy-${s.id}-${i + 1}`, help: "scene.preview.copy", what: "prompt" })) : null,
           // [OLD 2026-11-12 v0.13.0->v0.13.1] long && own  (a single-pass scene showed a hand-edited prompt as plain text, with no sign it was one)
           own && (long || String(overrides[String(i + 1)]).trim() !== "") // added 2026-11-12 v0.13.1
-            ? codeEditor({ value: overrides[String(i + 1)], help: "scene.preview.override", minRows: 6, maxHeight: 300, key: `pass-${s.id}-${i + 1}`, candidates: tagCandidates(ctx.p),
+            ? codeEditor({ value: overrides[String(i + 1)], help: "scene.preview.override", minRows: 6, maxHeight: 300, key: `pass-${s.id}-${i + 1}`, candidates: tagCandidates(ctx.p, s), /* v0.14.0: with the scene's @V1.2 ... */
               onInput: v => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts[String(i + 1)] = v; }, { coalesce: `pass-${s.id}-${i + 1}`, render: false }),
               onChange: () => ctx.store.notify() })
             : h("pre", { class: "rw-prompt-preview mono tall", help: "scene.preview", html: prompts[i] ? highlightHTML(prompts[i]) : "" },
@@ -1569,7 +1572,10 @@ function refsCard(ctx, s) {
               r.role === "pose" && poseCast(ctx, s, r, edit),
               (r.role === "keyframe" || r.role === "pose") && number({ value: Number(r.time.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "80px", unit: "s", help: r.role === "pose" ? "scene.refs.poseTime" : "scene.refs.time", key: `ref-t-${r.id}`, onChange: v => edit(r.id, x => { x.time = v ?? 0; }) }),
               r.role === "reference" && select({ options: retentionOptions(a.kind), value: ret, help: "scene.refs.retention", mono: true, key: `ref-ret-${r.id}`, onChange: v => edit(r.id, x => { x.retention = v === a.defaults.retention ? "" : v; }) }),
-              a.kind === "video" && toggle({ value: r.soundtrack, label: "soundtrack", help: "scene.refs.soundtrack", key: `ref-snd-${r.id}`, onChange: v => edit(r.id, x => { x.soundtrack = v; }) })),
+              // [OLD 2026-11-12 v0.13.1->v0.14.0] a.kind === "video" && toggle({ value: r.soundtrack, label: "soundtrack", help: "scene.refs.soundtrack", key: `ref-snd-${r.id}`, onChange: v => edit(r.id, x => { x.soundtrack = v; }) })),
+              a.kind === "video" && toggle({ value: r.soundtrack, label: "with sound", help: "scene.refs.soundtrack", key: `ref-snd-${r.id}`, onChange: v => edit(r.id, x => { x.soundtrack = v; }) })), // added 2026-11-12 v0.14.0: plainer label
+            // added 2026-11-12 v0.14.0: the part of a video or audio asset this reference sends
+            (a.kind === "video" || a.kind === "audio") && r.role === "reference" && clipEditor(ctx, s, r, a, edit),
             // [OLD 2026-11-03 v0.6.0 review] r.role === "reference" && keepChips({ values: r.keep.length ? r.keep : a.defaults.keep, help: "scene.refs.keep", onChange: v => edit(r.id, x => { x.keep = v; }) }),
             r.role === "reference" && keepChips({ values: r.keep.length ? r.keep : a.defaults.keep, help: "scene.refs.keep", key: `ref-keep-${r.id}`, onChange: v => edit(r.id, x => { x.keep = v; }) }), // added 2026-11-03 v0.6.0 review: key
             r.role === "pose" && poseNote(p, s, r, a), // added 2026-11-12 v0.12.0
@@ -1578,7 +1584,8 @@ function refsCard(ctx, s) {
               title: a.description || "", onClick: () => { ctx.store.setEph({ selectedAsset: a.id }); ctx.actions.setTab("assets"); } },
             a.description ? a.description : r.role === "reference" ? "No description: add one in the Assets tab" : "No description")));
       }),
-      addable.length ? h("div", { class: "rw-row" }, select({ options: addable, value: "", placeholder: "+ Add a reference…", help: "scene.refs.add", onChange: v => {
+      // [OLD 2026-11-12 v0.13.1->v0.14.0] addable.length ? h("div", { class: "rw-row" }, select({ options: addable, value: "", placeholder: "+ Add a reference…", help: "scene.refs.add", onChange: v => {
+      addable.length ? h("div", { class: "rw-row" }, select({ options: addable, value: "", placeholder: "+ Add a reference…", help: "scene.refs.add", key: `ref-add-${s.id}`, onChange: v => { // added 2026-11-12 v0.14.0: key
         const a = findAsset(p, v);
         // [OLD 2026-11-12 v0.11.0->v0.12.0] if (a) ctx.actions.editScene(s.id, sc => { sc.refs.push({ id: newId("r"), asset: a.id, role: a.defaults.role, time: 0, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack }); });
         // added 2026-11-12 v0.12.0: cast (a pose picture's default role starts it with the scene's first character)
@@ -1587,6 +1594,147 @@ function refsCard(ctx, s) {
       } })) : h("div", { class: "rw-dim small" }, "Upload assets in the Assets tab first."),
     ],
   });
+}
+
+// ---- added 2026-11-12 v0.14.0: clips of video and audio references (Sencer: "when using video or audio references,
+// allow to select from-to timestamps/frames of source video. we should be able to use the same video/audio asset in a
+// single scene multiple times, with different start/end timestamps/durations, with or without audio (for videos)").
+// Each reference has From / To (r.in / r.out, seconds on whole frames; To empty = the asset's end). The fields take
+// seconds (4.5), frames (108f) or a time (0:04.5, 1:02:03.25). The bar shows the clip in the whole file; drag its ends.
+// Preview plays the file: From here / To here take its position, Play clip plays From to To. Each reference's @ tag
+// (@V1, @V1.2 for the second one of V1) names that clip in the prompt.
+
+// "4.5", "4.5s", "108f", "0:04.5", "1:02:03.25" -> seconds; "" -> null; anything else -> NaN
+export function parseClipTime(text) {
+  const t = String(text ?? "").trim().toLowerCase().replace(",", ".");
+  if (!t) return null;
+  let m = /^(\d+(?:\.\d+)?)\s*f$/.exec(t);
+  if (m) return Number(m[1]) / FPS;
+  m = /^(\d+(?:\.\d+)?)\s*s?$/.exec(t);
+  if (m) return Number(m[1]);
+  m = /^(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(t);
+  if (m) return (Number(m[1] || 0) * 60 + Number(m[2])) * 60 + Number(m[3]);
+  return NaN;
+}
+
+function clipTimeField(ctx, { label, value, placeholder, help, key, onCommit }) {
+  const show = v => (v === null || v === undefined ? "" : fmtTime(v));
+  return h("label", { class: "rw-clip-field", help },
+    h("span", { class: "rw-dim small" }, label, value !== null && value !== undefined && h("span", { class: "mono" }, ` · ${framesOf(value)} f`)),
+    h("input", {
+      type: "text", class: "rw-input mono", value: show(value), placeholder, help, key, spellcheck: false,
+      onChange: e => {
+        const v = parseClipTime(e.target.value);
+        if (Number.isNaN(v)) { e.target.value = show(value); ctx.actions.toast("Type seconds (4.5), frames (108f) or a time (0:04.5).", "warn"); return; }
+        onCommit(v === null ? null : snapFrame(Math.max(0, v)));
+      },
+      onKeydown: e => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } },
+    }));
+}
+
+function clipEditor(ctx, s, r, a, edit) {
+  const c = refClip(r, a);
+  const dur = Number(a.duration) || 0;
+  const tok = refTokens(ctx.p, s)[r.id] || "@" + a.code;
+  const many = s.refs.filter(x => x.asset === a.id && x.role === "reference").length > 1;
+  const secs = c.seconds;
+  const bad = dur > 0 && c.start >= dur - 0.5 / FPS ? `starts after the end of ${a.code} (${fmtTime(dur)})`
+    : r.out !== null && r.out !== undefined && r.out <= c.start + 0.5 / FPS ? "ends before it starts"
+      : "";
+  const note = bad || (secs !== null && secs > 15 + 1e-6 ? "only the first 15 s is sent" : secs !== null && secs < 2 - 1e-6 ? "H3 references are 2–15 s" : "");
+  const open = !!ctx.eph.clipPreview?.[r.id];
+  const setOpen = v => ctx.store.setEph({ clipPreview: { ...(ctx.eph.clipPreview || {}), [r.id]: v } });
+  return h("div", { class: "rw-clip", help: "scene.refs.clip" },
+    h("div", { class: "rw-row rw-clip-row" },
+      h("button", { type: "button", class: ["rw-clip-tok mono", many && "many"], help: "scene.refs.token", key: `clip-tok-${r.id}`,
+        onClick: e => copyWithToast(tok, e.currentTarget, "tag") }, tok),
+      h("span", { class: "rw-dim small rw-ellipsis" }, refTrimmed(r) ? "a part of the file" : "the whole file"),
+      h("span", { class: "rw-flex" }),
+      refTrimmed(r) && button({ label: "Whole file", small: true, variant: "ghost", help: "scene.refs.clipReset", key: `clip-reset-${r.id}`, onClick: () => edit(r.id, x => { x.in = 0; x.out = null; }) }),
+      button({ label: open ? "Hide" : "Preview", icon: a.kind === "video" ? "video" : "audio", small: true, variant: "ghost", help: "scene.refs.clipPreview", key: `clip-prev-${r.id}`, onClick: () => setOpen(!open) })),
+    h("div", { class: "rw-clip-grid" },
+      clipTimeField(ctx, { label: "From", value: r.in || 0, help: "scene.refs.clipFrom", key: `clip-in-${r.id}`, onCommit: v => edit(r.id, x => { x.in = v ?? 0; }) }),
+      clipTimeField(ctx, { label: "To", value: r.out ?? null, placeholder: "end", help: "scene.refs.clipTo", key: `clip-out-${r.id}`,
+        onCommit: v => edit(r.id, x => { x.out = v; }) }),
+      clipTimeField(ctx, { label: "Length", value: secs, placeholder: "?", help: "scene.refs.clipLength", key: `clip-len-${r.id}`,
+        onCommit: v => edit(r.id, x => { x.out = v === null ? null : snapFrame((x.in || 0) + Math.max(1 / FPS, v)); }) })),
+    dur > 0 && clipBar(ctx, r, a, c, edit),
+    note && h("div", { class: ["rw-note", bad ? "err" : "warn", "rw-clip-note"], help: "scene.refs.clip" }, icon("warn", 12), `${tok} ${note}.`),
+    open && clipPreview(ctx, r, a, c, edit));
+}
+
+// the whole file as a bar with the clip on it; drag an end to move From / To (on frames)
+function clipBar(ctx, r, a, c, edit) {
+  const dur = Number(a.duration) || 0;
+  const end = c.end ?? dur;
+  const pct = t => Math.max(0, Math.min(100, (t / dur) * 100)) + "%";
+  const sel = h("span", { class: "rw-clip-sel", style: { left: pct(c.start), width: `calc(${pct(end)} - ${pct(c.start)})` } });
+  const tip = h("span", { class: "rw-clip-tip mono" });
+  const bar = h("div", { class: "rw-clip-bar", help: "scene.refs.clipBar" }, sel, tip);
+  const handle = which => {
+    const el = h("span", { class: ["rw-clip-h", which], help: "scene.refs.clipBar", style: { left: pct(which === "in" ? c.start : end) } });
+    el.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      let v = which === "in" ? c.start : end;
+      const move = ev => {
+        const rect = bar.getBoundingClientRect();
+        const t = snapFrame(Math.max(0, Math.min(dur, ((ev.clientX - rect.left) / Math.max(1, rect.width)) * dur)));
+        v = which === "in" ? Math.min(t, end - 1 / FPS) : Math.max(t, c.start + 1 / FPS);
+        el.style.left = pct(v);
+        const a0 = which === "in" ? v : c.start, b0 = which === "in" ? end : v;
+        sel.style.left = pct(a0);
+        sel.style.width = `calc(${pct(b0)} - ${pct(a0)})`;
+        tip.textContent = `${fmtTime(a0)} – ${fmtTime(b0)} · ${(b0 - a0).toFixed(2)} s`;
+        tip.style.left = pct(v);
+        bar.classList.add("dragging");
+      };
+      const up = ev => {
+        window.removeEventListener("pointermove", move, true);
+        window.removeEventListener("pointerup", up, true);
+        window.removeEventListener("pointercancel", up, true);
+        bar.classList.remove("dragging");
+        if (ev.type === "pointercancel") return;
+        if (which === "in" && v !== c.start) edit(r.id, x => { x.in = v; });
+        if (which === "out" && v !== end) edit(r.id, x => { x.out = v >= dur - 0.5 / FPS ? null : v; });
+      };
+      window.addEventListener("pointermove", move, true);
+      window.addEventListener("pointerup", up, true);
+      window.addEventListener("pointercancel", up, true);
+    });
+    return el;
+  };
+  bar.append(handle("in"), handle("out"));
+  return bar;
+}
+
+// the file in a player kept across renders; From here / To here / Play clip
+function clipPreview(ctx, r, a, c, edit) {
+  const url = viewURL(a.file, "input");
+  const el = kept(ctx, "clip-" + r.id, url, () => {
+    const m = h(a.kind === "video" ? "video" : "audio", { class: "rw-clip-media", src: url, controls: true, preload: "metadata", playsinline: true });
+    m.addEventListener("timeupdate", () => { if (m.__rwStopAt != null && m.currentTime >= m.__rwStopAt) { m.pause(); m.__rwStopAt = null; } });
+    return m;
+  });
+  const end = c.end;
+  return h("div", { class: "rw-clip-prev", help: "scene.refs.clipPreview" }, el,
+    h("div", { class: "rw-row wrap" },
+      button({ label: "From here", small: true, help: "scene.refs.clipHere", key: `clip-here-in-${r.id}`, onClick: () => {
+        const t = snapFrame(el.currentTime || 0);
+        edit(r.id, x => { x.in = t; if (x.out !== null && x.out !== undefined && x.out <= t) x.out = null; });
+      } }),
+      button({ label: "To here", small: true, help: "scene.refs.clipHere", key: `clip-here-out-${r.id}`, onClick: () => {
+        const t = snapFrame(el.currentTime || 0);
+        if (t <= (r.in || 0)) { ctx.actions.toast("To must be after From.", "warn"); return; }
+        edit(r.id, x => { x.out = t; });
+      } }),
+      button({ label: "Play clip", icon: "play", small: true, help: "scene.refs.clipPlay", key: `clip-play-${r.id}`, onClick: () => {
+        el.currentTime = c.start;
+        el.__rwStopAt = end ?? null;
+        el.play?.()?.catch?.(() => {});
+      } }),
+      h("span", { class: "rw-dim small mono" }, `${fmtTime(c.start)} – ${end !== null ? fmtTime(end) : "end"}`)));
 }
 
 // added 2026-11-12 v0.12.0: pose references (role "pose"): a picture whose body pose one character of the scene takes,

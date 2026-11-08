@@ -8,6 +8,7 @@ With the switch off everything is exactly as in v0.6.1: tests/data/v061_continua
 
 import copy
 import json
+import re  # added 2026-11-12 v0.14.0
 import os
 
 import pytest
@@ -21,6 +22,14 @@ from reelwright.storage import ProjectStore
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "v061_continuation.json")
 BUILD_KEYS = ("prompt", "tags", "tag_map", "unknown", "issues", "images", "videos", "audios", "guides", "subjects")
+
+
+def _v061_tags(b):
+    """added 2026-11-12 v0.14.0: a build without the tag map's @V1.2 style entries (a scene's further references of an
+    asset), which v0.6.1 did not write; the cache key does not read the tag map."""
+    b = dict(b)
+    b["tag_map"] = {k: v for k, v in b["tag_map"].items() if not re.fullmatch(r"@[PVA]\d+\.\d+", k)}
+    return b
 
 
 @pytest.fixture(scope="module")
@@ -95,6 +104,11 @@ def test_off_gives_the_v061_builds_and_cache_keys(v061, roots):
         for sid, want in expect.items():
             sr = r["scenes"][sid]
             got = [{k: b[k] for k in BUILD_KEYS} for b in sr["builds"]]
+            # [OLD 2026-11-12 v0.13.1->v0.14.0] assert json.loads(json.dumps(got)) == want["builds"], sid
+            # added 2026-11-12 v0.14.0: the tag map also names a scene's further references of an asset (@V1.2); the
+            # cache key does not read the tag map, so everything else is still v0.6.1's
+            for g in got:
+                g["tag_map"] = {k: v for k, v in g["tag_map"].items() if not re.fullmatch(r"@[PVA]\d+\.\d+", k)}
             assert json.loads(json.dumps(got)) == want["builds"], sid
             assert all(b["continuation"] is None for b in sr["builds"]), sid
             assert sr["pass_keys"] == want["pass_keys"], sid
@@ -124,8 +138,10 @@ def test_v080_changes_only_the_summary_of_multi_pass_scenes_with_a_written_summa
                 now, old = _sections(b["prompt"]), _sections(was["prompt"])
                 assert {k: v for k, v in now.items() if k != "summary"} == \
                     {k: v for k, v in old.items() if k != "summary"}, s["id"]
-                assert {k: b[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")} == \
-                    {k: was[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")}, s["id"]
+                # [OLD 2026-11-12 v0.13.1->v0.14.0] assert {k: b[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")} == \
+                # [OLD 2026-11-12 v0.13.1->v0.14.0]     {k: was[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")}, s["id"]
+                assert {k: _v061_tags(b)[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")} == \
+                    {k: was[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")}, s["id"]  # added 2026-11-12 v0.14.0
             if multi and written:
                 changed.append(s["id"])
                 assert all(_sections(b["prompt"])["summary"] != _sections(w["prompt"])["summary"]

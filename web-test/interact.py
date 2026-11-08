@@ -1515,6 +1515,7 @@ def main():
         v0120_checks(page, check, saved, shots)  # added 2026-11-12 v0.12.0: pose references
         v0130_checks(page, check, saved, shots)  # added 2026-11-12 v0.13.0: Chat tab; a new take keeps playing; full screen
         v0131_checks(page, check, saved, shots)  # added 2026-11-12 v0.13.1: what a duplicated scene keeps; drag scenes to reorder
+        v0140_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.0: clips of video and audio references
         browser.close()
     httpd.shutdown()
 
@@ -4888,6 +4889,148 @@ def v0131_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
     check(order() == before, f"a drag up or down pans and moves no scene: {order()[:4]}")
     audit("timeline after drags")
+    load(json.loads(saved))
+
+
+def v0140_checks(page, check, saved, shots):
+    """v0.14.0 (Sencer): "when using video or audio references, allow to select from-to timestamps/frames of source video.
+    we should be able to use the same video/audio asset in a single scene multiple times, with different start/end
+    timestamps/durations, with or without audio (for videos)"."""
+    import os
+    import subprocess
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def pick(k, text):
+        loc = page.locator(f"input[data-key='{k}']")
+        loc.click()
+        loc.fill(text)
+        page.wait_for_timeout(150)
+        loc.press("Enter")
+        page.wait_for_timeout(300)
+
+    def typ(k, text):
+        loc = page.locator(f"input[data-key='{k}']")
+        loc.click()
+        loc.fill(text)
+        loc.press("Enter")
+        page.wait_for_timeout(300)
+
+    refs = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project.scenes[0].refs))")
+    ref = lambda rid: next(r for r in refs() if r["id"] == rid)
+    toasts = lambda: " | ".join(page.locator(".rw-toast").all_inner_texts())
+    budget = lambda: page.evaluate("""async () => { const m = await import('/web/rw/model.js'); const p = window.__editor.project;
+      return m.sceneBudget(p, p.scenes[0]); }""")
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    a_v1 = next(a for a in q["assets"] if a["code"] == "V1")
+    a_v1["duration"] = 10.0
+    q["ui"].update(tab="scene", selected="s_01")
+    load(q)
+    page.evaluate("window.__editor.store.setEph({ toasts: [] })")
+
+    # 1. each video / audio reference has a clip editor with its @ tag; the sound toggle says what it does
+    check(page.locator(".rw-clip").count() == 2 and page.locator("[data-key='clip-tok-r_1']").inner_text() == "@V1"
+          and page.locator("[data-key='clip-tok-r_2']").inner_text() == "@A1", f"clip editors and tags: {page.locator('.rw-clip-tok').all_inner_texts()}")
+    check("with sound" in page.locator("[data-key='ref-snd-r_1']").locator("xpath=..").inner_text(), "the video's sound toggle reads 'with sound'")
+
+    # 2. From / To / Length take seconds, frames and times, on whole frames
+    typ("clip-in-r_1", "1.51")
+    typ("clip-out-r_1", "90f")
+    r = ref("r_1")
+    check(r["in"] == 1.5 and r["out"] == 3.75, f"From 1.51 s -> 1.5 (a frame), To 90f -> 3.75 s: {r['in']} {r['out']}")
+    check(page.locator("input[data-key='clip-len-r_1']").input_value() == "00:02.250", f"length {page.locator('input[data-key=clip-len-r_1]').input_value()}")
+    typ("clip-len-r_1", "0:02")
+    check(ref("r_1")["out"] == 3.5, f"Length 0:02 moves To: {ref('r_1')['out']}")
+    typ("clip-in-r_1", "abc")
+    check(ref("r_1")["in"] == 1.5 and "frames (108f)" in toasts() and page.locator("input[data-key='clip-in-r_1']").input_value() == "00:01.500",
+          f"bad text is put back: {ref('r_1')['in']} {toasts()!r}")
+
+    # 3. the same video again: its own clip, @V1.2, with its sound
+    pick("ref-add-s_01", "V1")
+    rs = refs()
+    second = rs[-1]
+    check(len(rs) == 3 and second["asset"] == "a_v1", f"the same asset can be added again: {[x['asset'] for x in rs]}")
+    tok2 = page.locator(f"[data-key='clip-tok-{second['id']}']")
+    check(tok2.inner_text() == "@V1.2" and "many" in (tok2.get_attribute("class") or ""), f"the second one is @V1.2: {tok2.inner_text()}")
+    typ(f"clip-in-{second['id']}", "6")
+    typ(f"clip-out-{second['id']}", "7")
+    note = page.locator(".rw-clip-note").all_inner_texts()
+    check(any("@V1.2 H3 references are 2–15 s" in n for n in note), f"a 1 s clip is warned: {note}")
+    page.locator(f"[data-key='ref-snd-{second['id']}']").click()
+    page.wait_for_timeout(300)
+    b = budget()
+    check(b["videos"] == 2 and abs(b["videoSeconds"] - 3.0) < 1e-6 and b["audio"] == 2, f"the budget counts each clip: {b}")
+
+    # 4. drag the end of the bar: To follows (on frames)
+    bar = page.locator(f"[data-key='clip-tok-{second['id']}']").locator("xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' rw-clip ')][1]").locator(".rw-clip-bar")
+    bb = bar.bounding_box()
+    hb = bar.locator(".rw-clip-h.out").bounding_box()
+    page.mouse.move(hb["x"] + hb["width"] / 2, hb["y"] + hb["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(bb["x"] + bb["width"] * 0.9, hb["y"] + hb["height"] / 2, steps=6)
+    tipv = bar.locator(".rw-clip-tip").inner_text()
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    out2 = ref(second["id"])["out"]
+    check(8.7 < out2 < 9.3 and abs(out2 * 24 - round(out2 * 24)) < 1e-9 and "00:06.000 –" in tipv, f"dragging To: {out2} tip {tipv!r}")
+    shots and page.screenshot(path=os.path.join(shots, "v0140_clips.png"))
+
+    # 5. the tag in the prompt: known (no warning) and @V1.9 is plain text
+    page.evaluate("window.__editor.store.update(p => { p.scenes[0].prompt.sections.detailed_description = 'The camera moves as @V1.2 does.'; })")
+    page.wait_for_timeout(400)
+    warns = page.locator(".rw-note.warn").all_inner_texts()
+    check(not any("@V1.2" in w for w in warns), f"@V1.2 is a known tag: {warns}")
+    page.evaluate("window.__editor.store.update(p => { p.scenes[0].prompt.sections.detailed_description = 'like @V1.9'; })")
+    page.wait_for_timeout(400)
+    warns = page.locator(".rw-note.warn").all_inner_texts()
+    check(any("@V1.9" in w and "plain text" in w for w in warns), f"@V1.9 is plain text: {warns}")
+
+    # 6. Preview: From here / To here take the player's position; Play clip plays From to To
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots")
+    path = os.path.join(d, "rw_take_a.webm")
+    if not os.path.exists(path):
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=160x90:r=24:d=10",
+                        "-c:v", "libvpx", "-b:v", "200k", path], check=True)
+    page.evaluate("""async () => {
+      const host = window.__host, orig = host.__origApiURL || host.apiURL.bind(host);
+      host.__origApiURL = orig;
+      const blob = URL.createObjectURL(await (await fetch('/web-test/shots/rw_take_a.webm')).blob());
+      host.apiURL = path => /dolly_in/.test(path) ? blob : orig(path);
+    }""")
+    page.locator("[data-key='clip-prev-r_1']").click()
+    page.wait_for_timeout(800)
+    media_ok = page.evaluate("""async () => { const v = document.querySelector('.rw-clip-media');
+      if (!v) return 'none'; if (v.readyState < 1) await new Promise(r => { v.onloadedmetadata = r; setTimeout(r, 3000); });
+      v.currentTime = 2.5; await new Promise(r => setTimeout(r, 300)); return v.currentTime; }""")
+    page.locator("[data-key='clip-here-in-r_1']").click()
+    page.wait_for_timeout(300)
+    r1 = ref("r_1")
+    check(media_ok == 2.5 and r1["in"] == 2.5 and r1["out"] == 3.5, f"From here: {media_ok} {r1['in']} {r1['out']}")
+    page.evaluate("async () => { const v = document.querySelector('.rw-clip-media'); v.currentTime = 4.25; await new Promise(r => setTimeout(r, 300)); }")
+    page.locator("[data-key='clip-here-out-r_1']").click()
+    page.wait_for_timeout(300)
+    check(ref("r_1")["out"] == 4.25, f"To here: {ref('r_1')['out']}")
+    page.locator("[data-key='clip-play-r_1']").click()
+    page.wait_for_timeout(2600)
+    st = page.evaluate("() => { const v = document.querySelector('.rw-clip-media'); return { t: v.currentTime, paused: v.paused }; }")
+    check(st["paused"] and 4.2 <= st["t"] <= 4.6, f"Play clip stops at To: {st}")
+    page.evaluate("window.__editor.store.notify()")
+    page.wait_for_timeout(300)
+    check(page.evaluate("document.querySelector('.rw-clip-media') && Math.abs(document.querySelector('.rw-clip-media').currentTime - " + str(st["t"]) + ") < 0.01"),
+          "the preview survives a re-render")
+    page.locator("[data-key='clip-reset-r_1']").click()
+    page.wait_for_timeout(300)
+    check(ref("r_1")["in"] == 0 and ref("r_1")["out"] is None, f"Whole file resets: {ref('r_1')}")
+
+    # 7. the timeline shows each clip with its tag
+    page.evaluate("window.__editor.actions.setTab('timeline')")
+    page.wait_for_timeout(500)
+    codes = page.locator(".rw-lane-body .rw-bar.vid .rw-bar-code, .rw-lane-body .vid .code").all_inner_texts()
+    lane = page.evaluate("() => [...document.querySelectorAll('.rw-lane-body')].map(x => x.textContent).join(' | ')")
+    check("V1.2" in lane, f"the timeline names the second clip V1.2: {lane[:300]}")
+    page.evaluate("""() => { const host = window.__host; if (host.__origApiURL) host.apiURL = host.__origApiURL; }""")
     load(json.loads(saved))
 
 

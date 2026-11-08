@@ -1081,3 +1081,22 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-scene-drop.same { border-left-color: var(--dim); opacity: 0.7; }
 .rw-scene-drop-label { position: absolute; left: 6px; top: 26px; padding: 3px 7px; border-radius: 5px; background: #eceef2; color: #14161b; font-size: 10.5px; white-space: nowrap; }
 .rw-scene-drop.same .rw-scene-drop-label { background: #3a3f4b; color: #d6d9e0; }
+
+/* added 2026-11-12 v0.14.0: clips of video and audio references (scene.js clipEditor) */
+.rw-clip { display: flex; flex-direction: column; gap: 7px; padding: 7px 8px 8px; border: 1px solid var(--line2); border-radius: 7px; background: rgba(255, 255, 255, 0.015); }
+.rw-clip-row { gap: 6px; align-items: center; }
+.rw-clip-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.rw-clip-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rw-clip-field .rw-input { width: 100%; height: 24px; font-size: 11px; padding: 0 6px; }
+.rw-clip-tok { height: 20px; padding: 0 7px; border-radius: 5px; border: 1px solid var(--line3); background: transparent; font-size: 10.5px; color: var(--text2); cursor: pointer; }
+.rw-clip-tok.many { border-color: rgba(167, 139, 250, 0.6); color: var(--vid-t); background: rgba(167, 139, 250, 0.1); }
+.rw-clip-tok:hover { border-color: var(--text3); }
+.rw-clip-bar { position: relative; height: 12px; margin: 4px 6px 2px; border-radius: 6px; background: #1b1e25; border: 1px solid var(--line); }
+.rw-clip-sel { position: absolute; top: 0; bottom: 0; border-radius: 5px; background: rgba(167, 139, 250, 0.38); }
+.rw-clip-h { position: absolute; top: -4px; width: 8px; height: 18px; margin-left: -4px; border-radius: 3px; background: #eceef2; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); cursor: ew-resize; touch-action: none; }
+.rw-clip-tip { position: absolute; top: -22px; transform: translateX(-50%); padding: 1px 6px; border-radius: 4px; background: #eceef2; color: #14161b; font-size: 10px; white-space: nowrap; pointer-events: none; display: none; z-index: 3; }
+.rw-clip-bar.dragging .rw-clip-tip { display: block; }
+.rw-clip-note { padding: 4px 8px; }
+.rw-clip-prev { display: flex; flex-direction: column; gap: 6px; }
+.rw-clip-media { width: 100%; max-height: 220px; border-radius: 6px; background: #000; }
+audio.rw-clip-media { height: 34px; background: transparent; }

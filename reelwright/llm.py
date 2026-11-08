@@ -900,6 +900,7 @@ def preserved_warnings(before, after):
 def scene_context(p, scene):
     idx_assets = {a["id"]: a for a in p["assets"]}
     cast = {c["id"]: c for c in p["cast"]}
+    tokens = _model.ref_tokens(p, scene) if hasattr(_model, "ref_tokens") else {}  # added 2026-11-12 v0.14.0
     refs = []
     for r in scene["refs"]:
         a = idx_assets.get(r["asset"])
@@ -917,9 +918,23 @@ def scene_context(p, scene):
                 who = cast.get(r.get("cast") or "")
                 role = "pose for {}: only the body pose is used, the person in it does not appear".format(
                     _prompt.tag_token(who["name"]) if who else "nobody yet")
-            refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], role,
-                                                   ", at {:.2f}s".format(r["time"]) if r["role"] in ("keyframe", "pose") else "",
-                                                   " - " + desc if desc else ""))
+            # [OLD 2026-11-12 v0.13.1->v0.14.0] refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], role,
+            # [OLD 2026-11-12 v0.13.1->v0.14.0]                                        ", at {:.2f}s".format(r["time"]) if r["role"] in ("keyframe", "pose") else "",
+            # [OLD 2026-11-12 v0.13.1->v0.14.0]                                        " - " + desc if desc else ""))
+            # added 2026-11-12 v0.14.0: a video or audio reference names its clip (@V1.2 for the second one of V1) and
+            # whether a video's own sound goes with it
+            tok = tokens.get(r["id"], "@" + a["code"])
+            clip = ""
+            if a["kind"] in ("video", "audio") and r["role"] == "reference" and hasattr(_model, "ref_clip"):
+                c = _model.ref_clip(r, a)
+                if _model.ref_trimmed(r):
+                    clip = ", the part from {} to {} of the file".format(
+                        spec.fmt_time(c["start"]), spec.fmt_time(c["end"]) if c["end"] is not None else "its end")
+                if a["kind"] == "video":
+                    clip += ", with its own sound" if r.get("soundtrack") else ", picture only"
+            refs.append("{} {} ({}, {}{}{}){}".format(tok, a["name"] or a["file"], a["kind"], role,
+                                                    ", at {:.2f}s".format(r["time"]) if r["role"] in ("keyframe", "pose") else "",
+                                                    clip, " - " + desc if desc else ""))
     people = []
     for e in scene["cast"]:
         c = cast.get(e["id"])
@@ -1308,6 +1323,8 @@ def _scene_tokens(p, scene, tag_map=None):
     for r in scene["refs"]:
         if r.get("asset") in idx:
             keys.add(_prompt.name_key(idx[r["asset"]]["code"]))
+    if hasattr(_model, "ref_tokens"):  # added 2026-11-12 v0.14.0: @V1.2 ...
+        keys |= {_prompt.name_key(tok[1:]) for tok in _model.ref_tokens(p, scene).values()}
     for e in scene["cast"]:
         c = cast.get(e.get("id"))
         if not c:

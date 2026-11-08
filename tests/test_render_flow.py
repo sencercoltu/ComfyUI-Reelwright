@@ -735,6 +735,49 @@ def test_reference_media_are_cut_before_decoding(comfy, tmp_path):
     assert a["waveform"].shape[-1] / a["sample_rate"] == pytest.approx(15, abs=0.01)
 
 
+def test_reference_clips_start_at_their_from(comfy, tmp_path):
+    """added 2026-11-12 v0.14.0: media.load_video / load_audio read a reference's clip from its From."""
+    from reelwright import media, merge
+    ff = merge.ffmpeg_bin()
+    path = str(tmp_path / "ramp.mp4")
+    subprocess.run([ff, "-loglevel", "error", "-y", "-f", "lavfi", "-i", "nullsrc=s=32x16:r=24:d=10,geq=lum='T*20':cb=128:cr=128",
+                    "-f", "lavfi", "-i", "aevalsrc='t/10':d=10:s=16000", "-shortest", "-pix_fmt", "yuv420p", path], check=True)
+    whole, _ = media.load_video(path, max_seconds=10)
+    frames, audio = media.load_video(path, max_seconds=3.0, max_frames=360, start=4.0)
+    assert frames.shape[0] == 72
+    assert abs(float(frames[0].float().mean()) - float(whole[96].float().mean())) < 0.03
+    assert abs(float(frames[-1].float().mean()) - float(whole[96 + 71].float().mean())) < 0.03
+    assert audio["waveform"].shape[-1] / audio["sample_rate"] == pytest.approx(3.0, abs=0.05)
+    assert float(audio["waveform"][..., :50].mean()) == pytest.approx(0.4, abs=0.03)
+    wav = str(tmp_path / "ramp.wav")
+    subprocess.run([ff, "-loglevel", "error", "-y", "-f", "lavfi", "-i", "aevalsrc='t/10':d=10:s=16000", wav], check=True)
+    a = media.load_audio(wav, max_seconds=2.0, start=5.0)
+    assert a["waveform"].shape[-1] / a["sample_rate"] == pytest.approx(2.0, abs=0.01)
+    assert float(a["waveform"][..., :50].mean()) == pytest.approx(0.5, abs=0.01)
+
+
+def test_reference_clips_reach_the_encoder(stubs, harbor, store, roots):
+    """added 2026-11-12 v0.14.0: the same video twice, as two clips (one with its sound), and an audio clip."""
+    render, calls, events = stubs
+    from reelwright import merge
+    harbor["global"]["output"].update(width=64, height=32)
+    s = harbor["scenes"][1]
+    s["refs"][1].update({"in": 0.5, "out": None})
+    s["refs"].append({"id": "r_dolly2", "asset": "a_dolly", "role": "reference", "in": 1.0, "out": 3.0, "soundtrack": True,
+                      "time": 0.0, "retention": "", "keep": [], "cast": ""})
+    harbor["assets"].append({"id": "a_amb", "kind": "audio", "code": "A9", "name": "rain",
+                             "file": "reelwright/harbor_lights/rain.wav", "duration": 4.2})
+    s["refs"].append({"id": "r_amb", "asset": "a_amb", "role": "reference", "in": 1.0, "out": 2.5, "time": 0.0,
+                      "retention": "", "keep": [], "cast": "", "soundtrack": False})
+    _real_assets(harbor, roots)
+    render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_one", "s_long"]}).run()
+    enc = next(e for e in calls["encode"] if len(e["video_frames"]) >= 2)
+    # 1.0-3.0 s = 48 frames; 0.5 s to the end of the 4.2 s file = 3.7 s, as many frames as the file has left (88-89)
+    assert 48 in enc["video_frames"] and any(x in enc["video_frames"] for x in (88, 89)), enc["video_frames"]
+    assert 2.0 in [round(x, 1) for x in enc["video_audio_secs"].values()]
+    assert 1.5 in [round(x, 2) for x in enc["audio_secs"]]
+
+
 def test_audio_references_are_trimmed_to_15_seconds(stubs, harbor, store, roots):
     render, calls, events = stubs
     from reelwright import merge

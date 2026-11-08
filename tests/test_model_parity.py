@@ -174,7 +174,17 @@ def harbor_like():
                   {"id": "r_pose", "asset": "a_pose", "role": "pose", "cast": "c_mara", "time": 20.0},
                   {"id": "r_pose_end", "asset": "a_pose", "role": "pose", "cast": "c_tom", "time": 99.0},
                   {"id": "r_pose_x", "asset": "a_belly", "role": "pose", "cast": "c_nobody", "time": 1.0},
-                  {"id": "r_pose_snd", "asset": "a_amb", "role": "pose", "cast": "c_mara", "time": 1.0}],
+                  {"id": "r_pose_snd", "asset": "a_amb", "role": "pose", "cast": "c_mara", "time": 1.0},
+                  # added 2026-11-12 v0.14.0: clips: the dolly again from 1 s to 3.5 s with its sound, from 2 s to its
+                  # end, the rain from 2 s to 4 s (twice: sent once), Mara's voice from 0.5 s (a clip of its own), a To
+                  # past the end, a From past the end
+                  {"id": "r_dolly_b", "asset": "a_dolly", "role": "reference", "in": 1.0, "out": 3.5, "soundtrack": True},
+                  {"id": "r_dolly_c", "asset": "a_dolly", "role": "reference", "in": "2"},
+                  {"id": "r_amb_clip", "asset": "a_amb", "role": "reference", "in": 2.0, "out": 4.0},
+                  {"id": "r_amb_clip2", "asset": "a_amb", "role": "reference", "in": 2.0, "out": 4.0},
+                  {"id": "r_voice_clip", "asset": "a_voice", "role": "reference", "in": 0.5},
+                  {"id": "r_amb_long", "asset": "a_amb", "role": "reference", "in": 5.0, "out": 99.0},
+                  {"id": "r_amb_late", "asset": "a_amb", "role": "reference", "in": 9.0}],
          "shots": [{"t": 0}, {"t": 6}, {"t": 14.375}, {"t": 22}],
          "dialogue": [{"id": "d_1", "speaker": "c_mara", "t": 3.0, "text": "a"},
                       {"id": "d_2", "speaker": "c_tom", "t": 28.0, "text": "b"}]},
@@ -229,7 +239,10 @@ def malformed():
             # [OLD 2026-11-12 v0.12.0] "refs": [{"id": "r", "asset": 3, "role": "x", "time": "1.5", "keep": ["a", 1, None, {}],
             # [OLD 2026-11-12 v0.12.0]           "soundtrack": 1}, {"id": "r"}, 7],
             "refs": [{"id": "r", "asset": 3, "role": "x", "time": "1.5", "keep": ["a", 1, None, {}],
-                      "soundtrack": 1}, {"id": "r"}, 7, {"role": "pose", "cast": 5, "time": "x"}],  # v0.12.0: pose
+                      "soundtrack": 1}, {"id": "r"}, 7, {"role": "pose", "cast": 5, "time": "x"},  # v0.12.0: pose
+                     # added 2026-11-12 v0.14.0: From / To as text, negative, past a frame, zero, not a number
+                     {"in": "1.02", "out": "3.51"}, {"in": -2, "out": -1}, {"in": 1.0208333, "out": 0},
+                     {"in": "x", "out": True}, {"in": None, "out": "4"}],
             "cast": ["c_1", {"id": 2, "outfit": None}, 3, None],
             "prompt": {"mode": "weird", "auto": "x", "sections": {"summary": 5, "extra": "keep"},
                        "pass_prompts": {"1": "a", "2": 3, "3": None, "4": ["x"]}},
@@ -728,3 +741,38 @@ def test_v080_seam_video_ref_off_budget_matches_the_build():
             c = model.scene_media_counts(p, p["scenes"][i], x)
             assert c["continuation"].startswith("video") if later else c["continuation"] == ""
             assert c["videos"] == len(b["videos"]) and c["files"] == len(b["images"]) + len(b["videos"]) + len(b["audios"])
+
+
+def test_v0140_clip_helpers_match(tmp_path):
+    """added 2026-11-12 v0.14.0: model.ref_clip / ref_trimmed / clip_key / ref_tokens = model.js refClip / refTrimmed /
+    clipKey / refTokens."""
+    p = model.normalize_project(harbor_like())
+    p["assets"].append({"id": "a_v2", "kind": "video", "code": "V9", "name": "x", "file": "x/v.mp4", "duration": 0})
+    p = model.normalize_project(p)
+    s = next(x for x in p["scenes"] if x["id"] == "s_long")
+    s["refs"].append({"id": "r_unknown_len", "asset": "a_v2", "role": "reference", "in": 1.0, "out": None})
+    s["refs"].append({"id": "r_unknown_len2", "asset": "a_v2", "role": "reference", "in": 1.0, "out": 2.0})
+    idx = model.project_index(p)
+    py = {"clips": [[model.ref_clip(r, idx["assets"].get(r["asset"])), model.ref_trimmed(r),
+                     list(model.clip_key(r, idx["assets"][r["asset"]])) if r["asset"] in idx["assets"] else None]
+                    for r in s["refs"]],
+          "tokens": model.ref_tokens(p, s), "snap": [model.snap_frame(x) for x in (0, 1.0208333, 2.5 / 24, 7.999)]}
+    runner = tmp_path / "clips.mjs"
+    runner.write_text(r"""
+import { pathToFileURL } from "node:url";
+const m = await import(pathToFileURL(process.argv[2]).href);
+let input = "";
+for await (const chunk of process.stdin) input += chunk;
+const p = JSON.parse(input);
+const s = p.scenes.find(x => x.id === "s_long");
+const asset = id => p.assets.find(a => a.id === id);
+process.stdout.write(JSON.stringify({
+  clips: s.refs.map(r => [m.refClip(r, asset(r.asset)), m.refTrimmed(r), asset(r.asset) ? m.clipKey(r, asset(r.asset)) : null]),
+  tokens: m.refTokens(p, s), snap: [0, 1.0208333, 2.5 / 24, 7.999].map(m.snapFrame) }));
+""")
+    res = subprocess.run([NODE, str(runner), MODEL_JS], input=json.dumps(p), capture_output=True, text=True, timeout=60)
+    assert res.returncode == 0, res.stderr
+    assert_same(py, json.loads(res.stdout), "clips")
+    assert py["tokens"]["r_dolly"] == "@" + idx["assets"]["a_dolly"]["code"]
+    assert py["tokens"]["r_dolly_b"].endswith(".2") and py["tokens"]["r_dolly_c"].endswith(".3")
+

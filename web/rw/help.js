@@ -184,9 +184,12 @@ tip("timeline.lane.keyframe.first_frame", "A picture pinned as frame 0 of the sc
 tip("timeline.lane.keyframe.last_frame", "A picture pinned as the last frame of the scene.");
 tip("timeline.lane.keyframe.keyframe", "A picture pinned at this exact time (keyframe completion).");
 tip("timeline.lane.lastFrameAuto", "The previous scene's last frame, used as this scene's frame 0.");
-tip("timeline.lane.vidRef", "A video reference (motion, camera or edit source). Uses one of the 3 video slots.");
-tip("timeline.lane.audRef", "An audio reference with its retention label. Uses one of the 3 audio slots.");
-tip("timeline.lane.soundtrack", "The soundtrack of a video reference, sent as its own <Audio n>.");
+// [OLD 2026-11-12 v0.13.1->v0.14.0] tip("timeline.lane.vidRef", "A video reference (motion, camera or edit source). Uses one of the 3 video slots.");
+tip("timeline.lane.vidRef", "A video reference (motion, camera or edit source) as the clip it sends: its tag (V1, V1.2 …), the part of the file and its length. Uses one of the 3 video slots."); // added 2026-11-12 v0.14.0
+// [OLD 2026-11-12 v0.13.1->v0.14.0] tip("timeline.lane.audRef", "An audio reference with its retention label. Uses one of the 3 audio slots.");
+tip("timeline.lane.audRef", "An audio reference as the clip it sends, with its retention label. Uses one of the 3 audio slots."); // added 2026-11-12 v0.14.0
+// [OLD 2026-11-12 v0.13.1->v0.14.0] tip("timeline.lane.soundtrack", "The soundtrack of a video reference, sent as its own <Audio n>.");
+tip("timeline.lane.soundtrack", "The sound of a video clip (With sound on), sent as its own <Audio n>."); // added 2026-11-12 v0.14.0
 tip("timeline.lane.voice", "Voice sample of a speaking cast member, sent so their lines keep the same voice.");
 // [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now: tip("timeline.lane.dialogue", "A spoken line. Written into the prompt as <Subject n> (S1) says <d>[Language] …</d>.");
 tip("timeline.lane.dialogue", "A spoken line. Written into the prompt as <Subject n> (S1) says, <d>[Language] …</d>, with S1, S2… in speaking order.");
@@ -357,7 +360,8 @@ more("scene.budget", "Reference budget", "What this scene sends per pass. H3 ref
 tip("scene.budget.pictures", "Picture references plus anchor sheets. Max 9.");
 tip("scene.budget.videos", "Video references, and their total length. Max 3 videos and 15 s.");
 tip("scene.budget.audio", "Audio references, video soundtracks and voice samples, with their total length. Max 3 and 15 s.");
-more("scene.refs", "References", "Assets this scene sends to H3. A picture can be a reference for the whole scene, or a guide pinned as the first frame, the last frame or a keyframe at a set time. Videos and audio are always references.\n\nEach reference has a retention label telling H3 how closely to follow it, and a list of features to keep. Values that differ from the asset's defaults are marked with a coral dot.", "Assets sent with this scene.");
+// [OLD 2026-11-12 v0.13.1->v0.14.0] more("scene.refs", "References", "Assets this scene sends to H3. A picture can be a reference for the whole scene, or a guide pinned as the first frame, the last frame or a keyframe at a set time. Videos and audio are always references.\n\nEach reference has a retention label telling H3 how closely to follow it, and a list of features to keep. Values that differ from the asset's defaults are marked with a coral dot.", "Assets sent with this scene.");
+more("scene.refs", "References", "Assets this scene sends to H3. A picture can be a reference for the whole scene, or a guide pinned as the first frame, the last frame or a keyframe at a set time. Videos and audio are always references, and each one sends a clip: the whole file or the part between its From and To. Add the same video or audio more than once to send different parts of it.\n\nEach reference has a retention label telling H3 how closely to follow it, and a list of features to keep. Values that differ from the asset's defaults are marked with a coral dot.", "Assets sent with this scene."); // added 2026-11-12 v0.14.0: clips
 // [OLD 2026-11-12 v0.11.0->v0.12.0] tip("scene.refs.role", "reference: guides the whole scene. first_frame / last_frame / keyframe: pins this picture at that exact frame.");
 // added 2026-11-12 v0.12.0: pose
 tip("scene.refs.role", "reference: guides the whole scene. first_frame / last_frame / keyframe: pins this picture at that exact frame. pose: a character of this scene takes the body pose in this picture, in the shot at its time.");
@@ -369,9 +373,22 @@ tip("scene.refs.retention", "How closely H3 should follow this reference.");
 tip("scene.refs.description", "The asset's description as this scene uses it. It lives on the asset: click to edit it in the Assets tab, and every scene follows.");
 tip("scene.cast.description", "The description this character's subject line uses: its own, or its first described anchor picture's.");
 tip("scene.refs.keep", "Features to keep, written into the retention line (face, hair, coat …). Press Enter to add.");
-tip("scene.refs.soundtrack", "Also send this video's audio as its own <Audio n>, numbered just before the video.");
+// [OLD 2026-11-12 v0.13.1->v0.14.0] tip("scene.refs.soundtrack", "Also send this video's audio as its own <Audio n>, numbered just before the video.");
+tip("scene.refs.soundtrack", "With sound: also send this clip's own sound as an <Audio n> of its own (it takes one of the 3 audio slots). Off: the picture only."); // added 2026-11-12 v0.14.0
+// added 2026-11-12 v0.14.0: clips of video and audio references
+more("scene.refs.clip", "Clip", "The part of the video or audio file this reference sends: From and To in the file (To empty = to its end). Add the same asset again under References to send another part of it: each reference is a clip of its own, with its own retention and, for a video, with or without its sound.\n\nType seconds (4.5), frames (108f) or a time (0:04.5). Times are kept on whole frames (24 fps). H3 takes 2-15 s per reference and 15 s of video (and of audio) per pass in all; only the first 15 s of a longer clip is sent.\n\nIn the prompt, the first reference of an asset is @V1, the next ones @V1.2, @V1.3 … (click the tag to copy it).", "The part of the file this reference sends.");
+tip("scene.refs.token", "This clip's @ tag. @V1 is the first reference of V1 in this scene, @V1.2 the second and so on. Click to copy it.");
+tip("scene.refs.clipFrom", "Where the clip starts in the file. Seconds (4.5), frames (108f) or a time (0:04.5).");
+tip("scene.refs.clipTo", "Where the clip ends in the file. Empty: the end of the file.");
+tip("scene.refs.clipLength", "The clip's length. Typing one moves To.");
+tip("scene.refs.clipReset", "Send the whole file again (From 0, no To).");
+tip("scene.refs.clipBar", "The whole file, with the clip marked. Drag either end to move From or To (on whole frames).");
+tip("scene.refs.clipPreview", "Play the file here, to find where the clip should start and end.");
+tip("scene.refs.clipHere", "Take the preview's position as From or To.");
+tip("scene.refs.clipPlay", "Play the clip from From to To.");
 tip("scene.refs.remove", "Remove this reference from the scene.");
-tip("scene.refs.add", "Add an asset as a reference with its default role and retention.");
+// [OLD 2026-11-12 v0.13.1->v0.14.0] tip("scene.refs.add", "Add an asset as a reference with its default role and retention.");
+tip("scene.refs.add", "Add an asset as a reference with its default role and retention. A video or audio asset can be added more than once, to send different parts of it."); // added 2026-11-12 v0.14.0
 tip("scene.refs.overridden", "This reference differs from the asset's defaults.");
 more("scene.cast", "Cast in this scene", "Characters, locations and props from the story bible. Their anchors, description, voice and identity LoRA are added automatically. Pick an outfit to change clothes while keeping the face.", "Story-bible entries in this scene.");
 tip("scene.cast.add", "Add a character, location or prop from the Cast tab.");

@@ -754,6 +754,10 @@ function normScene(s, d, lang, usedIds) {
     textField(r, "retention", "");
     r.keep = texts(r.keep);
     r.soundtrack = flag(r.soundtrack, false);
+    // added 2026-11-12 v0.14.0: the part of a video or audio asset the reference sends (refClip), on whole frames
+    r.in = snapFrame(Math.max(0, num(r.in, 0)));
+    const o = num(r.out, null);
+    r.out = o === null || o <= 0 ? null : snapFrame(o);
   }
   const cast = [];
   for (let e of Array.isArray(s.cast) ? s.cast : []) {
@@ -1427,6 +1431,52 @@ export function scenePeople(project, scene) {
 }
 // added 2026-11-12 v0.12.0: pose references, as model.pose_refs: a picture whose body pose one character of the scene
 // takes in the shot at its time; it goes to the pass whose span holds that time. [{ r, a, c }]
+// ---- added 2026-11-12 v0.14.0: clips of video and audio references (Sencer: "allow to select from-to timestamps/frames
+// of source video. we should be able to use the same video/audio asset in a single scene multiple times, with different
+// start/end timestamps/durations, with or without audio"). The same as model.py snap_frame, ref_trimmed, ref_clip,
+// clip_key, media_ref_ids, ref_tokens (tests/test_model_parity.py compares them).
+
+// t seconds on the nearest whole frame (half a frame rounds up).
+export function snapFrame(t) {
+  return Math.floor(Number(t) * FPS + 0.5) / FPS;
+}
+// Does reference r send only part of its asset (a From after 0 or a To)?
+export function refTrimmed(r) {
+  return !!r && typeof r === "object" && (num(r.in, 0) > 0 || num(r.out, 0) > 0);
+}
+// {start, end, seconds} of the part of video or audio asset a that reference r sends (end / seconds null when neither
+// a To nor the asset's length is known).
+export function refClip(r, a) {
+  const start = Math.max(0, num(r?.in, 0));
+  const o = num(r?.out, 0);
+  const dur = num(a?.duration, 0);
+  let end = o > 0 ? o : dur > 0 ? dur : null;
+  if (end !== null && dur > 0) end = Math.min(end, dur);
+  return { start, end, seconds: end === null ? null : Math.max(0, end - start) };
+}
+// What makes two references the same clip: [asset id, start, end] (end null when not trimmed, as a voice sample).
+export function clipKey(r, a) {
+  const c = refClip(r, a);
+  return [a.id, c.start, refTrimmed(r) ? c.end : null];
+}
+const sameClip = (x, y) => x[0] === y[0] && x[1] === y[1] && x[2] === y[2];
+// Ids of the scene's reference-role references on asset aid, in order (@V1 the first, @V1.2 the second ...).
+export function mediaRefIds(scene, aid) {
+  return (scene?.refs || []).filter(r => r && r.asset === aid && (r.role ?? "reference") === "reference").map(r => r.id);
+}
+// {ref id: "@V1" | "@V1.2"} for the scene's video and audio references.
+export function refTokens(project, scene) {
+  const out = {}, seen = new Map();
+  for (const r of scene?.refs || []) {
+    const a = findAsset(project, r.asset);
+    if (!a || !["video", "audio"].includes(a.kind) || (r.role ?? "reference") !== "reference" || !a.code) continue;
+    const n = (seen.get(a.id) || 0) + 1;
+    seen.set(a.id, n);
+    out[r.id] = "@" + a.code + (n === 1 ? "" : "." + n);
+  }
+  return out;
+}
+
 export function poseInPass(t, pass, duration) {
   const s = Number(pass.start), e = Number(pass.end);
   return (s <= t && t < e) || (t >= e && e >= Number(duration) - 1e-6);
@@ -1551,20 +1601,38 @@ export function sceneBudget(project, scene, pass = null, continuation = true) {
     if (v && v.kind === "audio" && !song && speaking.has(c.id)) sounds.push(v);
   }
   for (const a of posePics) if (!sent.has(a)) { sent.add(a); b.pictures++; } // added 2026-11-12 v0.12.0
+  // added 2026-11-12 v0.14.0: the audio clips sent: each voice sample (the whole file), then the audio references' clips
+  const clips = sounds.map(v => ({ key: [v.id, 0, null], seconds: Number(v.duration) || 0 }));
   for (const r of scene.refs) {
     const a = assets.get(r.asset);
     if (!a || r.role !== "reference") continue;
-    const dur = Number(a.duration) || 0;
+    // [OLD 2026-11-12 v0.13.1->v0.14.0] const dur = Number(a.duration) || 0;  (refClip gives each clip's length)
     if (a.kind === "image") {
       if (!sent.has(a.id)) { sent.add(a.id); b.pictures++; }
+    /* [OLD 2026-11-12 v0.13.1->v0.14.0] a video counted its asset's whole length; an audio asset counted once
     } else if (a.kind === "video") {
       b.videos++;
       b.videoSeconds += dur;
       if (r.soundtrack) { b.audio++; b.audioSeconds += dur; } // the video's sound takes an <Audio j> slot
     } else if (a.kind === "audio" && !sounds.some(x => x.id === a.id)) sounds.push(a);
+    [/OLD] */
+    // added 2026-11-12 v0.14.0: each reference sends its clip (refClip): every video reference, an audio clip once
+    } else if (a.kind === "video") {
+      const secs = refClip(r, a).seconds || 0;
+      b.videos++;
+      b.videoSeconds += secs;
+      if (r.soundtrack) { b.audio++; b.audioSeconds += secs; } // the video's sound takes an <Audio j> slot
+    } else if (a.kind === "audio") {
+      const key = clipKey(r, a);
+      if (!clips.some(x => sameClip(x.key, key))) clips.push({ key, seconds: refClip(r, a).seconds || 0 });
+    }
   }
+  // [OLD 2026-11-12 v0.13.1->v0.14.0] b.audio += sounds.length + (song ? 1 : 0);
+  // [OLD 2026-11-12 v0.13.1->v0.14.0] for (const a of sounds) b.audioSeconds += Number(a.duration) || 0;
+  sounds.length = 0;
+  for (const x of clips) sounds.push(x); // added 2026-11-12 v0.14.0: voice samples (whole files) and audio clips
   b.audio += sounds.length + (song ? 1 : 0);
-  for (const a of sounds) b.audioSeconds += Number(a.duration) || 0;
+  for (const x of sounds) b.audioSeconds += x.seconds;
   if (song) b.audioSeconds += song.length;
   b.files = b.pictures + b.videos + sounds.length + (song ? 1 : 0);
   // added 2026-11-05 v0.7.0: the continuation reference, when it fits (else the pass counts as in v0.6.1)
@@ -1852,7 +1920,8 @@ export function tagCandidates(project) {
   return out;
 }
 [/OLD] */
-export function tagCandidates(project) {
+// added 2026-11-12 v0.14.0: `scene` adds its further clips of an asset (@V1.2 ...)
+export function tagCandidates(project, scene = null) {
   // [OLD 2026-11-06 v0.8.0->v0.9.0] const out = project.assets.filter(a => a.code).map(a => ({ tag: "@" + a.code, label: a.name || a.code, kind: a.kind }));
   // added 2026-11-06 v0.9.0: the asset's group before its name in the @ list (shown and searched, never written)
   const out = project.assets.filter(a => a.code).map(a => ({ tag: "@" + a.code, label: (assetGroupName(project, a) ? assetGroupName(project, a) + " · " : "") + (a.name || a.code), kind: a.kind }));
@@ -1863,6 +1932,16 @@ export function tagCandidates(project) {
   out.push({ tag: "@tail", label: "previous scene's tail clip", kind: "video" });
   // the part of the soundtrack a pass is sent (v0.5.0); a pass without the song writes it as plain text
   if (playingTracks(project).some(({ t }) => t.sync)) out.push({ tag: "@soundtrack", label: "the song this part is cut to", kind: "audio" });
+  // added 2026-11-12 v0.14.0: the scene's second, third ... reference of a video or audio asset (its own clip)
+  if (scene) {
+    for (const r of scene.refs || []) {
+      const tok = refTokens(project, scene)[r.id];
+      if (!tok || !tok.includes(".")) continue;
+      const a = findAsset(project, r.asset);
+      const c = refClip(r, a);
+      out.push({ tag: tok, label: `${a.name || a.code} · ${fmtTime(c.start)}–${c.end !== null ? fmtTime(c.end) : "end"}`, kind: a.kind });
+    }
+  }
   return out;
 }
 

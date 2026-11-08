@@ -7,6 +7,7 @@ feedback; this module is what the renderer trusts.
 import copy
 import hashlib
 import json
+import math  # added 2026-11-12 v0.14.0: snap_frame
 import re
 import secrets
 import unicodedata  # added 2026-11-03 v0.6.0: slugify transliterates accents (NFKD)
@@ -694,6 +695,11 @@ def _norm_scene(s, d, lang, used_ids):
         _text_field(r, "retention", "")
         r["keep"] = _texts(r.get("keep"))
         r["soundtrack"] = spec.flag(r.get("soundtrack"), False)
+        # added 2026-11-12 v0.14.0: the part of a video or audio asset the reference sends (ref_clip): "in" where it
+        # starts in the asset, "out" where it ends (None = the asset's end), both on whole frames
+        r["in"] = snap_frame(max(0.0, spec.num(r.get("in"), 0.0)))
+        o = spec.num(r.get("out"), None)
+        r["out"] = None if o is None or o <= 0 else snap_frame(o)
     cast = []
     for e in s.get("cast") if isinstance(s.get("cast"), list) else []:
         e = {"id": e, "outfit": ""} if isinstance(e, str) else e
@@ -974,6 +980,62 @@ def scene_people(p, scene, idx=None):
 # comes from <Picture 4>") and analysed as attribute_transfer, as MiniMax's Ref2VA guide does for a characteristic
 # transferred from one reference to another subject; it is never a subject of its own (H3 would put the person in it
 # in the shot). It goes to the pass whose time span holds its time, like a keyframe.
+# ---- added 2026-11-12 v0.14.0: clips of video and audio references (Sencer: "allow to select from-to timestamps/frames
+# of source video. we should be able to use the same video/audio asset in a single scene multiple times, with different
+# start/end timestamps/durations, with or without audio"). model.js has the same functions (snapFrame, refClip,
+# refTrimmed, refTokens; tests/test_model_parity.py compares them).
+
+def snap_frame(t):
+    """t seconds on the nearest whole frame (half a frame rounds up, as Math.round in the editor)."""
+    return math.floor(float(t) * spec.FPS + 0.5) / spec.FPS
+
+
+def ref_trimmed(r):
+    """Does reference r send only part of its asset (a From after 0 or a To)?"""
+    return isinstance(r, dict) and (spec.num(r.get("in"), 0.0) > 0 or spec.num(r.get("out"), 0.0) > 0)
+
+
+def ref_clip(r, a):
+    """{"start", "end", "seconds"} of the part of video or audio asset `a` that reference r sends: start = its From,
+    end = its To, else the asset's end, never past the asset's end; seconds = end - start (0 when it ends before it
+    starts). end and seconds are None when neither a To nor the asset's length is known."""
+    start = max(0.0, spec.num((r or {}).get("in"), 0.0))
+    o = spec.num((r or {}).get("out"), 0.0)
+    dur = spec.num((a or {}).get("duration"), 0.0)
+    end = o if o > 0 else (dur if dur > 0 else None)
+    if end is not None and dur > 0:
+        end = min(end, dur)
+    return {"start": start, "end": end, "seconds": None if end is None else max(0.0, end - start)}
+
+
+def clip_key(r, a):
+    """What makes two references the same clip: (asset id, start, end), end None for a reference that is not trimmed
+    (so it matches a cast voice sample, which is always the whole file)."""
+    c = ref_clip(r, a)
+    return (a["id"], c["start"], c["end"] if ref_trimmed(r) else None)
+
+
+def media_ref_ids(scene, aid):
+    """Ids of the scene's reference-role references on asset aid, in the scene's order: @V1 names the first, @V1.2
+    the second and so on."""
+    return [r.get("id") for r in (scene or {}).get("refs") or [] if isinstance(r, dict) and r.get("asset") == aid
+            and r.get("role", "reference") == "reference"]
+
+
+def ref_tokens(p, scene, idx=None):
+    """{ref id: "@V1" | "@V1.2"} for the scene's video and audio references: the first reference of an asset is its
+    code, the next ones its code with .2, .3 ..."""
+    idx = idx or project_index(p)
+    out, seen = {}, {}
+    for r in (scene or {}).get("refs") or []:
+        a = idx["assets"].get(r.get("asset"))
+        if not a or a.get("kind") not in ("video", "audio") or r.get("role", "reference") != "reference" or not a.get("code"):
+            continue
+        n = seen[a["id"]] = seen.get(a["id"], 0) + 1
+        out[r["id"]] = "@" + a["code"] + ("" if n == 1 else ".{}".format(n))
+    return out
+
+
 def pose_in_pass(t, pass_, duration):
     """Does scene time t fall in this pass (start <= t < end; a time at or after the end of the last pass counts for
     it)? Overlapping passes both hold the overlap."""
@@ -1357,26 +1419,54 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
         if aid not in sent:
             sent.add(aid)
             out["pictures"] += 1
+    # [OLD 2026-11-12 v0.13.1->v0.14.0] every video reference counted its asset's whole length, and an audio asset
+    # counted once however often it was used
+    # for r in scene["refs"]:
+    #     a = assets.get(r["asset"])
+    #     if not a or r["role"] != "reference":
+    #         continue
+    #     dur = float(a.get("duration") or 0)
+    #     if a["kind"] == "image":
+    #         if a["id"] not in sent:
+    #             sent.add(a["id"])
+    #             out["pictures"] += 1
+    #     elif a["kind"] == "video":
+    #         out["videos"] += 1
+    #         out["video_seconds"] += dur
+    #         if r.get("soundtrack"):  # the video's sound takes an <Audio j> slot of its own
+    #             out["audio"] += 1
+    #             out["audio_seconds"] += dur
+    #     elif a["kind"] == "audio" and not any(x["id"] == a["id"] for x in sounds):
+    #         sounds.append(a)
+    # out["audio"] += len(sounds) + (1 if song else 0)
+    # for a in sounds:
+    #     out["audio_seconds"] += float(a.get("duration") or 0)
+    # [/OLD]
+    # added 2026-11-12 v0.14.0: each reference sends its clip (ref_clip): every video reference as before, an audio
+    # clip once (prompt.collect_refs; a voice sample is the whole file)
+    sounds = [((a["id"], 0.0, None), float(a.get("duration") or 0)) for a in sounds]
     for r in scene["refs"]:
         a = assets.get(r["asset"])
         if not a or r["role"] != "reference":
             continue
-        dur = float(a.get("duration") or 0)
         if a["kind"] == "image":
             if a["id"] not in sent:
                 sent.add(a["id"])
                 out["pictures"] += 1
         elif a["kind"] == "video":
+            secs = ref_clip(r, a)["seconds"] or 0.0
             out["videos"] += 1
-            out["video_seconds"] += dur
+            out["video_seconds"] += secs
             if r.get("soundtrack"):  # the video's sound takes an <Audio j> slot of its own
                 out["audio"] += 1
-                out["audio_seconds"] += dur
-        elif a["kind"] == "audio" and not any(x["id"] == a["id"] for x in sounds):
-            sounds.append(a)
+                out["audio_seconds"] += secs
+        elif a["kind"] == "audio":
+            key = clip_key(r, a)
+            if not any(x[0] == key for x in sounds):
+                sounds.append((key, ref_clip(r, a)["seconds"] or 0.0))
     out["audio"] += len(sounds) + (1 if song else 0)
-    for a in sounds:
-        out["audio_seconds"] += float(a.get("duration") or 0)
+    for _, secs in sounds:
+        out["audio_seconds"] += secs
     if song:
         out["audio_seconds"] += song["length"]
     out["files"] = out["pictures"] + out["videos"] + len(sounds) + (1 if song else 0)

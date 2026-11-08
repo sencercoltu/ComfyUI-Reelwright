@@ -58,6 +58,15 @@ log = logging.getLogger("reelwright")
 TAIL_FRAMES = spec.MIN_PASS_FRAMES  # tail.mp4: the last 124 frames of the scene (covers any tail overlap)
 SEED_STEP = 1000003                 # seed offset between takes (unchanged from v0.5.1)
 REF_MAX_FRAMES = int(spec.REF_MEDIA_MAX_SECONDS * spec.FPS)  # at most 15 s of a reference video is decoded
+
+
+def clip_window(entry):
+    """added 2026-11-12 v0.14.0: (start, seconds) of a build's video or audio reference: a trimmed one carries in and
+    seconds (prompt.collect_refs), others start at 0; never more than 15 s, and at least one frame."""
+    start = max(0.0, float(entry.get("in") or 0.0))
+    secs = entry.get("seconds")
+    secs = spec.REF_MEDIA_MAX_SECONDS if secs is None else min(float(secs), spec.REF_MEDIA_MAX_SECONDS)
+    return start, max(1.0 / spec.FPS, secs)
 MAX_VARIANTS = 8
 # added 2026-11-05 v0.8.0: the Global -> Long scenes choices a take records (take["long"])
 LONG_TAKE_KEYS = ("guide_vae", "carry_audio", "seam_video_ref", "handoff", "pass_cache")
@@ -535,8 +544,12 @@ class Renderer:
                     video_audios["ref_video_audio_{}".format(k)] = audio
                 continue
             # [OLD 2026-11-03 v0.5.1->v0.6.0] frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS)
-            frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS,
-                                             max_frames=REF_MAX_FRAMES)  # only the first 15 s is decoded
+            # [OLD 2026-11-12 v0.13.1->v0.14.0] frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS,
+            # [OLD 2026-11-12 v0.13.1->v0.14.0]                                  max_frames=REF_MAX_FRAMES)  # only the first 15 s is decoded
+            # added 2026-11-12 v0.14.0: a trimmed reference sends its clip (in / seconds in the build), at most 15 s
+            start, secs = clip_window(v)
+            frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=secs, max_frames=REF_MAX_FRAMES,
+                                             start=start)
             videos["ref_video_{}".format(k)] = frames
             if v["soundtrack"] and audio is not None:
                 video_audios["ref_video_audio_{}".format(k)] = audio
@@ -547,9 +560,15 @@ class Renderer:
         #                                                      else self._asset_path(a["asset"]))
         #           for k, a in enumerate(b["audios"])}
         # [/OLD]
-        audios = {"ref_audio_{}".format(k): media.load_audio(self._song_path(a["song"]) if a.get("song")
-                                                             else self._asset_path(a["asset"]),
-                                                             max_seconds=spec.REF_MEDIA_MAX_SECONDS)
+        # [OLD 2026-11-12 v0.13.1->v0.14.0] every audio reference from its start
+        # audios = {"ref_audio_{}".format(k): media.load_audio(self._song_path(a["song"]) if a.get("song")
+        #                                                      else self._asset_path(a["asset"]),
+        #                                                      max_seconds=spec.REF_MEDIA_MAX_SECONDS)
+        #           for k, a in enumerate(b["audios"])}
+        # [/OLD]
+        audios = {"ref_audio_{}".format(k): media.load_audio(self._song_path(a["song"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS)
+                  if a.get("song") else media.load_audio(self._asset_path(a["asset"]), max_seconds=clip_window(a)[1],
+                                                         start=clip_window(a)[0])  # added 2026-11-12 v0.14.0: its clip
                   for k, a in enumerate(b["audios"])}
         # [OLD 2026-11-05 v0.7.0->v0.8.0] the video VAE always encoded the references
         # out = MiniMaxH3ReferenceToVideo.execute(

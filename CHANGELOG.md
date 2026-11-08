@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.14.0 — 2026-11-12
+
+- **Clips of video and audio references.** Sencer: "when using video or audio references, allow to select from-to timestamps/frames of source video. we should be able to use the same video/audio asset in a single scene multiple times, with different start/end timestamps/durations, with or without audio (for videos)."
+  - Each video or audio reference under Scene → References now has **From**, **To** and **Length**: the part of the file it sends (To empty = to the end). Type seconds (`4.5`), frames (`108f`) or a time (`0:04.5`); times are kept on whole frames. The bar under them shows the clip in the whole file: drag its ends. **Whole file** sends all of it again.
+  - **Preview** plays the file in the card: **From here** / **To here** take its position, **Play clip** plays From to To.
+  - Add the same video or audio again under References to send another part of it. Each video clip is a `<Video k>` of its own, with or without its own sound (**With sound**, the toggle that was called "soundtrack").
+  - In the prompt, the first reference of an asset is `@V1`, the next ones `@V1.2`, `@V1.3` … Each clip shows its tag in the card (click to copy it), and the `@` list offers them.
+  - The renderer decodes only the clip. The reference budget counts each clip's length (H3 takes 2–15 s per reference and 15 s of video, and of audio, per pass).
+  - Issues: an error when a clip starts after its file ends or ends before it starts.
+  - The timeline's reference lanes and the inspector show each clip with its tag and range. The prompt rewriter sees each clip and its tag.
+- Nothing renders again: references without a From or To keep their prompts and takes. (A scene that already used the same motion or style video twice now names it as one subject shown in both clips, so that rare scene renders again.)
+- **For developers:** `ref.in` / `ref.out`; `model.snap_frame`, `ref_trimmed`, `ref_clip`, `clip_key`, `media_ref_ids`, `ref_tokens` (and their model.js twins); trimmed build entries carry `in` / `out` / `seconds`, keyed in `cache.pass_key`; `prompt.NTH_CLIP` and `PassRefs.video_of_ref` / `audio_of_ref` / `subject_of_ref` / `ref_alias`; `media.load_video(start=)`, `media.load_audio(start=)`, `render.clip_window`; `model.js tagCandidates(project, scene)`; `scene.js clipEditor`, `parseClipTime`. New `tests/test_ref_clips.py`; parity fixtures and a clip-helper parity test; `interact.py` runs `v0140_checks()`.
+
 ## v0.13.1 — 2026-11-12
 
 - **A duplicated scene and its sections.** Sencer: "when duplicating a scene, whatever I write in sections, the source scene is rendered." The copy is a full copy, and the sections are only part of what H3 gets. These are kept from the original and decide what happens on screen whatever the sections say:

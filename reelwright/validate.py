@@ -331,6 +331,26 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                        "{} is not in this scene".format(c["name"]))
                 issues.append(_issue("warn", "{}: {} is a pose reference but {}, so it is not sent".format(
                     name, a["code"], why), sid))
+        # added 2026-11-12 v0.14.0: the clip of a video or audio reference (From / To) must lie inside its asset
+        if hasattr(_model, "ref_clip"):
+            tokens = _model.ref_tokens(p, s, idx)
+            for r in s["refs"]:
+                a = assets.get(r.get("asset"))
+                if not a or a["kind"] not in ("video", "audio") or r.get("role") != "reference" or not _model.ref_trimmed(r):
+                    continue
+                c = _model.ref_clip(r, a)
+                dur = float(a.get("duration") or 0)
+                tok = tokens.get(r["id"], "@" + a["code"])
+                if dur and c["start"] >= dur - 0.5 / spec.FPS:
+                    issues.append(_issue("error", "{}: {} starts at {} but {} is only {} long".format(
+                        name, tok, spec.fmt_time(c["start"]), a["code"], spec.fmt_time(dur)), sid))
+                elif r.get("out") is not None and float(r["out"]) <= c["start"] + 0.5 / spec.FPS:
+                    issues.append(_issue("error", "{}: {} ends at {}, before it starts ({})".format(
+                        name, tok, spec.fmt_time(float(r["out"])), spec.fmt_time(c["start"])), sid))
+                elif dur and r.get("out") is not None and float(r["out"]) > dur + 0.5 / spec.FPS:
+                    issues.append(_issue("info", "{}: {} ends at {}, after the end of {} ({}): it is sent up to its "
+                                                 "end".format(name, tok, spec.fmt_time(float(r["out"])), a["code"],
+                                                              spec.fmt_time(dur)), sid))
         # added 2026-11-08 v0.11.0: a prop that is part of a character is left out of a scene its character is not in
         if hasattr(_model, "scene_people"):
             for part, owner in _model.scene_people(p, s, idx)[1]:
@@ -504,12 +524,18 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             # [OLD 2026-11-03 v0.4.3->v0.5.0] for kind, items in (("video", [assets[v["asset"]] for v in b["videos"]]),
             # [OLD 2026-11-03 v0.4.3->v0.5.0]                     ("audio", [assets[x["asset"]] for x in b["audios"]])):
             # added 2026-11-03 v0.5.0: the soundtrack segment counts as an audio ref of its own length
-            audio_items = [{"code": "soundtrack", "duration": x["song"]["length"]} if x.get("song") else assets[x["asset"]]
-                           for x in b["audios"]]
+            # [OLD 2026-11-12 v0.13.1->v0.14.0] audio_items = [{"code": "soundtrack", "duration": x["song"]["length"]} if x.get("song") else assets[x["asset"]]
+            # [OLD 2026-11-12 v0.13.1->v0.14.0]                for x in b["audios"]]
+            # added 2026-11-12 v0.14.0: a trimmed clip by its own length
+            audio_items = [{"code": "soundtrack", "duration": x["song"]["length"]} if x.get("song") else
+                           {"code": assets[x["asset"]]["code"] + " (clip)", "duration": x["seconds"] or 0} if "seconds" in x
+                           else assets[x["asset"]] for x in b["audios"]]
             # added 2026-11-05 v0.7.0: the continuation clip (no asset) by its length
             video_items = [{"code": _prompt.CONT_WHAT.get(v.get("source"), "the continuation clip"),
                             "duration": float(v.get("frames") or 0) / spec.FPS} if v.get("continuation")
-                           else assets[v["asset"]] for v in b["videos"]]
+                           # [OLD 2026-11-12 v0.13.1->v0.14.0] else assets[v["asset"]] for v in b["videos"]]
+                           else {"code": assets[v["asset"]]["code"] + " (clip)", "duration": v["seconds"] or 0}
+                           if "seconds" in v else assets[v["asset"]] for v in b["videos"]]  # added 2026-11-12 v0.14.0
             # [OLD 2026-11-05 v0.6.1->v0.7.0] for kind, items in (("video", [assets[v["asset"]] for v in b["videos"]]),
             for kind, items in (("video", video_items),
                                 ("audio", audio_items)):
