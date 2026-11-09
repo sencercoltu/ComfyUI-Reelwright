@@ -322,7 +322,12 @@ export function defaultPrompt() {
   const sections = {};
   for (const k of SECTION_KEYS) sections[k] = "";
   // passes: added 2026-11-05 v0.8.0 (see passTexts)
-  return { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections, raw: "", pass_prompts: {}, passes: [] };
+  // [OLD 2026-11-12 v0.14.4->v0.15.0] no brief field
+  // return { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections, raw: "", pass_prompts: {}, passes: [] };
+  // [/OLD]
+  // brief: added 2026-11-12 v0.15.0, the author's own words for Write prompts; never overwritten by what the LLM
+  // writes (model.py default_prompt)
+  return { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections, raw: "", pass_prompts: {}, passes: [], brief: "" };
 }
 
 export function defaultScene(project, patch = {}) {
@@ -803,6 +808,7 @@ function normScene(s, d, lang, usedIds) {
   const sec = pr.sections = isObj(pr.sections) ? pr.sections : {};
   for (const k of SECTION_KEYS) textField(sec, k, "");
   textField(pr, "raw", "");
+  textField(pr, "brief", ""); // added 2026-11-12 v0.15.0: the Write prompts brief (defaultPrompt)
   const pp = isObj(pr.pass_prompts) ? pr.pass_prompts : {};
   pr.pass_prompts = Object.fromEntries(Object.entries(pp).filter(([, v]) => text(v, null) !== null).map(([k, v]) => [k, text(v)]));
   // added 2026-11-05 v0.8.0: each pass's own six sections (see passTexts); an item that is not an object becomes an

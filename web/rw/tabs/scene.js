@@ -2,15 +2,18 @@
 
 import { h, icon, button, toggle, segmented, select, number, text, textarea, chip, dot, section, field, meter, keepChips, slider } from "../ui.js";
 import { choiceDialog } from "../ui.js"; // added 2026-11-05 v0.7.0: "Apply to all scenes" asks which scenes
+import { confirmDialog } from "../ui.js"; // added 2026-11-12 v0.15.0: Reset scene asks first
 import { resizableList, uiNum } from "../ui.js"; // added 2026-11-06 v0.9.0: shot and dialogue lists scroll in a box you can resize
 import { kept } from "../ui.js"; // added 2026-11-06 v0.10.0: pictures that survive re-renders
 import { copyButton } from "../ui.js"; // added 2026-11-06 v0.10.0: copy a pass prompt
+import { sortable, dragGrip, moveItem } from "../ui.js"; // added 2026-11-12 v0.15.0: references, cast and LoRAs in the order you drag them to
 import { seamFixes, seamFixTime } from "../passes.js"; // added 2026-11-06 v0.10.0: quick fixes for lines past a seam
 // added 2026-11-05 v0.7.0: the "In the cut" card (scene.merge)
 import { TRANSITIONS, DIRECTIONS, DIRECTED, mergeOf, ensureMerge, mergeDefaults, joinOf, transitionLabel } from "../cut.js";
 import { rw, viewURL } from "../api.js";
 import { newJob, jobLine } from "../llmjob.js"; // added 2026-11-03 v0.4.2
 import { jobText } from "../llmjob.js"; // added 2026-11-06 v0.10.2: progress lines updated in place
+import { outputButton } from "../llmjob.js"; // added 2026-11-12 v0.15.0: the reasoning and answer as they arrive
 import { codeEditor } from "../codeedit.js";
 // added 2026-11-05 v0.8.0: per-pass prompt texts, dialogue lengths, pass seams, the camera picker, "Write prompts"
 import {
@@ -588,9 +591,48 @@ function promptCard(ctx, s) {
       tab < 0 ? SECTION_KEYS.map(sectionEditor) : passPane(ctx, s, plan, pt, tab, { cands, write, busy }),
     ];
   }
+  // added 2026-11-12 v0.15.0: the Write prompts brief (scene.prompt.brief), the author's own words for the LLM, which
+  // nothing the LLM writes replaces; the Brief button shows or hides it (ui.brief_open, every scene, no undo step)
+  const hasBrief = !!String(s.prompt.brief || "").trim();
+  const briefOpen = !raw && !!p.ui.brief_open;
+  const briefBox = briefOpen && h("div", { class: "rw-psec rw-brief", help: "scene.prompt.brief" },
+    h("div", { class: "rw-psec-head" }, h("span", { class: "mono rw-dim", help: "scene.prompt.brief" }, "write prompts brief"),
+      h("span", { class: "rw-psec-src note", help: "scene.prompt.brief" }, "sent to the LLM · never overwritten · not sent to H3")),
+    codeEditor({ value: s.prompt.brief || "", help: "scene.prompt.brief", minRows: 3, maxHeight: 300,
+      placeholder: "What you want this scene to be, in your words: who does what, the mood, the lines. Write prompts reads it every time and never changes it.",
+      ...input((sc, v) => { sc.prompt.brief = v; }, `brief-${s.id}`, "Write prompts brief") }));
+  // added 2026-11-12 v0.15.0: Reset scene (Sencer: "add a "reset scene" button with confirmation, which clears all 6
+  // sections"): the six sections and every pass's own text go, as one undo step; shots, dialogue, references, cast,
+  // LoRAs, the raw prompt and the brief stay
+  const sectionsUsed = SECTION_KEYS.some(k => String(s.prompt.sections[k] || "").trim()) || pt.stored ||
+    Object.keys(s.prompt.pass_prompts || {}).length > 0;
+  const reset = async () => {
+    const ok = await confirmDialog(ctx.root, {
+      title: "Reset this scene's prompt?", okLabel: "Reset scene", danger: true, help: "scene.prompt.reset",
+      message: `Clears the six sections (subject definitions, summary, retention analysis, detailed description, soundscape, music)${multi || pt.stored ? " and every pass's own text" : ""}. The shots, dialogue, references, cast, LoRAs${hasBrief ? ", the Write prompts brief" : ""} and the raw prompt stay. Ctrl+Z undoes it.`,
+    });
+    if (!ok) return;
+    ctx.actions.editScene(s.id, sc => {
+      for (const k of SECTION_KEYS) sc.prompt.sections[k] = "";
+      sc.prompt.passes = [];
+      sc.prompt.pass_prompts = {};
+    }, { label: "Reset scene" });
+    ctx.actions.toast("Cleared the six sections. Ctrl+Z brings them back.", "ok");
+  };
   return section({
     title: "Prompt", help: "scene.prompt",
     actions: [
+      // added 2026-11-12 v0.15.0: Reset scene
+      !raw && button({ label: "Reset scene", icon: "refresh", small: true, variant: "danger-ghost", key: `reset-${s.id}`, help: "scene.prompt.reset",
+        disabled: busy || !sectionsUsed, onClick: reset }),
+      // added 2026-11-12 v0.15.0: show / hide the brief; the dot says this scene has one
+      !raw && button({ label: "Brief", icon: "file", small: true, variant: briefOpen ? "accent-ghost" : "ghost", key: `brief-btn-${s.id}`,
+        help: "scene.prompt.briefToggle", ariaLabel: briefOpen ? "Hide the Write prompts brief" : "Show the Write prompts brief",
+        extra: hasBrief && h("span", { class: "rw-ptab-dot rw-brief-dot", help: "scene.prompt.briefToggle" }),
+        onClick: () => ctx.store.update(q => { q.ui.brief_open = !q.ui.brief_open; }, { history: false, plan: false, autosave: false }) }),
+      // added 2026-11-12 v0.15.0: the last Write prompts output of this scene, after it ended (while it runs, the
+      // progress row has the button)
+      !raw && !mine && ctx.eph.lastWrite?.[s.id] && outputButton(ctx, { job: ctx.eph.lastWrite[s.id], title: "Write prompts · last LLM output", key: `write-out-last-${s.id}`, label: false }),
       !raw && button({ label: mine && !run.items[run.at]?.passes ? "Writing…" : "Write prompts", icon: "wand", small: true, variant: "pink", key: `write-${s.id}`,
         help: multi ? "scene.prompt.write" : "scene.prompt.writeOne", disabled: busy, onClick: () => write(null) }),
       segmented({ small: true, value: s.prompt.mode, help: "scene.prompt.mode", key: `pmode-${s.id}`, options: [
@@ -608,6 +650,7 @@ function promptCard(ctx, s) {
         `${list(tags.warns)}: not a cast member, asset or @soundtrack, so H3 gets ${tags.warns.length > 1 ? "them" : "it"} as plain text. Write @@ for a literal @.`),
       tags.notInScene.length > 0 && h("div", { class: "rw-note warn", help: "scene.prompt.notInScene" }, icon("warn", 12),
         `${list(tags.notInScene)} ${tags.notInScene.length > 1 ? "are" : "is"} not in this scene's cast, so only the name is written. Add ${tags.notInScene.length > 1 ? "them" : "it"} under “Cast in this scene” to send the pictures.`),
+      briefBox, // added 2026-11-12 v0.15.0
       mine && writeRow(ctx, run, plan),
       body,
     ],
@@ -788,6 +831,8 @@ function writeRow(ctx, run, plan) {
   return h("div", { class: "rw-row rw-llm-busy", help: "scene.prompt.writeProgress" },
     // [OLD 2026-11-06 v0.10.1->v0.10.2] h("span", { class: "rw-dim small mono grow" }, "Writing " + which + jobLine(d)),
     jobText(run.job, d, { fmt: line, class: "rw-dim small mono grow" }), // added 2026-11-06 v0.10.2
+    // added 2026-11-12 v0.15.0: show what the LLM thinks and writes (follows the run to its next job)
+    outputButton(ctx, { job: run.job, follow: () => (ctx.eph.passWrite?.running ? ctx.eph.passWrite.job : null), title: "Write prompts · LLM output", key: "write-out" }),
     button({ label: run.stop ? "Stopping…" : "Stop", icon: "close", small: true, key: "write-stop", help: "scene.prompt.writeStop", disabled: !!run.stop, onClick: () => stopWrite(ctx) }));
 }
 
@@ -1529,6 +1574,7 @@ function llmBusyRow(ctx, job, stopHelp) {
   return h("div", { class: "rw-row rw-llm-busy" },
     // [OLD 2026-11-06 v0.10.1->v0.10.2] h("span", { class: "rw-dim small mono grow", help: "global.llm.progress" }, jobLine(ctx.eph.llmJobs[job])),
     jobText(job, ctx.eph.llmJobs[job], { class: "rw-dim small mono grow", help: "global.llm.progress" }), // added 2026-11-06 v0.10.2: updated in place
+    outputButton(ctx, { job, title: "LLM output", key: `llm-out-${job}` }), // added 2026-11-12 v0.15.0
     button({ label: "Stop", icon: "close", small: true, help: stopHelp, onClick: () => rw.llmCancel(job).catch(() => {}) }));
 }
 
@@ -1577,14 +1623,18 @@ function refsCard(ctx, s) {
     children: [
       // [OLD 2026-11-06 v0.8.0->v0.9.0] s.refs.length === 0 && h("div", { class: "rw-empty sm", help: "scene.refs" }, "No references. Add one below or drag from the Timeline's asset bin."),
       s.refs.length === 0 && h("div", { class: "rw-empty sm", help: "scene.refs" }, "No references. Add one below."),  // added 2026-11-06 v0.9.0: no asset bin
-      s.refs.map(r => {
+      // [OLD 2026-11-12 v0.14.4->v0.15.0] s.refs.map(r => {  (no reordering)
+      // added 2026-11-12 v0.15.0: drag a reference's grip to put it elsewhere in the list (one undo step)
+      sortable({ id: `refs-${s.id}`, onMove: (from, to) => ctx.actions.editScene(s.id, sc => { moveItem(sc.refs, from, to); }, { label: "Reorder references" }), rows: s.refs.map(r => {
         const a = findAsset(p, r.asset);
-        if (!a) return h("div", { class: "rw-note warn" }, "A reference points at a deleted asset.", button({ label: "Remove", small: true, help: "scene.refs.remove", onClick: () => ctx.actions.editScene(s.id, sc => { sc.refs = sc.refs.filter(x => x.id !== r.id); }) }));
+        // [OLD 2026-11-12 v0.14.4->v0.15.0] if (!a) return h("div", { class: "rw-note warn" }, "A reference points at a deleted asset.", button({ label: "Remove", small: true, help: "scene.refs.remove", onClick: () => ctx.actions.editScene(s.id, sc => { sc.refs = sc.refs.filter(x => x.id !== r.id); }) }));
+        if (!a) return h("div", { class: "rw-note warn" }, dragGrip({ help: "scene.refs.order", key: `ref-grip-${r.id}` }), "A reference points at a deleted asset.", button({ label: "Remove", small: true, help: "scene.refs.remove", onClick: () => ctx.actions.editScene(s.id, sc => { sc.refs = sc.refs.filter(x => x.id !== r.id); }) })); // added 2026-11-12 v0.15.0: grip
         const kc = kindClass(a.kind);
         const ret = r.retention || a.defaults.retention;
         const overridden = (r.retention && r.retention !== a.defaults.retention) || r.role !== a.defaults.role;
         const roles = a.kind === "image" ? ROLES : ["reference"];
         return h("div", { class: ["rw-ref", overridden && "over"] },
+          dragGrip({ help: "scene.refs.order", key: `ref-grip-${r.id}` }), // added 2026-11-12 v0.15.0
           // [OLD 2026-11-06 v0.9.0->v0.10.0] a.kind === "image" ? h("img", { class: "rw-ref-thumb", src: viewURL(a.file, "input"), alt: "" }) : h("span", { class: "rw-ref-thumb rw-bg-" + kc + "-soft" }, icon(a.kind, 16)),
           // added 2026-11-06 v0.10.0: the same <img> across renders (it blinked while a render ran)
           a.kind === "image" ? kept(ctx, "ref-" + r.id, viewURL(a.file, "input"), () => h("img", { class: "rw-ref-thumb", src: viewURL(a.file, "input"), alt: "" })) : h("span", { class: "rw-ref-thumb rw-bg-" + kc + "-soft" }, icon(a.kind, 16)),
@@ -1618,7 +1668,8 @@ function refsCard(ctx, s) {
             a.kind !== "audio" && h("button", { type: "button", class: ["rw-ref-desc link rw-ellipsis", !a.description && "empty"], help: "scene.refs.description",
               title: a.description || "", onClick: () => { ctx.store.setEph({ selectedAsset: a.id }); ctx.actions.setTab("assets"); } },
             a.description ? a.description : r.role === "reference" ? "No description: add one in the Assets tab" : "No description")));
-      }),
+      // [OLD 2026-11-12 v0.14.4->v0.15.0] }),
+      }) }), // added 2026-11-12 v0.15.0: end of sortable
       // [OLD 2026-11-12 v0.13.1->v0.14.0] addable.length ? h("div", { class: "rw-row" }, select({ options: addable, value: "", placeholder: "+ Add a reference…", help: "scene.refs.add", onChange: v => {
       addable.length ? h("div", { class: "rw-row" }, select({ options: addable, value: "", placeholder: "+ Add a reference…", help: "scene.refs.add", key: `ref-add-${s.id}`, onChange: v => { // added 2026-11-12 v0.14.0: key
         const a = findAsset(p, v);
@@ -1804,13 +1855,16 @@ function castCard(ctx, s) {
     title: "Cast in this scene", help: "scene.cast",
     children: [
       s.cast.length === 0 && h("div", { class: "rw-empty sm", help: "scene.cast" }, "Nobody from the story bible yet."),
-      s.cast.map(sc => {
+      // [OLD 2026-11-12 v0.14.4->v0.15.0] s.cast.map(sc => {  (no reordering)
+      // added 2026-11-12 v0.15.0: drag a cast member's grip to put them elsewhere in the list (one undo step)
+      sortable({ id: `cast-${s.id}`, onMove: (from, to) => ctx.actions.editScene(s.id, x => { moveItem(x.cast, from, to); }, { label: "Reorder cast" }), rows: s.cast.map(sc => {
         const c = findCast(p, sc.id);
         if (!c) return null;
         const anchor = findAsset(p, c.anchors[0]);
         // added 2026-11-03 v0.4.1: when the anchors go as one sheet in this scene, the sheet is what is shown
         const packed = castPacks(p, s, c);
         return h("div", { class: "rw-list-row" },
+          dragGrip({ help: "scene.cast.order", key: `cast-grip-${c.id}` }), // added 2026-11-12 v0.15.0
           // [OLD 2026-11-03 v0.4.0->v0.4.1] anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
           // [OLD 2026-11-06 v0.9.0->v0.10.0] packed ? h("img", { class: "rw-avatar sheet", src: ctx.host.apiURL(sheetURL(p, c, 96)), alt: "", help: "scene.cast.sheet" })
           // [OLD 2026-11-06 v0.9.0->v0.10.0]   : anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
@@ -1840,7 +1894,8 @@ function castCard(ctx, s) {
           c.outfits.length > 0 && select({ options: c.outfits.map(o => ({ value: o.id, label: o.name })), value: sc.outfit || c.default_outfit, help: "scene.cast.outfit", key: `cast-outfit-${c.id}`,
             onChange: v => ctx.actions.editScene(s.id, x => { x.cast.find(q => q.id === c.id).outfit = v; }) }),
           button({ icon: "close", small: true, variant: "ghost", help: "scene.cast.remove", onClick: () => ctx.actions.editScene(s.id, x => { x.cast = x.cast.filter(q => q.id !== c.id); }) }));
-      }),
+      // [OLD 2026-11-12 v0.14.4->v0.15.0] }),
+      }) }), // added 2026-11-12 v0.15.0: end of sortable
       avail.length > 0 && select({ options: avail, value: "", placeholder: "+ Add from the story bible…", help: "scene.cast.add", onChange: v => {
         const c = findCast(p, v);
         if (c) ctx.actions.editScene(s.id, x => { x.cast.push({ id: c.id, outfit: c.default_outfit || "" }); });
@@ -1879,7 +1934,11 @@ function lorasCard(ctx, s) {
           }) }),
           ov !== undefined ? button({ icon: "refresh", small: true, variant: "ghost", help: "common.reset", onClick: () => setL(l => { delete l.strengths[gl.id]; }) }) : h("span", { class: "rw-reset-ph" }));
       }),
-      (o.items || []).map(it => h("div", { class: "rw-lora-row" },
+      // [OLD 2026-11-12 v0.14.4->v0.15.0] (o.items || []).map(it => h("div", { class: "rw-lora-row" },  (no reordering)
+      // added 2026-11-12 v0.15.0: drag a scene LoRA's grip to put it elsewhere among the scene's own LoRAs (one undo step;
+      // Global's LoRAs keep Global's order, set on the Global tab)
+      sortable({ id: `loras-${s.id}`, onMove: (from, to) => ctx.actions.editScene(s.id, sc => { if (sc.overrides.loras) moveItem(sc.overrides.loras.items, from, to); }, { label: "Reorder scene LoRAs" }), rows: (o.items || []).map(it => h("div", { class: "rw-lora-row" },
+        dragGrip({ help: "scene.loras.order", key: `lora-grip-${it.id}` }), // added 2026-11-12 v0.15.0
         dot("override"),
         /* [OLD 2026-11-03 v0.5.1->v0.6.0] no keys
         select({ options: loraList, value: it.name, placeholder: "choose LoRA", mono: true, help: "scene.loras.name", onChange: v => setL(l => { l.items.find(x => x.id === it.id).name = v; }) }),
@@ -1889,7 +1948,8 @@ function lorasCard(ctx, s) {
         select({ options: loraList, value: it.name, placeholder: "choose LoRA", mono: true, help: "scene.loras.name", key: `lora-name-${it.id}`, onChange: v => setL(l => { l.items.find(x => x.id === it.id).name = v; }) }),
         h("span", { class: "rw-dim small" }, "scene"),
         number({ value: it.strength, min: -4, max: 4, step: 0.05, width: "74px", help: "scene.loras.strength", key: `lora-s-${it.id}`, onChange: v => setL(l => { l.items.find(x => x.id === it.id).strength = v ?? 1; }) }),
-        button({ icon: "trash", small: true, variant: "ghost", help: "scene.loras.remove", onClick: () => setL(l => { l.items = l.items.filter(x => x.id !== it.id); }) }))),
+        // [OLD 2026-11-12 v0.14.4->v0.15.0] button({ icon: "trash", small: true, variant: "ghost", help: "scene.loras.remove", onClick: () => setL(l => { l.items = l.items.filter(x => x.id !== it.id); }) }))),
+        button({ icon: "trash", small: true, variant: "ghost", help: "scene.loras.remove", onClick: () => setL(l => { l.items = l.items.filter(x => x.id !== it.id); }) }))) }), // added 2026-11-12 v0.15.0: end of sortable
       eff.filter(l => l.source === "cast").map(l => h("div", { class: "rw-lora-row" },
         dot("auto", "scene.loras.cast"), h("span", { class: "mono grow rw-ellipsis" }, l.name.replace(/\.safetensors$/, "")),
         h("span", { class: "rw-c-pic small" }, "auto · Cast: " + l.castName), h("span", { class: "mono" }, Number(l.strength).toFixed(2)))),

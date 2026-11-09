@@ -302,6 +302,29 @@ def test_preview_jpeg_handles_nested_latents(comfy):
     assert max(img.size) == render.PREVIEW_MAX_SIDE
 
 
+# added 2026-11-12 v0.15.0 (Sencer: "Latent preview should update properly, it updates only once or twice"): the
+# preview shows the middle of what a pass makes new, not the first frame a continuation or guide fixes
+def test_preview_shows_the_middle_of_the_new_part(comfy):
+    render, _ = comfy
+    import torch
+    from PIL import Image
+    seen = []
+
+    class Previewer:
+        def decode_latent_to_preview_image(self, fmt, x0):
+            seen.append(float(x0[0, 0, 0, 0, 0]))
+            return ("JPEG", Image.new("RGB", (64, 36)), 512)
+    lat = torch.arange(10, dtype=torch.float32).view(1, 1, 10, 1, 1).expand(1, 4, 10, 2, 2).clone()
+    render.preview_jpeg(Previewer(), lat)
+    render.preview_jpeg(Previewer(), lat, 6)
+    render.preview_jpeg(Previewer(), lat, 99)
+    assert seen == [0.0, 6.0, 9.0]
+    assert render.preview_frame({"seam_before": "none", "keep_in_frames": 0, "keep_out_frames": 362}) == 46  # frame 181
+    assert render.preview_frame({"seam_before": "overlap", "overlap_frames": 39, "keep_in_frames": 0,
+                                 "keep_out_frames": 226}) == 33  # frame 132 of 226: past the 39 repeated frames
+    assert render.preview_frame({}) is None
+
+
 # added 2026-11-02 v0.3.9: VideoHelperSuite's animated previews wrap latent_preview.get_previewer; Reelwright uses the
 # original underneath (VHS's previewer sends its own frames under the node and returns no image)
 def test_stock_previewer_skips_wrappers(comfy, monkeypatch):

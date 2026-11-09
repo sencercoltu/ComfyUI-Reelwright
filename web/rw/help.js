@@ -399,6 +399,8 @@ tip("scene.refs.clipPreview", "Play the file here, to find where the clip should
 tip("scene.refs.clipHere", "Take the preview's position as From or To.");
 tip("scene.refs.clipPlay", "Play the clip from From to To.");
 tip("scene.refs.remove", "Remove this reference from the scene.");
+// added 2026-11-12 v0.15.0: drag to reorder
+more("scene.refs.order", "Reorder", "Drag the grip up or down to put this reference elsewhere in the list; ↑ / ↓ on the grip move it one place. Each move is one undo step.\n\nThe order is the order the references are sent in, after the cast's pictures, so it sets their numbers in the prompt (<Picture 2>, <Video 1> …).", "Drag to reorder.");
 // [OLD 2026-11-12 v0.13.1->v0.14.0] tip("scene.refs.add", "Add an asset as a reference with its default role and retention.");
 tip("scene.refs.add", "Add an asset as a reference with its default role and retention. A video or audio asset can be added more than once, to send different parts of it."); // added 2026-11-12 v0.14.0
 tip("scene.refs.overridden", "This reference differs from the asset's defaults.");
@@ -406,6 +408,8 @@ more("scene.cast", "Cast in this scene", "Characters, locations and props from t
 tip("scene.cast.add", "Add a character, location or prop from the Cast tab.");
 tip("scene.cast.outfit", "Which outfit or variant they wear in this scene.");
 tip("scene.cast.remove", "Remove from this scene.");
+// added 2026-11-12 v0.15.0: drag to reorder
+more("scene.cast.order", "Reorder", "Drag the grip up or down to put this cast member elsewhere in the list; ↑ / ↓ on the grip move them one place. Each move is one undo step.\n\nThe order is the order of the subjects in the prompt (<Subject 1>, <Subject 2> …) and of their pictures.", "Drag to reorder.");
 more("scene.loras", "Scene LoRAs", "Add to Global applies the Global LoRA stack first and then this scene's LoRAs. Replace Global uses only this scene's LoRAs.\n\nYou can also change the strength of a Global LoRA for this scene only. Identity LoRAs of cast members are added automatically and shown in blue.", "LoRAs for this scene.");
 tip("scene.loras.mode", "Add to the Global stack, or replace it for this scene.");
 tip("scene.loras.add", "Use the Global LoRAs and add this scene's on top.");
@@ -413,6 +417,8 @@ tip("scene.loras.replace", "Ignore the Global LoRAs in this scene.");
 tip("scene.loras.strength", "Strength for this scene. Set it back to the Global value to remove the override.");
 tip("scene.loras.name", "LoRA file (from ComfyUI's loras folder).");
 tip("scene.loras.remove", "Remove this LoRA from the scene.");
+// added 2026-11-12 v0.15.0: drag to reorder
+more("scene.loras.order", "Reorder", "Drag the grip up or down to put this LoRA elsewhere among the scene's own LoRAs; ↑ / ↓ on the grip move it one place. Each move is one undo step.\n\nLoRAs load in this order, after Global's (whose order is set on the Global tab).", "Drag to reorder.");
 tip("scene.loras.addItem", "Add a LoRA for this scene only.");
 tip("scene.loras.cast", "Added automatically because a cast member with an identity LoRA is in this scene.");
 
@@ -589,7 +595,9 @@ tip("render.stop", "Interrupt the current ComfyUI run. Finished scenes stay on d
 tip("render.banner", "What is rendering right now: which scene of the run, its pass and sampling step. The node title shows the same count and the overall percentage.");
 // [OLD 2026-11-02 v0.3.7->v0.3.8] previews were throttled to one a second
 // tip("render.preview", "Latent preview of the scene being sampled, about once a second. ComfyUI's preview setting decides its quality (Latent2RGB or TAESD) or turns it off.");
-tip("render.preview", "Latent preview of the scene being sampled, updated every sampler step. ComfyUI's preview setting decides its quality (Latent2RGB or TAESD) or turns it off. If a preview can't be decoded, the last good one stays.");
+// [OLD 2026-11-12 v0.14.4->v0.15.0] tip("render.preview", "Latent preview of the scene being sampled, updated every sampler step. ComfyUI's preview setting decides its quality (Latent2RGB or TAESD) or turns it off. If a preview can't be decoded, the last good one stays.");
+// added 2026-11-12 v0.15.0: the frame shown is the middle of the part the pass makes (the first frame is fixed by continuation and guides)
+tip("render.preview", "Latent preview of the scene being sampled, updated every sampler step. It shows a frame from the middle of the part this pass generates (the first frames repeat the previous pass or a guide picture, so they barely change). ComfyUI's preview setting decides its quality (Latent2RGB or TAESD) or turns it off. If a preview can't be decoded, the last good one stays.");
 tip("render.progress.scene", "Progress of the scene being rendered, across all of its passes.");
 tip("render.progress.total", "Progress of the whole run. Scenes reused from disk are not counted.");
 tip("render.refresh", "Reload takes and statuses from disk.");
@@ -748,7 +756,9 @@ more("global.loras", "Global LoRA stack", "LoRAs applied to every scene, in orde
 tip("global.loras.enabled", "Turn this LoRA on or off for every scene.");
 tip("global.loras.name", "LoRA file from models/loras.");
 tip("global.loras.strength", "Model strength.");
-tip("global.loras.order", "Move up in the stack.");
+// [OLD 2026-11-12 v0.14.4->v0.15.0] tip("global.loras.order", "Move up in the stack.");  (a button moved it up)
+// added 2026-11-12 v0.15.0: drag to reorder
+more("global.loras.order", "Reorder", "Drag the grip up or down to put this LoRA elsewhere in the stack; ↑ / ↓ on the grip move it one place. Each move is one undo step.\n\nLoRAs load in this order, before each scene's own.", "Drag to reorder.");
 tip("global.loras.remove", "Remove from the stack.");
 tip("global.loras.add", "Add a LoRA to the stack.");
 more("global.output", "Output", "H3 renders at about 1 megapixel with a 768-pixel short edge, capped at 768×1344 pixels of area, with both sides multiples of 32. The aspect presets use exactly the native H3 canvas rule. Frame rate (24 fps) and audio (32 kHz stereo) are fixed by the model.\n\nReference images: 'match' scales each reference down to the output area; 'max' keeps up to 2048 px on the short edge for the best identity, but reference tokens go through every step, so it can be several times slower.", "Output size and reference resolution.");
@@ -983,6 +993,14 @@ tip("scene.budget.pass", "What each pass of this long scene sends. A pass over a
 more("scene.prompt.tabs", "A tab per pass", "This scene is longer than one H3 pass, so it renders in passes. Whole scene holds the note on the whole scene and the sections every pass shares; each pass tab holds that pass's own sections, shots and dialogue. Times are scene times.", "The whole scene, or one of its passes.");
 tip("scene.prompt.tab.scene", "The scene note and the sections every pass shares.");
 tip("scene.prompt.tab.pass", "This pass: its own sections, shots and dialogue (scene times). A dot means it has text of its own.");
+// added 2026-11-12 v0.15.0: the LLM output popup
+more("llm.output", "LLM output", "Shows what the LLM sends back as it arrives, in a panel over the editor: its reasoning (Thinking: a thinking model's chain of thought, as far as the server passes it on) and the answer, for each request (each pass, part or try). Use it to see what a slow request is doing, or what one that timed out had got.\n\nWhile a batch runs, the panel follows it to the next scene or part. It stays open after the request ends; × or Esc closes it, and Output opens it again. Drag its corner to resize it. Copy puts the text on the clipboard.\n\nOnly requests made from this page show; nothing is kept after a reload.", "Show what the LLM thinks and writes.");
+tip("llm.output.copy", "Copy the reasoning and the answers.");
+// added 2026-11-12 v0.15.0: Reset scene
+more("scene.prompt.reset", "Reset scene", "Clears this scene's six sections (subject definitions, summary, retention analysis, detailed description, soundscape, music) and every pass's own text, after asking. Shots, dialogue, references, cast, LoRAs, the raw prompt and the Write prompts brief stay.\n\nOne undo step: Ctrl+Z brings the sections back. Off while Write prompts runs or when there is nothing to clear.", "Clear the six sections (asks first).");
+// added 2026-11-12 v0.15.0: the Write prompts brief
+more("scene.prompt.brief", "Write prompts brief", "Your own words for Write prompts: what the scene should be, who does what, the mood, the lines to speak. The LLM gets it every time it writes this scene's prompt (Write prompts, Write this pass, the rewriter), and where it and the summary disagree, the brief wins.\n\nNothing the LLM writes goes here, so it stays the same from one Write prompts to the next, unlike the summary, which Write prompts replaces. It is not sent to H3.\n\nWhen a scene of one pass has no brief yet, the first Write prompts keeps the summary you wrote as its brief.", "Your words for the LLM; Write prompts never overwrites them.");
+more("scene.prompt.briefToggle", "Brief", "Shows or hides the Write prompts brief on the Prompt card of every scene. The dot says this scene has a brief.\n\nThe brief is your own description for the LLM, kept between Write prompts runs.", "Show or hide the Write prompts brief.");
 more("scene.prompt.sceneNote", "Scene note", "In a scene of several passes the summary is a note on the whole scene: for you and for the LLM when it writes the passes. It is not sent to H3, because each pass does only part of the action: each pass gets its own summary, or one made from its shots and dialogue.", "A note on the whole scene; not sent in a scene of several passes.");
 tip("scene.prompt.shared", "Every pass uses this text unless it has its own.");
 // added 2026-11-12 v0.13.1: what a shared section is really used for, and the shot lines sent with the description

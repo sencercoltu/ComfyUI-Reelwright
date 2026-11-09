@@ -209,6 +209,9 @@ export function applyWritten(sc, p, res, report = null) {
     // keeps what the scene has
     const one = got.find(x => num(x.index, 1) === 1) || got[0];
     const sec = clean(one.sections);
+    // added 2026-11-12 v0.15.0: the summary the author wrote is about to be replaced by the LLM's; when the scene has no
+    // Write prompts brief yet, it becomes the brief, which Write prompts never overwrites (keepBrief)
+    if (keepBrief(sc, sec.summary) && report) report.brief = true;
     for (const k of SECTION_KEYS) if (sec[k].trim()) sc.prompt.sections[k] = sec[k];
     sc.prompt.passes = [];
     // [OLD 2026-11-12 v0.14.2->v0.14.3] const filled = fillScene(p, sc); // added 2026-11-12 v0.14.2
@@ -242,6 +245,18 @@ export function applyWritten(sc, p, res, report = null) {
   return n;
 }
 
+// added 2026-11-12 v0.15.0: copy the scene's summary into scene.prompt.brief when the brief is empty and the summary
+// is about to change to `next`, so the author's words are not lost; true when it did. The task-type prefix
+// ("[reference generation + ...]") is left out: the editor writes it.
+export function keepBrief(sc, next) {
+  const pr = sc?.prompt;
+  if (!pr || str(pr.brief).trim()) return false;
+  const old = str(pr.sections?.summary).replace(/^\s*\[[a-z +]+\]\s*/i, "").trim();
+  if (!old || !str(next).trim() || str(next).trim() === str(pr.sections?.summary).trim()) return false;
+  pr.brief = old;
+  return true;
+}
+
 // added 2026-11-12 v0.14.4: what Write prompts did with the shots it wrote (shotfill.writeShots / takePassShots)
 function fillToast(f) {
   const s = n => `${n} shot${n === 1 ? "" : "s"}`;
@@ -266,6 +281,9 @@ export async function runWrite(ctx, items, { origin = "scene", label = "" } = {}
     if (!scene) { it.state = "failed"; it.error = "the scene was deleted"; continue; }
     const job = newJob("passes");
     Object.assign(run, { at: i, job });
+    // added 2026-11-12 v0.15.0: the scene's last Write prompts job, so its output can be shown after it ends (a request
+    // that timed out: what did it get?)
+    store.eph.lastWrite = { ...(store.eph.lastWrite || {}), [it.sid]: job };
     it.state = "run";
     store.setEph({ passWrite: run });
     try {
@@ -285,6 +303,8 @@ export async function runWrite(ctx, items, { origin = "scene", label = "" } = {}
           : `Put ${fillWords(rep.fill)} on the timeline from what the LLM wrote, with framing and camera moves; the description keeps the style.`, "ok");
         [/OLD] */
         if (rep.fill && origin !== "import") ctx.actions.toast(fillToast(rep.fill), "ok"); // added 2026-11-12 v0.14.4
+        // added 2026-11-12 v0.15.0: the summary the author wrote was kept as the brief (keepBrief)
+        if (rep.brief && origin !== "import") ctx.actions.toast("Your summary was kept as this scene's Write prompts brief (the Brief button on the Prompt card): Write prompts reads it every time and never overwrites it.", "ok");
         wrote++;
       }
       if (Array.isArray(res?.warnings) && res.warnings.length) it.warnings = res.warnings.map(String);

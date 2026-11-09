@@ -206,8 +206,14 @@ def default_prompt():
     # [OLD 2026-11-05 v0.7.0->v0.8.0] return {"mode": "structured", "auto": {"subjects": True, "retention": True, "shots": True},
     #                                          "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}}
     # passes: added 2026-11-05 v0.8.0, each pass's own six sections (see pass_texts)
+    # [OLD 2026-11-12 v0.14.4->v0.15.0] no brief field
+    # return {"mode": "structured", "auto": {"subjects": True, "retention": True, "shots": True},
+    #         "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}, "passes": []}
+    # [/OLD]
+    # brief: added 2026-11-12 v0.15.0, the author's own words for Write prompts (llm.pass_request / rewrite read it);
+    # it is never overwritten by what the LLM writes, so it stays the same from one Write prompts to the next
     return {"mode": "structured", "auto": {"subjects": True, "retention": True, "shots": True},
-            "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}, "passes": []}
+            "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}, "passes": [], "brief": ""}
 
 
 def default_merge():
@@ -744,6 +750,7 @@ def _norm_scene(s, d, lang, used_ids):
     for k in SECTION_KEYS:
         _text_field(sec, k, "")
     _text_field(pr, "raw", "")
+    _text_field(pr, "brief", "")  # added 2026-11-12 v0.15.0: the Write prompts brief (default_prompt)
     pp = pr.get("pass_prompts") if isinstance(pr.get("pass_prompts"), dict) else {}
     pr["pass_prompts"] = {k: spec.text(v) for k, v in pp.items() if spec.text(v, None) is not None}
     # added 2026-11-05 v0.8.0: each pass's own six sections (see pass_texts); an item that is not an object becomes an

@@ -1111,3 +1111,30 @@ audio.rw-clip-media { height: 34px; background: transparent; }
 .rw-insp > .rw-fblock.grow:not(.folded) { flex: 1 1 auto; min-height: 0; }
 .rw-insp > .rw-fblock.grow .rw-prompt-preview { flex: 1 1 auto; min-height: 80px; }
 .rw-insp > .rw-fblock > .rw-kv-grid + .rw-field { margin-top: 5px; }
+
+/* added 2026-11-12 v0.15.0: lists put in order by dragging (ui.js sortable / dragGrip) */
+.rw-sortable { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.rw-drag-grip { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 24px; padding: 0; margin: 0 -2px; border: 0; border-radius: 4px; background: transparent; color: var(--dim); cursor: grab; touch-action: none; align-self: center; }
+.rw-drag-grip:hover, .rw-drag-grip:focus-visible { color: var(--text); background: var(--raise); outline: none; }
+.rw-sort-item.dragging { position: relative; z-index: 5; opacity: 0.9; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); outline: 1px solid var(--accent); }
+.rw-sort-item.drop-before { box-shadow: 0 -2px 0 0 var(--accent); }
+.rw-sort-item.drop-after { box-shadow: 0 2px 0 0 var(--accent); }
+body.rw-sorting, body.rw-sorting * { cursor: grabbing !important; user-select: none !important; }
+/* added 2026-11-12 v0.15.0: the Write prompts brief and its button's dot */
+.rw-brief { padding: 8px; border-radius: 8px; border: 1px dashed rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.04); }
+.rw-btn .rw-brief-dot { margin-left: 4px; background: var(--cam-t); }
+/* added 2026-11-12 v0.15.0: the LLM output popup (llmjob.js outputPopup) and the import row's Output button */
+.rw-script-part.run { grid-template-columns: 52px minmax(0, 0.9fr) minmax(0, 1.4fr) auto; align-items: center; }
+.rw-llm-out { position: absolute; right: 14px; bottom: 44px; z-index: 50; width: 600px; height: 460px; max-width: calc(100% - 28px); max-height: calc(100% - 70px); min-width: 280px; min-height: 160px; resize: both; overflow: hidden; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line2); border-radius: 10px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); }
+.rw-llm-out-head { display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 12px; border-bottom: 1px solid var(--line); min-width: 0; }
+.rw-llm-out-head .rw-llm-out-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rw-llm-out-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 14px; }
+.rw-llm-seg { display: flex; flex-direction: column; gap: 6px; }
+.rw-llm-seg + .rw-llm-seg { border-top: 1px solid var(--line); padding-top: 10px; }
+.rw-llm-think summary { cursor: pointer; color: var(--dim); }
+.rw-llm-think-text, .rw-llm-ans-text { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 11.5px; line-height: 1.45; }
+.rw-llm-think-text { color: var(--text3); font-style: italic; border-left: 2px solid var(--line2); padding-left: 8px; }
+.rw-llm-think-text:empty, .rw-llm-ans-text:empty { display: none; }
+.rw-llm-ans-head { color: var(--dim); }
+.rw-llm-ans-text { color: var(--text); }
+.rw-llm-notes:empty { display: none; }

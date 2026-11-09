@@ -900,3 +900,38 @@ def test_chat_turn_sends_the_conversation_and_streams_the_text():
     run_app(go2, handler)
     assert all("text" not in e for e in events)
 
+
+
+# ---- added 2026-11-12 v0.15.0: progress events carry what came since the last one (the editor's LLM output popup) --
+
+def test_progress_events_carry_the_reasoning_and_answer_as_deltas():
+    chunks = [("", "Let me "), ("", "think."), ("Hello", ""), (" world", ""), ("!", "")]
+
+    async def handler(request):
+        return await stream_response(request, sse(*chunks), delay=0.12)
+    events = []
+
+    async def go(cfg):
+        return await llm.chat(cfg, "sys", "hi", progress=events.append)
+    text, _, _ = run_app(go, handler)
+    assert text == "Hello world!"
+    got = {"think": "", "text": ""}
+    for d in events:
+        for k in ("think", "text"):
+            if k + "_add" in d:
+                assert d[k + "_at"] == len(got[k])  # each delta starts where the last one ended
+                got[k] += d[k + "_add"]
+    assert got == {"think": "Let me think.", "text": "Hello world!"}
+    assert events[-1]["phase"] == "done" and all("text" not in d for d in events)  # no whole text without with_text
+
+
+def test_progress_deltas_of_a_server_that_does_not_stream():
+    async def handler(request):
+        return web.json_response(reply("A red coat.", reasoning="hmm"))
+    events = []
+
+    async def go(cfg):
+        return await llm.chat(cfg, "sys", "hi", progress=events.append)
+    assert run_app(go, handler)[0] == "A red coat."
+    done = events[-1]
+    assert (done["text_at"], done["text_add"], done["think_at"], done["think_add"]) == (0, "A red coat.", 0, "hmm")

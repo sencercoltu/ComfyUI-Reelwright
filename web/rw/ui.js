@@ -918,6 +918,100 @@ export function resizableList({ height, min = 90, max = 2000, scroll, help, onRe
   return h("div", { class: "rw-rlist-wrap" }, box, grip);
 }
 
+// ---- added 2026-11-12 v0.15.0: lists put in order by dragging (Sencer: "let me re-order contents of "references",
+// "cast in this scene" and "Scene LORA's" by dragging them. Same goes for LORAs in other tabs").
+// sortable({ id, rows, onMove }) puts the rows (one element per item, in the list's order) in a box; each row holds a
+// dragGrip(). Dragging a grip up or down shows where the item will go (a line before or after a row) and, on release,
+// calls onMove(from, to): take the item at `from` out and put it back at `to` (moveItem does that), as one undo step.
+// ↑ / ↓ on a focused grip move the item one place. A redraw while dragging (a render's progress, an autosave) puts a
+// new box on screen: the drag goes on with that one (found again by its id).
+export function moveItem(list, from, to) {
+  if (!Array.isArray(list) || from === to || from < 0 || from >= list.length) return list;
+  const [x] = list.splice(from, 1);
+  list.splice(Math.max(0, Math.min(list.length, to)), 0, x);
+  return list;
+}
+
+export function sortable({ id, rows, onMove, cls }) {
+  // a row may be null (an item that shows nothing): the others keep their index in the list
+  (rows || []).forEach((el, i) => { if (el) { el.dataset.sortIndex = String(i); el.classList.add("rw-sort-item"); } });
+  const box = h("div", { class: ["rw-sortable", cls], dataset: { sortList: id } }, (rows || []).filter(Boolean));
+  box.__rwSortMove = onMove;
+  return box;
+}
+
+const SORT_MARKS = ["dragging", "drop-before", "drop-after"];
+export function dragGrip({ help, key, label = "Drag to reorder" }) {
+  const grip = h("button", {
+    type: "button", class: "rw-drag-grip", help, key, "aria-label": label,
+    onKeydown: e => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      const row = grip.closest("[data-sort-index]"), box = grip.closest("[data-sort-list]");
+      if (!row || !box) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // the row above / below: the item takes its place
+      const next = e.key === "ArrowDown" ? row.nextElementSibling : row.previousElementSibling;
+      if (next?.dataset.sortIndex !== undefined) box.__rwSortMove?.(Number(row.dataset.sortIndex), Number(next.dataset.sortIndex));
+    },
+    onClick: e => e.stopPropagation(),
+    onPointerdown: e => {
+      if (e.button !== 0) return;
+      const row0 = grip.closest("[data-sort-index]"), box0 = grip.closest("[data-sort-list]");
+      if (!row0 || !box0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.rwOwned = true; // the editor root stops it there, so Nodes 2.0 doesn't start dragging the whole node
+      grip.focus?.({ preventScroll: true });
+      const id = box0.dataset.sortList, from = Number(row0.dataset.sortIndex), y0 = e.clientY;
+      const root = box0.closest(".rw-root") || document;
+      const onMove = box0.__rwSortMove;
+      let to = from, moved = false;
+      const live = () => (box0.isConnected ? box0 : root.querySelector(`[data-sort-list="${CSS.escape(id)}"]`));
+      const clear = box => box?.querySelectorAll(":scope > [data-sort-index]").forEach(r => { r.classList.remove(...SORT_MARKS); r.style.transform = ""; });
+      const move = ev => {
+        if (!(ev.buttons & 1)) { stop(ev); return; }
+        const box = live();
+        if (!box) return;
+        const rows = [...box.querySelectorAll(":scope > [data-sort-index]")];
+        const at = r => Number(r.dataset.sortIndex);
+        const row = rows.find(r => at(r) === from);
+        if (!row) return;
+        if (!moved && Math.abs(ev.clientY - y0) < 4) return;
+        moved = true;
+        document.body.classList.add("rw-sorting");
+        clear(box);
+        row.classList.add("dragging");
+        row.style.transform = `translateY(${(ev.clientY - y0) / rootScale(box)}px)`;
+        // the rows whose middle is above the pointer stay above it; `to` is the place in the list once the item is
+        // taken out (before the first row below the pointer, else after the last row)
+        const others = rows.filter(r => r !== row);
+        const k = others.filter(r => { const b = r.getBoundingClientRect(); return b.top + b.height / 2 < ev.clientY; }).length;
+        const ref = k < others.length ? others[k] : others[others.length - 1];
+        if (!ref) { to = from; return; }
+        const pos = at(ref) > from ? at(ref) - 1 : at(ref);
+        to = k < others.length ? pos : pos + 1;
+        if (to !== from) ref.classList.add(k < others.length ? "drop-before" : "drop-after");
+      };
+      const stop = () => {
+        window.removeEventListener("pointermove", move, true);
+        window.removeEventListener("pointerup", stop, true);
+        window.removeEventListener("pointercancel", cancel, true);
+        window.removeEventListener("blur", cancel);
+        document.body.classList.remove("rw-sorting");
+        clear(live());
+        if (moved && to !== from) onMove?.(from, to);
+      };
+      const cancel = () => { moved = false; stop(); };
+      window.addEventListener("pointermove", move, true);
+      window.addEventListener("pointerup", stop, true);
+      window.addEventListener("pointercancel", cancel, true);
+      window.addEventListener("blur", cancel);
+    },
+  }, icon("grip", 14));
+  return grip;
+}
+
 // added 2026-11-06 v0.9.0: a number kept in project.ui (layout sizes, the monitor's volume), clamped; anything that is
 // not a finite number gives the default
 export function uiNum(p, key, dflt, lo = -Infinity, hi = Infinity) {

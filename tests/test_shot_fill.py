@@ -203,8 +203,11 @@ def test_framing_and_camera_move_are_read_from_a_shot():
         ("wide", "the camera pushes in", "small", "slow", "The pier at dusk."),
         ("close-up", "the camera holds a static shot", "", "", "@Mara."),
         ("low angle", "the camera tilts up", "", "fast", "The lighthouse against the sky."),
-        # a camera sentence that says more than the move is the camera text as written
-        ("", "the camera tracks her as she walks past the boats", "", "", "@Mara walks along the seawall."),
+        # [OLD 2026-11-12 v0.14.4->v0.15.0] a camera sentence that says more than the move is the camera text as written
+        # ("", "the camera tracks her as she walks past the boats", "", "", "@Mara walks along the seawall."),
+        # added 2026-11-12 v0.15.0: the move is still the preset; the sentence stays in the text
+        ("", "the camera tracks the moving subject", "", "",
+         "@Mara walks along the seawall. The camera tracks her as she walks past the boats."),
         ("", "the camera pushes in", "", "slow", "Wide on the pier."),  # "Wide on" is not a framing
         ("", "", "", "", "Rain falls on the harbor. Gulls cry."),
         ("medium", "the camera holds a static shot", "", "", "@Mara."),  # a static shot has no amplitude or speed
@@ -397,3 +400,84 @@ def test_tidy_rewrite_new_shots():
     assert prompt.tidy_rewrite(prop, before, {"shots": True})["detailed_description"] == "Style."
     assert prompt.tidy_rewrite(prop, before, {"shots": True}, new_shots=True)["detailed_description"] == \
         prop["detailed_description"]
+
+
+# ---- added 2026-11-12 v0.15.0: the Write prompts brief (Sencer: "Add a separate text field for "Write prompts" input,
+# whose content stay persistent between "Write prompts" ... my original text i write in summary gets overwritten") --
+
+def test_brief_is_kept_and_sent_to_the_llm(monkeypatch):
+    p = model.normalize_project(project(desc="", summary="x"))
+    s = p["scenes"][0]
+    assert s["prompt"]["brief"] == "" and model.default_prompt()["brief"] == ""
+    s["prompt"]["brief"] = 42  # a number becomes text, junk becomes empty (as every text field)
+    assert model.normalize_project(copy.deepcopy(p))["scenes"][0]["prompt"]["brief"] == "42"
+    s["prompt"]["brief"] = {"x": 1}
+    assert model.normalize_project(copy.deepcopy(p))["scenes"][0]["prompt"]["brief"] == ""
+    s["prompt"]["brief"] = "  Mara comes home and says she missed the sea.  "
+    plan, builds = llm.scene_builds(p, s)
+    body = llm.pass_request(p, s, plan, builds, 1)
+    assert llm.BRIEF_HEAD + "Mara comes home and says she missed the sea." in body
+    assert "when the whole-scene note, the author's brief or the instruction has someone speak" in body
+    s["prompt"]["brief"] = ""
+    assert llm.BRIEF_HEAD not in llm.pass_request(p, s, plan, builds, 1)
+    # the rewriter gets it too
+    s["prompt"]["brief"] = "Keep it quiet."
+    seen = {}
+
+    async def fake_ask(cfg, system, user, parse=None, **kw):
+        seen["user"] = user
+        return parse(json.dumps({"summary": "s"}), {})
+    monkeypatch.setattr(llm, "ask", fake_ask)
+    cfg = llm.resolve({"base_url": "http://127.0.0.1:9/v1"}, {"base_url": "", "model": "", "api_key": ""})
+    asyncio.run(llm.rewrite(cfg, p, s, ""))
+    assert llm.BRIEF_HEAD + "Keep it quiet." in seen["user"]
+
+
+BRIEF_RUNNER = r"""
+import { pathToFileURL } from "node:url";
+const dir = process.argv[process.argv.length - 1];
+const m = await import(pathToFileURL(dir + "/model.js").href);
+const ps = await import(pathToFileURL(dir + "/passes.js").href);
+let input = "";
+for await (const chunk of process.stdin) input += chunk;
+const req = JSON.parse(input);
+const out = [];
+for (const c of req.cases) {
+  const p = m.normalizeProject(c.project);
+  const sc = p.scenes[0];
+  const rep = {};
+  const n = ps.applyWritten(sc, p, { passes: [{ index: 1, sections: c.sections }] }, rep);
+  out.push({ n, brief: sc.prompt.brief, summary: sc.prompt.sections.summary, kept: !!rep.brief });
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_write_prompts_keeps_the_written_summary_as_the_brief(tmp_path):
+    # passes.js imports api.js, which needs a browser; the runner stubs it with a module of the same name
+    web = tmp_path / "rw"
+    shutil.copytree(WEB, web)
+    (web / "api.js").write_text("export const rw = {};\n")
+    (web / "llmjob.js").write_text("export const newJob = () => 'j';\n")
+
+    def run(cases):
+        r = subprocess.run([NODE, "--input-type=module", "-e", BRIEF_RUNNER, str(web)], input=json.dumps({"cases": cases}),
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout)
+
+    def proj(summary, brief=""):
+        p = project(desc="Warm light.")
+        p["scenes"][0]["prompt"]["sections"]["summary"] = summary
+        p["scenes"][0]["prompt"]["brief"] = brief
+        return p
+    new = {"summary": "Mara reaches the harbor at night.", "detailed_description": "Warm light."}
+    a, b, c, d = run([{"project": proj("[reference generation] She comes home."), "sections": new},
+                      {"project": proj("She comes home.", "My own brief."), "sections": new},
+                      {"project": proj(""), "sections": new},
+                      {"project": proj("She comes home."), "sections": {"summary": "", "detailed_description": "x"}}])
+    assert a == {"n": 1, "brief": "She comes home.", "summary": "Mara reaches the harbor at night.", "kept": True}
+    assert b["brief"] == "My own brief." and not b["kept"]  # a brief is never overwritten
+    assert c["brief"] == "" and not c["kept"]
+    assert d["brief"] == "" and d["summary"] == "She comes home." and not d["kept"]  # the summary did not change

@@ -7,6 +7,7 @@ import { createStore, withProjectId } from "./store.js";
 import * as M from "./model.js"; // added 2026-11-03 v0.6.0: model APIs that may not exist yet (nextSeedN, migrateScore)
 import { newJob } from "./llmjob.js"; // added 2026-11-03 v0.6.0: merge job ids
 import { ownJobs, jobLine } from "./llmjob.js"; // added 2026-11-06 v0.10.2: LLM progress in place, own jobs only
+import { feedStream } from "./llmjob.js"; // added 2026-11-12 v0.15.0: the reasoning and answer received, for the output popup
 import { installTooltips } from "./tooltip.js";
 /* [OLD 2026-11-02 v0.1.0->v0.2.0] comboState is needed for the render guard
 import { h, icon, button } from "./ui.js";
@@ -1281,6 +1282,9 @@ export function mountEditor(container, host) {
   on("reelwright.llm", d => {
     if (!d?.job || !ownJobs.has(d.job)) return;
     store.eph.llmJobs[d.job] = d;
+    // added 2026-11-12 v0.15.0: keep what the request received (llmjob.feedStream) and update the output popup
+    try { feedStream(d); } catch { /* the progress line still updates */ }
+    for (const el of root.querySelectorAll(".rw-llm-out")) { try { el.__rwFeed?.(d); } catch { /* keep the old text */ } }
     for (const el of root.querySelectorAll("[data-llm-job]")) {
       if (el.dataset.llmJob !== d.job) continue;
       // [OLD 2026-11-12 v0.12.0->v0.13.0] try { el.textContent = (el.__rwJobText || jobLine)(d); } catch { /* keep the old text */ }

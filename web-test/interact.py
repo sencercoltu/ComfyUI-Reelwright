@@ -1522,6 +1522,7 @@ def main():
         v0142_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.2: shots and lines written for a scene without shots go on the timeline
         v0143_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.3: framing and camera moves of written shots go into the shots
         v0144_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.4: written shots replace the shots whatever their count; scenes of several passes too
+        v0150_checks(page, check, saved, shots)  # added 2026-11-12 v0.15.0: drag to reorder, Reset scene, the LLM output popup, the Write prompts brief
         browser.close()
     httpd.shutdown()
 
@@ -4854,6 +4855,10 @@ def v0131_checks(page, check, saved, shots):
     page.wait_for_timeout(400)
     check(order() == before, f"Ctrl+Z puts it back: {order()[:4]}")
     # drag s_03 to the front: before the first scene
+    # added 2026-11-12 v0.15.0: under load the blocks were not drawn yet after the undo (box() gave None once)
+    page.wait_for_selector(".rw-scene[data-sid='s_03']", timeout=4000)
+    page.wait_for_selector(".rw-scene[data-sid='s_01']", timeout=4000)
+    page.wait_for_timeout(200)
     a, f = box("s_03"), box("s_01")
     x, y = a["x"] + 20, a["y"] + 40
     page.mouse.move(x, y)
@@ -5415,6 +5420,202 @@ def v0144_checks(page, check, saved, shots):
           f"the passes keep only the style and their continuing lines: {[x['sections']['detailed_description'][:60] for x in pp]}")
     page.evaluate("window.__mockFlags.writeText = {}")
     load(json.loads(saved))
+
+
+
+def v0150_checks(page, check, saved, shots):
+    """v0.15.0 (Sencer): drag references, cast and LoRAs into order; Reset scene; the LLM output popup; a Write prompts
+    brief that Write prompts never overwrites."""
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    scene_of = lambda sid: next(x for x in cur()["scenes"] if x["id"] == sid)
+    labels = lambda: [x["label"] for x in page.evaluate("window.__editor.store.history()") if x["done"]]
+    toasts = lambda: " | ".join(page.locator(".rw-toast").all_inner_texts())
+    undo = lambda: (page.evaluate("window.__editor.store.undo()"), page.wait_for_timeout(300))
+
+    def drag(src, dst, below=True):  # press a grip, move over the middle of another row (just below it), release
+        page.locator(dst).scroll_into_view_if_needed()
+        page.locator(src).scroll_into_view_if_needed()
+        page.wait_for_timeout(150)
+        a, b = page.locator(src).bounding_box(), page.locator(dst).bounding_box()
+        page.mouse.move(a["x"] + a["width"] / 2, a["y"] + a["height"] / 2)
+        page.mouse.down()
+        y = b["y"] + (b["height"] * 0.8 if below else b["height"] * 0.2)
+        page.mouse.move(a["x"] + a["width"] / 2, y, steps=8)
+        page.wait_for_timeout(120)
+        marked = page.evaluate("document.querySelectorAll('.rw-sort-item.drop-before, .rw-sort-item.drop-after').length")
+        dragging = page.evaluate("document.querySelectorAll('.rw-sort-item.dragging').length")
+        page.mouse.up()
+        page.wait_for_timeout(350)
+        return marked, dragging
+
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="scene", selected="s_03")
+    q["ui"].pop("collapsed", None)
+    load(q)
+    p = cur()
+    imgs = [a["id"] for a in p["assets"] if a["kind"] == "image"][:3]
+    chars = [c["id"] for c in p["cast"]][:3]
+
+    # 1. references: drag the first below the second; ↓ on a grip; one undo step each
+    page.evaluate("""([imgs, chars]) => window.__editor.store.update(q => { const s = q.scenes.find(x => x.id === 's_03');
+      s.refs = imgs.map((a, i) => ({ id: 'r_t' + i, asset: a, role: 'reference', time: 0, retention: '', keep: [], soundtrack: false, cast: '' }));
+      s.cast = chars.map(c => ({ id: c, outfit: '' }));
+      s.overrides.loras = { mode: 'add', items: [{ id: 'l_a', name: 'a.safetensors', strength: 0.8, enabled: true }, { id: 'l_b', name: 'b.safetensors', strength: 0.5, enabled: true }], strengths: {} };
+    }, { label: 'v0150 setup' })""", [imgs, chars])
+    page.wait_for_timeout(400)
+    check(page.locator("[data-key='ref-grip-r_t0']").count() == 1 and page.locator(".rw-sortable[data-sort-list='refs-s_03'] > .rw-sort-item").count() == len(imgs),
+          "every reference row has a grip in a sortable list")
+    marked, dragging = drag("[data-key='ref-grip-r_t0']", "[data-key='ref-grip-r_t1'] >> xpath=ancestor::div[contains(@class,'rw-sort-item')][1]")
+    order = [r["id"] for r in scene_of("s_03")["refs"]]
+    check(order[:2] == ["r_t1", "r_t0"] and labels()[-1] == "Reorder references" and marked == 1 and dragging == 1,
+          f"dragging a reference moves it, one undo step, with a drop line while dragging: {order} {labels()[-1:]} marked={marked} dragging={dragging}")
+    page.screenshot(path=str(shots / "v0150_refs_dragged.png"))
+    undo()
+    check([r["id"] for r in scene_of("s_03")["refs"]][:2] == ["r_t0", "r_t1"], "Ctrl+Z puts the references back")
+    page.locator("[data-key='ref-grip-r_t0']").focus()
+    page.keyboard.press("ArrowDown")
+    page.wait_for_timeout(350)
+    check([r["id"] for r in scene_of("s_03")["refs"]][:2] == ["r_t1", "r_t0"], "↓ on a grip moves the reference one place")
+    check(page.evaluate("document.activeElement?.dataset?.key") == "ref-grip-r_t0", "the grip keeps the focus after the move")
+    page.keyboard.press("ArrowUp")
+    page.wait_for_timeout(350)
+    check([r["id"] for r in scene_of("s_03")["refs"]][:2] == ["r_t0", "r_t1"], "↑ moves it back")
+    # a short press without a move is not a reorder
+    n = len(labels())
+    b = page.locator("[data-key='ref-grip-r_t0']").bounding_box()
+    page.mouse.click(b["x"] + 4, b["y"] + 6)
+    page.wait_for_timeout(250)
+    check(len(labels()) == n, "a click on a grip changes nothing")
+
+    # 2. cast and the scene's LoRAs
+    if len(chars) >= 2:
+        drag(f"[data-key='cast-grip-{chars[1]}']", f"[data-key='cast-grip-{chars[0]}'] >> xpath=ancestor::div[contains(@class,'rw-sort-item')][1]", below=False)
+        got = [c["id"] for c in scene_of("s_03")["cast"]]
+        check(got[:2] == [chars[1], chars[0]] and labels()[-1] == "Reorder cast", f"dragging a cast member up moves them: {got} {labels()[-1:]}")
+    page.locator("[data-key='lora-grip-l_a']").focus()
+    page.keyboard.press("ArrowDown")
+    page.wait_for_timeout(350)
+    got = [x["id"] for x in scene_of("s_03")["overrides"]["loras"]["items"]]
+    check(got == ["l_b", "l_a"] and labels()[-1] == "Reorder scene LoRAs", f"scene LoRAs reorder: {got} {labels()[-1:]}")
+    audit("Sortable lists")
+
+    # 3. Global LoRA stack: drag
+    page.evaluate("""() => window.__editor.store.update(q => { q.global.loras = [
+      { id: 'g_a', name: 'ga.safetensors', strength: 1, enabled: true }, { id: 'g_b', name: 'gb.safetensors', strength: 1, enabled: true },
+      { id: 'g_c', name: 'gc.safetensors', strength: 1, enabled: true }]; }, { label: 'v0150 global loras' })""")
+    page.click(".rw-tab:has-text('Global')")
+    page.wait_for_timeout(400)
+    grip = page.locator("[data-key='glora-grip-g_a']")
+    grip.scroll_into_view_if_needed()
+    drag("[data-key='glora-grip-g_a']", "[data-key='glora-grip-g_c'] >> xpath=ancestor::div[contains(@class,'rw-sort-item')][1]")
+    got = [x["id"] for x in cur()["global"]["loras"]]
+    check(got == ["g_b", "g_c", "g_a"] and labels()[-1] == "Reorder global LoRAs", f"Global LoRAs: dragged to the end: {got} {labels()[-1:]}")
+    check(page.locator("button[data-help='global.loras.order']:not(.rw-drag-grip)").count() == 0, "the old move-up button is gone")
+    audit("Global LoRA stack")
+    page.click(".rw-tab:has-text('Scene')")
+    page.wait_for_timeout(400)
+
+    # 4. the Write prompts brief: shown by its button, sent to the LLM, kept; the summary the author wrote becomes it
+    page.evaluate("window.__editor.actions.addScene('s_03')")
+    page.wait_for_timeout(300)
+    sid = cur()["ui"]["selected"]
+    page.evaluate("""sid => window.__editor.store.update(q => { const s = q.scenes.find(x => x.id === sid);
+      s.duration = 8; s.dialogue = []; s.shots = []; s.prompt.sections.summary = 'Mara comes home and hugs the keeper.'; }, { label: 'v0150 brief scene' })""", sid)
+    page.wait_for_timeout(300)
+    check(page.locator(f"[data-key='brief-btn-{sid}']").count() == 1 and page.locator(f"textarea[data-key='brief-{sid}']").count() == 0,
+          "the Brief button is there, the brief is hidden")
+    page.evaluate("([sid]) => { window.__mockFlags.writeText[sid] = 'Dusk.\\n[Shot 1] A wide shot of @Mara at the pier.'; window.__mockFlags.passesMs = 0; window.__mockFlags.passCalls = []; window.__editor.store.setEph({ toasts: [] }); }", [sid])
+    page.click(f"[data-key='write-{sid}']")
+    page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
+    page.wait_for_timeout(400)
+    sc = scene_of(sid)
+    check(sc["prompt"]["brief"] == "Mara comes home and hugs the keeper." and sc["prompt"]["sections"]["summary"] != sc["prompt"]["brief"],
+          f"the summary the author wrote is kept as the brief: {sc['prompt']['brief']!r} / {sc['prompt']['sections']['summary']!r}")
+    check("kept as this scene's Write prompts brief" in toasts(), f"a toast says so: {toasts()!r}")
+    check(page.locator(f"[data-key='brief-btn-{sid}'] .rw-brief-dot").count() == 1, "the Brief button has a dot when the scene has a brief")
+    page.click(f"[data-key='brief-btn-{sid}']")
+    page.wait_for_timeout(300)
+    ta = page.locator(f"textarea[data-key='brief-{sid}']")
+    check(ta.count() == 1 and ta.input_value() == "Mara comes home and hugs the keeper.", "the button shows the brief")
+    ta.fill("Mara comes home at dusk; she says she missed the sea.")
+    page.wait_for_timeout(250)
+    page.locator(".rw-root").click(position={"x": 4, "y": 4})
+    page.wait_for_timeout(300)
+    page.evaluate("() => { window.__mockFlags.passCalls = []; window.__editor.store.setEph({ toasts: [] }); }")
+    page.click(f"[data-key='write-{sid}']")
+    page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
+    page.wait_for_timeout(400)
+    calls = page.evaluate("window.__mockFlags.passCalls")
+    sc = scene_of(sid)
+    check(calls and calls[-1]["brief"] == "Mara comes home at dusk; she says she missed the sea." and sc["prompt"]["brief"] == calls[-1]["brief"]
+          and "kept as this scene's" not in toasts(), f"the brief is sent and stays the same: {calls[-1:]} {sc['prompt']['brief']!r}")
+    page.screenshot(path=str(shots / "v0150_brief.png"))
+    audit("Brief")
+    page.click(f"[data-key='brief-btn-{sid}']")  # hide it again (every scene)
+    page.wait_for_timeout(250)
+
+    # 5. Reset scene: asks, clears the six sections (one undo step), keeps the brief and the shots
+    shots_before = len(scene_of(sid)["shots"])
+    page.click(f"[data-key='reset-{sid}']")
+    page.wait_for_timeout(250)
+    check(page.locator(".rw-modal").count() == 1 and "Write prompts brief" in page.locator(".rw-modal").inner_text(), "Reset scene asks first and says what stays")
+    page.screenshot(path=str(shots / "v0150_reset_ask.png"))
+    page.locator(".rw-modal button:has-text('Cancel')").click()
+    page.wait_for_timeout(250)
+    check(scene_of(sid)["prompt"]["sections"]["detailed_description"] != "", "Cancel keeps the sections")
+    page.click(f"[data-key='reset-{sid}']")
+    page.wait_for_timeout(250)
+    page.locator(".rw-modal button:has-text('Reset scene')").click()
+    page.wait_for_timeout(350)
+    sc = scene_of(sid)
+    check(all(v == "" for v in sc["prompt"]["sections"].values()) and sc["prompt"]["passes"] == [] and labels()[-1] == "Reset scene"
+          and sc["prompt"]["brief"] and len(sc["shots"]) == shots_before, f"Reset scene clears the sections only: {sc['prompt']} {labels()[-1:]}")
+    check(page.locator(f"[data-key='reset-{sid}']").is_disabled(), "nothing left to clear: the button is off")
+    undo()
+    check(scene_of(sid)["prompt"]["sections"]["detailed_description"] != "", "Ctrl+Z brings the sections back")
+
+    # 6. the LLM output popup: opened from the progress row, live, stays after the run, opens again from the card
+    page.evaluate("() => { window.__mockFlags.passesMs = 2400; window.__editor.store.setEph({ toasts: [] }); }")
+    page.click(f"[data-key='write-{sid}']")
+    page.wait_for_selector("[data-key='write-out']", timeout=4000)
+    check(page.locator(".rw-llm-out").count() == 0, "the output is not shown until asked for")
+    page.click("[data-key='write-out']")
+    page.wait_for_timeout(200)
+    check(page.locator(".rw-llm-out").count() == 1 and "Hide output" in page.locator("[data-key='write-out']").inner_text(), "Output opens the popup")
+    page.wait_for_function("() => (document.querySelector('.rw-llm-out .rw-llm-think-text')?.textContent || '').includes('Shots first')", timeout=6000)
+    page.screenshot(path=str(shots / "v0150_output_live.png"))
+    page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
+    page.wait_for_timeout(400)
+    out = page.locator(".rw-llm-out").inner_text()
+    check("The user wants the scene written. Shots first, then the sound." in out and "Mara at the pier" in out and "Pass 1 of 1" in out,
+          f"the popup shows the reasoning and the answer: {out[:300]!r}")
+    check(page.locator(".rw-llm-out").count() == 1, "the popup stays after the run")
+    audit("Output popup")
+    page.locator(".rw-llm-out button[data-help='common.close']").click()
+    page.wait_for_timeout(250)
+    check(page.locator(".rw-llm-out").count() == 0, "× closes it")
+    last = page.locator(f"[data-key='write-out-last-{sid}']")
+    check(last.count() == 1, "the Prompt card offers the last output")
+    last.click()
+    page.wait_for_timeout(250)
+    check(page.locator(".rw-llm-out").count() == 1 and "Mara at the pier" in page.locator(".rw-llm-out").inner_text(), "it shows the last run's output")
+    page.screenshot(path=str(shots / "v0150_output_last.png"))
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(200)
+    if page.locator(".rw-llm-out").count():
+        page.locator(".rw-llm-out button[data-help='common.close']").click()
+        page.wait_for_timeout(200)
+    page.evaluate("() => { window.__mockFlags.passesMs = 0; }")
 
 
 if __name__ == "__main__":

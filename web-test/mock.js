@@ -562,10 +562,16 @@ async function llmWork(job, ms, tokens, sendWith = null) {
   const send = sendWith || (d => { for (const cb of listeners["reelwright.llm"] || []) cb({ job, budget: 16384, input: 2400, context: 32768, ...d }); });
   send({ phase: "waiting", elapsed: 0, tokens: 0, reasoning: 0 });
   const steps = 6;
+  // added 2026-11-12 v0.15.0: the reasoning (first half) and the answer (second half) as they come, like llm.py chat
+  const think = ["The user wants ", "the scene written. ", "Shots first, then the sound."], answer = ["{\"summary\": ", "\"Mara at the pier\", ", "\"detailed_description\": \"...\"}"];
+  const at = { think: 0, text: 0 };
   for (let i = 1; i <= steps; i++) {
     await new Promise(r => setTimeout(r, ms / steps));
     if (llmCancelled.has(job)) { delete llmLive[job]; llmCancelled.delete(job); return true; }
-    send({ phase: "writing", elapsed: (ms / 1000) * (i / steps), tokens: Math.round(tokens * i / steps), reasoning: 0 });
+    // [OLD 2026-11-12 v0.14.4->v0.15.0] send({ phase: "writing", elapsed: (ms / 1000) * (i / steps), tokens: Math.round(tokens * i / steps), reasoning: 0 });
+    const k = i <= 3 ? "think" : "text", add = (k === "think" ? think : answer)[(i - 1) % 3];
+    send({ phase: "writing", elapsed: (ms / 1000) * (i / steps), tokens: Math.round(tokens * i / steps), reasoning: 0, [k + "_at"]: at[k], [k + "_add"]: add });
+    at[k] += add.length;
   }
   delete llmLive[job];
   return false;
@@ -623,7 +629,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-12 v0.14.1->v0.14.2] case "/reelwright/info": return json({ version: "0.14.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-12 v0.14.2->v0.14.3] case "/reelwright/info": return json({ version: "0.14.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-12 v0.14.3->v0.14.4] case "/reelwright/info": return json({ version: "0.14.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    case "/reelwright/info": return json({ version: "0.14.4", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-12 v0.14.4->v0.15.0] case "/reelwright/info": return json({ version: "0.14.4", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.15.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -793,7 +800,8 @@ async function route(path, opts = {}) {
       const p = body.project, i = p.scenes.findIndex(x => x.id === body.scene_id), s = p.scenes[i];
       if (!s) return json({ error: "Unknown scene " + body.scene_id }, 400);
       // [OLD 2026-11-06 v0.9.0->v0.10.0] mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job });
-      mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job, instruction: body.instruction || "" }); // added 2026-11-06 v0.10.0: the rewriter on a pass tab sends one
+      // [OLD 2026-11-12 v0.14.4->v0.15.0] mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job, instruction: body.instruction || "" }); // added 2026-11-06 v0.10.0: the rewriter on a pass tab sends one
+      mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job, instruction: body.instruction || "", brief: s?.prompt?.brief ?? null }); // v0.10.0: instruction; v0.15.0: the scene's Write prompts brief
       if (mockFlags.passesFail === body.scene_id) return json({ error: "No answer from http://llm.local:30000/v1 for 120 s. (tried 3 times)", reason: "stall" }, 502);
       const plan = modelPlanScene(p, s, i).passes;
       const want = Array.isArray(body.passes) && body.passes.length ? body.passes.filter(k => k >= 1 && k <= plan.length) : plan.map(x => x.index);

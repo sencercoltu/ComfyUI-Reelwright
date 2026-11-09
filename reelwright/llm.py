@@ -555,6 +555,10 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
     t0 = time.time()
     state = {"tokens": 0, "reasoning": 0, "chars": 0, "last": 0.0}
     content, reasoning, finish, model = [], [], "", cfg["model"]
+    # added 2026-11-12 v0.15.0: how much of the answer and of the reasoning the progress events have carried so far
+    # (Sencer: "When waiting for response, we receive thinking, but cannot see what it thinks. Add the thinking progress
+    # and received content as output so we can see what's going on")
+    sent = {"text": 0, "think": 0, "text_n": 0, "think_n": 0}
 
     def report(phase, force=False):
         now = time.time()
@@ -567,6 +571,15 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
                  "elapsed": round(now - t0, 1), "budget": limit, "input": est, "context": ctx}
             if with_text:  # added 2026-11-12 v0.13.0: the answer so far (an inline <think> block shows as it comes)
                 d["text"] = "".join(content)
+            # added 2026-11-12 v0.15.0: what came since the last event: text_add (answer) at text_at, think_add
+            # (reasoning) at think_at, character offsets in what this request received, so the editor can show the
+            # reasoning and the answer as they arrive (llmjob.js jobStream) without the whole text in every event
+            for k, parts in (("text", content), ("think", reasoning)):
+                if len(parts) > sent[k + "_n"]:
+                    add = "".join(parts[sent[k + "_n"]:])
+                    d[k + "_at"], d[k + "_add"] = sent[k], add
+                    sent[k] += len(add)
+                    sent[k + "_n"] = len(parts)
             progress(d)
 
     report("waiting", force=True)
@@ -1004,7 +1017,8 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
                      "sentences, then the scene as one [Shot 1] line (composition, subject appearance and position, "
                      "environment and lighting, action, camera movement and sound){}. {}").format(
             ", with every spoken line of the scene, word for word" if scene.get("dialogue") else
-            "; when the summary or the instruction has someone speak, write those lines in it",
+            # [OLD 2026-11-12 v0.14.4->v0.15.0] "; when the summary or the instruction has someone speak, write those lines in it",
+            "; when the summary, the brief or the instruction has someone speak, write those lines in it",
             # [OLD 2026-11-12 v0.14.2->v0.14.3] FILL_LINES_RULE)  (the camera move was not asked for in the guide's words)
             FILL_LINES_RULE + " " + FILL_CAMERA_RULE)  # FILL_CAMERA_RULE: added 2026-11-12 v0.14.3
     # [OLD 2026-11-12 v0.14.1->v0.14.2] the description rule was always the style sentences
@@ -1018,13 +1032,26 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
     #     ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
     #     instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing")
     # [/OLD]
-    user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}Instruction: {}\n\n"
+    # [OLD 2026-11-12 v0.14.4->v0.15.0] no brief
+    # user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}Instruction: {}\n\n"
+    #         "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
+    #         "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
+    #         "Do not repeat what the editor adds automatically: {}. {} Write overall_soundscape and "
+    #         "non_diegetic_music as the guide describes.").format(
+    #     ctx, before,
+    #     ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
+    #     instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing",
+    #     desc_rule)
+    # [/OLD]
+    user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}{}Instruction: {}\n\n"
             "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
             "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
             "Do not repeat what the editor adds automatically: {}. {} Write overall_soundscape and "
             "non_diegetic_music as the guide describes.").format(
         ctx, before,
         ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
+        # added 2026-11-12 v0.15.0: the author's brief (brief_text)
+        (BRIEF_HEAD + brief_text(scene) + "\n\n" if brief_text(scene) else ""),
         instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing",
         desc_rule)
     # [OLD 2026-11-03 v0.4.1->v0.4.2] an unreadable or cut-off answer raised a bare JSON error
@@ -1429,6 +1456,18 @@ def writes_shots(scene, plan):
     return fills_timeline(scene, plan) or (pr.get("mode") != "raw" and bool((pr.get("auto") or {}).get("shots")))
 
 
+# added 2026-11-12 v0.15.0: scene.prompt.brief, the author's own words for Write prompts (the Prompt card's Brief).
+# Nothing the LLM writes goes there, so it stays the same from one Write prompts to the next, unlike the summary.
+BRIEF_HEAD = ("Author's brief for this scene (the author's own words; follow it, and where it and the whole-scene note "
+              "disagree, the brief wins):\n")
+
+
+def brief_text(scene):
+    """added 2026-11-12 v0.15.0: the scene's Write prompts brief, stripped ("" when it has none)."""
+    pr = scene.get("prompt") if isinstance(scene.get("prompt"), dict) else {}
+    return str(pr.get("brief") or "").strip()
+
+
 def pass_request(p, scene, plan, builds, k, written=None, stored=None, instruction=""):
     """The user message that asks for pass k (1-based) of a scene: the scene and cast (scene_context), the whole-scene
     note, this pass's range, shots and spoken lines in pass and scene time, the references it sends, the pass before
@@ -1442,6 +1481,8 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
     parts = ["The whole scene, for context (you write only pass {}):\n{}".format(k, scene_context(p, scene))]
     note = _prompt._strip_task_tags(str((pr.get("sections") or {}).get("summary") or "")).strip()
     parts.append("Whole-scene note (what the whole scene is about; not a prompt of its own):\n" + (note or "(none)"))
+    if brief_text(scene):  # added 2026-11-12 v0.15.0: the author's Write prompts brief, kept between runs
+        parts.append(BRIEF_HEAD + brief_text(scene))
 
     start, end, gen = float(x["start"]), float(x["end"]), int(x["gen_frames"])
     head = ("Write the prompt of pass {} of {}. It covers scene time {} to {} ({:.2f} s); H3 generates {} frames "
@@ -1474,8 +1515,12 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
         "(none on the timeline yet: write it as one shot; the editor puts it on the timeline)" if fill else
         "(no shots on the timeline: write it as one shot)")) +
         "\nIts spoken lines:\n" + ("\n".join(spoken) or (
-            "(none on the timeline yet: when the whole-scene note or the instruction has someone speak, write those "
-            "lines, word for word as the note gives them, and only those; the editor puts them on the timeline)"
+            # [OLD 2026-11-12 v0.14.4->v0.15.0] "(none on the timeline yet: when the whole-scene note or the instruction has someone speak, write those "
+            # [OLD 2026-11-12 v0.14.4->v0.15.0] "lines, word for word as the note gives them, and only those; the editor puts them on the timeline)"
+            # added 2026-11-12 v0.15.0: or the author's brief, when the scene has one
+            "(none on the timeline yet: when the whole-scene note{} or the instruction has someone speak, write those "
+            "lines, word for word as the note gives them, and only those; the editor puts them on the timeline)".format(
+                ", the author's brief" if brief_text(scene) else "")
             if free else "(none)")))
     # added 2026-11-06 v0.10.0: how each speaker of this pass sounds (cast voice_desc), to describe at their first line
     voices = pass_voices(p, x)
