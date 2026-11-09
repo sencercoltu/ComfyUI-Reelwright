@@ -16,6 +16,7 @@ def project(page):
 def main():
     httpd = serve()
     url = f"http://127.0.0.1:{httpd.server_address[1]}/web-test/harness.html"
+    page_url = url  # added 2026-11-09 v0.17.3: main() reuses the name url below (v0173_scrollbar_checks opens the page)
     errors, failures = [], []
 
     def check(cond, msg):
@@ -24,6 +25,7 @@ def main():
             print("FAIL:", msg, flush=True)  # added 2026-11-03 v0.6.0: shown at once (a later crash hides the summary)
 
     with sync_playwright() as p:
+        pw = p  # added 2026-11-09 v0.17.3: main() reuses the name p below (v0173_scrollbar_checks needs Playwright)
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
         page.on("pageerror", lambda e: errors.append(str(e)))
@@ -1526,7 +1528,9 @@ def main():
         v0151_checks(page, check, saved, shots)  # added 2026-11-09 v0.15.1: dialogs open next to what opened them
         v0160_checks(page, check, saved, shots)  # added 2026-11-09 v0.16.0: video anchors; sheets too small; the sheet in the subject line
         v0161_checks(page, check, saved, shots)  # added 2026-11-09 v0.16.1: a video anchor has the scene reference's clip editor
+        v0173_checks(page, check, saved, shots)  # added 2026-11-09 v0.17.3: prompt editors keep their size through a re-render
         browser.close()
+        v0173_scrollbar_checks(pw, page_url, check)  # added 2026-11-09 v0.17.3: typing lands where the caret is (real scrollbars)
     httpd.shutdown()
 
     for e in errors:
@@ -5931,6 +5935,90 @@ def v0161_checks(page, check, saved, shots):
     check(not r["dup"], f"video anchor clip: duplicate keys {r['dup'][:6]}")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
+
+
+# added 2026-11-09 v0.17.3
+LONG_SHOT = " ".join(["Mara walks slowly along the wet pier while the lamps flicker and the gulls cry overhead."] * 30)
+
+
+def v0173_checks(page, check, saved, shots):
+    """v0.17.3 (Sencer: "the shot cards flicker randomly"): a re-render (autosave, progress, a plan refresh) showed every
+    prompt editor at its first rows for a frame, so the shot cards jumped; they keep their size now. A rebuilt editor
+    shows the text its textarea holds."""
+    page.evaluate("window.__editor.actions.select('s_02', 'scene')")
+    page.wait_for_timeout(500)
+    page.evaluate("t => window.__editor.store.update(p => { const s = p.scenes.find(x => x.id === 's_02'); s.shots[0].text = t.slice(0, 600); })", LONG_SHOT)
+    page.wait_for_timeout(400)
+    frames = page.evaluate("""async () => {
+      const sizes = () => [...document.querySelectorAll('.rw-code-ta')].map(ta => ta.clientHeight);
+      const before = sizes(); const log = [];
+      window.__editor.store.notify();
+      for (let k = 0; k < 4; k++) { await new Promise(r => requestAnimationFrame(r)); log.push(sizes()); }
+      return { before, log }; }""")
+    check(all(f == frames["before"] for f in frames["log"]) and frames["before"],
+          f"prompt editors keep their height through a re-render: {frames['before'][:4]} -> {[f[:4] for f in frames['log']]}")
+    same = page.evaluate("() => [...document.querySelectorAll('.rw-code')].every(w => w.querySelector('.rw-code-hl').textContent === w.querySelector('.rw-code-ta').value + '\\n')")
+    check(same, "every prompt editor's overlay shows its text")
+    # typing while the tab re-renders: the text and the caret stay
+    page.wait_for_timeout(300)
+    page.evaluate("() => { const ta = document.querySelector('.rw-shot-row .rw-code-ta'); ta.scrollIntoView({ block: 'center' }); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }")
+    for ch in " Rain.":
+        page.keyboard.type(ch)
+        page.evaluate("window.__editor.store.notify()")
+        page.wait_for_timeout(30)
+    page.wait_for_timeout(200)
+    st = page.evaluate("() => { const ta = document.querySelector('.rw-shot-row .rw-code-ta'); const pre = ta.parentElement.querySelector('.rw-code-hl'); return [ta.value.slice(-12), ta.selectionStart === ta.value.length, pre.textContent === ta.value + '\\n', document.activeElement === ta]; }")
+    check(st[0].endswith("head. Rain.") or st[0].endswith(" Rain.") and all(st[1:]), f"typing through re-renders: {st}")
+    # Sencer: "the screen flickers whenever I change a setting or type anything ... (something like doublebuffering?)":
+    # pictures and videos shown again after a re-render are the same elements (not loaded and decoded again)
+    for tab, sel in (("cast", ".rw-root .rw-body img"), ("assets", ".rw-root .rw-body img, .rw-root .rw-body video")):
+        page.evaluate(f"window.__editor.actions.setTab('{tab}')")
+        page.wait_for_timeout(500)
+        same = page.evaluate("""async (sel) => {
+          const before = [...document.querySelectorAll(sel)];
+          window.__editor.store.notify();
+          await new Promise(r => requestAnimationFrame(r)); await new Promise(r => requestAnimationFrame(r));
+          const after = [...document.querySelectorAll(sel)];
+          return [before.length, after.length, after.filter(x => before.includes(x)).length]; }""", sel)
+        check(same[0] > 0 and same[0] == same[1] == same[2], f"{tab}: media survive a re-render: {same}")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+def v0173_scrollbar_checks(p, url, check):
+    """v0.17.3 (Sencer: "when editing shot text, the cursor is at correct position, but typing and deleting is in wrong
+    position, usually a few words before"): with real scrollbars (the harness's browser hides them), a text taller than
+    the editor gave the textarea a scrollbar, so it wrapped narrower than the highlighted overlay; a click put the caret
+    where it showed, but the text went in earlier. Typing lands where the user clicked now."""
+    b = p.chromium.launch(ignore_default_args=["--hide-scrollbars"])
+    page = b.new_page(viewport={"width": 1600, "height": 1000})
+    page.goto(url)
+    page.wait_for_selector(".rw-scene")
+    page.wait_for_timeout(600)
+    page.evaluate("window.__editor.actions.select('s_02', 'scene')")
+    page.wait_for_timeout(500)
+    page.evaluate("t => window.__editor.store.update(p => { const s = p.scenes.find(x => x.id === 's_02'); s.shots[0].text = t; })", LONG_SHOT)
+    page.wait_for_timeout(400)
+    page.evaluate("() => document.querySelector('.rw-shot-row .rw-code-ta').scrollIntoView({ block: 'center' })")
+    page.wait_for_timeout(300)
+    w = page.evaluate("""() => { const ta = document.querySelector('.rw-shot-row .rw-code-ta'); const pre = ta.parentElement.querySelector('.rw-code-hl');
+      const cw = el => { const cs = getComputedStyle(el); return el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); };
+      return [ta.offsetWidth - ta.clientWidth, cw(ta), cw(pre)]; }""")
+    check(w[0] > 0, f"the long shot text has a scrollbar here: {w}")
+    check(abs(w[1] - w[2]) < 0.5, f"the overlay wraps at the textarea's width: {w}")
+    # click at the 6th "gulls" as the overlay shows it, type X: it goes right there
+    at = page.evaluate("""() => { const pre = document.querySelector('.rw-shot-row .rw-code-hl'); const ta = pre.parentElement.querySelector('.rw-code-ta');
+      const text = ta.value; let idx = -1; for (let k = 0; k < 6; k++) idx = text.indexOf('gulls', idx + 1);
+      const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT); let n, pos = 0;
+      while ((n = walker.nextNode())) { if (pos + n.length > idx) break; pos += n.length; }
+      const r = document.createRange(); r.setStart(n, idx - pos); r.setEnd(n, idx - pos + 1);
+      const b = r.getBoundingClientRect(); return { idx, x: b.left + 0.5, y: b.top + b.height / 2 }; }""")
+    page.mouse.click(at["x"], at["y"])
+    page.keyboard.type("X")
+    page.wait_for_timeout(200)
+    v = page.evaluate("() => document.querySelector('.rw-shot-row .rw-code-ta').value")
+    check(v.find("X") == at["idx"], f"typed where the caret showed: X at {v.find('X')}, the word at {at['idx']}")
+    b.close()
 
 
 if __name__ == "__main__":

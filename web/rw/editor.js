@@ -1000,6 +1000,30 @@ export function mountEditor(container, host) {
   root.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing && e.target === typedIn && e.target.tagName === "INPUT") typedIn = null; }, true);
   root.addEventListener("focusout", e => { const t = e.target; setTimeout(() => { if (typedIn === t && document.activeElement !== t) typedIn = null; }, 0); }, true);
 
+  // added 2026-11-09 v0.17.3: the pictures and videos of the old body that the new one shows again (same tag, address and
+  // class) replace their new copies, with the new copy's attributes. Not an element with handlers (h() __rwOn) or one
+  // ui.kept() manages; a playing video moved within the same task keeps playing.
+  function adoptMedia(old, fresh) {
+    const id = el => el.tagName + "|" + (el.getAttribute("src") || "") + "|" + (el.getAttribute("class") || "");
+    const free = el => !el.__rwOn && !el.__rwKept && !!el.getAttribute("src");
+    const pool = new Map();
+    for (const el of old.querySelectorAll("img, video")) {
+      if (!free(el)) continue;
+      const k = id(el);
+      if (!pool.has(k)) pool.set(k, []);
+      pool.get(k).push(el);
+    }
+    if (!pool.size) return;
+    for (const el of fresh.querySelectorAll("img, video")) {
+      if (!free(el)) continue;
+      const prev = pool.get(id(el))?.shift();
+      if (!prev) continue;
+      for (const { name } of [...prev.attributes]) if (!el.hasAttribute(name)) prev.removeAttribute(name);
+      for (const { name, value } of [...el.attributes]) if (prev.getAttribute(name) !== value) prev.setAttribute(name, value);
+      el.replaceWith(prev);
+    }
+  }
+
   let frame = 0;
   // added 2026-11-03 v0.6.0: one render per animation frame; nothing after destroy()
   function schedule() { if (!frame && !destroyed) frame = requestAnimationFrame(render); }
@@ -1049,7 +1073,14 @@ export function mountEditor(container, host) {
     // [OLD 2026-11-08 v0.12.0->v0.13.0] const tab = TABS[store.project.ui.tab] || TABS.timeline;
     const tab = TABS[currentTabId()]; // added 2026-11-08 v0.13.0: a hidden tab shows the Timeline
     // [OLD 2026-11-09 v0.14.0->v0.14.1] body.replaceChildren(tab.mod.render(ctx));
-    body.replaceChildren(foldScope(ctx, () => tab.mod.render(ctx))); // added 2026-11-09 v0.14.1: every card folds
+    // [OLD 2026-11-09 v0.17.2->v0.17.3] body.replaceChildren(foldScope(ctx, () => tab.mod.render(ctx))); // added 2026-11-09 v0.14.1: every card folds
+    // added 2026-11-09 v0.17.3 (Sencer: "the screen flickers whenever I change a setting or type anything. can we prevent the
+    // flickering (something like doublebuffering?)"): the new body is built aside and swapped in at once, as before; a
+    // picture or video it shows again is the one already on screen (moved over, not loaded and decoded again), so it
+    // does not go blank for a frame
+    const fresh = foldScope(ctx, () => tab.mod.render(ctx)); // every card folds (v0.14.1)
+    adoptMedia(body, fresh);
+    body.replaceChildren(fresh);
     bodyTab = store.project.ui.tab; // added 2026-11-03 v0.6.0 review
     bodyVersion = typeof store.project.__rwv === "number" ? store.project.__rwv : -2; // added 2026-11-03 v0.6.0 review
     renderFooter();

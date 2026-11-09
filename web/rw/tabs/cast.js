@@ -14,6 +14,7 @@ import { partOwner } from "../model.js"; // added 2026-11-08 v0.11.0: a prop tha
 import { SMALL_TILE_PX } from "../model.js"; // added 2026-11-09 v0.16.0: sheet pictures too small for identity
 import { refClip, fmtTime } from "../model.js"; // added 2026-11-09 v0.16.0: video anchors
 import { sortable, dragGrip, moveItem } from "../ui.js"; // added 2026-11-09 v0.16.0: video anchors in the order you drag them to
+import { kept } from "../ui.js"; // added 2026-11-09 v0.17.3: the sheet picture survives re-renders
 // [OLD 2026-11-09 v0.16.0->v0.16.1] import { clipTimeField } from "./scene.js"; // added 2026-11-09 v0.16.0: From / To of a video anchor
 import { clipEditor } from "./scene.js"; // added 2026-11-09 v0.16.1: the scene reference's clip editor (Preview, From here / To here, the bar)
 import { describeBox } from "./assets.js"; // added 2026-11-02 v0.2.0: describe from anchors
@@ -196,8 +197,13 @@ function anchorsCard(ctx, c) {
           // added 2026-11-09 v0.16.0: say it plainly when the sheet makes each picture too small (model.tilePixels)
           packedSomewhere && fullS < SMALL_TILE_PX && h("div", { class: "rw-note warn small", help: "cast.anchors.small" }, icon("warn", 12),
             h("span", null, `In the ${cols}×${rows} sheet each picture reaches H3 at only about ${fullS} px, too small for a reliable identity. Keep a sheet to about 4 pictures (a clear face and a full body), pick Separate or Auto, or set Global → Output → Reference images to max.`))),
+        /* [OLD 2026-11-09 v0.17.2->v0.17.3] a new sheet picture every render (its click handler kept editor.js adoptMedia from reusing it)
         packedSomewhere && h("img", { class: "rw-sheet-img", src: ctx.host.apiURL(sheetURL(p, c, 160)), alt: "", help: "cast.anchors.sheetPreview",
           onClick: () => window.open(ctx.host.apiURL(sheetURL(p, c, 768)), "_blank", "noopener") })),
+        [/OLD] */
+        // added 2026-11-09 v0.17.3: the same picture across renders (no blank frame); same address, same sheet to open
+        packedSomewhere && kept(ctx, "sheet160-" + c.id, sheetURL(p, c, 160), () => h("img", { class: "rw-sheet-img", src: ctx.host.apiURL(sheetURL(p, c, 160)), alt: "", help: "cast.anchors.sheetPreview",
+          onClick: () => window.open(ctx.host.apiURL(sheetURL(p, c, 768)), "_blank", "noopener") }))),
       h("div", { class: "rw-row wrap", help: "cast.promote" },
         h("span", { class: "rw-dim small" }, "Promote a rendered frame:"),
         select({ options: scenesWithTakes, value: ctx.eph.promoteScene || scenesWithTakes[0]?.value || "", placeholder: scenesWithTakes.length ? undefined : "no renders yet", help: "cast.promote.scene",

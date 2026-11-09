@@ -26,11 +26,36 @@ export function codeEditor({ value, onInput, onChange, key, help, candidates, pl
   let active = 0;
   let token = null;
 
+  /* [OLD 2026-11-09 v0.17.2->v0.17.3] the overlay wrapped wider than the textarea once its scrollbar showed (a text taller
+     than maxHeight), so the caret stood where the user clicked but typing went in a few words earlier (Sencer: "when
+     editing shot text, the cursor is at correct position, but typing and deleting is in wrong position")
   function fit() {
     ta.style.height = "auto";
     const hgt = Math.min(maxHeight, Math.max(ta.scrollHeight, minRows * 18 + 16));
     ta.style.height = hgt + "px";
     pre.style.height = hgt + "px";
+  }
+  [/OLD] */
+  // added 2026-11-09 v0.17.3: the overlay has the textarea's text width (its scrollbar's room on the right as padding) and
+  // its scroll position, so every line wraps at the same word
+  function align() {
+    if (!ta.isConnected) return;
+    const gutter = Math.max(0, ta.offsetWidth - ta.clientWidth);
+    const pad = getComputedStyle(ta).paddingRight;
+    const want = gutter ? `calc(${pad} + ${gutter}px)` : "";
+    if (pre.style.paddingRight !== want) pre.style.paddingRight = want;
+    if (pre.scrollTop !== ta.scrollTop) pre.scrollTop = ta.scrollTop;
+  }
+  function fit() {
+    const keep = ta.scrollTop; // added 2026-11-09 v0.17.3: "auto" for a moment reset the scroll position
+    ta.style.height = "auto";
+    const hgt = Math.min(maxHeight, Math.max(ta.scrollHeight, minRows * 18 + 16));
+    ta.style.height = hgt + "px";
+    pre.style.height = hgt + "px";
+    ta.scrollTop = keep;
+    // added 2026-11-09 v0.17.3: a rebuilt editor whose textarea got the typed text (editor.js render) shows that text
+    if (pre.textContent !== ta.value + "\n") pre.innerHTML = highlightHTML(ta.value);
+    align();
   }
 
   let lastQ = null; // added 2026-11-04 v0.6.1: the query the list was opened for (openList)
@@ -89,7 +114,9 @@ export function codeEditor({ value, onInput, onChange, key, help, candidates, pl
     sync();
     openList();
   });
-  ta.addEventListener("scroll", () => { pre.scrollTop = ta.scrollTop; });
+  // [OLD 2026-11-09 v0.17.2->v0.17.3] ta.addEventListener("scroll", () => { pre.scrollTop = ta.scrollTop; });
+  ta.addEventListener("scroll", align); // added 2026-11-09 v0.17.3: also the scrollbar's room
+  ta.addEventListener("focus", align); // added 2026-11-09 v0.17.3: the box may have been resized since (a node resized)
   ta.addEventListener("change", () => onChange?.(ta.value));
   ta.addEventListener("blur", () => setTimeout(closeList, 120));
   ta.addEventListener("keydown", e => {
@@ -107,6 +134,13 @@ export function codeEditor({ value, onInput, onChange, key, help, candidates, pl
       closeList();
     }
   });
+  /* [OLD 2026-11-09 v0.17.2->v0.17.3] the size came a frame later: every re-render of a tab (autosave, progress, a plan
+     refresh) showed each prompt editor at its first rows for a frame, so the shot cards jumped (Sencer: "the shot
+     cards flicker randomly")
   requestAnimationFrame(fit);
+  [/OLD] */
+  // added 2026-11-09 v0.17.3: sized before the page is painted: right after the render that puts it in the page (a microtask
+  // runs before the frame is drawn), else on the next frame
+  queueMicrotask(() => (ta.isConnected ? fit() : requestAnimationFrame(fit)));
   return wrap;
 }

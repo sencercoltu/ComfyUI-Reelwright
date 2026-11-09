@@ -27,7 +27,9 @@ export function h(tag, props, ...children) {
       // [OLD 2026-11-03 v0.6.0 review] else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
       // added 2026-11-03 v0.6.0 review: a field with an onInput handler stores (or shows) what is typed as it is typed;
       // editor.js render() treats only the other text fields as holding unsaved typing (__rwLive marks the live ones)
-      else if (k.startsWith("on") && typeof v === "function") { el.addEventListener(k.slice(2).toLowerCase(), v); if (k === "onInput") el.__rwLive = true; }
+      // [OLD 2026-11-09 v0.17.2->v0.17.3] else if (k.startsWith("on") && typeof v === "function") { el.addEventListener(k.slice(2).toLowerCase(), v); if (k === "onInput") el.__rwLive = true; }
+      // added 2026-11-09 v0.17.3: __rwOn marks an element with handlers (editor.js adoptMedia never swaps it for an old copy)
+      else if (k.startsWith("on") && typeof v === "function") { el.addEventListener(k.slice(2).toLowerCase(), v); el.__rwOn = true; if (k === "onInput") el.__rwLive = true; }
       else if (k === "html") el.innerHTML = v;
       else if (!svg && k in el && typeof v !== "string") el[k] = v;
       else el.setAttribute(k, v === true ? "" : String(v));
@@ -1106,6 +1108,7 @@ export function kept(ctx, slot, src, make) {
   let el = map.get(key);
   if (el) map.delete(key); // most recently used last
   else el = make();
+  el.__rwKept = true; // added 2026-11-09 v0.17.3: managed here (editor.js adoptMedia leaves it alone)
   map.set(key, el);
   if (map.size > KEPT_MAX) map.delete(map.keys().next().value);
   return el;
