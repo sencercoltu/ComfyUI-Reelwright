@@ -1,4 +1,4 @@
-"""added 2026-11-12 v0.14.0: clips of video and audio references (Sencer: "when using video or audio references, allow to
+"""added 2026-11-08 v0.14.0: clips of video and audio references (Sencer: "when using video or audio references, allow to
 select from-to timestamps/frames of source video. we should be able to use the same video/audio asset in a single scene
 multiple times, with different start/end timestamps/durations, with or without audio (for videos)").
 

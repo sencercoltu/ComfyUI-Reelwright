@@ -7,7 +7,7 @@ from .model import cast_description, project_index
 from .planner import continuation_depth
 from . import prompt as _prompt  # added 2026-11-03 v0.6.0: prompt.prepare (shared context)
 from . import soundtrack  # added 2026-11-03 v0.5.0
-import inspect  # added 2026-11-12 v0.16.0: scene_media_counts(anchors=) when the model has it
+import inspect  # added 2026-11-09 v0.16.0: scene_media_counts(anchors=) when the model has it
 
 
 def _issue(level, message, scene_id=None):
@@ -59,14 +59,14 @@ def _media_counts(p, scene, pass_, b, ctx):
         # rule, but a pass whose text uses fixed reference numbers, or whose guide pictures named in the text take the
         # room, leaves it out (prompt.build_pass); then the pass counts as in v0.6.1.
         mode = ctx["start_mode"].get(scene["id"])
-        # [OLD 2026-11-12 v0.15.1->v0.16.0] c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode))
-        # added 2026-11-12 v0.16.0: the video anchors as the build sends them (added below), not as the model picks them
+        # [OLD 2026-11-09 v0.15.1->v0.16.0] c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode))
+        # added 2026-11-09 v0.16.0: the video anchors as the build sends them (added below), not as the model picks them
         kw = {"video_anchors": False} if "video_anchors" in inspect.signature(counts).parameters else {}
         c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, **kw))
         sent = next((x for x in b["images"] + b["videos"] if x.get("continuation")), None)
         kind = "" if not sent else "picture" if sent in b["images"] else "video_audio" if sent["soundtrack"] else "video"
         if c.get("continuation", "") != kind:
-            # [OLD 2026-11-12 v0.15.1->v0.16.0] c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, continuation=False))
+            # [OLD 2026-11-09 v0.15.1->v0.16.0] c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, continuation=False))
             c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, continuation=False, **kw))
             c["continuation"] = kind
             c["pictures" if kind == "picture" else "videos"] += 1 if kind else 0
@@ -86,7 +86,7 @@ def _media_counts(p, scene, pass_, b, ctx):
                 c["videos"] += 1
                 c["video_seconds"] += float(assets[v["asset"]].get("duration") or 0)
                 c["files"] += 1
-            if v.get("anchor") and kw:  # added 2026-11-12 v0.16.0: a video anchor (model.pick_video_anchors)
+            if v.get("anchor") and kw:  # added 2026-11-09 v0.16.0: a video anchor (model.pick_video_anchors)
                 c["videos"] += 1
                 c["files"] += 1
                 c["video_seconds"] += float(v.get("seconds") or 0)
@@ -285,7 +285,7 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                                  "{} ({}) file is missing{}".format(a["code"], a["name"] or a["file"],
                                                                     "" if a["id"] in tracks else " (no scene uses it)")))
 
-    # added 2026-11-12 v0.16.0: a video anchor that cannot be sent (deleted or not a video, or no clip left by From / To)
+    # added 2026-11-09 v0.16.0: a video anchor that cannot be sent (deleted or not a video, or no clip left by From / To)
     for c in p["cast"]:
         for va in c.get("video_anchors") or []:
             a = assets.get(va.get("asset"))
@@ -300,8 +300,11 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                                                                           spec.fmt_time(clip["start"]),
                                                                           spec.fmt_time(float(a.get("duration") or 0)))))
             elif clip["seconds"] is not None and clip["seconds"] < spec.REF_MEDIA_MIN_SECONDS - 1e-6:
-                issues.append(_issue("info", "{}: video anchor {} is a {:.2f} s clip (H3 video references are 2-15 s)"
-                                     .format(c["name"], a["code"], clip["seconds"])))
+                # [OLD 2026-11-09 v0.17.0->v0.17.1] issues.append(_issue("info", "{}: video anchor {} is a {:.2f} s clip (H3 video references are 2-15 s)"
+                # [OLD 2026-11-09 v0.17.0->v0.17.1]                      .format(c["name"], a["code"], clip["seconds"])))
+                # added 2026-11-09 v0.17.1 (third review): such a clip is not sent (model.pick_video_anchors "short")
+                issues.append(_issue("warn", "{}: video anchor {} is a {:.2f} s clip, so it is not sent (H3 video "
+                                             "references are 2-15 s)".format(c["name"], a["code"], clip["seconds"])))
             elif clip["seconds"] is not None and clip["seconds"] > spec.REF_MEDIA_MAX_SECONDS + 1e-6:
                 issues.append(_issue("info", "{}: video anchor {} is a {:.1f} s clip, so only its first {:g} s are sent; "
                                              "set its From / To to the part that shows {} best".format(
@@ -353,7 +356,7 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             issues.append(_issue("error", "{}: duration must be above 0".format(name), sid))
         if i == 0 and s["start"]["mode"] != "fresh":
             issues.append(_issue("info", "{}: the first scene always starts fresh".format(name), sid))
-        # added 2026-11-12 v0.12.0: a pose reference goes out only with a picture and a character of this scene
+        # added 2026-11-08 v0.12.0: a pose reference goes out only with a picture and a character of this scene
         if hasattr(_model, "pose_refs"):
             sent = {r["id"] for r, _, _ in _model.pose_refs(p, s, None, None, idx)}
             for r in s["refs"]:
@@ -366,7 +369,7 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                        "{} is not in this scene".format(c["name"]))
                 issues.append(_issue("warn", "{}: {} is a pose reference but {}, so it is not sent".format(
                     name, a["code"], why), sid))
-        # added 2026-11-12 v0.14.0: the clip of a video or audio reference (From / To) must lie inside its asset
+        # added 2026-11-08 v0.14.0: the clip of a video or audio reference (From / To) must lie inside its asset
         if hasattr(_model, "ref_clip"):
             tokens = _model.ref_tokens(p, s, idx)
             for r in s["refs"]:
@@ -472,7 +475,7 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             elif c["kind"] == "character" and not c["anchors"]:
                 issues.append(_issue("warn", "{}: {} has no anchor pictures, so identity is not locked".format(name, c["name"]), sid))
 
-        # added 2026-11-12 v0.16.0: a packed anchor sheet whose pictures reach H3 too small for a reliable identity
+        # added 2026-11-09 v0.16.0: a packed anchor sheet whose pictures reach H3 too small for a reliable identity
         # (model.tile_pixels at the size the scene renders, with Global -> Output -> Reference images)
         if hasattr(_model, "tile_pixels"):
             st = _model.resolve_settings(p, s, i)
@@ -580,18 +583,18 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             # [OLD 2026-11-03 v0.4.3->v0.5.0] for kind, items in (("video", [assets[v["asset"]] for v in b["videos"]]),
             # [OLD 2026-11-03 v0.4.3->v0.5.0]                     ("audio", [assets[x["asset"]] for x in b["audios"]])):
             # added 2026-11-03 v0.5.0: the soundtrack segment counts as an audio ref of its own length
-            # [OLD 2026-11-12 v0.13.1->v0.14.0] audio_items = [{"code": "soundtrack", "duration": x["song"]["length"]} if x.get("song") else assets[x["asset"]]
-            # [OLD 2026-11-12 v0.13.1->v0.14.0]                for x in b["audios"]]
-            # added 2026-11-12 v0.14.0: a trimmed clip by its own length
+            # [OLD 2026-11-08 v0.13.1->v0.14.0] audio_items = [{"code": "soundtrack", "duration": x["song"]["length"]} if x.get("song") else assets[x["asset"]]
+            # [OLD 2026-11-08 v0.13.1->v0.14.0]                for x in b["audios"]]
+            # added 2026-11-08 v0.14.0: a trimmed clip by its own length
             audio_items = [{"code": "soundtrack", "duration": x["song"]["length"]} if x.get("song") else
                            {"code": assets[x["asset"]]["code"] + " (clip)", "duration": x["seconds"] or 0} if "seconds" in x
                            else assets[x["asset"]] for x in b["audios"]]
             # added 2026-11-05 v0.7.0: the continuation clip (no asset) by its length
             video_items = [{"code": _prompt.CONT_WHAT.get(v.get("source"), "the continuation clip"),
                             "duration": float(v.get("frames") or 0) / spec.FPS} if v.get("continuation")
-                           # [OLD 2026-11-12 v0.13.1->v0.14.0] else assets[v["asset"]] for v in b["videos"]]
+                           # [OLD 2026-11-08 v0.13.1->v0.14.0] else assets[v["asset"]] for v in b["videos"]]
                            else {"code": assets[v["asset"]]["code"] + " (clip)", "duration": v["seconds"] or 0}
-                           if "seconds" in v else assets[v["asset"]] for v in b["videos"]]  # added 2026-11-12 v0.14.0
+                           if "seconds" in v else assets[v["asset"]] for v in b["videos"]]  # added 2026-11-08 v0.14.0
             # [OLD 2026-11-05 v0.6.1->v0.7.0] for kind, items in (("video", [assets[v["asset"]] for v in b["videos"]]),
             for kind, items in (("video", video_items),
                                 ("audio", audio_items)):

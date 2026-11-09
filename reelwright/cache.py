@@ -86,18 +86,18 @@ def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pas
         "seed": pass_["seed"],
         "prompt": build["prompt"],
         "images": [[asset_digest(a) for a in img["assets"]] for img in build["images"]],
-        # [OLD 2026-11-12 v0.13.1->v0.14.0] "videos": [[asset_digest(v["asset"]), v["soundtrack"]] for v in build["videos"]],
-        # added 2026-11-12 v0.14.0: a trimmed clip adds its range (an untrimmed one keeps its v0.13 key)
+        # [OLD 2026-11-08 v0.13.1->v0.14.0] "videos": [[asset_digest(v["asset"]), v["soundtrack"]] for v in build["videos"]],
+        # added 2026-11-08 v0.14.0: a trimmed clip adds its range (an untrimmed one keeps its v0.13 key)
         "videos": [[asset_digest(v["asset"]), v["soundtrack"]] + ([v["in"], v["out"]] if "in" in v else [])
                    for v in build["videos"]],
         # [OLD 2026-11-03 v0.4.3->v0.5.0] "audios": [asset_digest(a["asset"]) for a in build["audios"]],
         # added 2026-11-03 v0.5.0: the soundtrack segment is keyed by what it plays, so moving or trimming a track
         # re-renders only the passes it covers
-        # [OLD 2026-11-12 v0.13.1->v0.14.0] "audios": [soundtrack.digest(a["song"], asset_digest) if a.get("song") else asset_digest(a["asset"])
-        # [OLD 2026-11-12 v0.13.1->v0.14.0]            for a in build["audios"]],
+        # [OLD 2026-11-08 v0.13.1->v0.14.0] "audios": [soundtrack.digest(a["song"], asset_digest) if a.get("song") else asset_digest(a["asset"])
+        # [OLD 2026-11-08 v0.13.1->v0.14.0]            for a in build["audios"]],
         "audios": [soundtrack.digest(a["song"], asset_digest) if a.get("song") else
                    [asset_digest(a["asset"]), a["in"], a["out"]] if "in" in a else asset_digest(a["asset"])
-                   for a in build["audios"]],  # added 2026-11-12 v0.14.0: a trimmed clip with its range
+                   for a in build["audios"]],  # added 2026-11-08 v0.14.0: a trimmed clip with its range
         "guides": guides,
     # [OLD 2026-11-05 v0.7.0->v0.8.0] })
     }

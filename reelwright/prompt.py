@@ -209,7 +209,7 @@ class PassRefs:
         # added 2026-11-02 v0.2.0: reference assets that define reusable visible content are
         # <Subject N> in H3's Ref2VA guide; @P2 then resolves to that subject.
         self.subject_of_asset = {}
-        # added 2026-11-12 v0.14.0: the same video or audio asset can be sent as several clips (a reference each, with
+        # added 2026-11-08 v0.14.0: the same video or audio asset can be sent as several clips (a reference each, with
         # its own From / To): the label of each reference, and the reference whose clip a duplicate one shares
         self.video_of_ref = {}
         self.audio_of_ref = {}
@@ -220,7 +220,7 @@ class PassRefs:
         # added 2026-11-05 v0.7.0: the footage this pass continues from, sent as reference 1 (see continuation_of):
         # {"kind": "picture"|"video", "source", "frames", "label": "<Picture 1>"|"<Video 1>", "audio_number"} or None
         self.continuation = None
-        # added 2026-11-12 v0.16.0: the video anchors picked or left out (model.pick_video_anchors), for build_pass's notes
+        # added 2026-11-09 v0.16.0: the video anchors picked or left out (model.pick_video_anchors), for build_pass's notes
         self.anchor_notes = []
 
     def number(self):
@@ -235,7 +235,7 @@ class PassRefs:
             # [OLD 2026-11-05 v0.6.1->v0.7.0] self.video_of_asset.setdefault(v["asset"], k)
             if v.get("asset"):  # added 2026-11-05 v0.7.0: the continuation clip is no asset
                 self.video_of_asset.setdefault(v["asset"], k)
-                if v.get("ref"):  # added 2026-11-12 v0.14.0
+                if v.get("ref"):  # added 2026-11-08 v0.14.0
                     self.video_of_ref.setdefault(v["ref"], k)
         for a in self.audios:
             audio_n += 1
@@ -244,7 +244,7 @@ class PassRefs:
                 self.song_number = audio_n
             else:
                 self.audio_of_asset.setdefault(a["asset"], audio_n)
-                if a.get("ref"):  # added 2026-11-12 v0.14.0
+                if a.get("ref"):  # added 2026-11-08 v0.14.0
                     self.audio_of_ref.setdefault(a["ref"], audio_n)
 
     @property
@@ -252,7 +252,7 @@ class PassRefs:
         return len(self.images) + len(self.videos) + len(self.audios)
 
 
-# added 2026-11-12 v0.14.0: model.clip_key of an entry already in refs.videos / refs.audios (a voice sample or a
+# added 2026-11-08 v0.14.0: model.clip_key of an entry already in refs.videos / refs.audios (a voice sample or a
 # reference that is not trimmed has no in / out: the whole file)
 def _clip_key_of(entry, a):
     if "in" in entry:
@@ -305,7 +305,7 @@ def continuation_of(p, scene, scene_index, pass_, ctx=None):
             "frames": _model.continuation_frames(p, scene_index, pass_, mode)}
 
 
-# added 2026-11-12 v0.16.0: what a pass sends so far, as model.scene_media_counts counts it, for pick_video_anchors
+# added 2026-11-09 v0.16.0: what a pass sends so far, as model.scene_media_counts counts it, for pick_video_anchors
 def _sent_counts(refs, assets):
     def secs(entry, a):
         if entry.get("continuation"):
@@ -322,13 +322,15 @@ def _sent_counts(refs, assets):
             "audio_seconds": sum(audio) + sum(t for v, t in video if v["soundtrack"]), "files": refs.file_count}
 
 
-# added 2026-11-12 v0.16.0: what build_pass says about the video anchors of a pass (refs.anchor_notes)
+# added 2026-11-09 v0.16.0: what build_pass says about the video anchors of a pass (refs.anchor_notes)
 ANCHOR_LEFT = {
     "videos": "H3 takes {} videos and the pass sends that many already".format(spec.MAX_REF_VIDEOS),
     "files": "H3 takes {} files and the pass sends that many already".format(spec.MAX_REF_FILES),
     "seconds": "H3 takes {:g} s of video in all and less than {:g} s are left".format(spec.REF_MEDIA_TOTAL_SECONDS,
                                                                                    spec.REF_MEDIA_MIN_SECONDS),
     "clip": "its From / To leave no clip (Cast -> Video anchors)",
+    "short": "its clip is under {:g} s (H3 video references are {:g}-{:g} s)".format(  # added 2026-11-09 v0.17.1
+        spec.REF_MEDIA_MIN_SECONDS, spec.REF_MEDIA_MIN_SECONDS, spec.REF_MEDIA_MAX_SECONDS),
 }
 
 
@@ -512,18 +514,18 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
     entries = [(x["entry"], x["cast"], x["outfit"], x["ids"]) for x in people]
     parts_of = {x["cast"]["id"]: x["parts"] for x in people}
     own_of = {x["cast"]["id"]: set(x["own"]) for x in people}
-    poses = _model.pose_refs(p, scene, pass_, people, idx) if hasattr(_model, "pose_refs") else []  # added 2026-11-12 v0.12.0
+    poses = _model.pose_refs(p, scene, pass_, people, idx) if hasattr(_model, "pose_refs") else []  # added 2026-11-08 v0.12.0
     # [OLD 2026-11-03 v0.5.1->v0.6.0] a mentioned guide picture counted in every pass
     # unpacked = len({a for *_, ids in entries for a in ids}) + len(
     #     {r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
     #      (r["role"] == "reference" or assets[r["asset"]]["code"].upper() in mentioned_codes)} -
     #     {a for *_, ids in entries for a in ids})
     # [/OLD]
-    # [OLD 2026-11-12 v0.11.0->v0.12.0] unpacked = len({a for *_, ids in entries for a in ids}) + len(
-    # [OLD 2026-11-12 v0.11.0->v0.12.0]     {r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
-    # [OLD 2026-11-12 v0.11.0->v0.12.0]      (r["role"] == "reference" or (r["id"] in guided and assets[r["asset"]]["code"].upper() in mentioned_codes))} -
-    # [OLD 2026-11-12 v0.11.0->v0.12.0]     {a for *_, ids in entries for a in ids})
-    # added 2026-11-12 v0.12.0: + the pose pictures of this pass
+    # [OLD 2026-11-08 v0.11.0->v0.12.0] unpacked = len({a for *_, ids in entries for a in ids}) + len(
+    # [OLD 2026-11-08 v0.11.0->v0.12.0]     {r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
+    # [OLD 2026-11-08 v0.11.0->v0.12.0]      (r["role"] == "reference" or (r["id"] in guided and assets[r["asset"]]["code"].upper() in mentioned_codes))} -
+    # [OLD 2026-11-08 v0.11.0->v0.12.0]     {a for *_, ids in entries for a in ids})
+    # added 2026-11-08 v0.12.0: + the pose pictures of this pass
     unpacked = len({a for *_, ids in entries for a in ids}) + len(
         ({r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
           (r["role"] == "reference" or (r["id"] in guided and assets[r["asset"]]["code"].upper() in mentioned_codes))} |
@@ -579,7 +581,7 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
             refs.audios.append({"asset": c["voice"], "ref": None, "cast": c["id"]})  # a whole file (clip_key: start 0, no end)
     if song:
         refs.audios.append({"asset": None, "ref": None, "cast": None, "song": song})
-    # added 2026-11-12 v0.12.0: pose pictures, after the cast's; never subjects (cited in their character's line)
+    # added 2026-11-08 v0.12.0: pose pictures, after the cast's; never subjects (cited in their character's line)
     for r, a, c in poses:
         if not any(a["id"] in img["assets"] for img in refs.images):
             refs.images.append({"assets": [a["id"]], "cast": None, "ref": r["id"], "pose": c["id"]})
@@ -589,7 +591,7 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
         a = assets.get(r["asset"])
         if not a:
             continue
-        if r["role"] == "pose":  # added 2026-11-12 v0.12.0: sent above (model.pose_refs), or not at all
+        if r["role"] == "pose":  # added 2026-11-08 v0.12.0: sent above (model.pose_refs), or not at all
             continue
         if r["role"] in guide_only:
             # [OLD 2026-11-03 v0.5.1->v0.6.0] a guide picture named anywhere in the scene's text went to every pass; a guide clip never
@@ -610,13 +612,13 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
             if any(a["id"] in img["assets"] for img in refs.images):
                 continue
             refs.images.append({"assets": [a["id"]], "cast": None, "ref": r["id"]})
-        # [OLD 2026-11-12 v0.13.1->v0.14.0] a reference sent its asset from the start; an audio asset went once
+        # [OLD 2026-11-08 v0.13.1->v0.14.0] a reference sent its asset from the start; an audio asset went once
         # elif a["kind"] == "video":
         #     refs.videos.append({"asset": a["id"], "soundtrack": bool(r.get("soundtrack")), "ref": r["id"]})
         # elif a["kind"] == "audio" and not any(x["asset"] == a["id"] for x in refs.audios):
         #     refs.audios.append({"asset": a["id"], "ref": r["id"], "cast": None})
         # [/OLD]
-        # added 2026-11-12 v0.14.0: each reference sends its clip (From / To, model.ref_clip). Every video reference is
+        # added 2026-11-08 v0.14.0: each reference sends its clip (From / To, model.ref_clip). Every video reference is
         # a <Video k> of its own, as before; an audio reference that repeats a clip already sent (the same asset and
         # range, or a cast voice sample: the whole file) shares its label, as an audio asset did before. A trimmed
         # clip carries in / out / seconds in the build, so references that are not trimmed keep their builds and keys.
@@ -639,7 +641,7 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
     if cont and cont["kind"] == "video":
         refs.videos[0]["soundtrack"] = sum(1 for v in refs.videos if v["soundtrack"]) + len(refs.audios) < \
             spec.MAX_REF_AUDIOS
-    # added 2026-11-12 v0.16.0: the cast's video anchors, after everything else, while H3's budget has room
+    # added 2026-11-09 v0.16.0: the cast's video anchors, after everything else, while H3's budget has room
     # (model.pick_video_anchors; scene_media_counts counts them the same way). Each is a <Video k> of its character's
     # subject (below), with its own From / To, shortened to the seconds left when it has to be.
     if any(x["cast"].get("video_anchors") for x in people):
@@ -650,13 +652,13 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
                                 "seconds": x["seconds"]})
         refs.anchor_notes = picked + left
     refs.number()
-    # added 2026-11-12 v0.16.0: a video anchor is shown in its character's subject line
+    # added 2026-11-09 v0.16.0: a video anchor is shown in its character's subject line
     for k, v in enumerate(refs.videos, 1):
         if v.get("anchor"):
             subj = next((x for x in refs.subjects if x["cast"] == v["cast"]), None)
             if subj is not None:
                 subj["videos"].append(k)
-    # added 2026-11-12 v0.12.0: each character's poses in this pass: the picture and the shot (only when it has any,
+    # added 2026-11-08 v0.12.0: each character's poses in this pass: the picture and the shot (only when it has any,
     # so other builds and their cache keys stay as they were)
     for r, a, c in poses:
         subj = next((x for x in refs.subjects if x["cast"] == c["id"]), None)
@@ -689,13 +691,13 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
             continue
         a = assets[v["asset"]]
         # [OLD 2026-11-03 v0.5.1->v0.6.0] if a.get("category") not in SUBJECT_VIDEO_CATEGORIES or a["id"] in refs.subject_of_asset:  (guide clips are no subjects)
-        # [OLD 2026-11-12 v0.13.1->v0.14.0] if v.get("guide") or a.get("category") not in SUBJECT_VIDEO_CATEGORIES or a["id"] in refs.subject_of_asset:
-        # [OLD 2026-11-12 v0.13.1->v0.14.0]     continue
-        # added 2026-11-12 v0.14.0: each clip of a motion or style video is a subject of its own (a second clip of the
+        # [OLD 2026-11-08 v0.13.1->v0.14.0] if v.get("guide") or a.get("category") not in SUBJECT_VIDEO_CATEGORIES or a["id"] in refs.subject_of_asset:
+        # [OLD 2026-11-08 v0.13.1->v0.14.0]     continue
+        # added 2026-11-08 v0.14.0: each clip of a motion or style video is a subject of its own (a second clip of the
         # same video used to be named as a camera reference); @V1 stays the first one
         if v.get("guide") or a.get("category") not in SUBJECT_VIDEO_CATEGORIES:
             continue
-        if v.get("anchor"):  # added 2026-11-12 v0.16.0: a video anchor belongs to its character's subject
+        if v.get("anchor"):  # added 2026-11-09 v0.16.0: a video anchor belongs to its character's subject
             continue
         twin = next((s for s in refs.subjects if s.get("asset") == a["id"] and not s["cast"] and s["videos"] and
                      _clip_key_of(refs.videos[s["videos"][0] - 1], a) == _clip_key_of(v, a)), None)
@@ -706,8 +708,8 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
             continue
         refs.subjects.append({"cast": None, "ref": v["ref"], "asset": a["id"], "number": len(refs.subjects) + 1,
                               "outfit": None, "pictures": [], "videos": [k]})
-        # [OLD 2026-11-12 v0.13.1->v0.14.0] refs.subject_of_asset[a["id"]] = refs.subjects[-1]["number"]
-        refs.subject_of_asset.setdefault(a["id"], refs.subjects[-1]["number"])  # added 2026-11-12 v0.14.0
+        # [OLD 2026-11-08 v0.13.1->v0.14.0] refs.subject_of_asset[a["id"]] = refs.subjects[-1]["number"]
+        refs.subject_of_asset.setdefault(a["id"], refs.subjects[-1]["number"])  # added 2026-11-08 v0.14.0
         if v.get("ref"):
             refs.subject_of_ref[v["ref"]] = refs.subjects[-1]["number"]
 
@@ -799,7 +801,7 @@ def mentioned_codes(text):
             base = POSSESSIVE.match(m.group(2))
             if base:
                 out.add(base.group(1).upper())
-            nth = NTH_CLIP.fullmatch(m.group(2))  # added 2026-11-12 v0.14.0: @V1.2 names V1
+            nth = NTH_CLIP.fullmatch(m.group(2))  # added 2026-11-08 v0.14.0: @V1.2 names V1
             if nth:
                 out.add(nth.group(1).upper())
     return out
@@ -851,7 +853,7 @@ def _voice_words(a, c):
     return "{}'s voice".format(c.get("name") or "the character")
 
 
-# added 2026-11-12 v0.14.0: "@V1.2" names the second reference of V1 in the scene (model.ref_tokens)
+# added 2026-11-08 v0.14.0: "@V1.2" names the second reference of V1 in the scene (model.ref_tokens)
 NTH_CLIP = re.compile(r"([PVA]\d+)\.(\d+)", re.I)
 
 
@@ -882,7 +884,7 @@ def resolve_tag(name, braced, p, refs, ctx, scene=None):
     """(text, level, message) for one tag in this pass: level None when it resolves to a label; otherwise the
     words written instead and why. text None means the tag stays as typed."""
     idx = ctx["index"]
-    nth = None if braced or idx["codes"].get(name.upper()) else _nth_clip(name, refs, scene, idx)  # added 2026-11-12 v0.14.0
+    nth = None if braced or idx["codes"].get(name.upper()) else _nth_clip(name, refs, scene, idx)  # added 2026-11-08 v0.14.0
     if nth:
         return nth
     a = None if braced else idx["codes"].get(name.upper())
@@ -1349,13 +1351,13 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
             # added 2026-11-08 v0.11.0: the pictures that show only a part are named with the part, below
             parts = s.get("parts") or []
             only_parts = {k for x in parts for k in x["pictures"]}
-            # [OLD 2026-11-12 v0.15.1->v0.16.0] a sheet read as one picture, and a cast subject never had videos
+            # [OLD 2026-11-09 v0.15.1->v0.16.0] a sheet read as one picture, and a cast subject never had videos
             # own_src = _labels("Picture", [k for k in s["pictures"] if k not in only_parts]) or \
             #     _labels("Video", s["videos"])
             # if own_src:
             #     text += ", shown in " + own_src
             # [/OLD]
-            # added 2026-11-12 v0.16.0: a packed sheet says what it is (Sencer: "how does H3 assign the single sheet as
+            # added 2026-11-09 v0.16.0: a packed sheet says what it is (Sencer: "how does H3 assign the single sheet as
             # a single subject?" -> "do both"), and the character's video anchors follow its pictures
             own_pics = [k for k in s["pictures"] if k not in only_parts]
             own_src = _labels("Picture", own_pics)
@@ -1374,7 +1376,7 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
                 text += ", " + outfit_words(o["name"])  # added 2026-11-08 v0.11.0: "with …" names read as written
             for x in parts:  # added 2026-11-08 v0.11.0: props that are part of this character
                 text += ", " + part_words(cast[x["cast"]], assets, x["pictures"])
-            if s.get("poses"):  # added 2026-11-12 v0.12.0: as ref-en.txt 2.1 ("whose walking motion comes from <Video 1>")
+            if s.get("poses"):  # added 2026-11-08 v0.12.0: as ref-en.txt 2.1 ("whose walking motion comes from <Video 1>")
                 text += ", " + pose_words(s["poses"])
             lines.append(text + ".")
         else:
@@ -1388,7 +1390,7 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
     for k, img in enumerate(refs.images, 1):
         if img["cast"] or any(k in s["pictures"] for s in refs.subjects):
             continue
-        if img.get("pose"):  # added 2026-11-12 v0.12.0: cited in its character's line
+        if img.get("pose"):  # added 2026-11-08 v0.12.0: cited in its character's line
             continue
         if img.get("continuation"):  # added 2026-11-05 v0.7.0: the last frame of the scene before
             lines.append(continuation_definition(refs.continuation))
@@ -1416,7 +1418,7 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
             lines.append("<Video {}> is the camera-movement and pacing reference{}.".format(k, ", showing " + desc if desc else ""))
     sub_of_cast = {s["cast"]: s["number"] for s in refs.subjects if s["cast"]}
     for v_k, v in enumerate(refs.videos, 1):
-        if v["soundtrack"] and v.get("anchor"):  # added 2026-11-12 v0.16.0: the voice of a video anchor's character
+        if v["soundtrack"] and v.get("anchor"):  # added 2026-11-09 v0.16.0: the voice of a video anchor's character
             lines.append("<Audio {}> is the synchronized audio track of <Video {}>, the voice of <Subject {}>.".format(
                 v["audio_number"], v_k, sub_of_cast.get(v.get("cast"), "?")))
             continue
@@ -1428,8 +1430,8 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
                          "soundtrack.".format(refs.song_number))
             continue
         a = assets[au["asset"]]
-        # [OLD 2026-11-12 v0.13.1->v0.14.0] n = refs.audio_of_asset[au["asset"]]
-        n = refs.audio_of_ref.get(au.get("ref")) or refs.audio_of_asset[au["asset"]]  # added 2026-11-12 v0.14.0: each clip its own
+        # [OLD 2026-11-08 v0.13.1->v0.14.0] n = refs.audio_of_asset[au["asset"]]
+        n = refs.audio_of_ref.get(au.get("ref")) or refs.audio_of_asset[au["asset"]]  # added 2026-11-08 v0.14.0: each clip its own
         if au["cast"]:
             spk = " ({})".format(ids[au["cast"]]) if au["cast"] in ids else ""
             lines.append("<Audio {}> is the voice-timbre reference for <Subject {}>{}.".format(n, sub_of_cast.get(au["cast"], "?"), spk))
@@ -1439,7 +1441,7 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
     return lines
 
 
-# added 2026-11-12 v0.16.0: what a packed anchor sheet is, in the subject line of its cast member
+# added 2026-11-09 v0.16.0: what a packed anchor sheet is, in the subject line of its cast member
 SHEET_NOUN = {"character": "person", "location": "place", "prop": "object"}
 
 
@@ -1448,7 +1450,7 @@ def sheet_words(c, n):
     return "a sheet of {} views of the same {}".format(n, SHEET_NOUN.get(c.get("kind"), "subject"))
 
 
-# added 2026-11-12 v0.12.0: a character's pose references in this pass
+# added 2026-11-08 v0.12.0: a character's pose references in this pass
 def pose_words(poses):
     """"whose pose in [Shot 2] comes from <Picture 4>" (and "in [Shot 3] from <Picture 5>" for more)."""
     bits = ["in [Shot {}] {}from <Picture {}>".format(x["shot"], "comes " if i == 0 else "", x["picture"])
@@ -1511,7 +1513,7 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):  # ctx: added 2026-11-0
     for k, img in enumerate(refs.images, 1):
         if img["cast"] or any(k in s["pictures"] for s in refs.subjects):
             continue
-        if img.get("pose"):  # added 2026-11-12 v0.12.0: the pose goes to the character, nothing else of the picture
+        if img.get("pose"):  # added 2026-11-08 v0.12.0: the pose goes to the character, nothing else of the picture
             subj = next((x for x in refs.subjects if x["cast"] == img["pose"]), None)
             pose = next((x for x in (subj or {}).get("poses") or [] if x["picture"] == k), None)
             if subj and pose:
@@ -1548,7 +1550,7 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):  # ctx: added 2026-11-0
         if v["soundtrack"] and v.get("continuation"):  # added 2026-11-05 v0.7.0: the sound it continues
             lines += continuation_retention(refs.continuation)[1:]
             continue
-        if v["soundtrack"] and v.get("anchor"):  # added 2026-11-12 v0.16.0: a video anchor's sound is its character's voice
+        if v["soundtrack"] and v.get("anchor"):  # added 2026-11-09 v0.16.0: a video anchor's sound is its character's voice
             subj = next((x["number"] for x in refs.subjects if x["cast"] == v.get("cast")), "?")
             lines.append("<Audio {n}>: reference - the voice timbre and delivery of <Subject {s}> follow the sound of "
                          "<Video {k}> without copying the original signal.".format(n=v["audio_number"], s=subj, k=k))
@@ -1565,8 +1567,8 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):  # ctx: added 2026-11-0
                          "and beat.".format(refs.song_number, ret, _keep_phrase(["its vocals, rhythm and beat"], ret)))
             continue
         a = assets[au["asset"]]
-        # [OLD 2026-11-12 v0.13.1->v0.14.0] n = refs.audio_of_asset[au["asset"]]
-        n = refs.audio_of_ref.get(au.get("ref")) or refs.audio_of_asset[au["asset"]]  # added 2026-11-12 v0.14.0: each clip its own
+        # [OLD 2026-11-08 v0.13.1->v0.14.0] n = refs.audio_of_asset[au["asset"]]
+        n = refs.audio_of_ref.get(au.get("ref")) or refs.audio_of_asset[au["asset"]]  # added 2026-11-08 v0.14.0: each clip its own
         if au["cast"]:
             lines.append("<Audio {}>: reference - the voice timbre and delivery of <Subject {}> follow <Audio {}> "
                          "without copying the original signal.".format(n, sub_of_cast.get(au["cast"], "?"), n))
@@ -1688,7 +1690,7 @@ def shot_descriptions(p, scene, refs, pass_, ids, unknown, ctx=None):  # ctx: ad
     # [OLD 2026-11-03 v0.4.0->v0.4.1] the lines were built here; the body moved to shot_parts(), which keeps each
     # shot's spoken lines apart so a written [Shot N] can keep them
     # [OLD 2026-11-03 v0.5.1->v0.6.0] return [" ".join([x["text"]] + x["dialogue"]) for x in shot_parts(p, scene, refs, pass_, ids, unknown)]
-    # [OLD 2026-11-12 v0.16.1->v0.17.0] return [" ".join([x["text"]] + x["dialogue"]) for x in shot_parts(p, scene, refs, pass_, ids, unknown, ctx=ctx)]
+    # [OLD 2026-11-09 v0.16.1->v0.17.0] return [" ".join([x["text"]] + x["dialogue"]) for x in shot_parts(p, scene, refs, pass_, ids, unknown, ctx=ctx)]
     return [x["line"] for x in shot_parts(p, scene, refs, pass_, ids, unknown, ctx=ctx)]  # v0.17.0: lines in place
 
 
@@ -1705,9 +1707,16 @@ def shot_parts(p, scene, refs, pass_, ids, unknown, ctx=None, issues=None):  # c
         # [OLD 2026-11-06 v0.8.0 lead review] cam, body = sub(sh.get("camera", "")), sub(sh.get("text", ""))  ("Tracking Shot" became "A tracking Shot:")
         # added 2026-11-06 v0.8.0 (lead review): an official move's name is written as its phrase
         cam, body = sub(_model.official_camera(sh.get("camera", ""))), sub(sh.get("text", ""))
-        # added 2026-11-12 v0.17.0: "At MM:SS.mmm," cues in the shot's text are scene times, like its start: this
+        # added 2026-11-09 v0.17.0: "At MM:SS.mmm," cues in the shot's text are scene times, like its start: this
         # pass's time (as in written [Shot N] lines, written_shots)
         body = _rebase_shot(body, float(pass_.get("start") or 0.0), scene.get("duration"))
+        # added 2026-11-09 v0.17.1 (third review): a text that opens with a cue ("At 00:02.000, she turns.", as Write prompts
+        # writes a shot that opens with a spoken line) follows the shot's opening, as sentences of their own; it used
+        # to be the cut's object ("the shot cuts to at 00:06.000, she turns.") and its cue was not seen
+        timed = ""
+        lead = LEAD_CUE.match(body)
+        if lead and not CUT_WORDS.match(body, lead.end()):
+            timed, body = body, ""
         parts = ["[Shot {}]".format(n)]
         short = _camera_phrase(cam)
         # added 2026-11-05 v0.8.0: a shot with a framing, camera amplitude or speed is written in the form of H3's
@@ -1731,8 +1740,10 @@ def shot_parts(p, scene, refs, pass_, ids, unknown, ctx=None, issues=None):  # c
                 parts.append(_sentence(at + _lower_lead(body or "a new angle")))
                 if cam:
                     parts.append(_sentence(cam))
+        if timed:  # added 2026-11-09 v0.17.1
+            parts.append(timed)
         spoken = []
-        times = []  # added 2026-11-12 v0.17.0
+        times = []  # added 2026-11-09 v0.17.0
         for d in pass_["dialogue"]:
             if float(d["t"]) < float(sh["t"]) - 1e-6 and n > 1:
                 continue
@@ -1741,14 +1752,14 @@ def shot_parts(p, scene, refs, pass_, ids, unknown, ctx=None, issues=None):  # c
             # [OLD 2026-11-03 v0.4.0->v0.4.1] parts.append(_dialogue_sentence(p, refs, d, ids))
             # [OLD 2026-11-03 v0.5.1->v0.6.0] spoken.append(_dialogue_sentence(p, refs, d, ids))
             # [OLD 2026-11-06 v0.9.0->v0.10.0] spoken.append(_dialogue_sentence(p, refs, d, ids, ctx))
-            # [OLD 2026-11-12 v0.16.1->v0.17.0] spoken.append(_dialogue_sentence(p, refs, d, ids, ctx, voiced))  # added 2026-11-06 v0.10.0: voiced
-            # added 2026-11-12 v0.17.0: each line opens with its time in the pass (Sencer: "The dialogues are not added
+            # [OLD 2026-11-09 v0.16.1->v0.17.0] spoken.append(_dialogue_sentence(p, refs, d, ids, ctx, voiced))  # added 2026-11-06 v0.10.0: voiced
+            # added 2026-11-09 v0.17.0: each line opens with its time in the pass (Sencer: "The dialogues are not added
             # to shots at the given time index. the dialogue should have it's proper place and time index in the shot")
             spoken.append(_timed_line(float(d["t"]), _dialogue_sentence(p, refs, d, ids, ctx, voiced)))
             times.append(float(d["t"]))
         # [OLD 2026-11-03 v0.4.0->v0.4.1] out.append(" ".join(parts))
-        # [OLD 2026-11-12 v0.16.1->v0.17.0] out.append({"label": "[Shot {}]".format(n), "text": " ".join(parts), "dialogue": spoken})
-        # added 2026-11-12 v0.17.0: "line" is the shot with its spoken lines where they happen (_place_lines); "times"
+        # [OLD 2026-11-09 v0.16.1->v0.17.0] out.append({"label": "[Shot {}]".format(n), "text": " ".join(parts), "dialogue": spoken})
+        # added 2026-11-09 v0.17.0: "line" is the shot with its spoken lines where they happen (_place_lines); "times"
         # the lines' times in the pass
         text = " ".join(parts)
         out.append({"label": "[Shot {}]".format(n), "text": text, "dialogue": spoken, "times": times,
@@ -1756,7 +1767,7 @@ def shot_parts(p, scene, refs, pass_, ids, unknown, ctx=None, issues=None):  # c
     return out
 
 
-# ---- added 2026-11-12 v0.17.0: spoken lines at their time and place in the shot (Sencer: "The dialogues are not
+# ---- added 2026-11-09 v0.17.0: spoken lines at their time and place in the shot (Sencer: "The dialogues are not
 # added to shots at the given time index. the dialogue should have it's proper place and time index in the shot").
 # Every line opens with its time in the pass, the way H3's guide times a cut: "At 00:02.400, <Subject 1> (S1) says,
 # <d>[English] …</d>". In the shot's text, a sentence that opens with "At MM:SS.mmm," is a timing cue: a line goes
@@ -1776,7 +1787,10 @@ def _cue_points(text):
     out, pos = [], 0
     for k, x in enumerate(DIALOGUE_SPAN_SPLIT.split(text or "")):
         if k % 2 == 0:
-            for m in CUE_TIME.finditer(x):
+            # [OLD 2026-11-09 v0.17.0->v0.17.1] for m in CUE_TIME.finditer(x):  (a cue right after "[Shot N]" was not seen)
+            for m in CUE_AT.finditer(x):  # added 2026-11-09 v0.17.1
+                if CUT_WORDS.match(x, m.end()):  # added 2026-11-09 v0.17.1: the shot's cut, not a cue
+                    continue
                 out.append((pos + m.start(2), int(m.group(3)) * 60 + float(m.group(4))))
         pos += len(x)
     return out
@@ -1802,16 +1816,16 @@ def _place_lines(text, lines):
 
 def _keep_dialogue(parts):
     """fix() for shot lines: a written [Shot N] that left out a spoken line gets it back (word for word)."""
-    # [OLD 2026-11-12 v0.16.1->v0.17.0] spoken = {x["label"]: x["dialogue"] for x in parts}
+    # [OLD 2026-11-09 v0.16.1->v0.17.0] spoken = {x["label"]: x["dialogue"] for x in parts}
     spoken = {x["label"]: list(zip(x.get("times") or [0.0] * len(x["dialogue"]), x["dialogue"])) for x in parts}
 
     def fix(label, chunk, line):
-        # [OLD 2026-11-12 v0.16.1->v0.17.0] appended at the end of the written shot
+        # [OLD 2026-11-09 v0.16.1->v0.17.0] appended at the end of the written shot
         # missing = [d for d in spoken.get(label, []) if line is not None and
         #            not any(span in chunk for span in DIALOGUE_SPAN.findall(d))]
         # return " ".join([chunk] + missing)
         # [/OLD]
-        # added 2026-11-12 v0.17.0: at its time among the written shot's own timing cues
+        # added 2026-11-09 v0.17.0: at its time among the written shot's own timing cues
         missing = [(t, d) for t, d in spoken.get(label, []) if line is not None and
                    not any(span in chunk for span in DIALOGUE_SPAN.findall(d))]
         return _place_lines(chunk, missing)
@@ -1888,7 +1902,15 @@ def _rebase_clock(text, offset):
 
 
 # added 2026-11-03 v0.6.0 review: "At MM:SS.mmm," opening a sentence: a time on the shot's timeline
-CUE_TIME = re.compile(r"(^\s*|[.!?]\s+)(At\s+)(\d{1,2}):(\d{2}(?:\.\d{1,3})?)(?=\s*,)")
+# [OLD 2026-11-09 v0.17.0->v0.17.1] CUE_TIME = re.compile(r"(^\s*|[.!?]\s+)(At\s+)(\d{1,2}):(\d{2}(?:\.\d{1,3})?)(?=\s*,)")
+# added 2026-11-09 v0.17.1 (third review): also after "…" and after a colon ("A close-up: At 00:02.000, she turns"), as
+# shotfill.js CUES
+CUE_TIME = re.compile(r"(^\s*|[.!?…]\s+|:\s+)(At\s+)(\d{1,2}):(\d{2}(?:\.\d{1,3})?)(?=\s*,)")
+# added 2026-11-09 v0.17.1: a cue that opens a shot ("[Shot 1] At 00:02.000, she turns") is a cue for placing lines too; a
+# cut ("At 00:06.000, the shot cuts to") is not
+CUE_AT = re.compile(r"(^\s*|[.!?…]\s+|:\s+|\]\s+)(At\s+)(\d{1,2}):(\d{2}(?:\.\d{1,3})?)(?=\s*,)")
+CUT_WORDS = re.compile(r"\s*,\s*the\s+(?:shot|camera)\s+(?:cuts|transitions|changes|switches|dissolves|fades)\s+to\b", re.I)
+LEAD_CUE = re.compile(r"^At\s+\d{1,2}:\d{2}(?:\.\d{1,3})?(?=\s*,)")
 
 
 def _rebase_shot(text, offset, limit=None):
@@ -2105,7 +2127,7 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
     elif refs.continuation and refs.continuation["kind"] == "video" and not refs.continuation["audio_number"]:
         issues.append({"level": "info", "tag": "", "message": "{} is sent as <Video 1> without its sound: the {} audio "
                        "slots are taken".format(CONT_WHAT[cont["source"]], spec.MAX_REF_AUDIOS)})
-    issues += anchor_issues(refs, ctx["index"])  # added 2026-11-12 v0.16.0: video anchors shortened, left out or muted
+    issues += anchor_issues(refs, ctx["index"])  # added 2026-11-09 v0.16.0: video anchors shortened, left out or muted
     tags = task_tags(p, scene, refs, ctx=ctx)
     tag_line = "[{}]".format(" + ".join(tags)) if tags else ""
     # [OLD 2026-11-05 v0.6.1->v0.7.0] unknown, issues = [], []
@@ -2192,9 +2214,9 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
                      sec["retention_analysis"], LABEL_START)
         # [OLD 2026-11-03 v0.5.1->v0.6.0] parts = shot_parts(p, scene, refs, pass_, ids, unknown) if auto.get("shots") else []
         parts = shot_parts(p, scene, refs, pass_, ids, unknown, ctx=ctx, issues=issues) if auto.get("shots") else []
-        # [OLD 2026-11-12 v0.16.1->v0.17.0] desc = _merge([(x["label"], " ".join([x["text"]] + x["dialogue"])) for x in parts],
-        # [OLD 2026-11-12 v0.16.1->v0.17.0]               sec["detailed_description"], SHOT_START, _keep_dialogue(parts), pre_first=True)
-        desc = _merge([(x["label"], x["line"]) for x in parts],  # added 2026-11-12 v0.17.0: the lines at their time
+        # [OLD 2026-11-09 v0.16.1->v0.17.0] desc = _merge([(x["label"], " ".join([x["text"]] + x["dialogue"])) for x in parts],
+        # [OLD 2026-11-09 v0.16.1->v0.17.0]               sec["detailed_description"], SHOT_START, _keep_dialogue(parts), pre_first=True)
+        desc = _merge([(x["label"], x["line"]) for x in parts],  # added 2026-11-09 v0.17.0: the lines at their time
                       sec["detailed_description"], SHOT_START, _keep_dialogue(parts), pre_first=True)
         # added 2026-11-05 v0.7.0: the continuation is defined, analysed and cited in [Shot 1], also when those
         # sections are written by hand (automatic lines already have it)
@@ -2220,7 +2242,7 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
         tag_map["@" + idx["assets"][aid]["code"]] = "<Video {}>".format(k)
     for aid, k in refs.audio_of_asset.items():
         tag_map["@" + idx["assets"][aid]["code"]] = "<Audio {}>".format(k)
-    # added 2026-11-12 v0.14.0: "@V1.2" and so on for the scene's further clips of an asset that this pass sends
+    # added 2026-11-08 v0.14.0: "@V1.2" and so on for the scene's further clips of an asset that this pass sends
     for rid, tok in _model.ref_tokens(p, scene, idx).items():
         if "." not in tok:
             continue
@@ -2240,8 +2262,8 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
     for s in refs.subjects:
         if s["cast"]:
             tag_map["@" + idx["cast"][s["cast"]]["name"]] = "<Subject {}>".format(s["number"])
-        # [OLD 2026-11-12 v0.13.1->v0.14.0] else:
-        elif refs.subject_of_asset.get(s["asset"]) == s["number"]:  # added 2026-11-12 v0.14.0: @V1 is the first clip
+        # [OLD 2026-11-08 v0.13.1->v0.14.0] else:
+        elif refs.subject_of_asset.get(s["asset"]) == s["number"]:  # added 2026-11-08 v0.14.0: @V1 is the first clip
             tag_map["@" + idx["assets"][s["asset"]]["code"]] = "<Subject {}>".format(s["number"])
 
     # [OLD 2026-11-03 v0.5.1->v0.6.0] return {"prompt": text, "tags": tags, "tag_map": tag_map, "unknown": sorted(set(unknown)),
@@ -2295,8 +2317,8 @@ def as_text(value):
     return str(value)
 
 
-# [OLD 2026-11-12 v0.14.1->v0.14.2] def tidy_rewrite(proposal, before, auto, tag_map=None):
-def tidy_rewrite(proposal, before, auto, tag_map=None, new_shots=False):  # new_shots: added 2026-11-12 v0.14.2
+# [OLD 2026-11-09 v0.14.1->v0.14.2] def tidy_rewrite(proposal, before, auto, tag_map=None):
+def tidy_rewrite(proposal, before, auto, tag_map=None, new_shots=False):  # new_shots: added 2026-11-09 v0.14.2
     """proposal / before: the six sections. auto: the scene's automatic parts. tag_map: pass 1's "@P1" -> "<Picture 1>".
 
     - a whole six-section prompt returned inside one key is split back into its sections;
@@ -2306,7 +2328,7 @@ def tidy_rewrite(proposal, before, auto, tag_map=None, new_shots=False):  # new_
     - parts the editor writes automatically are not taken from the LLM: subject definitions and retention lines
       keep their previous text, and detailed_description keeps only what comes before [Shot 1], plus the [Shot N]
       lines that were written by hand before (the LLM's version of them when it returned one; v0.6.0);
-    - new_shots (added 2026-11-12 v0.14.2): the scene has no shots on the timeline and the LLM was asked to write
+    - new_shots (added 2026-11-09 v0.14.2): the scene has no shots on the timeline and the LLM was asked to write
       them, so detailed_description keeps every [Shot N] line it wrote (the editor puts them on the timeline).
     """
     # [OLD 2026-11-03 v0.5.1->v0.6.0] out = {k: str(proposal.get(k) or "") for k in REF2VA_SECTIONS}  (a list or object became a repr)
@@ -2347,8 +2369,8 @@ def tidy_rewrite(proposal, before, auto, tag_map=None, new_shots=False):  # new_
             rewritten.setdefault(label, chunk)
         if "detailed_description" not in given:
             pre = _chunks(str(before.get("detailed_description") or ""), SHOT_START)[0]
-        # [OLD 2026-11-12 v0.14.1->v0.14.2] out["detailed_description"] = "\n".join([pre] + [rewritten.get(label, chunk) for label, chunk in mine]).strip()
-        if new_shots and theirs and "detailed_description" in given:  # added 2026-11-12 v0.14.2
+        # [OLD 2026-11-09 v0.14.1->v0.14.2] out["detailed_description"] = "\n".join([pre] + [rewritten.get(label, chunk) for label, chunk in mine]).strip()
+        if new_shots and theirs and "detailed_description" in given:  # added 2026-11-09 v0.14.2
             out["detailed_description"] = "\n".join([pre] + [chunk for label, chunk in theirs]).strip()
         else:
             out["detailed_description"] = "\n".join([pre] + [rewritten.get(label, chunk) for label, chunk in mine]).strip()

@@ -451,6 +451,18 @@ def test_bad_input_answers_400_not_500(api, harbor):
     assert out[-1][0] == 200 and out[-1][1]["parts"] == []
 
 
+def test_a_script_part_past_the_parts_answers_400(api, harbor):
+    """added 2026-11-09 v0.17.1 (third review 10): part 5 of 3 was accepted."""
+    run, _, _ = api
+    harbor = dict(harbor, **{"global": dict(harbor["global"], llm=dict(harbor["global"]["llm"], base_url="http://127.0.0.1:9/v1"))})
+
+    async def go(c):
+        return await post(c, "/reelwright/llm/script", {"project": harbor, "script": "INT. HOUSE\nHello.", "part": 5,
+                                                        "parts": 3})
+    status, body = run(go)
+    assert status == 400 and "part" in body["error"], body
+
+
 # ---- added 2026-11-04 v0.6.1 (review of v0.6.0) --------------------------------------------------------------------
 
 def test_unreadable_input_answers_400_not_500(api, store, roots):
@@ -702,7 +714,7 @@ def test_speech_and_voice_from_take_routes(api, store, roots):
     assert s7 == 400
 
 
-# added 2026-11-12 v0.13.0: Chat tab route: checks the conversation, answers with the reply, Stop cancels it
+# added 2026-11-08 v0.13.0: Chat tab route: checks the conversation, answers with the reply, Stop cancels it
 def test_llm_chat_route(api, monkeypatch):
     run, routes, events = api
     seen = []

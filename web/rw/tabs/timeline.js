@@ -9,7 +9,7 @@
 // [OLD 2026-11-02 v0.2.2->v0.3.0] import { h, icon, button, toggle, segmented, chip, dot, slider } from "../ui.js";
 // [OLD 2026-11-06 v0.8.0->v0.9.0] import { h, icon, button, toggle, segmented, chip, dot, slider, select } from "../ui.js";
 import { h, icon, button, toggle, segmented, chip, dot, slider, select, splitter, uiNum, rootScale } from "../ui.js"; // added 2026-11-06 v0.9.0: panel bars
-import { foldBlock } from "../ui.js"; // added 2026-11-12 v0.14.1: the inspector's parts fold
+import { foldBlock } from "../ui.js"; // added 2026-11-09 v0.14.1: the inspector's parts fold
 // [OLD 2026-11-05 v0.6.1->v0.7.0] import { viewURL } from "../api.js";
 import { rw, viewURL } from "../api.js"; // added 2026-11-05 v0.7.0: rw.filmstrip
 import { joinOf, TRANSITION, DIRECTED, DIRECTIONS, transitionLabel } from "../cut.js"; // added 2026-11-05 v0.7.0: cut marks
@@ -24,7 +24,7 @@ import {
   sceneAt, sceneOverlapAt, tailOverlapFrames, soundtrackLocked,
   effectiveStart, MAX_SCENE_SECONDS, // added 2026-11-03 v0.6.0 review: rollLengths
   dialogueSeconds, SECTION_KEYS, // added 2026-11-06 v0.9.0: captions and the inspector's summary
-  refClip, refTrimmed, refTokens, // added 2026-11-12 v0.14.0: reference clips on the lanes
+  refClip, refTrimmed, refTokens, // added 2026-11-08 v0.14.0: reference clips on the lanes
 } from "../model.js";
 import { passLayout, passTextsOf } from "../passes.js"; // added 2026-11-06 v0.9.0: the pass at the playhead
 // [OLD 2026-11-06 v0.8.0->v0.9.0] import { uploadFiles } from "./assets.js";  (only the asset bin used it)
@@ -237,7 +237,7 @@ function monitorOf(ctx) {
   badgeBR.style.display = "none";
   const el = h("div", { class: "rw-mon", help: "timeline.monitor" }, video, img, empty, h("div", { class: "rw-mon-safe" }), badgeTL, badgeTR, badgeBL, badgeBR, caption);
   const m = ctx.monitor = { el, video, img, empty, badgeTL, badgeTR, badgeBL, badgeBR, caption, capKey: null, sceneId: null, src: "" };
-  // added 2026-11-12 v0.13.0: full screen (Sencer: "add option to go full screen for preview video"). The monitor moves
+  // added 2026-11-08 v0.13.0: full screen (Sencer: "add option to go full screen for preview video"). The monitor moves
   // into m.fs, a box in the editor's root that re-renders never replace (the tab's own panels are rebuilt on every
   // render, which would end full screen), with a bar: play/pause, time, scene, exit. Double-click or F toggles it;
   // in full screen a click plays or pauses and Esc comes back.
@@ -262,12 +262,12 @@ function monitorOf(ctx) {
     const take = ctx.starredTake(scene.id);
     const src = take?.files?.video ? viewURL(take.files.video) : "";
     if (m.sceneId !== scene.id || m.src !== src) {
-      // added 2026-11-12 v0.13.0: a new take of the scene that is playing (a render finished while the film played):
+      // added 2026-11-08 v0.13.0: a new take of the scene that is playing (a render finished while the film played):
       // it takes over at the same moment and keeps playing (before, the monitor stopped on its first frame)
       const resume = ctx.eph.playing && m.sceneId === scene.id && !!src;
       m.sceneId = scene.id;
       m.src = src;
-      // [OLD 2026-11-12 v0.12.0->v0.13.0] if (src) { video.src = src; video.style.display = ""; img.style.display = "none"; empty.style.display = "none"; }
+      // [OLD 2026-11-08 v0.12.0->v0.13.0] if (src) { video.src = src; video.style.display = ""; img.style.display = "none"; empty.style.display = "none"; }
       if (src) {
         video.src = src; video.style.display = ""; img.style.display = "none"; empty.style.display = "none";
         if (resume) {
@@ -315,7 +315,7 @@ function monitorOf(ctx) {
   // added 2026-11-06 v0.9.0: the frame count and the caption at `local` (scene time). Cheap: the DOM is touched only
   // when the text changes. Off with the transport's CC button (ui.captions).
   m.overlay = (scene, local) => {
-    if (ctx.monFull) fullBar(ctx, scene); // added 2026-11-12 v0.13.0
+    if (ctx.monFull) fullBar(ctx, scene); // added 2026-11-08 v0.13.0
     const idx = sceneIndex(ctx.p, scene.id) + 1;
     const bl = `${String(idx).padStart(2, "0")} · f ${Math.min(framesOf(local), framesOf(scene.duration))} / ${framesOf(scene.duration)}`;
     if (badgeBL.textContent !== bl) badgeBL.textContent = bl;
@@ -333,7 +333,7 @@ function monitorOf(ctx) {
   return m;
 }
 
-// added 2026-11-12 v0.13.0: the monitor full screen (see monitorOf)
+// added 2026-11-08 v0.13.0: the monitor full screen (see monitorOf)
 function enterFull(ctx) {
   const m = monitorOf(ctx);
   if (ctx.monFull) return;
@@ -670,7 +670,7 @@ export function onKey(ctx, e) {
   if (letter(e, "i")) { ctx.store.setEph({ loop: { in: p.ui.playhead, out: Math.max(p.ui.playhead + 0.5, ctx.eph.loop?.out ?? sceneStarts(p).total) } }); return true; } // added 2026-11-04 v0.6.1
   if (letter(e, "o")) { ctx.store.setEph({ loop: { in: Math.min(ctx.eph.loop?.in ?? 0, p.ui.playhead - 0.5), out: p.ui.playhead } }); return true; } // added 2026-11-04 v0.6.1
   if (letter(e, "m")) { addMarker(ctx); return true; } // added 2026-11-04 v0.6.1
-  if (letter(e, "f")) { toggleFull(ctx); return true; } // added 2026-11-12 v0.13.0: the monitor full screen
+  if (letter(e, "f")) { toggleFull(ctx); return true; } // added 2026-11-08 v0.13.0: the monitor full screen
   if (k === "+" || k === "=") { setZoom(ctx, zoomOf(ctx) * 1.25); return true; }
   if (k === "-") { setZoom(ctx, zoomOf(ctx) / 1.25); return true; }
   // added 2026-11-03 v0.6.0: Delete removes what the inspector shows: a marker, a soundtrack track, else the scene
@@ -776,7 +776,7 @@ function addMarker(ctx) {
 
 // ---- Inspector ----
 
-const START_WORD = { fresh: "fresh", last_frame: "from the last frame", tail: "tail clip" }; // added 2026-11-12 v0.14.1: folded Details
+const START_WORD = { fresh: "fresh", last_frame: "from the last frame", tail: "tail clip" }; // added 2026-11-09 v0.14.1: folded Details
 
 function renderInspector(ctx) {
   const p = ctx.p;
@@ -830,7 +830,7 @@ function renderInspector(ctx) {
       h("span", { class: ["rw-status", "st-" + status], help: "status." + status }, h("span", { class: "rw-led" }), STATUS_LABEL[status] || status),
       h("span", { class: "rw-flex" }),
       button({ label: "Open in Scene tab", icon: "chevRight", help: "timeline.inspector.open", variant: "link", small: true, onClick: () => ctx.actions.setTab("scene") })),
-    /* [OLD 2026-11-12 v0.14.0->v0.14.1] the details, summary, chips and prompt could not be folded
+    /* [OLD 2026-11-09 v0.14.0->v0.14.1] the details, summary, chips and prompt could not be folded
     h("div", { class: "rw-kv-grid" },
       h("div", { class: "rw-kv", help: "timeline.inspector.duration" }, h("span", null, "Duration"),
         h("b", { class: "mono" }, s.duration.toFixed(2) + " s ", h("small", null, framesOf(s.duration) + " f"))),
@@ -856,7 +856,7 @@ function renderInspector(ctx) {
     h("pre", { class: "rw-prompt-preview mono", help: "timeline.inspector.prompt", html: prompt ? highlightHTML(prompt) : "" },
       prompt ? null : h("span", { class: "rw-dim" }, ctx.eph.backend === "online" ? "The prompt preview appears once the scene has a prompt." : "Prompt preview needs the Reelwright backend (start ComfyUI with the node installed).")),
     [/OLD] */
-    // added 2026-11-12 v0.14.1: every part folds (Sencer: "make every section under every tab collapsible"); a folded
+    // added 2026-11-09 v0.14.1: every part folds (Sencer: "make every section under every tab collapsible"); a folded
     // part shows a short summary on its line
     foldBlock({
       ctx, id: "tl.details", label: "Details", help: "timeline.inspector.details",
@@ -916,13 +916,13 @@ function summaryBlock(ctx, s) {
   const txt = (raw ? s.prompt.raw : s.prompt.sections.summary || "").trim();
   const now = h("div", { class: "rw-insp-now", help: "timeline.inspector.now" });
   ctx.tl = ctx.tl || {};
-  // [OLD 2026-11-12 v0.14.0->v0.14.1] Object.assign(ctx.tl, { now, nowScene: s.id, nowPlan: plan, nowTexts: multi ? passTextsOf(p, s, plan).texts : null, nowKey: null });
-  // added 2026-11-12 v0.14.1: the summary folds; folded, "at the playhead" is not built or kept up to date
+  // [OLD 2026-11-09 v0.14.0->v0.14.1] Object.assign(ctx.tl, { now, nowScene: s.id, nowPlan: plan, nowTexts: multi ? passTextsOf(p, s, plan).texts : null, nowKey: null });
+  // added 2026-11-09 v0.14.1: the summary folds; folded, "at the playhead" is not built or kept up to date
   const folded = !!p.ui?.collapsed?.["tl.summary"];
   Object.assign(ctx.tl, { now: folded ? null : now, nowScene: s.id, nowPlan: plan, nowTexts: multi && !folded ? passTextsOf(p, s, plan).texts : null, nowKey: null });
   const { starts } = sceneStarts(p);
   nowAt(ctx, sceneAt(p, p.ui.playhead), p.ui.playhead - (starts[sceneAt(p, p.ui.playhead).id] ?? 0));
-  /* [OLD 2026-11-12 v0.14.0->v0.14.1] the summary could not be folded
+  /* [OLD 2026-11-09 v0.14.0->v0.14.1] the summary could not be folded
   return h("div", { class: "rw-insp-sum" },
     h("div", { class: "rw-insp-label", help: multi && !raw ? "scene.prompt.sceneNote" : "timeline.inspector.summary" },
       raw ? "Raw prompt" : multi ? `Scene note · ${plan.passes.length} passes` : "Summary"),
@@ -930,7 +930,7 @@ function summaryBlock(ctx, s) {
       : h("div", { class: "rw-insp-text rw-dim", help: "timeline.inspector.summary" }, raw ? "No raw prompt yet." : "No summary yet: write one in the Scene tab, or let Write prompts do it."),
     now);
   [/OLD] */
-  // added 2026-11-12 v0.14.1: a folded summary shows its start on its line
+  // added 2026-11-09 v0.14.1: a folded summary shows its start on its line
   const short = txt.replace(/\s+/g, " ");
   return foldBlock({
     ctx, id: "tl.summary", cls: "rw-insp-sum", help: multi && !raw ? "scene.prompt.sceneNote" : "timeline.inspector.summary",
@@ -994,8 +994,8 @@ function refChips(ctx, s) {
     if (!a) continue;
     const kind = a.kind === "image" ? "pic" : a.kind === "video" ? "vid" : "aud";
     const what = r.role === "keyframe" ? `keyframe @ ${fmtTime(r.time)}` : r.role === "reference" ? (r.retention || a.defaults.retention) : r.role;
-    // [OLD 2026-11-12 v0.13.1->v0.14.0] out.push(chip({ code: a.code, label: (a.name || "").slice(0, 18) + " · " + what, kind, help: "timeline.chip.ref" }));
-    // added 2026-11-12 v0.14.0: a clip shows its tag (V1.2) and the part of the file
+    // [OLD 2026-11-08 v0.13.1->v0.14.0] out.push(chip({ code: a.code, label: (a.name || "").slice(0, 18) + " · " + what, kind, help: "timeline.chip.ref" }));
+    // added 2026-11-08 v0.14.0: a clip shows its tag (V1.2) and the part of the file
     const tok = (refTokens(p, s)[r.id] || "@" + a.code).slice(1);
     const c = a.kind !== "image" && refTrimmed(r) ? refClip(r, a) : null;
     const part = c ? ` · ${fmtTime(c.start, false)}–${c.end !== null ? fmtTime(c.end, false) : "end"}` : "";
@@ -1073,7 +1073,7 @@ function renderTransport(ctx) {
     ctx.eph.playing && ctx.play && ctx.play.follow === false && button({ label: "Follow", icon: "eye", small: true, variant: "accent-ghost", key: "tl-follow",
       help: "timeline.follow", extra: null, onClick: () => resumeFollow(ctx) }),
     h("span", { class: "rw-flex" }),
-    // added 2026-11-12 v0.13.0: the monitor full screen (also: double-click it, or F)
+    // added 2026-11-08 v0.13.0: the monitor full screen (also: double-click it, or F)
     button({ icon: "expand", small: true, variant: ctx.monFull ? "accent-ghost" : "ghost", key: "tl-full", help: "timeline.fullscreen", onClick: () => toggleFull(ctx) }),
     // added 2026-11-06 v0.9.0: captions on/off, and the monitor's volume (the merge never reads either)
     button({ label: "CC", small: true, variant: p.ui.captions === false ? "ghost" : "accent-ghost", key: "tl-cc", help: "timeline.captions",
@@ -1265,9 +1265,9 @@ function renderLanes(ctx) {
     if (!near(x00, s.duration * z)) return; // added 2026-11-03 v0.6.0: far from the view
     // added 2026-11-03 v0.6.0: how it really starts (a re-anchored tail continues from the last frame only)
     const eff = si === 0 ? "fresh" : ov(s, si) * FPS > 1.5 ? "tail" : ov(s, si) > 0 ? "last_frame" : "fresh";
-    // [OLD 2026-11-12 v0.13.1->v0.14.0] const picItems = [], audItems = [];
-    const picItems = [], audItems = [], vidItems = []; // added 2026-11-12 v0.14.0: video clips in rows too
-    const tokens = refTokens(p, s); // added 2026-11-12 v0.14.0
+    // [OLD 2026-11-08 v0.13.1->v0.14.0] const picItems = [], audItems = [];
+    const picItems = [], audItems = [], vidItems = []; // added 2026-11-08 v0.14.0: video clips in rows too
+    const tokens = refTokens(p, s); // added 2026-11-08 v0.14.0
     const anchored = s.cast.map(sc => findCast(p, sc.id)).filter(c => c?.anchors.length);
     if (anchored.length) picItems.push({ left: x0 + 3, width: w - 6, cls: "pic soft", label: anchored.map(c => c.name).join(" · ") + " · anchors", help: "timeline.lane.castAnchors", onClick: selectScene(s.id) });
     for (const sc of s.cast) {
@@ -1289,7 +1289,7 @@ function renderLanes(ctx) {
           const left = Math.min(x00 + t * z + 8, x0 + w - 40);
           picItems.push({ left, width: Math.max(34, Math.min(110, x0 + w - 3 - left)), cls: "pic", code: a.code, label: r.role === "keyframe" ? "@ " + fmtTime(r.time) : r.role.replace("_", " "), help: "timeline.lane.keyframe." + r.role, onClick: selectScene(s.id) });
         }
-      /* [OLD 2026-11-12 v0.13.1->v0.14.0] the whole file's length, every video bar on one row
+      /* [OLD 2026-11-08 v0.13.1->v0.14.0] the whole file's length, every video bar on one row
       } else if (a.kind === "video") {
         vids.append(bar({ left: x0 + 3, width: Math.min(w - 6, (a.duration || 2) * z), cls: "vid", code: a.code, label: `${a.name || ""} · ${a.category || r.role}`, help: "timeline.lane.vidRef", onClick: selectScene(s.id) }));
         if (r.soundtrack) audItems.push({ left: x0 + 3, width: Math.min(w - 6, (a.duration || 2) * z), cls: "aud soft", code: a.code, label: "soundtrack", help: "timeline.lane.soundtrack", onClick: selectScene(s.id) });
@@ -1297,7 +1297,7 @@ function renderLanes(ctx) {
         audItems.push({ left: x0 + 3, width: Math.min(w - 6, (a.duration || 2) * z), cls: "aud", code: a.code, label: `${a.name || ""} · ${ret}`, help: "timeline.lane.audRef", onClick: selectScene(s.id) });
       }
       [/OLD] */
-      // added 2026-11-12 v0.14.0: each reference as its clip (From / To): its length, its @ tag and the part of the file
+      // added 2026-11-08 v0.14.0: each reference as its clip (From / To): its length, its @ tag and the part of the file
       } else {
         const c = refClip(r, a);
         const len = Math.min(w - 6, Math.max(1, (c.seconds ?? 2) * z));
@@ -1319,7 +1319,7 @@ function renderLanes(ctx) {
     if (eff === "tail") vids.append(bar({ left: x00, width: ov(s, si) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
     placeRows(picItems, 2).forEach(it => pics.append(bar({ ...it, rows: 2 })));
     placeRows(audItems, 2).forEach(it => auds.append(bar({ ...it, rows: 2 })));
-    placeRows(vidItems, 2).forEach(it => vids.append(bar({ ...it, rows: 2 }))); // added 2026-11-12 v0.14.0
+    placeRows(vidItems, 2).forEach(it => vids.append(bar({ ...it, rows: 2 }))); // added 2026-11-08 v0.14.0
     s.shots.forEach((sh, k) => {
       // [OLD 2026-11-05 v0.7.0->v0.8.0] if (!sh.camera) return;
       if (!sh.camera && !sh.framing) return; // added 2026-11-05 v0.8.0: a framing alone is shown too
@@ -1535,7 +1535,7 @@ function lanesPointerdown(ctx, e) {
   if (e.button !== 0 || !(e.target instanceof Element) || e.target.closest(LANE_CONTROLS)) return;
   e.rwOwned = true; // the editor root stops it there, so Nodes 2.0 doesn't start dragging the whole node
   const t = e.target;
-  // added 2026-11-12 v0.13.1: a sideways drag on a scene block moves the scene in the order (sceneDrag); a drag that
+  // added 2026-11-08 v0.13.1: a sideways drag on a scene block moves the scene in the order (sceneDrag); a drag that
   // starts mostly up or down still pans, and so does Alt + drag
   const block = !e.altKey && ctx.p.scenes.length > 1 ? t.closest(".rw-scene[data-sid]") : null;
   if (block) { sceneDrag(ctx, e, block.dataset.sid); return; }
@@ -1566,7 +1566,7 @@ function lanesPointerdown(ctx, e) {
   });
 }
 
-// added 2026-11-12 v0.13.1: drag a scene block left or right to move the scene in the order (Sencer: "I should be able
+// added 2026-11-08 v0.13.1: drag a scene block left or right to move the scene in the order (Sencer: "I should be able
 // to reorganise scenes, move/drag them left/right"). The block follows the pointer and a marker with a label shows
 // where it lands: before the first scene whose middle is right of the pointer. The release moves it there
 // (actions.moveSceneTo, one undo step). Esc cancels; near the lanes' edges the timeline scrolls. A drag that starts
@@ -2241,8 +2241,8 @@ export function render(ctx) {
   // added 2026-11-06 v0.9.0: three panels. The bar between the monitor and the inspector sets the monitor's share of
   // the width (ui.tl_mon, 0.15–0.85); the bar under them sets their height (ui.tl_top, px). Double-click a bar to
   // reset it. Sizes are kept in the project like the zoom (no undo step).
-  // [OLD 2026-11-12 v0.12.0->v0.13.0] const monCol = h("div", { class: "rw-mon-col rw-panel", style: { width: (uiNum(p, "tl_mon", MON_SHARE, 0.15, 0.85) * 100).toFixed(2) + "%" } }, m.el, renderTransport(ctx));
-  // added 2026-11-12 v0.13.0: while the monitor is full screen it stays in its full-screen box; the panel says so
+  // [OLD 2026-11-08 v0.12.0->v0.13.0] const monCol = h("div", { class: "rw-mon-col rw-panel", style: { width: (uiNum(p, "tl_mon", MON_SHARE, 0.15, 0.85) * 100).toFixed(2) + "%" } }, m.el, renderTransport(ctx));
+  // added 2026-11-08 v0.13.0: while the monitor is full screen it stays in its full-screen box; the panel says so
   const monEl = ctx.monFull ? h("div", { class: "rw-mon rw-mon-away", help: "timeline.fullscreen", onClick: () => toggleFull(ctx) }, icon("expand", 18), h("span", null, "Full screen · Esc to come back")) : m.el;
   const monCol = h("div", { class: "rw-mon-col rw-panel", style: { width: (uiNum(p, "tl_mon", MON_SHARE, 0.15, 0.85) * 100).toFixed(2) + "%" } }, monEl, renderTransport(ctx));
   const top = h("div", { class: "rw-tl-top", style: { height: Math.round(uiNum(p, "tl_top", TOP_H, TOP_MIN, 4000)) + "px" } });

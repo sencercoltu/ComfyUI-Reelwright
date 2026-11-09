@@ -42,7 +42,7 @@ IMPORT_MAX_TOKENS = 24576
 # - One main action per shot, physically achievable in the time given. State camera framing and movement or say the camera is static.
 # - Concrete visual and sound detail; no camera brand names, no meta commentary."""
 # [/OLD]
-# [OLD 2026-11-12 v0.16.1->v0.17.0] H3_RULES: "- Keep shot markers like [Shot 2] and cut times like "At 00:05.000" unless asked to change them; cut times mark cuts and the first shot has none." (the times of spoken lines were not mentioned)
+# [OLD 2026-11-09 v0.16.1->v0.17.0] H3_RULES: "- Keep shot markers like [Shot 2] and cut times like "At 00:05.000" unless asked to change them; cut times mark cuts and the first shot has none." (the times of spoken lines were not mentioned)
 H3_RULES = """You write prompts for MiniMax H3 Ref2VA, a reference-to-video-with-audio model.
 Rules you must follow:
 - Keep every reference token exactly as written: @P1, @V2, @A1, @Name, @{Two Words}, @tail. Never invent new ones, never rename them. The editor turns them into <Subject N>, <Picture N>, <Video N> and <Audio N> labels later.
@@ -523,8 +523,8 @@ def _split_reasoning(content, reasoning):
     return content.strip(), (reasoning + "".join(inline)).strip()
 
 
-# [OLD 2026-11-12 v0.12.0->v0.13.0] async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None, progress=None):
-# added 2026-11-12 v0.13.0: history (earlier turns of the Chat tab, [{role: user|assistant, content}], sent between the
+# [OLD 2026-11-08 v0.12.0->v0.13.0] async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None, progress=None):
+# added 2026-11-08 v0.13.0: history (earlier turns of the Chat tab, [{role: user|assistant, content}], sent between the
 # system prompt and `user`) and with_text (progress events carry the answer so far, "text", four times a second)
 async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None, progress=None, history=None,
                with_text=False):
@@ -536,13 +536,13 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
     history = [m for m in history or [] if isinstance(m, dict) and m.get("role") in ("user", "assistant")]  # v0.13.0
     counted = "\n".join([str(m.get("content") or "") for m in history] + [user]) if history else user  # v0.13.0
     if timeout is None:
-        # [OLD 2026-11-12 v0.12.0->v0.13.0] limit, est, ctx = await budget(cfg, system, user, want)
+        # [OLD 2026-11-08 v0.12.0->v0.13.0] limit, est, ctx = await budget(cfg, system, user, want)
         limit, est, ctx = await budget(cfg, system, counted, want)
     else:
-        # [OLD 2026-11-12 v0.12.0->v0.13.0] limit, est, ctx = want, estimate_tokens(system) + estimate_tokens(user), None
+        # [OLD 2026-11-08 v0.12.0->v0.13.0] limit, est, ctx = want, estimate_tokens(system) + estimate_tokens(user), None
         limit, est, ctx = want, estimate_tokens(system) + estimate_tokens(counted), None
-    # [OLD 2026-11-12 v0.12.0->v0.13.0] body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit, "stream": True,
-    # [OLD 2026-11-12 v0.12.0->v0.13.0]         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    # [OLD 2026-11-08 v0.12.0->v0.13.0] body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit, "stream": True,
+    # [OLD 2026-11-08 v0.12.0->v0.13.0]         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit, "stream": True,
             "messages": [{"role": "system", "content": system}] +
                         [{"role": m["role"], "content": str(m.get("content") or "")} for m in history] +
@@ -556,30 +556,32 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
     t0 = time.time()
     state = {"tokens": 0, "reasoning": 0, "chars": 0, "last": 0.0}
     content, reasoning, finish, model = [], [], "", cfg["model"]
-    # added 2026-11-12 v0.15.0: how much of the answer and of the reasoning the progress events have carried so far
+    # added 2026-11-09 v0.15.0: how much of the answer and of the reasoning the progress events have carried so far
     # (Sencer: "When waiting for response, we receive thinking, but cannot see what it thinks. Add the thinking progress
     # and received content as output so we can see what's going on")
     sent = {"text": 0, "think": 0, "text_n": 0, "think_n": 0}
 
     def report(phase, force=False):
         now = time.time()
-        # [OLD 2026-11-12 v0.12.0->v0.13.0] if progress and (force or now - state["last"] >= 0.5):
+        # [OLD 2026-11-08 v0.12.0->v0.13.0] if progress and (force or now - state["last"] >= 0.5):
         if progress and (force or now - state["last"] >= (0.25 if with_text else 0.5)):
             state["last"] = now
-            # [OLD 2026-11-12 v0.12.0->v0.13.0] progress({"phase": phase, "tokens": state["tokens"], "reasoning": state["reasoning"], "chars": state["chars"],
-            # [OLD 2026-11-12 v0.12.0->v0.13.0]           "elapsed": round(now - t0, 1), "budget": limit, "input": est, "context": ctx})
+            # [OLD 2026-11-08 v0.12.0->v0.13.0] progress({"phase": phase, "tokens": state["tokens"], "reasoning": state["reasoning"], "chars": state["chars"],
+            # [OLD 2026-11-08 v0.12.0->v0.13.0]           "elapsed": round(now - t0, 1), "budget": limit, "input": est, "context": ctx})
             d = {"phase": phase, "tokens": state["tokens"], "reasoning": state["reasoning"], "chars": state["chars"],
                  "elapsed": round(now - t0, 1), "budget": limit, "input": est, "context": ctx}
-            if with_text:  # added 2026-11-12 v0.13.0: the answer so far (an inline <think> block shows as it comes)
+            if with_text:  # added 2026-11-08 v0.13.0: the answer so far (an inline <think> block shows as it comes)
                 d["text"] = "".join(content)
-            # added 2026-11-12 v0.15.0: what came since the last event: text_add (answer) at text_at, think_add
+            # added 2026-11-09 v0.15.0: what came since the last event: text_add (answer) at text_at, think_add
             # (reasoning) at think_at, character offsets in what this request received, so the editor can show the
             # reasoning and the answer as they arrive (llmjob.js jobStream) without the whole text in every event
             for k, parts in (("text", content), ("think", reasoning)):
                 if len(parts) > sent[k + "_n"]:
                     add = "".join(parts[sent[k + "_n"]:])
                     d[k + "_at"], d[k + "_add"] = sent[k], add
-                    sent[k] += len(add)
+                    # [OLD 2026-11-09 v0.17.0->v0.17.1] sent[k] += len(add)  (code points; the editor counts UTF-16 units, so after
+                    # an emoji the popup cut the start of the next piece)
+                    sent[k] += len(add.encode("utf-16-le")) // 2  # added 2026-11-09 v0.17.1: UTF-16 units, as JavaScript
                     sent[k + "_n"] = len(parts)
             progress(d)
 
@@ -669,7 +671,7 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
     return text, ms, model
 
 
-# added 2026-11-12 v0.13.0: the Chat tab (general questions to the configured LLM, not about a scene)
+# added 2026-11-08 v0.13.0: the Chat tab (general questions to the configured LLM, not about a scene)
 CHAT_SYSTEM = ("You are a helpful assistant inside Reelwright, a timeline editor in ComfyUI that makes films of any length "
                "with MiniMax H3 reference-to-video generation. Answer the user's questions directly and concisely, about "
                "anything they ask. Use Markdown for lists, tables and code.")
@@ -914,7 +916,7 @@ def preserved_warnings(before, after):
 def scene_context(p, scene):
     idx_assets = {a["id"]: a for a in p["assets"]}
     cast = {c["id"]: c for c in p["cast"]}
-    tokens = _model.ref_tokens(p, scene) if hasattr(_model, "ref_tokens") else {}  # added 2026-11-12 v0.14.0
+    tokens = _model.ref_tokens(p, scene) if hasattr(_model, "ref_tokens") else {}  # added 2026-11-08 v0.14.0
     refs = []
     for r in scene["refs"]:
         a = idx_assets.get(r["asset"])
@@ -923,19 +925,19 @@ def scene_context(p, scene):
             # refs.append("@{} {} ({}, {}{})".format(a["code"], a["name"] or a["file"], a["kind"], r["role"],
             #                                      ", at {:.2f}s".format(r["time"]) if r["role"] == "keyframe" else ""))
             desc = (a.get("description") or "").strip()
-            # [OLD 2026-11-12 v0.11.0->v0.12.0] refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], r["role"],
-            # [OLD 2026-11-12 v0.11.0->v0.12.0]                                        ", at {:.2f}s".format(r["time"]) if r["role"] == "keyframe" else "",
-            # [OLD 2026-11-12 v0.11.0->v0.12.0]                                        " - " + desc if desc else ""))
-            # added 2026-11-12 v0.12.0: a pose reference says whose pose it is, and that only the pose is used
+            # [OLD 2026-11-08 v0.11.0->v0.12.0] refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], r["role"],
+            # [OLD 2026-11-08 v0.11.0->v0.12.0]                                        ", at {:.2f}s".format(r["time"]) if r["role"] == "keyframe" else "",
+            # [OLD 2026-11-08 v0.11.0->v0.12.0]                                        " - " + desc if desc else ""))
+            # added 2026-11-08 v0.12.0: a pose reference says whose pose it is, and that only the pose is used
             role = r["role"]
             if role == "pose":
                 who = cast.get(r.get("cast") or "")
                 role = "pose for {}: only the body pose is used, the person in it does not appear".format(
                     _prompt.tag_token(who["name"]) if who else "nobody yet")
-            # [OLD 2026-11-12 v0.13.1->v0.14.0] refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], role,
-            # [OLD 2026-11-12 v0.13.1->v0.14.0]                                        ", at {:.2f}s".format(r["time"]) if r["role"] in ("keyframe", "pose") else "",
-            # [OLD 2026-11-12 v0.13.1->v0.14.0]                                        " - " + desc if desc else ""))
-            # added 2026-11-12 v0.14.0: a video or audio reference names its clip (@V1.2 for the second one of V1) and
+            # [OLD 2026-11-08 v0.13.1->v0.14.0] refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], role,
+            # [OLD 2026-11-08 v0.13.1->v0.14.0]                                        ", at {:.2f}s".format(r["time"]) if r["role"] in ("keyframe", "pose") else "",
+            # [OLD 2026-11-08 v0.13.1->v0.14.0]                                        " - " + desc if desc else ""))
+            # added 2026-11-08 v0.14.0: a video or audio reference names its clip (@V1.2 for the second one of V1) and
             # whether a video's own sound goes with it
             tok = tokens.get(r["id"], "@" + a["code"])
             clip = ""
@@ -1000,13 +1002,13 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
     # text, _, _ = await chat(cfg, H3_RULES + "\n" + preset, user)
     # [/OLD]
     auto = pr["auto"]
-    # added 2026-11-12 v0.14.2: a scene made in one pass with no shots is written as its [Shot 1] line with its spoken
+    # added 2026-11-09 v0.14.2: a scene made in one pass with no shots is written as its [Shot 1] line with its spoken
     # lines, which the editor puts on the timeline (fills_timeline, web/rw/shotfill.js)
     i = next((n for n, x in enumerate(p["scenes"]) if x["id"] == scene["id"]), None)
     fill = bool(auto.get("shots")) and i is not None and fills_timeline(scene, plan_scene(p, scene, i))
-    # [OLD 2026-11-12 v0.14.1->v0.14.2] added = [x for x, on in (("the <Subject N>/<Picture N>/<Audio N> definition lines", auto.get("subjects")),
-    # [OLD 2026-11-12 v0.14.1->v0.14.2]                          ("the retention lines for every reference", auto.get("retention")),
-    # [OLD 2026-11-12 v0.14.1->v0.14.2]                          ("the [Shot N] lines with their cut times and the dialogue", auto.get("shots"))) if on]
+    # [OLD 2026-11-09 v0.14.1->v0.14.2] added = [x for x, on in (("the <Subject N>/<Picture N>/<Audio N> definition lines", auto.get("subjects")),
+    # [OLD 2026-11-09 v0.14.1->v0.14.2]                          ("the retention lines for every reference", auto.get("retention")),
+    # [OLD 2026-11-09 v0.14.1->v0.14.2]                          ("the [Shot N] lines with their cut times and the dialogue", auto.get("shots"))) if on]
     added = [x for x, on in (("the <Subject N>/<Picture N>/<Audio N> definition lines", auto.get("subjects")),
                              ("the retention lines for every reference", auto.get("retention")),
                              ("the [Shot N] lines with their cut times and the dialogue", auto.get("shots") and not fill))
@@ -1018,11 +1020,11 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
                      "sentences, then the scene as one [Shot 1] line (composition, subject appearance and position, "
                      "environment and lighting, action, camera movement and sound){}. {}").format(
             ", with every spoken line of the scene, word for word" if scene.get("dialogue") else
-            # [OLD 2026-11-12 v0.14.4->v0.15.0] "; when the summary or the instruction has someone speak, write those lines in it",
+            # [OLD 2026-11-09 v0.14.4->v0.15.0] "; when the summary or the instruction has someone speak, write those lines in it",
             "; when the summary, the brief or the instruction has someone speak, write those lines in it",
-            # [OLD 2026-11-12 v0.14.2->v0.14.3] FILL_LINES_RULE)  (the camera move was not asked for in the guide's words)
-            FILL_LINES_RULE + " " + FILL_CAMERA_RULE)  # FILL_CAMERA_RULE: added 2026-11-12 v0.14.3
-    # [OLD 2026-11-12 v0.14.1->v0.14.2] the description rule was always the style sentences
+            # [OLD 2026-11-09 v0.14.2->v0.14.3] FILL_LINES_RULE)  (the camera move was not asked for in the guide's words)
+            FILL_LINES_RULE + " " + FILL_CAMERA_RULE)  # FILL_CAMERA_RULE: added 2026-11-09 v0.14.3
+    # [OLD 2026-11-09 v0.14.1->v0.14.2] the description rule was always the style sentences
     # user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}Instruction: {}\n\n"
     #         "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
     #         "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
@@ -1033,7 +1035,7 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
     #     ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
     #     instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing")
     # [/OLD]
-    # [OLD 2026-11-12 v0.14.4->v0.15.0] no brief
+    # [OLD 2026-11-09 v0.14.4->v0.15.0] no brief
     # user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}Instruction: {}\n\n"
     #         "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
     #         "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
@@ -1051,7 +1053,7 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
             "non_diegetic_music as the guide describes.").format(
         ctx, before,
         ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
-        # added 2026-11-12 v0.15.0: the author's brief (brief_text)
+        # added 2026-11-09 v0.15.0: the author's brief (brief_text)
         (BRIEF_HEAD + brief_text(scene) + "\n\n" if brief_text(scene) else ""),
         instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing",
         desc_rule)
@@ -1066,9 +1068,9 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
                      progress=progress)
     # [OLD 2026-11-03 v0.4.0->v0.4.1] the reply was used as it came: repeated automatic parts, "<Subject 1>" instead of @Name, labels inside values
     # out = {k: str(data.get(k, sections.get(k, "")) or "") for k in sections}
-    # [OLD 2026-11-12 v0.14.1->v0.14.2] out = dict(sections, **tidy_rewrite(data if isinstance(data, dict) else {}, sections, auto, tag_map))  # added 2026-11-03 v0.4.1
+    # [OLD 2026-11-09 v0.14.1->v0.14.2] out = dict(sections, **tidy_rewrite(data if isinstance(data, dict) else {}, sections, auto, tag_map))  # added 2026-11-03 v0.4.1
     out = dict(sections, **tidy_rewrite(data if isinstance(data, dict) else {}, sections, auto, tag_map,
-                                        new_shots=fill))  # new_shots: added 2026-11-12 v0.14.2
+                                        new_shots=fill))  # new_shots: added 2026-11-09 v0.14.2
     return {"sections": out, "warnings": preserved_warnings(before, json.dumps(out, ensure_ascii=False))}
 
 
@@ -1151,7 +1153,7 @@ PASS_WORDS_WARN = (300, 650)   # an answer outside this range gets a warning
 PASS_MIN_TOKENS = 4096         # one pass answers with about 1,000-1,500 tokens
 PASS_MIN_TOKENS_THINKING = 8192  # ... and a thinking model reasons before it
 
-# [OLD 2026-11-12 v0.16.1->v0.17.0] PASS_RULES said: "Every spoken line of the pass appears exactly once, word for
+# [OLD 2026-11-09 v0.16.1->v0.17.0] PASS_RULES said: "Every spoken line of the pass appears exactly once, word for
 # word, in the shot where it is spoken, after its speaker and speaker ID, for example: @Mara (S1) mutters, <d>[English]
 # Almost home.</d>" (no time, no place in the action) and the Voices example had no time either
 PASS_RULES = """How these requests work: H3 makes at most about 15 seconds per generation, so a longer scene is made \
@@ -1387,7 +1389,7 @@ def _scene_tokens(p, scene, tag_map=None):
     for r in scene["refs"]:
         if r.get("asset") in idx:
             keys.add(_prompt.name_key(idx[r["asset"]]["code"]))
-    if hasattr(_model, "ref_tokens"):  # added 2026-11-12 v0.14.0: @V1.2 ...
+    if hasattr(_model, "ref_tokens"):  # added 2026-11-08 v0.14.0: @V1.2 ...
         keys |= {_prompt.name_key(tok[1:]) for tok in _model.ref_tokens(p, scene).values()}
     for e in scene["cast"]:
         c = cast.get(e.get("id"))
@@ -1418,15 +1420,15 @@ def pass_voices(p, x):
     return out
 
 
-# added 2026-11-12 v0.14.2 (Sencer: "when creating a single shot scene, the shot section (and dialogues) are not
+# added 2026-11-09 v0.14.2 (Sencer: "when creating a single shot scene, the shot section (and dialogues) are not
 # populated"): a scene made in one pass with no shots on the timeline is written as [Shot N] lines with its spoken
 # lines, and the editor puts them on the timeline (web/rw/shotfill.js). The request asks for every spoken line as a
 # sentence of its own, so the editor can take it out of the shot's text, and, when the scene has no lines yet, lets
 # the LLM write the lines the note calls for (tidy_pass keeps them: free_lines).
-# [OLD 2026-11-12 v0.16.1->v0.17.0] FILL_LINES_RULE = ("Write every spoken line as a sentence of its own: the speaker's @name, the speaker ID and how they "
+# [OLD 2026-11-09 v0.16.1->v0.17.0] FILL_LINES_RULE = ("Write every spoken line as a sentence of its own: the speaker's @name, the speaker ID and how they "
 #                    "speak, then the line, for example: @Mara (S1) mutters, <d>[English] Almost home.</d> Describe the "
 #                    "action in sentences of their own. The editor puts the shot and its spoken lines on the timeline.")
-# added 2026-11-12 v0.17.0: each line (and each action after one) opens with its time, so the editor puts it on the
+# added 2026-11-09 v0.17.0: each line (and each action after one) opens with its time, so the editor puts it on the
 # timeline at that time and keeps its place in the shot (web/rw/shotfill.js)
 FILL_LINES_RULE = ("Write every spoken line as a sentence of its own, where it is spoken in the shot's action, opening "
                    "with the time it is spoken in the pass: the time, the speaker's @name, the speaker ID and how they "
@@ -1441,7 +1443,7 @@ def fills_timeline(scene, plan):
     return (scene.get("prompt") or {}).get("mode") != "raw" and len(plan["passes"]) == 1 and not scene.get("shots")
 
 
-# added 2026-11-12 v0.14.3 (Sencer: "camera movements are not reflected to shots when using Write prompts"): the
+# added 2026-11-09 v0.14.3 (Sencer: "camera movements are not reflected to shots when using Write prompts"): the
 # editor also takes each written shot's framing and camera move into the shot's fields (web/rw/shotfill.js cameraOf),
 # for a scene made in one pass with automatic shot lines, so the request asks for them in the words of H3's guide
 FILL_CAMERA_RULE = ("Start each [Shot N] line with its framing, for example \"[Shot 1] A medium shot: ...\" (extreme "
@@ -1455,7 +1457,7 @@ FILL_CAMERA_RULE = ("Start each [Shot N] line with its framing, for example \"[S
                     "the framing and the camera move in the shot's fields.")
 
 
-# [OLD 2026-11-12 v0.14.3->v0.14.4] only a scene made in one pass
+# [OLD 2026-11-09 v0.14.3->v0.14.4] only a scene made in one pass
 # def writes_shots(scene, plan):
 #     """Does the editor take the written shots into the scene's shots (fills_timeline, or a scene made in one pass
 #     whose shot lines are automatic)?"""
@@ -1465,19 +1467,19 @@ FILL_CAMERA_RULE = ("Start each [Shot N] line with its framing, for example \"[S
 # [/OLD]
 def writes_shots(scene, plan):
     """Does the editor take the written shots into the scene's shots (fills_timeline, or a scene whose shot lines are
-    automatic; added 2026-11-12 v0.14.4: in a scene of several passes too, web/rw/shotfill.js takePassShots)?"""
+    automatic; added 2026-11-09 v0.14.4: in a scene of several passes too, web/rw/shotfill.js takePassShots)?"""
     pr = scene.get("prompt") or {}
     return fills_timeline(scene, plan) or (pr.get("mode") != "raw" and bool((pr.get("auto") or {}).get("shots")))
 
 
-# added 2026-11-12 v0.15.0: scene.prompt.brief, the author's own words for Write prompts (the Prompt card's Brief).
+# added 2026-11-09 v0.15.0: scene.prompt.brief, the author's own words for Write prompts (the Prompt card's Brief).
 # Nothing the LLM writes goes there, so it stays the same from one Write prompts to the next, unlike the summary.
 BRIEF_HEAD = ("Author's brief for this scene (the author's own words; follow it, and where it and the whole-scene note "
               "disagree, the brief wins):\n")
 
 
 def brief_text(scene):
-    """added 2026-11-12 v0.15.0: the scene's Write prompts brief, stripped ("" when it has none)."""
+    """added 2026-11-09 v0.15.0: the scene's Write prompts brief, stripped ("" when it has none)."""
     pr = scene.get("prompt") if isinstance(scene.get("prompt"), dict) else {}
     return str(pr.get("brief") or "").strip()
 
@@ -1495,7 +1497,7 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
     parts = ["The whole scene, for context (you write only pass {}):\n{}".format(k, scene_context(p, scene))]
     note = _prompt._strip_task_tags(str((pr.get("sections") or {}).get("summary") or "")).strip()
     parts.append("Whole-scene note (what the whole scene is about; not a prompt of its own):\n" + (note or "(none)"))
-    if brief_text(scene):  # added 2026-11-12 v0.15.0: the author's Write prompts brief, kept between runs
+    if brief_text(scene):  # added 2026-11-09 v0.15.0: the author's Write prompts brief, kept between runs
         parts.append(BRIEF_HEAD + brief_text(scene))
 
     start, end, gen = float(x["start"]), float(x["end"]), int(x["gen_frames"])
@@ -1519,19 +1521,19 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
     elif cont.get("source") == "prev_scene_tail" or (k == 1 and plan.get("start_mode") == "tail"):
         head += " It continues seamlessly from the end of the scene before (@tail)."
     shot_lines, spoken = _pass_lines(p, scene, x, k - 1 if k > 1 else 0)
-    # [OLD 2026-11-12 v0.14.1->v0.14.2] a scene without shots or lines got no lines: the rules forbid other spoken words
+    # [OLD 2026-11-09 v0.14.1->v0.14.2] a scene without shots or lines got no lines: the rules forbid other spoken words
     # parts.append(head + "\nIts shots:\n" + ("\n".join(shot_lines) or "(no shots on the timeline: write it as one shot)") +
     #              "\nIts spoken lines:\n" + ("\n".join(spoken) or "(none)"))
-    # added 2026-11-12 v0.14.2: a scene written into the timeline (fills_timeline)
+    # added 2026-11-09 v0.14.2: a scene written into the timeline (fills_timeline)
     fill = fills_timeline(scene, plan)
     free = fill and not scene.get("dialogue")
     parts.append(head + "\nIts shots:\n" + ("\n".join(shot_lines) or (
         "(none on the timeline yet: write it as one shot; the editor puts it on the timeline)" if fill else
         "(no shots on the timeline: write it as one shot)")) +
         "\nIts spoken lines:\n" + ("\n".join(spoken) or (
-            # [OLD 2026-11-12 v0.14.4->v0.15.0] "(none on the timeline yet: when the whole-scene note or the instruction has someone speak, write those "
-            # [OLD 2026-11-12 v0.14.4->v0.15.0] "lines, word for word as the note gives them, and only those; the editor puts them on the timeline)"
-            # added 2026-11-12 v0.15.0: or the author's brief, when the scene has one
+            # [OLD 2026-11-09 v0.14.4->v0.15.0] "(none on the timeline yet: when the whole-scene note or the instruction has someone speak, write those "
+            # [OLD 2026-11-09 v0.14.4->v0.15.0] "lines, word for word as the note gives them, and only those; the editor puts them on the timeline)"
+            # added 2026-11-09 v0.15.0: or the author's brief, when the scene has one
             "(none on the timeline yet: when the whole-scene note{} or the instruction has someone speak, write those "
             "lines, word for word as the note gives them, and only those; the editor puts them on the timeline)".format(
                 ", the author's brief" if brief_text(scene) else "")
@@ -1609,8 +1611,8 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
         m, "s" if m > 1 else "", int(round(sum(PASS_WORDS) / 2.0 / m)), *PASS_WORDS)]
     if auto.get("shots"):
         rules.append("Your [Shot N] lines replace the editor's automatic shot lines, so describe every shot in full.")
-    # [OLD 2026-11-12 v0.14.2->v0.14.3] if fill:  # added 2026-11-12 v0.14.2
-    # [OLD 2026-11-12 v0.14.2->v0.14.3]     rules.append(FILL_LINES_RULE)
+    # [OLD 2026-11-09 v0.14.2->v0.14.3] if fill:  # added 2026-11-09 v0.14.2
+    # [OLD 2026-11-09 v0.14.2->v0.14.3]     rules.append(FILL_LINES_RULE)
     if fill or writes_shots(scene, plan):  # v0.14.2: spoken lines; v0.14.3: framing and camera move too
         rules += [FILL_LINES_RULE, FILL_CAMERA_RULE]
     rules.append("Leave subject_definitions empty: the editor writes a definition line for every reference this pass "
@@ -1766,7 +1768,7 @@ def drop_foreign_lines(text, belongs):
     return text.strip(), removed, twice
 
 
-# [OLD 2026-11-12 v0.14.1->v0.14.2] def tidy_pass(sections, x, build, auto, k=1, known=None, guides=()):
+# [OLD 2026-11-09 v0.14.1->v0.14.2] def tidy_pass(sections, x, build, auto, k=1, known=None, guides=()):
 def tidy_pass(sections, x, build, auto, k=1, known=None, guides=(), free_lines=False):  # free_lines: added v0.14.2
     """(six sections as text, warnings) of one pass's answer, ready to store as scene.prompt.passes[k-1].sections:
     - a whole six-section prompt inside one key is split into its sections; a value's own label is dropped;
@@ -1780,7 +1782,7 @@ def tidy_pass(sections, x, build, auto, k=1, known=None, guides=(), free_lines=F
       start time in the pass (the timeline's).
     Warnings: the description's length, spoken lines missing or added, unknown @ names, labels left as written,
     a [Shot N] count that does not match the pass's shots, cut times moved, a frame guide (pass_guides) not named.
-    free_lines (added 2026-11-12 v0.14.2): the scene has no spoken lines yet and the LLM may write them
+    free_lines (added 2026-11-09 v0.14.2): the scene has no spoken lines yet and the LLM may write them
     (fills_timeline), so only a second copy of a line is taken out."""
     warnings = []
     out = {key: _prompt.as_text(sections.get(key)).strip() if sections.get(key) is not None else ""
@@ -1872,8 +1874,8 @@ def tidy_pass(sections, x, build, auto, k=1, known=None, guides=(), free_lines=F
     # added 2026-11-06 v0.10.0: a spoken line that is not one of this pass's, and a second copy of one that is, are
     # taken out of the text with their sentence ("Mara (S1) says, <d>…</d>"); the warning says which
     own = [_core(t) for t in lines if _core(t)]
-    # [OLD 2026-11-12 v0.14.1->v0.14.2] out["detailed_description"], extra, twice = drop_foreign_lines(
-    # [OLD 2026-11-12 v0.14.1->v0.14.2]     out["detailed_description"], lambda c: any(t in c or c in t for t in own))
+    # [OLD 2026-11-09 v0.14.1->v0.14.2] out["detailed_description"], extra, twice = drop_foreign_lines(
+    # [OLD 2026-11-09 v0.14.1->v0.14.2]     out["detailed_description"], lambda c: any(t in c or c in t for t in own))
     out["detailed_description"], extra, twice = drop_foreign_lines(
         out["detailed_description"], lambda c: free_lines or any(t in c or c in t for t in own))
     if extra:
@@ -1950,8 +1952,8 @@ async def write_passes(cfg, p, scene, wanted=None, instruction="", progress=None
             state["warnings"].append("Pass {} was not written: {}".format(k, e))
             return state
         state["tokens"] += int(info.get("tokens") or 0)
-        # [OLD 2026-11-12 v0.14.1->v0.14.2] sections, warns = tidy_pass(secs, x, b, pr.get("auto") or {}, k, _scene_tokens(p, scene),
-        # [OLD 2026-11-12 v0.14.1->v0.14.2]                             pass_guides(p, scene, x))
+        # [OLD 2026-11-09 v0.14.1->v0.14.2] sections, warns = tidy_pass(secs, x, b, pr.get("auto") or {}, k, _scene_tokens(p, scene),
+        # [OLD 2026-11-09 v0.14.1->v0.14.2]                             pass_guides(p, scene, x))
         sections, warns = tidy_pass(secs, x, b, pr.get("auto") or {}, k, _scene_tokens(p, scene),
                                     pass_guides(p, scene, x),
                                     free_lines=fills_timeline(scene, plan) and not scene.get("dialogue"))  # v0.14.2

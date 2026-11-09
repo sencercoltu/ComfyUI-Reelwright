@@ -11,11 +11,11 @@ import { rw, viewURL } from "../api.js";
 import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription, sheetGrid, anchorPixels, sheetURL, castPacks } from "../model.js";
 import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
 import { partOwner } from "../model.js"; // added 2026-11-08 v0.11.0: a prop that is part of a character
-import { SMALL_TILE_PX } from "../model.js"; // added 2026-11-12 v0.16.0: sheet pictures too small for identity
-import { refClip, fmtTime } from "../model.js"; // added 2026-11-12 v0.16.0: video anchors
-import { sortable, dragGrip, moveItem } from "../ui.js"; // added 2026-11-12 v0.16.0: video anchors in the order you drag them to
-// [OLD 2026-11-12 v0.16.0->v0.16.1] import { clipTimeField } from "./scene.js"; // added 2026-11-12 v0.16.0: From / To of a video anchor
-import { clipEditor } from "./scene.js"; // added 2026-11-12 v0.16.1: the scene reference's clip editor (Preview, From here / To here, the bar)
+import { SMALL_TILE_PX } from "../model.js"; // added 2026-11-09 v0.16.0: sheet pictures too small for identity
+import { refClip, fmtTime } from "../model.js"; // added 2026-11-09 v0.16.0: video anchors
+import { sortable, dragGrip, moveItem } from "../ui.js"; // added 2026-11-09 v0.16.0: video anchors in the order you drag them to
+// [OLD 2026-11-09 v0.16.0->v0.16.1] import { clipTimeField } from "./scene.js"; // added 2026-11-09 v0.16.0: From / To of a video anchor
+import { clipEditor } from "./scene.js"; // added 2026-11-09 v0.16.1: the scene reference's clip editor (Preview, From here / To here, the bar)
 import { describeBox } from "./assets.js"; // added 2026-11-02 v0.2.0: describe from anchors
 
 const KINDS = [["character", "Characters"], ["location", "Locations"], ["prop", "Props"]];
@@ -193,7 +193,7 @@ function anchorsCard(ctx, c) {
               { value: "separate", label: "Separate", help: "cast.anchors.sheet.off" }] }),
           h("div", { class: "rw-dim small" }, packNote),
           sizeNote && h("div", { class: ["small", (packedSomewhere ? draftS : draftA) < 200 ? "rw-c-warn" : "rw-dim"], help: "cast.anchors.size" }, sizeNote),
-          // added 2026-11-12 v0.16.0: say it plainly when the sheet makes each picture too small (model.tilePixels)
+          // added 2026-11-09 v0.16.0: say it plainly when the sheet makes each picture too small (model.tilePixels)
           packedSomewhere && fullS < SMALL_TILE_PX && h("div", { class: "rw-note warn small", help: "cast.anchors.small" }, icon("warn", 12),
             h("span", null, `In the ${cols}×${rows} sheet each picture reaches H3 at only about ${fullS} px, too small for a reliable identity. Keep a sheet to about 4 pictures (a clear face and a full body), pick Separate or Auto, or set Global → Output → Reference images to max.`))),
         packedSomewhere && h("img", { class: "rw-sheet-img", src: ctx.host.apiURL(sheetURL(p, c, 160)), alt: "", help: "cast.anchors.sheetPreview",
@@ -208,12 +208,12 @@ function anchorsCard(ctx, c) {
   });
 }
 
-// ---- added 2026-11-12 v0.16.0: video anchors (Sencer: "why didn't we add video anchors? if possible, lets add them as
+// ---- added 2026-11-09 v0.16.0: video anchors (Sencer: "why didn't we add video anchors? if possible, lets add them as
 // well"). Clips of the cast member that go with its pictures as part of its subject ("shown in <Picture 1> and in
 // <Video 2>"), to every scene it is in, after the scene's own videos while H3's budget has room (3 videos, 15 s of
 // video in all; model.pickVideoAnchors). Each has a From / To like a scene's video reference and sends its sound only
 // when "with sound" is on. Drag the grip to reorder: the first ones go first when room is short.
-// added 2026-11-12 v0.16.1: help keys of a video anchor's clip editor (From / To / Length keep their v0.16.0 names)
+// added 2026-11-09 v0.16.1: help keys of a video anchor's clip editor (From / To / Length keep their v0.16.0 names)
 const VA_HELP = name => ({ clipFrom: "cast.videoAnchors.from", clipTo: "cast.videoAnchors.to", clipLength: "cast.videoAnchors.length" })[name] || "cast.videoAnchors." + name;
 function videoAnchorsCard(ctx, c) {
   const p = ctx.p;
@@ -228,7 +228,7 @@ function videoAnchorsCard(ctx, c) {
         h("span", { class: "grow" }, a ? `${a.code} is not a video, so it is not sent.` : "This video anchor's asset was deleted."),
         button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => edit(x => { x.video_anchors = x.video_anchors.filter(y => y.id !== va.id); }, "Remove video anchor") }));
     }
-    /* [OLD 2026-11-12 v0.16.0->v0.16.1] own From / To fields and notes; the scene's clip editor does this now
+    /* [OLD 2026-11-09 v0.16.0->v0.16.1] own From / To fields and notes; the scene's clip editor does this now
     const clip = refClip(va, a);
     const dur = Number(a.duration) || 0;
     const secs = clip.seconds;
@@ -236,7 +236,7 @@ function videoAnchorsCard(ctx, c) {
       : secs !== null && secs > 15 + 1e-6 ? `${secs.toFixed(1)} s: only its first 15 s are sent`
         : secs !== null && secs < 2 - 1e-6 ? "under 2 s: H3 video references are 2–15 s" : "";
     [/OLD] */
-    const dur = Number(a.duration) || 0; // added 2026-11-12 v0.16.1
+    const dur = Number(a.duration) || 0; // added 2026-11-09 v0.16.1
     return h("div", { class: "rw-vanchor" },
       dragGrip({ help: "cast.videoAnchors.order", key: `va-grip-${va.id}` }),
       h("span", { class: "rw-vanchor-thumb rw-bg-vid-soft" }, icon("video", 16)),
@@ -244,7 +244,7 @@ function videoAnchorsCard(ctx, c) {
         h("div", { class: "rw-row" }, h("b", { class: "mono rw-c-vid" }, a.code), h("b", { class: "rw-ellipsis grow" }, a.name || a.file.split("/").pop()),
           h("span", { class: "rw-dim small mono" }, dur ? fmtTime(dur) : ""),
           button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => edit(x => { x.video_anchors = x.video_anchors.filter(y => y.id !== va.id); }, "Remove video anchor") })),
-        /* [OLD 2026-11-12 v0.16.0->v0.16.1] From / To / length only, without Preview, From here / To here or the bar
+        /* [OLD 2026-11-09 v0.16.0->v0.16.1] From / To / length only, without Preview, From here / To here or the bar
         h("div", { class: "rw-row wrap rw-clip-row" },
           clipTimeField(ctx, { label: "From", value: va.in, placeholder: "0", help: "cast.videoAnchors.from", key: `va-in-${va.id}`, onCommit: v => one(va.id, x => { x.in = v ?? 0; }) }),
           clipTimeField(ctx, { label: "To", value: va.out, placeholder: dur ? fmtTime(dur) : "end", help: "cast.videoAnchors.to", key: `va-out-${va.id}`, onCommit: v => one(va.id, x => { x.out = v; }) }),
@@ -252,7 +252,7 @@ function videoAnchorsCard(ctx, c) {
           toggle({ value: !!va.soundtrack, label: "with sound", help: "cast.videoAnchors.sound", key: `va-snd-${va.id}`, onChange: v => one(va.id, x => { x.soundtrack = v; }) })),
         note && h("div", { class: "small rw-c-warn", help: "cast.videoAnchors.length" }, note)));
         [/OLD] */
-        // added 2026-11-12 v0.16.1: the scene reference's clip editor (Sencer: "add the same options to video anchors as
+        // added 2026-11-09 v0.16.1: the scene reference's clip editor (Sencer: "add the same options to video anchors as
         // in scene tab/reference card/video reference. preview, from and to buttons etc."): Whole file, Preview with
         // From here / To here / Play clip, From / To / Length, the bar with draggable ends, and its notes
         h("div", { class: "rw-row wrap" },
@@ -533,7 +533,7 @@ export function render(ctx) {
         c.speaker && chip({ label: `<Subject> · ${c.speaker}`, kind: "pic", help: "cast.speaker" }),
         [/OLD] */
         h("span", { class: "rw-flex" })),
-      // [OLD 2026-11-12 v0.15.1->v0.16.0] anchorsCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c))
+      // [OLD 2026-11-09 v0.15.1->v0.16.0] anchorsCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c))
       anchorsCard(ctx, c), videoAnchorsCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c)) // v0.16.0: video anchors
       : h("div", { class: "rw-col wide" }, section({ title: "Story bible", help: "cast.bible", children: [
         h("div", { class: "rw-empty" }, "Add a character, location or prop. Its anchors are sent to every scene it appears in, which keeps it looking the same."),

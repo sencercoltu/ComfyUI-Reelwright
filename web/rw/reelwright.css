@@ -469,8 +469,8 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-opt.on.o-tail { border-color: var(--vid); background: rgba(167, 139, 250, 0.07); } .rw-opt.on.o-tail .rw-radio { border-color: var(--vid); }
 .rw-tasks { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .rw-psec { display: flex; flex-direction: column; gap: 4px; }
-/* [OLD 2026-11-12 v0.13.0->v0.13.1] .rw-psec-head { display: flex; align-items: center; gap: 10px; font-size: 10.5px; } */
-.rw-psec-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 10.5px; } /* added 2026-11-12 v0.13.1: more labels (which passes use it, shot lines) wrap */
+/* [OLD 2026-11-08 v0.13.0->v0.13.1] .rw-psec-head { display: flex; align-items: center; gap: 10px; font-size: 10.5px; } */
+.rw-psec-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 10.5px; } /* added 2026-11-08 v0.13.1: more labels (which passes use it, shot lines) wrap */
 .rw-psec-head .rw-toggle-row { font-size: 10.5px; }
 .rw-psec-head .rw-toggle { transform: scale(0.85); }
 .rw-list-row.shot .rw-input, .rw-list-row.dlg .rw-input { height: 28px; }
@@ -1036,7 +1036,7 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-io-panel { display: flex; flex-direction: column; gap: 6px; }
 .rw-hidden-file { display: none; }
 
-/* added 2026-11-12 v0.13.0: Chat tab */
+/* added 2026-11-08 v0.13.0: Chat tab */
 .rw-chat { display: flex; flex-direction: column; gap: 10px; height: 100%; max-width: 980px; margin: 0 auto; padding: 12px; box-sizing: border-box; }
 .rw-chat-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .rw-chat-head .rw-ellipsis { min-width: 0; }
@@ -1061,7 +1061,7 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-chat-send { display: flex; gap: 8px; align-items: flex-end; }
 .rw-chat-input { flex: 1 1 auto; resize: vertical; min-height: 56px; max-height: 240px; }
 
-/* added 2026-11-12 v0.13.0: the monitor full screen (timeline.js enterFull) */
+/* added 2026-11-08 v0.13.0: the monitor full screen (timeline.js enterFull) */
 .rw-mon-fs { display: none; }
 .rw-mon-fs:fullscreen { display: flex; flex-direction: column; width: 100%; height: 100%; background: #000; outline: none; }
 .rw-mon-fs:-webkit-full-screen { display: flex; flex-direction: column; width: 100%; height: 100%; background: #000; outline: none; } /* a rule of its own: browsers that do not know it drop only this one */
@@ -1074,7 +1074,7 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-mon-fstitle { min-width: 0; color: var(--text3); }
 .rw-mon-away { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--dim); cursor: pointer; }
 
-/* added 2026-11-12 v0.13.1: drag a scene to move it in the order (timeline.js sceneDrag) */
+/* added 2026-11-08 v0.13.1: drag a scene to move it in the order (timeline.js sceneDrag) */
 .rw-root.rw-scene-moving, .rw-root.rw-scene-moving * { cursor: grabbing !important; user-select: none; }
 .rw-scene.dragging { z-index: 5; opacity: 0.8; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5); pointer-events: none; }
 .rw-scene-drop { position: absolute; top: 2px; height: 80px; width: 0; margin-left: -1px; border-left: 3px solid var(--accent); border-radius: 2px; z-index: 6; pointer-events: none; }
@@ -1082,7 +1082,7 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-scene-drop-label { position: absolute; left: 6px; top: 26px; padding: 3px 7px; border-radius: 5px; background: #eceef2; color: #14161b; font-size: 10.5px; white-space: nowrap; }
 .rw-scene-drop.same .rw-scene-drop-label { background: #3a3f4b; color: #d6d9e0; }
 
-/* added 2026-11-12 v0.14.0: clips of video and audio references (scene.js clipEditor) */
+/* added 2026-11-08 v0.14.0: clips of video and audio references (scene.js clipEditor) */
 .rw-clip { display: flex; flex-direction: column; gap: 7px; padding: 7px 8px 8px; border: 1px solid var(--line2); border-radius: 7px; background: rgba(255, 255, 255, 0.015); }
 .rw-clip-row { gap: 6px; align-items: center; }
 .rw-clip-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
@@ -1100,7 +1100,7 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-clip-prev { display: flex; flex-direction: column; gap: 6px; }
 .rw-clip-media { width: 100%; max-height: 220px; border-radius: 6px; background: #000; }
 audio.rw-clip-media { height: 34px; background: transparent; }
-/* added 2026-11-12 v0.14.1: foldable blocks (the Timeline inspector's parts) */
+/* added 2026-11-09 v0.14.1: foldable blocks (the Timeline inspector's parts) */
 .rw-fblock { display: flex; flex-direction: column; gap: 4px; flex: none; min-width: 0; }
 .rw-fblock-head { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 18px; }
 .rw-fblock-head .rw-card-fold { width: 18px; height: 18px; }
@@ -1112,7 +1112,7 @@ audio.rw-clip-media { height: 34px; background: transparent; }
 .rw-insp > .rw-fblock.grow .rw-prompt-preview { flex: 1 1 auto; min-height: 80px; }
 .rw-insp > .rw-fblock > .rw-kv-grid + .rw-field { margin-top: 5px; }
 
-/* added 2026-11-12 v0.15.0: lists put in order by dragging (ui.js sortable / dragGrip) */
+/* added 2026-11-09 v0.15.0: lists put in order by dragging (ui.js sortable / dragGrip) */
 .rw-sortable { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 .rw-drag-grip { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 24px; padding: 0; margin: 0 -2px; border: 0; border-radius: 4px; background: transparent; color: var(--dim); cursor: grab; touch-action: none; align-self: center; }
 .rw-drag-grip:hover, .rw-drag-grip:focus-visible { color: var(--text); background: var(--raise); outline: none; }
@@ -1120,10 +1120,10 @@ audio.rw-clip-media { height: 34px; background: transparent; }
 .rw-sort-item.drop-before { box-shadow: 0 -2px 0 0 var(--accent); }
 .rw-sort-item.drop-after { box-shadow: 0 2px 0 0 var(--accent); }
 body.rw-sorting, body.rw-sorting * { cursor: grabbing !important; user-select: none !important; }
-/* added 2026-11-12 v0.15.0: the Write prompts brief and its button's dot */
+/* added 2026-11-09 v0.15.0: the Write prompts brief and its button's dot */
 .rw-brief { padding: 8px; border-radius: 8px; border: 1px dashed rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.04); }
 .rw-btn .rw-brief-dot { margin-left: 4px; background: var(--cam-t); }
-/* added 2026-11-12 v0.15.0: the LLM output popup (llmjob.js outputPopup) and the import row's Output button */
+/* added 2026-11-09 v0.15.0: the LLM output popup (llmjob.js outputPopup) and the import row's Output button */
 .rw-script-part.run { grid-template-columns: 52px minmax(0, 0.9fr) minmax(0, 1.4fr) auto; align-items: center; }
 .rw-llm-out { position: absolute; right: 14px; bottom: 44px; z-index: 50; width: 600px; height: 460px; max-width: calc(100% - 28px); max-height: calc(100% - 70px); min-width: 280px; min-height: 160px; resize: both; overflow: hidden; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line2); border-radius: 10px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); }
 .rw-llm-out-head { display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 12px; border-bottom: 1px solid var(--line); min-width: 0; }
@@ -1138,10 +1138,10 @@ body.rw-sorting, body.rw-sorting * { cursor: grabbing !important; user-select: n
 .rw-llm-ans-head { color: var(--dim); }
 .rw-llm-ans-text { color: var(--text); }
 .rw-llm-notes:empty { display: none; }
-/* added 2026-11-12 v0.15.1: a dialog opens next to what opened it (ui.js placeNear); without .anchored it is centred */
+/* added 2026-11-09 v0.15.1: a dialog opens next to what opened it (ui.js placeNear); without .anchored it is centred */
 .rw-modal.anchored { display: block; }
 .rw-modal.anchored > .rw-modal-box { position: absolute; margin: 0; }
-/* added 2026-11-12 v0.16.0: Cast → Video anchors */
+/* added 2026-11-09 v0.16.0: Cast → Video anchors */
 .rw-vanchor { display: flex; gap: 10px; padding: 8px; border-radius: 8px; background: var(--panel2); border: 1px solid #262a33; align-items: flex-start; min-width: 0; }
 .rw-vanchor-thumb { width: 44px; height: 44px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .rw-vanchor-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }

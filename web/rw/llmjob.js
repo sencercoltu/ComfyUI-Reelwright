@@ -1,5 +1,5 @@
 import { h } from "./ui.js"; // added 2026-11-06 v0.10.2: jobText
-import { button, icon, rootScale } from "./ui.js"; // added 2026-11-12 v0.15.0: the output popup
+import { button, icon, rootScale } from "./ui.js"; // added 2026-11-09 v0.15.0: the output popup
 
 // Progress of a running LLM request (added 2026-11-03 v0.4.2). The backend sends reelwright.llm events tagged with
 // the job id the editor chose; editor.js keeps the latest one per job in eph.llmJobs.
@@ -43,7 +43,7 @@ export function jobText(job, d, { tag = "span", fmt = jobLine, ...props } = {}) 
   return el;
 }
 
-// ---- added 2026-11-12 v0.15.0: what an LLM request receives, as it arrives (Sencer: "The Write prompt LLM response
+// ---- added 2026-11-09 v0.15.0: what an LLM request receives, as it arrives (Sencer: "The Write prompt LLM response
 // sometimes never ends, after a while times out. When waiting for response, we receive thinking, but cannot see what
 // it thinks. Add the thinking progress and received content as output so we can see what's going on. It should only
 // be shown by a toggle button inside a popup.")

@@ -1,4 +1,4 @@
-"""Spoken lines at their time and place in the shot (added 2026-11-12 v0.17.0; Sencer: "The dialogues are not added to
+"""Spoken lines at their time and place in the shot (added 2026-11-09 v0.17.0; Sencer: "The dialogues are not added to
 shots at the given time index. the dialogue should have it's proper place and time index in the shot").
 
 - prompt.py: every line opens with its time in the pass ("At 00:02.000, <Subject 1> (S1) says, <d>…</d>"); a sentence
@@ -134,3 +134,113 @@ def test_write_prompts_reads_the_lines_times_and_places(tmp_path, harbor):
     text = one["shots"][0]["text"]
     assert text.startswith("The pier. At 00:05.000, she pockets the key. At 00:07.500, @Mara turns to the sea. At 00:0"), text
     assert text.endswith(", the lamps flicker."), text
+
+
+# ---- added 2026-11-09 v0.17.1: fixes from the third review ---------------------------------------------------------
+
+def test_a_cue_that_opens_a_shot(harbor):
+    """Review 3: a shot text that opens with "At MM:SS.mmm," (as Write prompts writes a shot that opens with a spoken
+    line) follows the shot's opening as sentences of their own; its cue places the lines (it was not seen, and a later
+    shot read "the shot cuts to at 00:06.000, she leaves.")."""
+    p = copy.deepcopy(harbor)
+    s = p["scenes"][0]
+    s["cast"] = [{"id": "c_mara", "outfit": ""}]
+    s["shots"] = [{"t": 0, "camera": "", "text": "At 00:02.000, @Mara turns to the sea."},
+                  {"t": 6, "camera": "", "text": "At 00:06.500, she leaves."}]
+    s["dialogue"] = [{"id": "d_a", "speaker": "c_mara", "t": 0.5, "text": "Not tonight."},
+                     {"id": "d_b", "speaker": "c_mara", "t": 7.0, "text": "Goodbye."}]
+    p = normalize_project(p)
+    one, two = _desc(_pass_prompt(p, 0)).split("\n")[-2:]
+    assert one == "[Shot 1] At 00:00.500, <Subject 1> (S1) says, <d>[English] Not tonight.</d> At 00:02.000, " \
+                  "<Subject 1> turns to the sea.", one
+    assert two == "[Shot 2] At 00:06.000, the shot cuts to a new angle. At 00:06.500, she leaves. At 00:07.000, " \
+                  "<Subject 1> (S1) says, <d>[English] Goodbye.</d>", two
+
+
+def test_cue_points_and_rebase():
+    """Review 6: a cue after "…" or a colon is a cue (as shotfill.js CUES); a cut is not."""
+    pts = prompt._cue_points("[Shot 1] Wait… At 00:01.000, go. A close-up: At 00:02.000, run. "
+                             "[Shot 2] At 00:03.000, the shot cuts to a door. [Shot 3] At 00:04.000, rain.")
+    assert [t for _, t in pts] == [1.0, 2.0, 4.0]
+    assert prompt._rebase_shot("A close-up: At 00:17.000, she turns.", 10.0, 32) == "A close-up: At 00:07.000, she turns."
+    assert prompt._rebase_shot("Wait… At 00:17.000, she turns.", 10.0, 32) == "Wait… At 00:07.000, she turns."
+
+
+RUN2 = r"""
+import { pathToFileURL } from "node:url";
+const dir = process.argv[2];
+const m = await import(pathToFileURL(dir + "/model.js").href);
+const f = await import(pathToFileURL(dir + "/shotfill.js").href);
+let input = "";
+for await (const chunk of process.stdin) input += chunk;
+const req = JSON.parse(input);
+const p = m.normalizeProject(req.project);
+const out = [];
+for (const c of req.cases) {
+  const i = p.scenes.findIndex(s => s.id === c.scene);
+  const sc = p.scenes[i];
+  const plan = m.planScene(p, sc, i);
+  if (c.op === "plan") out.push(plan.passes.map(x => ({ start: x.start, keep_in: x.keep_in, shots: x.shots.map(s => ({ id: s.id, t: s.t, continuing: s.continuing })) })));
+  else if (c.op === "read") out.push(f.readWritten(p, sc, c.text, c.pass ? plan.passes[c.pass - 1] : null));
+  else if (c.op === "passes") { const n = f.takePassShots(p, sc, plan, c.items); out.push({ n, shots: sc.shots }); }
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def _run2(tmp_path, p, cases):
+    script = tmp_path / "run2.mjs"
+    script.write_text(RUN2)
+    r = subprocess.run([NODE, str(script), os.path.join(ROOT, "web", "rw")], input=json.dumps({"project": p, "cases": cases}),
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+@pytest.mark.skipif(not NODE, reason="node is not installed")
+def test_write_prompts_times_review_fixes(tmp_path, harbor):
+    """Review 2: a short scene's written times are pass time + the pass's start (keep_in was counted twice). Review 8:
+    a written time before the line before it is not taken. Review 3: a shot that opens with a spoken line opens with
+    its speaker, not with a time."""
+    p = copy.deepcopy(harbor)
+    p["scenes"][0]["duration"] = 10.0
+    p["scenes"][2]["trim"] = {"keep": "end"}  # the 2.5 s insert keeps the end of what H3 makes
+    p = normalize_project(p)
+    (plan,) = _run2(tmp_path, p, [{"op": "plan", "scene": "s_short"}])
+    start = plan[0]["start"]
+    assert start < -1  # H3 makes more than 2.5 s; the cut keeps its end
+    short, order, opens = _run2(tmp_path, p, [
+        {"op": "read", "scene": "s_short", "pass": 1, "text": "[Shot 1] @Mara at the door. At {}, @Mara (S1) says, "
+         "<d>[English] Home.</d>".format(prompt.spec.fmt_time(1.0 - start))},
+        {"op": "read", "scene": "s_one", "text": "[Shot 1] @Mara waits. At 00:04.000, @Mara (S1) says, <d>[English] One."
+         "</d> At 00:02.000, @Mara (S1) says, <d>[English] Two.</d>"},
+        {"op": "read", "scene": "s_one", "text": "[Shot 1] @Mara waits.\n[Shot 2] At 00:05.000, the shot cuts to @Mara "
+         "(S1), who whispers, <d>[English] Now.</d> She leaves."}])
+    assert round(short["lines"][0]["t"] * 24) == 24, short["lines"]  # 1.0 s into the scene
+    assert [round(d["t"] * 24) for d in order["lines"]][0] == 96 and order["lines"][1]["t"] > order["lines"][0]["t"]
+    assert opens["shots"][1]["text"].startswith("@Mara. At 00:0"), opens["shots"][1]
+    assert opens["shots"][1]["text"].endswith(", she leaves."), opens["shots"][1]
+
+
+@pytest.mark.skipif(not NODE, reason="node is not installed")
+def test_write_prompts_on_a_scene_of_several_passes_keeps_scene_times(tmp_path, harbor):
+    """Review 1: takePassShots stored the written "At MM:SS," cues in pass time; they are scene times in the shots."""
+    p = copy.deepcopy(harbor)
+    p["scenes"][1]["prompt"]["auto"] = {"subjects": True, "retention": True, "shots": True}
+    p = normalize_project(p)
+    (plan,) = _run2(tmp_path, p, [{"op": "plan", "scene": "s_long"}])
+    k = next(i for i, x in enumerate(plan) if i > 0 and any(not s["continuing"] for s in x["shots"]))
+    x = plan[k]
+    lines = []
+    for j, s in enumerate(x["shots"], 1):
+        if s["continuing"]:
+            lines.append("[Shot {}] The walk continues.".format(j))
+        else:
+            lines.append("[Shot {}] At {}, the shot cuts to the seawall. @Mara walks. At {}, she stops.".format(
+                j, prompt.spec.fmt_time(s["t"]), prompt.spec.fmt_time(s["t"] + 1.0)))
+    items = [{"index": k + 1, "sections": {"detailed_description": "Rain.\n" + "\n".join(lines)}}]
+    (res,) = _run2(tmp_path, p, [{"op": "passes", "scene": "s_long", "items": items}])
+    assert res["n"]
+    first = next(s for s in x["shots"] if not s["continuing"])
+    shot = next(s for s in res["shots"] if s["id"] == first["id"])
+    assert "At {}, she stops.".format(prompt.spec.fmt_time(first["t"] + x["start"] + 1.0)) in shot["text"], (shot, x["start"])

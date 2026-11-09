@@ -79,9 +79,9 @@ def main():
         check(page.locator(".rw-ac.on .rw-ac-item").count() > 0, "autocomplete list did not open")
         page.keyboard.press("Enter")
         page.wait_for_timeout(300)
-        # [OLD 2026-11-12 v0.14.0->v0.14.1] a click on a card title folds every card now; click beside it to leave the field
+        # [OLD 2026-11-09 v0.14.0->v0.14.1] a click on a card title folds every card now; click beside it to leave the field
         # page.locator(".rw-card-title:has-text('Duration')").click()
-        page.locator(".rw-card:has(.rw-card-title:has-text('Duration'))").click(position={"x": 4, "y": 4})  # added 2026-11-12 v0.14.1: the card's corner
+        page.locator(".rw-card:has(.rw-card-title:has-text('Duration'))").click(position={"x": 4, "y": 4})  # added 2026-11-09 v0.14.1: the card's corner
         page.wait_for_timeout(500)
         summary = project(page)["scenes"][2]["prompt"]["sections"]["summary"]
         check("@P1" in summary, f"autocomplete did not insert @P1: {summary!r}")
@@ -508,7 +508,7 @@ def main():
         page.mouse.up()
         page.wait_for_timeout(300)
         check(abs((sl() - s0) - 200) < 3 and ph() == t1 and project(page)["ui"]["selected"] == sel, f"pan: scroll {s0}->{sl()}, playhead {ph()} vs {t1}")
-        # [OLD 2026-11-12 v0.13.0->v0.13.1] a sideways drag on a scene block moves the scene now (v0131_checks); Alt + drag pans
+        # [OLD 2026-11-08 v0.13.0->v0.13.1] a sideways drag on a scene block moves the scene now (v0131_checks); Alt + drag pans
         # # a drag that starts on a scene block pans too and does not select it
         # bb = box(".rw-scene", 5)
         # s0 = sl()
@@ -520,7 +520,7 @@ def main():
         # s1, sel1, ph1 = sl(), project(page)["ui"]["selected"], ph()
         # check(abs((s0 - s1) - 100) < 3 and sel1 == sel, f"drag on a scene block did not pan or selected it: scroll {s0}->{s1}, selected {sel1} vs {sel}, playhead {ph1}")
         # [/OLD]
-        # added 2026-11-12 v0.13.1: Alt + drag on a scene block pans and neither selects nor moves it
+        # added 2026-11-08 v0.13.1: Alt + drag on a scene block pans and neither selects nor moves it
         bb = box(".rw-scene", 5)
         s0, order0 = sl(), [x["id"] for x in project(page)["scenes"]]
         page.mouse.move(bb["x"] + 30, bb["y"] + 40)
@@ -1514,18 +1514,18 @@ def main():
         v0102_checks(page, check, saved, shots)  # added 2026-11-06 v0.10.2: merge and LLM progress without rebuilding the tab; tooltips survive a rebuild
         v0103_checks(page, check, saved, shots)  # added 2026-11-07 v0.10.3: Global → Project → New project
         v0110_checks(page, check, saved, shots)  # added 2026-11-08 v0.11.0: Cast → Part of; outfit pictures
-        v0120_checks(page, check, saved, shots)  # added 2026-11-12 v0.12.0: pose references
-        v0130_checks(page, check, saved, shots)  # added 2026-11-12 v0.13.0: Chat tab; a new take keeps playing; full screen
-        v0131_checks(page, check, saved, shots)  # added 2026-11-12 v0.13.1: what a duplicated scene keeps; drag scenes to reorder
-        v0140_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.0: clips of video and audio references
-        v0141_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.1: every card folds; the Timeline inspector's parts too
-        v0142_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.2: shots and lines written for a scene without shots go on the timeline
-        v0143_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.3: framing and camera moves of written shots go into the shots
-        v0144_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.4: written shots replace the shots whatever their count; scenes of several passes too
-        v0150_checks(page, check, saved, shots)  # added 2026-11-12 v0.15.0: drag to reorder, Reset scene, the LLM output popup, the Write prompts brief
-        v0151_checks(page, check, saved, shots)  # added 2026-11-12 v0.15.1: dialogs open next to what opened them
-        v0160_checks(page, check, saved, shots)  # added 2026-11-12 v0.16.0: video anchors; sheets too small; the sheet in the subject line
-        v0161_checks(page, check, saved, shots)  # added 2026-11-12 v0.16.1: a video anchor has the scene reference's clip editor
+        v0120_checks(page, check, saved, shots)  # added 2026-11-08 v0.12.0: pose references
+        v0130_checks(page, check, saved, shots)  # added 2026-11-08 v0.13.0: Chat tab; a new take keeps playing; full screen
+        v0131_checks(page, check, saved, shots)  # added 2026-11-08 v0.13.1: what a duplicated scene keeps; drag scenes to reorder
+        v0140_checks(page, check, saved, shots)  # added 2026-11-08 v0.14.0: clips of video and audio references
+        v0141_checks(page, check, saved, shots)  # added 2026-11-09 v0.14.1: every card folds; the Timeline inspector's parts too
+        v0142_checks(page, check, saved, shots)  # added 2026-11-09 v0.14.2: shots and lines written for a scene without shots go on the timeline
+        v0143_checks(page, check, saved, shots)  # added 2026-11-09 v0.14.3: framing and camera moves of written shots go into the shots
+        v0144_checks(page, check, saved, shots)  # added 2026-11-09 v0.14.4: written shots replace the shots whatever their count; scenes of several passes too
+        v0150_checks(page, check, saved, shots)  # added 2026-11-09 v0.15.0: drag to reorder, Reset scene, the LLM output popup, the Write prompts brief
+        v0151_checks(page, check, saved, shots)  # added 2026-11-09 v0.15.1: dialogs open next to what opened them
+        v0160_checks(page, check, saved, shots)  # added 2026-11-09 v0.16.0: video anchors; sheets too small; the sheet in the subject line
+        v0161_checks(page, check, saved, shots)  # added 2026-11-09 v0.16.1: a video anchor has the scene reference's clip editor
         browser.close()
     httpd.shutdown()
 
@@ -1781,15 +1781,15 @@ def f2a_checks(page, check, saved, shots):
     page.mouse.down()
     page.mouse.move(bx["x"] + 30 + 3 * z * sc, bx["y"] + bx["height"] / 2, steps=6)
     page.wait_for_timeout(200)
-    # [OLD 2026-11-12 v0.13.0->v0.13.1] read at once: a render that lands during the drag (the autosave's "Saving…") replaces
+    # [OLD 2026-11-08 v0.13.0->v0.13.1] read at once: a render that lands during the drag (the autosave's "Saving…") replaces
     # the clip, and its tip comes back with the next pointer move, so the check failed when the timing fell that way
     # n_stale = page.locator(".rw-scene.rw-stale-preview").count()
     # tip = page.locator(".rw-track-clip[data-tid='t_song'] .rw-drag-tip").first.inner_text()
     # [/OLD]
-    # added 2026-11-12 v0.13.1: a pointer keeps moving while it drags; nudge it until the tip is there (at most ~1 s)
+    # added 2026-11-08 v0.13.1: a pointer keeps moving while it drags; nudge it until the tip is there (at most ~1 s)
     tip = ""
-    # [OLD 2026-11-12 v0.14.3->v0.14.4] for k in range(5):  (about 1 s was sometimes too short while a render landed)
-    for k in range(15):  # added 2026-11-12 v0.14.4: up to ~3 s
+    # [OLD 2026-11-09 v0.14.3->v0.14.4] for k in range(5):  (about 1 s was sometimes too short while a render landed)
+    for k in range(15):  # added 2026-11-09 v0.14.4: up to ~3 s
         page.mouse.move(bx["x"] + 30 + 3 * z * sc + (k % 2), bx["y"] + bx["height"] / 2)
         page.wait_for_timeout(200)
         tl = page.locator(".rw-track-clip[data-tid='t_song'] .rw-drag-tip")
@@ -4858,7 +4858,7 @@ def v0131_checks(page, check, saved, shots):
     page.wait_for_timeout(400)
     check(order() == before, f"Ctrl+Z puts it back: {order()[:4]}")
     # drag s_03 to the front: before the first scene
-    # added 2026-11-12 v0.15.0: under load the blocks were not drawn yet after the undo (box() gave None once)
+    # added 2026-11-09 v0.15.0: under load the blocks were not drawn yet after the undo (box() gave None once)
     page.wait_for_selector(".rw-scene[data-sid='s_03']", timeout=4000)
     page.wait_for_selector(".rw-scene[data-sid='s_01']", timeout=4000)
     page.wait_for_timeout(200)
@@ -5231,7 +5231,7 @@ def v0142_checks(page, check, saved, shots):
     page.wait_for_function(f"() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     sc = scene_of(sid)
-    # [OLD 2026-11-12 v0.14.2->v0.14.3] the framing stayed in the text
+    # [OLD 2026-11-09 v0.14.2->v0.14.3] the framing stayed in the text
     # check(len(sc["shots"]) == 1 and sc["shots"][0]["t"] == 0 and sc["shots"][0]["text"].startswith("A medium shot of @Mara")
     check(len(sc["shots"]) == 1 and sc["shots"][0]["t"] == 0 and sc["shots"][0]["text"].startswith("@Mara at the harbor wall") and sc["shots"][0]["framing"] == "medium"
           and "Almost home" not in sc["shots"][0]["text"], f"Write prompts put the shot on the timeline: {sc['shots']}")
@@ -5446,9 +5446,9 @@ def v0150_checks(page, check, saved, shots):
     undo = lambda: (page.evaluate("window.__editor.store.undo()"), page.wait_for_timeout(300))
 
     def drag(src, dst, below=True):  # press a grip, move over the middle of another row (just below it), release
-        # [OLD 2026-11-12 v0.15.0->v0.15.1] page.locator(dst).scroll_into_view_if_needed()
-        # [OLD 2026-11-12 v0.15.0->v0.15.1] page.locator(src).scroll_into_view_if_needed()
-        # added 2026-11-12 v0.15.1: a redraw (plan refresh) during Playwright's "stable" wait failed it now and then
+        # [OLD 2026-11-09 v0.15.0->v0.15.1] page.locator(dst).scroll_into_view_if_needed()
+        # [OLD 2026-11-09 v0.15.0->v0.15.1] page.locator(src).scroll_into_view_if_needed()
+        # added 2026-11-09 v0.15.1: a redraw (plan refresh) during Playwright's "stable" wait failed it now and then
         page.wait_for_timeout(300)
         page.locator(src).evaluate("e => e.scrollIntoView({ block: 'center' })")
         page.wait_for_timeout(150)
@@ -5521,9 +5521,9 @@ def v0150_checks(page, check, saved, shots):
       { id: 'g_c', name: 'gc.safetensors', strength: 1, enabled: true }]; }, { label: 'v0150 global loras' })""")
     page.click(".rw-tab:has-text('Global')")
     page.wait_for_timeout(400)
-    # [OLD 2026-11-12 v0.15.0->v0.15.1] grip = page.locator("[data-key='glora-grip-g_a']")
-    # [OLD 2026-11-12 v0.15.0->v0.15.1] grip.scroll_into_view_if_needed()
-    page.wait_for_timeout(800)  # added 2026-11-12 v0.15.1: let the plan refresh redraw first (drag scrolls the grip into view)
+    # [OLD 2026-11-09 v0.15.0->v0.15.1] grip = page.locator("[data-key='glora-grip-g_a']")
+    # [OLD 2026-11-09 v0.15.0->v0.15.1] grip.scroll_into_view_if_needed()
+    page.wait_for_timeout(800)  # added 2026-11-09 v0.15.1: let the plan refresh redraw first (drag scrolls the grip into view)
     drag("[data-key='glora-grip-g_a']", "[data-key='glora-grip-g_c'] >> xpath=ancestor::div[contains(@class,'rw-sort-item')][1]")
     got = [x["id"] for x in cur()["global"]["loras"]]
     check(got == ["g_b", "g_c", "g_a"] and labels()[-1] == "Reorder global LoRAs", f"Global LoRAs: dragged to the end: {got} {labels()[-1:]}")
@@ -5575,9 +5575,9 @@ def v0150_checks(page, check, saved, shots):
     shots_before = len(scene_of(sid)["shots"])
     page.click(f"[data-key='reset-{sid}']")
     page.wait_for_timeout(250)
-    # [OLD 2026-11-12 v0.16.0->v0.16.1] check(page.locator(".rw-modal").count() == 1 and "Write prompts brief" in page.locator(".rw-modal").inner_text(), "Reset scene asks first and says what stays")
+    # [OLD 2026-11-09 v0.16.0->v0.16.1] check(page.locator(".rw-modal").count() == 1 and "Write prompts brief" in page.locator(".rw-modal").inner_text(), "Reset scene asks first and says what stays")
     ask = page.locator(".rw-modal").inner_text() if page.locator(".rw-modal").count() == 1 else ""
-    check("Write prompts brief" in ask and f"the {shots_before} shot" in ask, f"Reset scene asks first and says what goes and what stays: {ask!r}")  # added 2026-11-12 v0.16.1
+    check("Write prompts brief" in ask and f"the {shots_before} shot" in ask, f"Reset scene asks first and says what goes and what stays: {ask!r}")  # added 2026-11-09 v0.16.1
     page.screenshot(path=str(shots / "v0150_reset_ask.png"))
     page.locator(".rw-modal button:has-text('Cancel')").click()
     page.wait_for_timeout(250)
@@ -5587,16 +5587,16 @@ def v0150_checks(page, check, saved, shots):
     page.locator(".rw-modal button:has-text('Reset scene')").click()
     page.wait_for_timeout(350)
     sc = scene_of(sid)
-    # [OLD 2026-11-12 v0.16.0->v0.16.1] check(all(v == "" for v in sc["prompt"]["sections"].values()) and sc["prompt"]["passes"] == [] and labels()[-1] == "Reset scene"
-    # [OLD 2026-11-12 v0.16.0->v0.16.1]       and sc["prompt"]["brief"] and len(sc["shots"]) == shots_before, f"Reset scene clears the sections only: {sc['prompt']} {labels()[-1:]}")
-    # added 2026-11-12 v0.16.1: the shots and dialogue go too (Sencer: "reset scene's doesn't remove the shots.")
+    # [OLD 2026-11-09 v0.16.0->v0.16.1] check(all(v == "" for v in sc["prompt"]["sections"].values()) and sc["prompt"]["passes"] == [] and labels()[-1] == "Reset scene"
+    # [OLD 2026-11-09 v0.16.0->v0.16.1]       and sc["prompt"]["brief"] and len(sc["shots"]) == shots_before, f"Reset scene clears the sections only: {sc['prompt']} {labels()[-1:]}")
+    # added 2026-11-09 v0.16.1: the shots and dialogue go too (Sencer: "reset scene's doesn't remove the shots.")
     check(all(v == "" for v in sc["prompt"]["sections"].values()) and sc["prompt"]["passes"] == [] and labels()[-1] == "Reset scene"
           and sc["prompt"]["brief"] and shots_before > 0 and sc["shots"] == [] and sc["dialogue"] == [],
           f"Reset scene clears the sections, shots and dialogue: {sc['prompt']} shots {len(sc['shots'])}/{shots_before} lines {len(sc['dialogue'])} {labels()[-1:]}")
     check(page.locator(f"[data-key='reset-{sid}']").is_disabled(), "nothing left to clear: the button is off")
     undo()
     check(scene_of(sid)["prompt"]["sections"]["detailed_description"] != "", "Ctrl+Z brings the sections back")
-    check(len(scene_of(sid)["shots"]) == shots_before, "Ctrl+Z brings the shots back")  # added 2026-11-12 v0.16.1
+    check(len(scene_of(sid)["shots"]) == shots_before, "Ctrl+Z brings the shots back")  # added 2026-11-09 v0.16.1
 
     # 6. the LLM output popup: opened from the progress row, live, stays after the run, opens again from the card
     page.evaluate("() => { window.__mockFlags.passesMs = 2400; window.__editor.store.setEph({ toasts: [] }); }")
@@ -5779,8 +5779,8 @@ def v0160_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
     va = mara()["video_anchors"]
     check((va[0]["in"], va[0]["out"], va[0]["soundtrack"]) == (1.5, 4.0, True), f"From / To and with sound: {va[0]}")
-    # [OLD 2026-11-12 v0.16.0->v0.16.1] check("2.50 s sent" in page.locator(".rw-vanchor").first.inner_text(), "the clip length shows")
-    check(page.locator(f"input[data-key='va-len-{first}']").input_value() == "00:02.500", "the clip length shows")  # added 2026-11-12 v0.16.1: the Length field
+    # [OLD 2026-11-09 v0.16.0->v0.16.1] check("2.50 s sent" in page.locator(".rw-vanchor").first.inner_text(), "the clip length shows")
+    check(page.locator(f"input[data-key='va-len-{first}']").input_value() == "00:02.500", "the clip length shows")  # added 2026-11-09 v0.16.1: the Length field
     page.locator(f"[data-key='va-grip-{first}']").focus()
     page.keyboard.press("ArrowDown")
     page.wait_for_timeout(350)
@@ -5837,7 +5837,7 @@ def v0160_checks(page, check, saved, shots):
     page.wait_for_timeout(400)
 
 
-# added 2026-11-12 v0.16.1
+# added 2026-11-09 v0.16.1
 def v0161_checks(page, check, saved, shots):
     """v0.16.1 (Sencer: "add the same options to video anchors as in scene tab/reference card/video reference. preview,
     from and to buttons etc."): a video anchor has Preview (From here / To here / Play clip), the bar with draggable

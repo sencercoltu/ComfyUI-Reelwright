@@ -9,7 +9,7 @@ export const STABLE_LANGUAGES = ["Arabic", "Chinese", "English", "French", "Germ
   "Japanese", "Korean", "Portuguese", "Russian", "Spanish"];
 export const VISUAL_RETENTION = ["fully_preserved", "partially_preserved", "attribute_transfer", "weak_reference"];
 export const AUDIO_RETENTION = ["fully_copy", "partially_copy", "reference", "weak_reference"];
-// [OLD 2026-11-12 v0.11.0->v0.12.0] export const ROLES = ["reference", "first_frame", "last_frame", "keyframe"];
+// [OLD 2026-11-08 v0.11.0->v0.12.0] export const ROLES = ["reference", "first_frame", "last_frame", "keyframe"];
 export const ROLES = ["reference", "first_frame", "last_frame", "keyframe", "pose"]; // v0.12.0: pose (poseRefs)
 export const START_MODES = ["fresh", "last_frame", "tail"];
 // added 2026-11-05 v0.8.0: Global -> Long scenes -> hand-off and pass cache (model.py LONG_HANDOFF / LONG_PASS_CACHE)
@@ -322,10 +322,10 @@ export function defaultPrompt() {
   const sections = {};
   for (const k of SECTION_KEYS) sections[k] = "";
   // passes: added 2026-11-05 v0.8.0 (see passTexts)
-  // [OLD 2026-11-12 v0.14.4->v0.15.0] no brief field
+  // [OLD 2026-11-09 v0.14.4->v0.15.0] no brief field
   // return { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections, raw: "", pass_prompts: {}, passes: [] };
   // [/OLD]
-  // brief: added 2026-11-12 v0.15.0, the author's own words for Write prompts; never overwritten by what the LLM
+  // brief: added 2026-11-09 v0.15.0, the author's own words for Write prompts; never overwritten by what the LLM
   // writes (model.py default_prompt)
   return { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections, raw: "", pass_prompts: {}, passes: [], brief: "" };
 }
@@ -731,7 +731,7 @@ function normCast(c, lang) {
   const lora = c.lora = isObj(c.lora) ? c.lora : {};
   textField(lora, "name", "");
   lora.strength = num(lora.strength, 0.8);
-  // added 2026-11-12 v0.16.0: video anchors [{id, asset, in, out, soundtrack}] (model.py _norm_cast, pickVideoAnchors)
+  // added 2026-11-09 v0.16.0: video anchors [{id, asset, in, out, soundtrack}] (model.py _norm_cast, pickVideoAnchors)
   c.video_anchors = objects(c.video_anchors);
   const used = new Set();
   for (const va of c.video_anchors) {
@@ -766,11 +766,11 @@ function normScene(s, d, lang, usedIds) {
     textField(r, "asset", "");
     r.role = ROLES.includes(r.role) ? r.role : "reference";
     r.time = num(r.time, 0);
-    textField(r, "cast", ""); // added 2026-11-12 v0.12.0: the character a pose reference is for
+    textField(r, "cast", ""); // added 2026-11-08 v0.12.0: the character a pose reference is for
     textField(r, "retention", "");
     r.keep = texts(r.keep);
     r.soundtrack = flag(r.soundtrack, false);
-    // added 2026-11-12 v0.14.0: the part of a video or audio asset the reference sends (refClip), on whole frames
+    // added 2026-11-08 v0.14.0: the part of a video or audio asset the reference sends (refClip), on whole frames
     r.in = snapFrame(Math.max(0, num(r.in, 0)));
     const o = num(r.out, null);
     r.out = o === null || o <= 0 ? null : snapFrame(o);
@@ -819,7 +819,7 @@ function normScene(s, d, lang, usedIds) {
   const sec = pr.sections = isObj(pr.sections) ? pr.sections : {};
   for (const k of SECTION_KEYS) textField(sec, k, "");
   textField(pr, "raw", "");
-  textField(pr, "brief", ""); // added 2026-11-12 v0.15.0: the Write prompts brief (defaultPrompt)
+  textField(pr, "brief", ""); // added 2026-11-09 v0.15.0: the Write prompts brief (defaultPrompt)
   const pp = isObj(pr.pass_prompts) ? pr.pass_prompts : {};
   pr.pass_prompts = Object.fromEntries(Object.entries(pp).filter(([, v]) => text(v, null) !== null).map(([k, v]) => [k, text(v)]));
   // added 2026-11-05 v0.8.0: each pass's own six sections (see passTexts); an item that is not an object becomes an
@@ -1446,9 +1446,9 @@ export function scenePeople(project, scene) {
   // [OLD 2026-11-08 v0.10.3->v0.11.0] return { people, autoPack, assets, unpacked };
   return { people, autoPack, assets, unpacked, leftOut }; // added 2026-11-08 v0.11.0: leftOut
 }
-// added 2026-11-12 v0.12.0: pose references, as model.pose_refs: a picture whose body pose one character of the scene
+// added 2026-11-08 v0.12.0: pose references, as model.pose_refs: a picture whose body pose one character of the scene
 // takes in the shot at its time; it goes to the pass whose span holds that time. [{ r, a, c }]
-// ---- added 2026-11-12 v0.14.0: clips of video and audio references (Sencer: "allow to select from-to timestamps/frames
+// ---- added 2026-11-08 v0.14.0: clips of video and audio references (Sencer: "allow to select from-to timestamps/frames
 // of source video. we should be able to use the same video/audio asset in a single scene multiple times, with different
 // start/end timestamps/durations, with or without audio"). The same as model.py snap_frame, ref_trimmed, ref_clip,
 // clip_key, media_ref_ids, ref_tokens (tests/test_model_parity.py compares them).
@@ -1543,7 +1543,7 @@ export function anchorPixels(project, c, packed, width, height) {
   const s = max ? Math.min(1, 2048 / Math.min(W, H)) : Math.min(1, Math.sqrt(area / (W * H)));
   return Math.round(Math.min(cw, ch) * s);
 }
-// ---- added 2026-11-12 v0.16.0: video anchors (model.py video_anchors_of / pick_video_anchors, the same rules): sent to
+// ---- added 2026-11-09 v0.16.0: video anchors (model.py video_anchors_of / pick_video_anchors, the same rules): sent to
 // every pass of a scene the character is in, after everything else, while H3 takes 3 videos, 15 s of video in all and
 // 12 files; a clip is shortened to the seconds left when at least 2 s are; its sound only when asked and a slot is free.
 const REF_MEDIA_TOTAL_SECONDS = 15;
@@ -1561,8 +1561,11 @@ export function pickVideoAnchors(people, assets, n) {
       const room = REF_MEDIA_TOTAL_SECONDS - n.videoSeconds;
       const secs = full <= room + 1e-6 ? full : Math.floor(room * FPS + 1e-6) / FPS;
       const cut = secs < full - 1e-6;
-      const why = full <= 0 ? "clip" : n.videos >= MAX_REF_VIDEOS ? "videos" : n.files >= MAX_REF_FILES ? "files"
-        : secs <= 0 || (cut && secs < REF_MEDIA_MIN_SECONDS - 1e-6) ? "seconds" : "";
+      // [OLD 2026-11-09 v0.17.0->v0.17.1] const why = full <= 0 ? "clip" : n.videos >= MAX_REF_VIDEOS ? "videos" : n.files >= MAX_REF_FILES ? "files"
+      // [OLD 2026-11-09 v0.17.0->v0.17.1]   : secs <= 0 || (cut && secs < REF_MEDIA_MIN_SECONDS - 1e-6) ? "seconds" : "";  (a clip under 2 s was sent)
+      // added 2026-11-09 v0.17.1 (third review): a clip under 2 s is not sent ("short"), as model.py
+      const why = full <= 0 ? "clip" : full < REF_MEDIA_MIN_SECONDS - 1e-6 ? "short" : n.videos >= MAX_REF_VIDEOS ? "videos"
+        : n.files >= MAX_REF_FILES ? "files" : secs <= 0 || (cut && secs < REF_MEDIA_MIN_SECONDS - 1e-6) ? "seconds" : "";
       if (why) { left.push({ cast: c.id, anchor: va.id, asset: a.id, why }); continue; }
       const sound = !!va.soundtrack && n.audio < MAX_REF_AUDIOS && n.audioSeconds + secs <= REF_MEDIA_TOTAL_SECONDS + 1e-4;
       n.videos++; n.files++; n.videoSeconds += secs;
@@ -1573,7 +1576,7 @@ export function pickVideoAnchors(people, assets, n) {
   return { picked, left };
 }
 
-// added 2026-11-12 v0.16.0 (model.py tile_pixels): about how many pixels the short side of one picture of a packed sheet
+// added 2026-11-09 v0.16.0 (model.py tile_pixels): about how many pixels the short side of one picture of a packed sheet
 // of `pics` (assets) has when H3 gets it, at width x height and Global → Output → Reference images ("match" | "max")
 export const SMALL_TILE_PX = 300;
 export function tilePixels(pics, width, height, refSize = "match") {
@@ -1587,7 +1590,7 @@ export function tilePixels(pics, width, height, refSize = "match") {
   return Math.floor(Math.min(cw, ch) * s + 0.5);
 }
 
-// added 2026-11-12 v0.16.0: the output size a scene renders at (model.py resolve_settings: its own size, else Global;
+// added 2026-11-09 v0.16.0: the output size a scene renders at (model.py resolve_settings: its own size, else Global;
 // a draft scene at Global → Draft's scale)
 export function sceneOutputSize(project, scene) {
   const g = project.global, o = scene?.overrides || {};
@@ -1597,7 +1600,7 @@ export function sceneOutputSize(project, scene) {
   return [w, h];
 }
 
-// added 2026-11-12 v0.16.0: the size of one picture of c's sheet in this scene (its anchors, outfit and parts' pictures,
+// added 2026-11-09 v0.16.0: the size of one picture of c's sheet in this scene (its anchors, outfit and parts' pictures,
 // as scenePeople gives them), or 0 when c sends no sheet there
 export function sceneTilePixels(project, scene, c) {
   if (!castPacks(project, scene, c)) return 0;
@@ -1648,13 +1651,13 @@ export function continuationFrames(project, i, pass, mode = null) {
 }
 
 // [OLD 2026-11-05 v0.6.1->v0.7.0] export function sceneBudget(project, scene, pass = null) {
-// [OLD 2026-11-12 v0.15.1->v0.16.0] export function sceneBudget(project, scene, pass = null, continuation = true) {
-export function sceneBudget(project, scene, pass = null, continuation = true, videoAnchors = true) { // videoAnchors: added 2026-11-12 v0.16.0
+// [OLD 2026-11-09 v0.15.1->v0.16.0] export function sceneBudget(project, scene, pass = null, continuation = true) {
+export function sceneBudget(project, scene, pass = null, continuation = true, videoAnchors = true) { // videoAnchors: added 2026-11-09 v0.16.0
   if (!pass) {
     /* [OLD 2026-11-05 v0.6.1->v0.7.0] no continuation
     const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x));
     [/OLD] */
-    // [OLD 2026-11-12 v0.15.1->v0.16.0] const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x, continuation));
+    // [OLD 2026-11-09 v0.15.1->v0.16.0] const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x, continuation));
     const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x, continuation, videoAnchors));
     const b = {};
     for (const k of ["pictures", "videos", "videoSeconds", "audio", "audioSeconds", "files"]) b[k] = Math.max(...outs.map(o => o[k]));
@@ -1667,8 +1670,8 @@ export function sceneBudget(project, scene, pass = null, continuation = true, vi
   const { people, assets, unpacked } = scenePeople(project, scene);
   const idx = project.scenes.findIndex(x => x.id === scene.id);
   const cont = continuation ? passContinuation(project, idx < 0 ? null : idx, pass) : "";
-  // [OLD 2026-11-12 v0.11.0->v0.12.0] const autoPack = unpacked + (cont === "picture" ? 1 : 0) > MAX_REF_IMAGES;
-  // added 2026-11-12 v0.12.0: the pose pictures of this pass count too (model.scene_media_counts)
+  // [OLD 2026-11-08 v0.11.0->v0.12.0] const autoPack = unpacked + (cont === "picture" ? 1 : 0) > MAX_REF_IMAGES;
+  // added 2026-11-08 v0.12.0: the pose pictures of this pass count too (model.scene_media_counts)
   const posePics = [...new Set(poseRefs(project, scene, pass, people).map(x => x.a.id))];
   const anchorIds = new Set(people.flatMap(x => x.ids));
   const refPicIds = new Set(scene.refs.filter(r => r.role === "reference" && assets.get(r.asset)?.kind === "image").map(r => r.asset));
@@ -1684,23 +1687,23 @@ export function sceneBudget(project, scene, pass = null, continuation = true, vi
     const v = assets.get(c.voice);
     if (v && v.kind === "audio" && !song && speaking.has(c.id)) sounds.push(v);
   }
-  for (const a of posePics) if (!sent.has(a)) { sent.add(a); b.pictures++; } // added 2026-11-12 v0.12.0
-  // added 2026-11-12 v0.14.0: the audio clips sent: each voice sample (the whole file), then the audio references' clips
+  for (const a of posePics) if (!sent.has(a)) { sent.add(a); b.pictures++; } // added 2026-11-08 v0.12.0
+  // added 2026-11-08 v0.14.0: the audio clips sent: each voice sample (the whole file), then the audio references' clips
   const clips = sounds.map(v => ({ key: [v.id, 0, null], seconds: Number(v.duration) || 0 }));
   for (const r of scene.refs) {
     const a = assets.get(r.asset);
     if (!a || r.role !== "reference") continue;
-    // [OLD 2026-11-12 v0.13.1->v0.14.0] const dur = Number(a.duration) || 0;  (refClip gives each clip's length)
+    // [OLD 2026-11-08 v0.13.1->v0.14.0] const dur = Number(a.duration) || 0;  (refClip gives each clip's length)
     if (a.kind === "image") {
       if (!sent.has(a.id)) { sent.add(a.id); b.pictures++; }
-    /* [OLD 2026-11-12 v0.13.1->v0.14.0] a video counted its asset's whole length; an audio asset counted once
+    /* [OLD 2026-11-08 v0.13.1->v0.14.0] a video counted its asset's whole length; an audio asset counted once
     } else if (a.kind === "video") {
       b.videos++;
       b.videoSeconds += dur;
       if (r.soundtrack) { b.audio++; b.audioSeconds += dur; } // the video's sound takes an <Audio j> slot
     } else if (a.kind === "audio" && !sounds.some(x => x.id === a.id)) sounds.push(a);
     [/OLD] */
-    // added 2026-11-12 v0.14.0: each reference sends its clip (refClip): every video reference, an audio clip once
+    // added 2026-11-08 v0.14.0: each reference sends its clip (refClip): every video reference, an audio clip once
     } else if (a.kind === "video") {
       const secs = refClip(r, a).seconds || 0;
       b.videos++;
@@ -1711,10 +1714,10 @@ export function sceneBudget(project, scene, pass = null, continuation = true, vi
       if (!clips.some(x => sameClip(x.key, key))) clips.push({ key, seconds: refClip(r, a).seconds || 0 });
     }
   }
-  // [OLD 2026-11-12 v0.13.1->v0.14.0] b.audio += sounds.length + (song ? 1 : 0);
-  // [OLD 2026-11-12 v0.13.1->v0.14.0] for (const a of sounds) b.audioSeconds += Number(a.duration) || 0;
+  // [OLD 2026-11-08 v0.13.1->v0.14.0] b.audio += sounds.length + (song ? 1 : 0);
+  // [OLD 2026-11-08 v0.13.1->v0.14.0] for (const a of sounds) b.audioSeconds += Number(a.duration) || 0;
   sounds.length = 0;
-  for (const x of clips) sounds.push(x); // added 2026-11-12 v0.14.0: voice samples (whole files) and audio clips
+  for (const x of clips) sounds.push(x); // added 2026-11-08 v0.14.0: voice samples (whole files) and audio clips
   b.audio += sounds.length + (song ? 1 : 0);
   for (const x of sounds) b.audioSeconds += x.seconds;
   if (song) b.audioSeconds += song.length;
@@ -1722,7 +1725,7 @@ export function sceneBudget(project, scene, pass = null, continuation = true, vi
   // added 2026-11-05 v0.7.0: the continuation reference, when it fits (else the pass counts as in v0.6.1)
   b.continuation = "";
   if (cont === "picture") {
-    // [OLD 2026-11-12 v0.15.1->v0.16.0] if (b.pictures + 1 > MAX_REF_IMAGES || b.files + 1 > MAX_REF_FILES) return sceneBudget(project, scene, pass, false);
+    // [OLD 2026-11-09 v0.15.1->v0.16.0] if (b.pictures + 1 > MAX_REF_IMAGES || b.files + 1 > MAX_REF_FILES) return sceneBudget(project, scene, pass, false);
     if (b.pictures + 1 > MAX_REF_IMAGES || b.files + 1 > MAX_REF_FILES) return sceneBudget(project, scene, pass, false, videoAnchors);
     b.pictures++;
     b.files++;
@@ -1735,7 +1738,7 @@ export function sceneBudget(project, scene, pass = null, continuation = true, vi
     b.continuation = "video";
     if (b.audio < MAX_REF_AUDIOS) { b.audio++; b.audioSeconds += secs; b.continuation = "video_audio"; } // its sound
   }
-  if (videoAnchors) pickVideoAnchors(people, assets, b); // added 2026-11-12 v0.16.0: the cast's video anchors, after everything else
+  if (videoAnchors) pickVideoAnchors(people, assets, b); // added 2026-11-09 v0.16.0: the cast's video anchors, after everything else
   return b;
 }
 
@@ -1933,7 +1936,7 @@ export function assetCastUse(project, assetId) {
   for (const c of project.cast) {
     const scenes = project.scenes.filter(s => s.cast.some(x => x.id === c.id)).length;
     if (c.anchors.includes(assetId)) out.push({ cast: c, as: "anchor", scenes });
-    if ((c.video_anchors || []).some(x => x.asset === assetId)) out.push({ cast: c, as: "video anchor", scenes }); // added 2026-11-12 v0.16.0
+    if ((c.video_anchors || []).some(x => x.asset === assetId)) out.push({ cast: c, as: "video anchor", scenes }); // added 2026-11-09 v0.16.0
     if (c.voice === assetId) out.push({ cast: c, as: "voice", scenes });
   }
   return out;
@@ -2007,7 +2010,7 @@ export function tagCandidates(project) {
   return out;
 }
 [/OLD] */
-// added 2026-11-12 v0.14.0: `scene` adds its further clips of an asset (@V1.2 ...)
+// added 2026-11-08 v0.14.0: `scene` adds its further clips of an asset (@V1.2 ...)
 export function tagCandidates(project, scene = null) {
   // [OLD 2026-11-06 v0.8.0->v0.9.0] const out = project.assets.filter(a => a.code).map(a => ({ tag: "@" + a.code, label: a.name || a.code, kind: a.kind }));
   // added 2026-11-06 v0.9.0: the asset's group before its name in the @ list (shown and searched, never written)
@@ -2019,7 +2022,7 @@ export function tagCandidates(project, scene = null) {
   out.push({ tag: "@tail", label: "previous scene's tail clip", kind: "video" });
   // the part of the soundtrack a pass is sent (v0.5.0); a pass without the song writes it as plain text
   if (playingTracks(project).some(({ t }) => t.sync)) out.push({ tag: "@soundtrack", label: "the song this part is cut to", kind: "audio" });
-  // added 2026-11-12 v0.14.0: the scene's second, third ... reference of a video or audio asset (its own clip)
+  // added 2026-11-08 v0.14.0: the scene's second, third ... reference of a video or audio asset (its own clip)
   if (scene) {
     for (const r of scene.refs || []) {
       const tok = refTokens(project, scene)[r.id];

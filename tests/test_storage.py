@@ -319,3 +319,13 @@ def test_job_ids_are_never_shared(store):
             assert jobs.is_busy(store.slug, "merge") and jobs.is_busy(store.slug, "render")
         assert jobs.get(chosen) is merge_job
     assert not jobs.is_busy(store.slug)
+
+
+def test_deleting_the_starred_take_stars_the_newest(store):
+    """added 2026-11-09 v0.17.1 (third review 9): the star goes to the newest take by created time (as repair()), not
+    to the last one in the list (a take added again moves to the end)."""
+    store.add_take("s_one", {"id": "v3", "created": 200.0})
+    store.add_take("s_one", {"id": "v1", "created": 100.0}, star=False)
+    store.add_take("s_one", {"id": "v2", "created": 300.0})
+    store.delete_take("s_one", "v2")
+    assert store.read_index("s_one")["starred"] == "v3"

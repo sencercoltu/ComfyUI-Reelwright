@@ -61,7 +61,7 @@ REF_MAX_FRAMES = int(spec.REF_MEDIA_MAX_SECONDS * spec.FPS)  # at most 15 s of a
 
 
 def clip_window(entry):
-    """added 2026-11-12 v0.14.0: (start, seconds) of a build's video or audio reference: a trimmed one carries in and
+    """added 2026-11-08 v0.14.0: (start, seconds) of a build's video or audio reference: a trimmed one carries in and
     seconds (prompt.collect_refs), others start at 0; never more than 15 s, and at least one frame."""
     start = max(0.0, float(entry.get("in") or 0.0))
     secs = entry.get("seconds")
@@ -328,15 +328,15 @@ def stock_previewer(device, latent_format):
     return fn(device, latent_format)
 
 
-# [OLD 2026-11-12 v0.14.4->v0.15.0] def preview_jpeg(previewer, x0):  (always the first frame)
+# [OLD 2026-11-09 v0.14.4->v0.15.0] def preview_jpeg(previewer, x0):  (always the first frame)
 def preview_jpeg(previewer, x0, frame=None):
-    """frame (added 2026-11-12 v0.15.0; Sencer: "Latent preview should update properly, it updates only once or
+    """frame (added 2026-11-09 v0.15.0; Sencer: "Latent preview should update properly, it updates only once or
     twice"): the latent frame of a video latent to show. ComfyUI's previewers show the first one, and in a pass that
     starts from a frame or clip (a continuation, a first-frame guide) the first frame is fixed from the first step, so
     the preview barely changed; the render shows the middle of the part the pass makes new."""
     if getattr(x0, "is_nested", False):  # H3 latents carry video and audio; the first is the video
         x0 = x0.tensors[0]
-    if frame is not None and getattr(x0, "ndim", 0) == 5 and x0.shape[2] > 1:  # added 2026-11-12 v0.15.0
+    if frame is not None and getattr(x0, "ndim", 0) == 5 and x0.shape[2] > 1:  # added 2026-11-09 v0.15.0
         k = max(0, min(int(frame), int(x0.shape[2]) - 1))
         x0 = x0[:, :, k:k + 1]
     # [OLD 2026-11-02 v0.3.8->v0.3.9] a previewer that returned None failed here with "cannot unpack non-iterable NoneType"
@@ -353,7 +353,7 @@ def preview_jpeg(previewer, x0, frame=None):
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-# added 2026-11-12 v0.15.0: the latent frame in the middle of the part of pass x that H3 makes new: after an overlap
+# added 2026-11-09 v0.15.0: the latent frame in the middle of the part of pass x that H3 makes new: after an overlap
 # with the pass before, or after the cut's start (an H3 latent holds 1 frame, then 4 frames per latent frame)
 def preview_frame(x):
     try:
@@ -390,13 +390,13 @@ def _sample(model, positive, latent, seed, settings, on_step):
     previewer = stock_previewer(guider.model_patcher.load_device, guider.model_patcher.model.latent_format)
     pbar = comfy.utils.ProgressBar(steps)  # ComfyUI's queue progress, without an image
 
-    frame = settings.get("preview_frame")  # added 2026-11-12 v0.15.0: the latent frame to preview (see preview_jpeg)
+    frame = settings.get("preview_frame")  # added 2026-11-09 v0.15.0: the latent frame to preview (see preview_jpeg)
 
     def callback(step, x0, x, total_steps):
         pbar.update_absolute(step + 1, total_steps, None)
         # [OLD 2026-11-02 v0.3.7->v0.3.8] # the image is only decoded when on_step asks for it (it throttles to about one per second)
         # the image is only decoded when on_step asks for it (at most one per PREVIEW_MIN_INTERVAL)
-        # [OLD 2026-11-12 v0.14.4->v0.15.0] on_step(step + 1, total_steps, (lambda: preview_jpeg(previewer, x0)) if previewer else None)
+        # [OLD 2026-11-09 v0.14.4->v0.15.0] on_step(step + 1, total_steps, (lambda: preview_jpeg(previewer, x0)) if previewer else None)
         on_step(step + 1, total_steps, (lambda: preview_jpeg(previewer, x0, frame)) if previewer else None)
 
     samples = guider.sample(noise, latent_image, sampler, sigmas, callback=callback,
@@ -569,9 +569,9 @@ class Renderer:
                     video_audios["ref_video_audio_{}".format(k)] = audio
                 continue
             # [OLD 2026-11-03 v0.5.1->v0.6.0] frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS)
-            # [OLD 2026-11-12 v0.13.1->v0.14.0] frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS,
-            # [OLD 2026-11-12 v0.13.1->v0.14.0]                                  max_frames=REF_MAX_FRAMES)  # only the first 15 s is decoded
-            # added 2026-11-12 v0.14.0: a trimmed reference sends its clip (in / seconds in the build), at most 15 s
+            # [OLD 2026-11-08 v0.13.1->v0.14.0] frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS,
+            # [OLD 2026-11-08 v0.13.1->v0.14.0]                                  max_frames=REF_MAX_FRAMES)  # only the first 15 s is decoded
+            # added 2026-11-08 v0.14.0: a trimmed reference sends its clip (in / seconds in the build), at most 15 s
             start, secs = clip_window(v)
             frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=secs, max_frames=REF_MAX_FRAMES,
                                              start=start)
@@ -585,7 +585,7 @@ class Renderer:
         #                                                      else self._asset_path(a["asset"]))
         #           for k, a in enumerate(b["audios"])}
         # [/OLD]
-        # [OLD 2026-11-12 v0.13.1->v0.14.0] every audio reference from its start
+        # [OLD 2026-11-08 v0.13.1->v0.14.0] every audio reference from its start
         # audios = {"ref_audio_{}".format(k): media.load_audio(self._song_path(a["song"]) if a.get("song")
         #                                                      else self._asset_path(a["asset"]),
         #                                                      max_seconds=spec.REF_MEDIA_MAX_SECONDS)
@@ -593,7 +593,7 @@ class Renderer:
         # [/OLD]
         audios = {"ref_audio_{}".format(k): media.load_audio(self._song_path(a["song"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS)
                   if a.get("song") else media.load_audio(self._asset_path(a["asset"]), max_seconds=clip_window(a)[1],
-                                                         start=clip_window(a)[0])  # added 2026-11-12 v0.14.0: its clip
+                                                         start=clip_window(a)[0])  # added 2026-11-08 v0.14.0: its clip
                   for k, a in enumerate(b["audios"])}
         # [OLD 2026-11-05 v0.7.0->v0.8.0] the video VAE always encoded the references
         # out = MiniMaxH3ReferenceToVideo.execute(
@@ -1532,9 +1532,9 @@ class Renderer:
                 send("reelwright.preview", {"slug": self.slug, "scene_id": sid, "pass": _n + 1, "passes": n_pass,
                                             "step": step, "steps": total, "image": image})
 
-        # [OLD 2026-11-12 v0.14.4->v0.15.0] samples = _sample(model, positive, latent, seed, st, on_step)
+        # [OLD 2026-11-09 v0.14.4->v0.15.0] samples = _sample(model, positive, latent, seed, st, on_step)
         samples = _sample(model, positive, latent, seed, dict(st, preview_frame=preview_frame(sr["plan"]["passes"][n])),
-                          on_step)  # added 2026-11-12 v0.15.0: the preview shows the middle of what the pass makes
+                          on_step)  # added 2026-11-09 v0.15.0: the preview shows the middle of what the pass makes
         del positive, latent
         self.progress(sid, n + 1, n_pass, "decode")
         frames = nodes.VAEDecode().decode(self.models.vae(st["video_vae"], "vae"), samples)[0]

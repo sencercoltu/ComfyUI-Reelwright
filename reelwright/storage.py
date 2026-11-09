@@ -344,7 +344,9 @@ class ProjectStore:
             idx = self.read_index(scene_id)
             idx["takes"] = [t for t in idx["takes"] if t["id"] != take_id]
             if idx["starred"] == take_id:
-                idx["starred"] = idx["takes"][-1]["id"] if idx["takes"] else None
+                # [OLD 2026-11-09 v0.17.0->v0.17.1] idx["starred"] = idx["takes"][-1]["id"] if idx["takes"] else None  (list order)
+                # added 2026-11-09 v0.17.1 (third review): the newest take, in the order repair() uses (_take_order)
+                idx["starred"] = max(idx["takes"], key=_take_order)["id"] if idx["takes"] else None
                 # added 2026-11-03 v0.6.0: the fallback star is automatic, so the next render may re-star a matching take
                 idx["auto_star"] = idx["starred"]
             self.write_index(scene_id, idx)

@@ -872,7 +872,7 @@ def test_script_import_asks_for_fuller_shots_and_a_scene_note():
     assert default_project("Demo")["global"]["llm"]["import_max_tokens"] == 24576 == llm.IMPORT_MAX_TOKENS
 
 
-# ---- added 2026-11-12 v0.13.0: Chat tab ---------------------------------------------------------------------------
+# ---- added 2026-11-08 v0.13.0: Chat tab ---------------------------------------------------------------------------
 
 def test_chat_turn_sends_the_conversation_and_streams_the_text():
     seen, events = [], []
@@ -902,7 +902,7 @@ def test_chat_turn_sends_the_conversation_and_streams_the_text():
 
 
 
-# ---- added 2026-11-12 v0.15.0: progress events carry what came since the last one (the editor's LLM output popup) --
+# ---- added 2026-11-09 v0.15.0: progress events carry what came since the last one (the editor's LLM output popup) --
 
 def test_progress_events_carry_the_reasoning_and_answer_as_deltas():
     chunks = [("", "Let me "), ("", "think."), ("Hello", ""), (" world", ""), ("!", "")]
@@ -923,6 +923,26 @@ def test_progress_events_carry_the_reasoning_and_answer_as_deltas():
                 got[k] += d[k + "_add"]
     assert got == {"think": "Let me think.", "text": "Hello world!"}
     assert events[-1]["phase"] == "done" and all("text" not in d for d in events)  # no whole text without with_text
+
+
+def test_progress_offsets_count_utf16_units():
+    """added 2026-11-09 v0.17.1 (third review 5): the offsets are in UTF-16 units, as the editor counts (an emoji is
+    two), so the popup does not cut the start of the next piece."""
+    chunks = [("Take \U0001F3AC", ""), (" two", ""), ("!", "")]
+
+    async def handler(request):
+        return await stream_response(request, sse(*chunks), delay=0.12)
+    events = []
+
+    async def go(cfg):
+        return await llm.chat(cfg, "sys", "hi", progress=events.append)
+    run_app(go, handler)
+    got = ""
+    for d in events:
+        if "text_add" in d:
+            assert d["text_at"] == len(got.encode("utf-16-le")) // 2
+            got += d["text_add"]
+    assert got == "Take \U0001F3AC two!"
 
 
 def test_progress_deltas_of_a_server_that_does_not_stream():

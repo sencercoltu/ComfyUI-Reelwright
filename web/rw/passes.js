@@ -8,8 +8,8 @@
 import * as model from "./model.js";
 import { rw } from "./api.js";
 import { newJob } from "./llmjob.js";
-// [OLD 2026-11-12 v0.14.2->v0.14.3] import { fillScene, fillWords } from "./shotfill.js"; // added 2026-11-12 v0.14.2: a scene written without shots gets them
-// [OLD 2026-11-12 v0.14.3->v0.14.4] import { writeShots, fillWords } from "./shotfill.js"; // v0.14.2: a scene written without shots gets them; v0.14.3: shots on the timeline take their written text, framing and camera move
+// [OLD 2026-11-09 v0.14.2->v0.14.3] import { fillScene, fillWords } from "./shotfill.js"; // added 2026-11-09 v0.14.2: a scene written without shots gets them
+// [OLD 2026-11-09 v0.14.3->v0.14.4] import { writeShots, fillWords } from "./shotfill.js"; // v0.14.2: a scene written without shots gets them; v0.14.3: shots on the timeline take their written text, framing and camera move
 import { writeShots, takePassShots, fillWords } from "./shotfill.js"; // v0.14.2-v0.14.4: the written shots go into the scene's shots
 
 const { FPS, SECTION_KEYS, planScene, sceneIndex } = model;
@@ -196,9 +196,9 @@ export function writeBusy(ctx) {
 
 // Put a written answer into a scene being edited: a single-pass scene gets it in its own sections (it has no tabs; its
 // pass 1 uses them), a multi-pass scene in scene.prompt.passes (the current layout, then the written passes).
-// added 2026-11-12 v0.14.2: a single-pass scene with no shots on the timeline takes the shots and spoken lines the
+// added 2026-11-09 v0.14.2: a single-pass scene with no shots on the timeline takes the shots and spoken lines the
 // answer wrote (shotfill.fillScene); report.fill gets the counts
-// [OLD 2026-11-12 v0.14.1->v0.14.2] export function applyWritten(sc, p, res) {
+// [OLD 2026-11-09 v0.14.1->v0.14.2] export function applyWritten(sc, p, res) {
 export function applyWritten(sc, p, res, report = null) {
   const plan = passLayout(p, sc);
   const got = (Array.isArray(res?.passes) ? res.passes : []).filter(x => x && typeof x === "object" && x.sections);
@@ -209,13 +209,13 @@ export function applyWritten(sc, p, res, report = null) {
     // keeps what the scene has
     const one = got.find(x => num(x.index, 1) === 1) || got[0];
     const sec = clean(one.sections);
-    // added 2026-11-12 v0.15.0: the summary the author wrote is about to be replaced by the LLM's; when the scene has no
+    // added 2026-11-09 v0.15.0: the summary the author wrote is about to be replaced by the LLM's; when the scene has no
     // Write prompts brief yet, it becomes the brief, which Write prompts never overwrites (keepBrief)
     if (keepBrief(sc, sec.summary) && report) report.brief = true;
     for (const k of SECTION_KEYS) if (sec[k].trim()) sc.prompt.sections[k] = sec[k];
     sc.prompt.passes = [];
-    // [OLD 2026-11-12 v0.14.2->v0.14.3] const filled = fillScene(p, sc); // added 2026-11-12 v0.14.2
-    const filled = writeShots(p, sc); // added 2026-11-12 v0.14.3: also a scene that already has its shots
+    // [OLD 2026-11-09 v0.14.2->v0.14.3] const filled = fillScene(p, sc); // added 2026-11-09 v0.14.2
+    const filled = writeShots(p, sc); // added 2026-11-09 v0.14.3: also a scene that already has its shots
     if (report) report.fill = filled;
     return 1;
   }
@@ -228,7 +228,7 @@ export function applyWritten(sc, p, res, report = null) {
   });
   if (typeof model.writePassTexts === "function" && !moved) {
     const items = got.map(x => ({ index: Math.round(num(x.index, 0)), sections: clean(x.sections) })).filter(x => x.index >= 1 && x.index <= plan.passes.length);
-    // added 2026-11-12 v0.14.4: the shots that start in a written pass take their written text, framing and move
+    // added 2026-11-09 v0.14.4: the shots that start in a written pass take their written text, framing and move
     const took = takePassShots(p, sc, plan, items);
     if (report) report.fill = took;
     model.writePassTexts(p, sc, plan, items);
@@ -245,7 +245,7 @@ export function applyWritten(sc, p, res, report = null) {
   return n;
 }
 
-// added 2026-11-12 v0.15.0: copy the scene's summary into scene.prompt.brief when the brief is empty and the summary
+// added 2026-11-09 v0.15.0: copy the scene's summary into scene.prompt.brief when the brief is empty and the summary
 // is about to change to `next`, so the author's words are not lost; true when it did. The task-type prefix
 // ("[reference generation + ...]") is left out: the editor writes it.
 export function keepBrief(sc, next) {
@@ -257,7 +257,7 @@ export function keepBrief(sc, next) {
   return true;
 }
 
-// added 2026-11-12 v0.14.4: what Write prompts did with the shots it wrote (shotfill.writeShots / takePassShots)
+// added 2026-11-09 v0.14.4: what Write prompts did with the shots it wrote (shotfill.writeShots / takePassShots)
 function fillToast(f) {
   const s = n => `${n} shot${n === 1 ? "" : "s"}`;
   if (!f.updated) return `Put ${fillWords(f)} on the timeline from what the LLM wrote, with framing and camera moves; the description keeps the style.`;
@@ -281,7 +281,7 @@ export async function runWrite(ctx, items, { origin = "scene", label = "" } = {}
     if (!scene) { it.state = "failed"; it.error = "the scene was deleted"; continue; }
     const job = newJob("passes");
     Object.assign(run, { at: i, job });
-    // added 2026-11-12 v0.15.0: the scene's last Write prompts job, so its output can be shown after it ends (a request
+    // added 2026-11-09 v0.15.0: the scene's last Write prompts job, so its output can be shown after it ends (a request
     // that timed out: what did it get?)
     store.eph.lastWrite = { ...(store.eph.lastWrite || {}), [it.sid]: job };
     it.state = "run";
@@ -292,18 +292,18 @@ export async function runWrite(ctx, items, { origin = "scene", label = "" } = {}
       if (n && store.project.scenes.some(x => x.id === it.sid)) {
         const multi = passLayout(store.project, store.project.scenes.find(x => x.id === it.sid)).passes.length > 1;
         const what = it.passes?.length === 1 && multi ? `Write pass ${it.passes[0]}` : "Write prompts";
-        // [OLD 2026-11-12 v0.14.1->v0.14.2] ctx.actions.editScene(it.sid, (sc, q) => { applyWritten(sc, q, res); }, { label: origin === "import" ? `${what}: ${scene.title}` : what });
-        // added 2026-11-12 v0.14.2: say when the answer's shots and spoken lines were put on the timeline
+        // [OLD 2026-11-09 v0.14.1->v0.14.2] ctx.actions.editScene(it.sid, (sc, q) => { applyWritten(sc, q, res); }, { label: origin === "import" ? `${what}: ${scene.title}` : what });
+        // added 2026-11-09 v0.14.2: say when the answer's shots and spoken lines were put on the timeline
         const rep = {};
         ctx.actions.editScene(it.sid, (sc, q) => { applyWritten(sc, q, res, rep); }, { label: origin === "import" ? `${what}: ${scene.title}` : what });
-        // [OLD 2026-11-12 v0.14.2->v0.14.3] if (rep.fill && origin !== "import") ctx.actions.toast(`Put ${fillWords(rep.fill)} on the timeline from what the LLM wrote; the description keeps the style.`, "ok");
-        /* [OLD 2026-11-12 v0.14.3->v0.14.4] no word on added shots or shots the answer left out
-        if (rep.fill && origin !== "import") ctx.actions.toast(rep.fill.updated // added 2026-11-12 v0.14.3
+        // [OLD 2026-11-09 v0.14.2->v0.14.3] if (rep.fill && origin !== "import") ctx.actions.toast(`Put ${fillWords(rep.fill)} on the timeline from what the LLM wrote; the description keeps the style.`, "ok");
+        /* [OLD 2026-11-09 v0.14.3->v0.14.4] no word on added shots or shots the answer left out
+        if (rep.fill && origin !== "import") ctx.actions.toast(rep.fill.updated // added 2026-11-09 v0.14.3
           ? `Updated ${fillWords(rep.fill)} from what the LLM wrote (text, framing, camera move); the description keeps the style.`
           : `Put ${fillWords(rep.fill)} on the timeline from what the LLM wrote, with framing and camera moves; the description keeps the style.`, "ok");
         [/OLD] */
-        if (rep.fill && origin !== "import") ctx.actions.toast(fillToast(rep.fill), "ok"); // added 2026-11-12 v0.14.4
-        // added 2026-11-12 v0.15.0: the summary the author wrote was kept as the brief (keepBrief)
+        if (rep.fill && origin !== "import") ctx.actions.toast(fillToast(rep.fill), "ok"); // added 2026-11-09 v0.14.4
+        // added 2026-11-09 v0.15.0: the summary the author wrote was kept as the brief (keepBrief)
         if (rep.brief && origin !== "import") ctx.actions.toast("Your summary was kept as this scene's Write prompts brief (the Brief button on the Prompt card): Write prompts reads it every time and never overwrites it.", "ok");
         wrote++;
       }

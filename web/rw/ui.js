@@ -114,7 +114,7 @@ const ICONS = {
   tag: '<path d="M2.5 3.5v4l6 6 5-5-6-6h-4a1 1 0 0 0-1 1z"/><circle cx="5.5" cy="5.5" r="1"/>', // added 2026-11-06 v0.9.0: asset tags
   file: '<path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/>',
   history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.3 2.6v2.6h2.6M8 5v3.2l2.2 1.4"/>', // added 2026-11-03 v0.6.0
-  expand: '<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>', // added 2026-11-12 v0.13.0: full screen
+  expand: '<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>', // added 2026-11-08 v0.13.0: full screen
 };
 
 export function icon(name, size = 14) {
@@ -493,7 +493,7 @@ export function section({ title, help, actions, children, cls, tint }) {
     children);
 }
 [/OLD] */
-/* [OLD 2026-11-12 v0.14.0->v0.14.1] only cards given `collapse` could fold; no menu, no fold-all
+/* [OLD 2026-11-09 v0.14.0->v0.14.1] only cards given `collapse` could fold; no menu, no fold-all
 // added 2026-11-06 v0.10.0: collapse: {ctx, id, summary?} makes the card collapsible: a chevron before the title (and
 // a click on the title) folds it to its head, which then shows `summary` instead of the actions. The state is kept
 // per card id in project.ui.collapsed (no undo step), so a folded card stays folded in every scene.
@@ -520,7 +520,7 @@ export function section({ title, help, actions, children, cls, tint, collapse })
     folded ? null : children);
 }
 [/OLD] */
-// added 2026-11-12 v0.14.1: every card folds (Sencer: "make every section under every tab collapsible"). While a tab
+// added 2026-11-09 v0.14.1: every card folds (Sencer: "make every section under every tab collapsible"). While a tab
 // renders (editor.js wraps the tab's render in foldScope), a card without its own `collapse` folds under its help id,
 // else its title; `collapse: false` keeps a card open. The state is project.ui.collapsed[id] as before (no undo step).
 // The head's right-click menu folds or opens this card or every card in the tab; Alt+click on the chevron or the title
@@ -596,7 +596,7 @@ export function section({ title, help, actions, children, cls, tint, collapse })
     folded ? null : children);
 }
 
-// added 2026-11-12 v0.14.1: a foldable block inside a panel (the Timeline inspector has blocks, not cards): a chevron
+// added 2026-11-09 v0.14.1: a foldable block inside a panel (the Timeline inspector has blocks, not cards): a chevron
 // and a label on one line, the block's content below. Same state, menu, Alt+click and media pause as a card.
 export function foldBlock({ ctx, id, label, help, summary, children, cls }) {
   const folded = !!ctx.p.ui?.collapsed?.[id];
@@ -753,7 +753,7 @@ export function confirmDialog(root, { title, message, confirmLabel = "Delete", d
 }
 [/OLD] */
 
-// ---- added 2026-11-12 v0.15.1: dialogs open next to what opened them (Sencer: "All confirmation dialogs should pop up
+// ---- added 2026-11-09 v0.15.1: dialogs open next to what opened them (Sencer: "All confirmation dialogs should pop up
 // near the cursor or triggering button, not center of the node. It's easy to miss if the node grows high.")
 // The last press and the last key press anywhere on the page (window, capture phase: before ComfyUI or the editor can
 // stop them). dialogAnchor(root) gives the screen rect to open next to: the control that was pressed (still on screen
@@ -816,11 +816,11 @@ export function placeNear(root, box, anchor, gap = 8) {
 // reach ComfyUI (Ctrl moves focus to a hidden field first). Other keys don't reach the editor's shortcuts.
 //   choices: [{value, label, variant?: "primary"|"danger"|"default", help?}] in display order
 //   focus: the value whose button has focus at first (default: the cancel button when danger, else the last button)
-//   anchor (added 2026-11-12 v0.15.1): an element or screen rect to open next to; default dialogAnchor(root)
-// [OLD 2026-11-12 v0.15.0->v0.15.1] export function choiceDialog(root, { title, message, choices, cancelValue = null, focus, danger = false, help } = {}) {
+//   anchor (added 2026-11-09 v0.15.1): an element or screen rect to open next to; default dialogAnchor(root)
+// [OLD 2026-11-09 v0.15.0->v0.15.1] export function choiceDialog(root, { title, message, choices, cancelValue = null, focus, danger = false, help } = {}) {
 export function choiceDialog(root, { title, message, choices, cancelValue = null, focus, danger = false, help, anchor } = {}) {
   return new Promise(resolve => {
-    // added 2026-11-12 v0.15.1: taken before anything changes focus
+    // added 2026-11-09 v0.15.1: taken before anything changes focus
     const near = anchor instanceof Element ? anchor.getBoundingClientRect() : anchor || dialogAnchor(root);
     root.__rwModalClose?.(); // a dialog still open is cancelled, so its promise and listeners never leak
     root.querySelectorAll(".rw-modal").forEach(m => m.remove());
@@ -867,7 +867,7 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
     const cancel = () => finish(cancelValue);
     const btns = choices.map(c => button({ label: c.label, variant: c.variant || "default", help: c.help || (c.value === cancelValue ? "common.cancel" : "common.confirm"),
       onClick: () => finish(c.value) }));
-    /* [OLD 2026-11-12 v0.15.0->v0.15.1] the box was centred in the node (out of sight when the node is taller than the window)
+    /* [OLD 2026-11-09 v0.15.0->v0.15.1] the box was centred in the node (out of sight when the node is taller than the window)
     const overlay = h("div", { class: "rw-modal", onPointerdown: e => { if (e.target === overlay) finish(cancelValue); } },
       h("div", { class: ["rw-modal-box", choices.length > 2 && "wide"], role: "alertdialog", "aria-modal": "true", help },
         h("div", { class: "rw-modal-title" }, danger ? icon("warn", 15) : null, h("span", null, title)),
@@ -876,7 +876,7 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
         sink));
     root.appendChild(overlay);
     [/OLD] */
-    // added 2026-11-12 v0.15.1: the box opens next to what opened it (placeNear)
+    // added 2026-11-09 v0.15.1: the box opens next to what opened it (placeNear)
     const box = h("div", { class: ["rw-modal-box", choices.length > 2 && "wide"], role: "alertdialog", "aria-modal": "true", help },
       h("div", { class: "rw-modal-title" }, danger ? icon("warn", 15) : null, h("span", null, title)),
       message ? h("div", { class: "rw-modal-msg" }, message) : null,
@@ -898,10 +898,10 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
 // A confirmation: Cancel and OK. Resolves true/false. Options: {title, message, confirmLabel | okLabel,
 // cancelLabel, danger = true, help}. A dangerous one opens with Cancel focused, so Enter alone never deletes.
 // added 2026-11-03 v0.6.0: built on choiceDialog
-// [OLD 2026-11-12 v0.15.0->v0.15.1] export function confirmDialog(root, { title, message, confirmLabel, okLabel, danger = true, cancelLabel = "Cancel", help } = {}) {
-// [OLD 2026-11-12 v0.15.0->v0.15.1]   return choiceDialog(root, {
-// [OLD 2026-11-12 v0.15.0->v0.15.1]     title, message, danger, help, cancelValue: false,
-export function confirmDialog(root, { title, message, confirmLabel, okLabel, danger = true, cancelLabel = "Cancel", help, anchor } = {}) { // anchor: added 2026-11-12 v0.15.1
+// [OLD 2026-11-09 v0.15.0->v0.15.1] export function confirmDialog(root, { title, message, confirmLabel, okLabel, danger = true, cancelLabel = "Cancel", help } = {}) {
+// [OLD 2026-11-09 v0.15.0->v0.15.1]   return choiceDialog(root, {
+// [OLD 2026-11-09 v0.15.0->v0.15.1]     title, message, danger, help, cancelValue: false,
+export function confirmDialog(root, { title, message, confirmLabel, okLabel, danger = true, cancelLabel = "Cancel", help, anchor } = {}) { // anchor: added 2026-11-09 v0.15.1
   return choiceDialog(root, {
     title, message, danger, help, anchor, cancelValue: false,
     choices: [
@@ -992,7 +992,7 @@ export function resizableList({ height, min = 90, max = 2000, scroll, help, onRe
   return h("div", { class: "rw-rlist-wrap" }, box, grip);
 }
 
-// ---- added 2026-11-12 v0.15.0: lists put in order by dragging (Sencer: "let me re-order contents of "references",
+// ---- added 2026-11-09 v0.15.0: lists put in order by dragging (Sencer: "let me re-order contents of "references",
 // "cast in this scene" and "Scene LORA's" by dragging them. Same goes for LORAs in other tabs").
 // sortable({ id, rows, onMove }) puts the rows (one element per item, in the list's order) in a box; each row holds a
 // dragGrip(). Dragging a grip up or down shows where the item will go (a line before or after a row) and, on release,

@@ -302,7 +302,7 @@ def test_preview_jpeg_handles_nested_latents(comfy):
     assert max(img.size) == render.PREVIEW_MAX_SIDE
 
 
-# added 2026-11-12 v0.15.0 (Sencer: "Latent preview should update properly, it updates only once or twice"): the
+# added 2026-11-09 v0.15.0 (Sencer: "Latent preview should update properly, it updates only once or twice"): the
 # preview shows the middle of what a pass makes new, not the first frame a continuation or guide fixes
 def test_preview_shows_the_middle_of_the_new_part(comfy):
     render, _ = comfy
@@ -759,7 +759,7 @@ def test_reference_media_are_cut_before_decoding(comfy, tmp_path):
 
 
 def test_reference_clips_start_at_their_from(comfy, tmp_path):
-    """added 2026-11-12 v0.14.0: media.load_video / load_audio read a reference's clip from its From."""
+    """added 2026-11-08 v0.14.0: media.load_video / load_audio read a reference's clip from its From."""
     from reelwright import media, merge
     ff = merge.ffmpeg_bin()
     path = str(tmp_path / "ramp.mp4")
@@ -780,7 +780,7 @@ def test_reference_clips_start_at_their_from(comfy, tmp_path):
 
 
 def test_reference_clips_reach_the_encoder(stubs, harbor, store, roots):
-    """added 2026-11-12 v0.14.0: the same video twice, as two clips (one with its sound), and an audio clip."""
+    """added 2026-11-08 v0.14.0: the same video twice, as two clips (one with its sound), and an audio clip."""
     render, calls, events = stubs
     from reelwright import merge
     harbor["global"]["output"].update(width=64, height=32)

@@ -27,7 +27,7 @@ STABLE_LANGUAGES = ("Arabic", "Chinese", "English", "French", "German", "Italian
                     "Japanese", "Korean", "Portuguese", "Russian", "Spanish")
 VISUAL_RETENTION = ("fully_preserved", "partially_preserved", "attribute_transfer", "weak_reference")
 AUDIO_RETENTION = ("fully_copy", "partially_copy", "reference", "weak_reference")
-# [OLD 2026-11-12 v0.11.0->v0.12.0] ROLES = ("reference", "first_frame", "last_frame", "keyframe")
+# [OLD 2026-11-08 v0.11.0->v0.12.0] ROLES = ("reference", "first_frame", "last_frame", "keyframe")
 ROLES = ("reference", "first_frame", "last_frame", "keyframe", "pose")  # v0.12.0: pose (model.pose_refs)
 START_MODES = ("fresh", "last_frame", "tail")
 TASK_TAG_ORDER = ("reference generation", "keyframe completion", "video continuation",

@@ -7,7 +7,7 @@ import { createStore, withProjectId } from "./store.js";
 import * as M from "./model.js"; // added 2026-11-03 v0.6.0: model APIs that may not exist yet (nextSeedN, migrateScore)
 import { newJob } from "./llmjob.js"; // added 2026-11-03 v0.6.0: merge job ids
 import { ownJobs, jobLine } from "./llmjob.js"; // added 2026-11-06 v0.10.2: LLM progress in place, own jobs only
-import { feedStream } from "./llmjob.js"; // added 2026-11-12 v0.15.0: the reasoning and answer received, for the output popup
+import { feedStream } from "./llmjob.js"; // added 2026-11-09 v0.15.0: the reasoning and answer received, for the output popup
 import { installTooltips } from "./tooltip.js";
 /* [OLD 2026-11-02 v0.1.0->v0.2.0] comboState is needed for the render guard
 import { h, icon, button } from "./ui.js";
@@ -21,7 +21,7 @@ import { h, icon, button, comboState, contextMenu } from "./ui.js";
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { h, icon, button, comboState, contextMenu, confirmDialog } from "./ui.js";
 import { h, icon, button, comboState, contextMenu, confirmDialog, choiceDialog, focusGuard, isTextField } from "./ui.js";
 import { copyMenuItems, copyButton } from "./ui.js"; // added 2026-11-06 v0.10.0: right-click Copy text, Issues → Copy all
-import { foldScope } from "./ui.js"; // added 2026-11-12 v0.14.1: every card on every tab folds
+import { foldScope } from "./ui.js"; // added 2026-11-09 v0.14.1: every card on every tab folds
 import { VERSION } from "./version.js";
 import {
   normalizeProject, defaultScene, newId, sceneIndex, sceneStarts, assembledDuration, fmtTime,
@@ -36,7 +36,7 @@ import * as castTab from "./tabs/cast.js";
 import * as renderTab from "./tabs/render.js";
 import * as globalTab from "./tabs/global.js";
 import * as filesTab from "./tabs/files.js"; // added 2026-11-03 v0.4.0
-import * as chatTab from "./tabs/chat.js"; // added 2026-11-12 v0.13.0: general questions to the LLM
+import * as chatTab from "./tabs/chat.js"; // added 2026-11-08 v0.13.0: general questions to the LLM
 // [OLD 2026-11-02 v0.3.8->v0.3.9] import { createPreviewView } from "./preview.js"; // added 2026-11-02 v0.3.8
 import { createPreviewView, imageBlob } from "./preview.js"; // added 2026-11-02 v0.3.8; imageBlob added v0.3.9
 
@@ -48,7 +48,7 @@ const TABS = {
   render: { label: "Render", icon: "render", mod: renderTab },
   files: { label: "Files", icon: "disk", mod: filesTab }, // added 2026-11-03 v0.4.0: disk use and deleting
   global: { label: "Global", icon: "global", mod: globalTab },
-  // added 2026-11-12 v0.13.0: shown only while an LLM base URL is set (when: chatTab.enabled)
+  // added 2026-11-08 v0.13.0: shown only while an LLM base URL is set (when: chatTab.enabled)
   chat: { label: "Chat", icon: "dialogue", mod: chatTab, when: ctx => chatTab.enabled(ctx) },
 };
 
@@ -116,7 +116,7 @@ function cloneScenes(p, scenes) {
   return made;
 }
 
-// added 2026-11-12 v0.13.1: what a duplicated scene keeps that decides what H3 gets besides its sections: shot and
+// added 2026-11-08 v0.13.1: what a duplicated scene keeps that decides what H3 gets besides its sections: shot and
 // dialogue lines (with "auto shots + dialogue"), pass texts from Write prompts, hand-edited pass prompts, Raw mode.
 // Editing only the copy's sections left all of these as they were, so it rendered the original scene again.
 export function copyKeeps(s) {
@@ -360,7 +360,7 @@ export function mountEditor(container, host) {
         p.ui.selected = s.id;
       }, { label: "Add scene" });
     },
-    /* [OLD 2026-11-12 v0.13.0->v0.13.1] no word on what the copy keeps: its shots, pass texts and hand-edited prompts
+    /* [OLD 2026-11-08 v0.13.0->v0.13.1] no word on what the copy keeps: its shots, pass texts and hand-edited prompts
        still decide what H3 gets, so editing only its sections rendered the original scene again (reported by Sencer)
     // added 2026-11-03 v0.6.0: new ids and a fresh seed number for the copy
     duplicateScene(id) {
@@ -375,7 +375,7 @@ export function mountEditor(container, host) {
     },
     [/OLD] */
     // added 2026-11-03 v0.6.0: new ids and a fresh seed number for the copy
-    // added 2026-11-12 v0.13.1: a toast names what the copy keeps that wins over its sections (copyKeeps)
+    // added 2026-11-08 v0.13.1: a toast names what the copy keeps that wins over its sections (copyKeeps)
     duplicateScene(id) {
       let made = null;
       store.update(p => {
@@ -462,9 +462,9 @@ export function mountEditor(container, host) {
       store.update(q => {
         q.assets = q.assets.filter(x => x.id !== id);
         for (const s of q.scenes) s.refs = s.refs.filter(r => r.asset !== id);
-        // [OLD 2026-11-12 v0.15.1->v0.16.0] for (const c of q.cast) { c.anchors = c.anchors.filter(x => x !== id); if (c.voice === id) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => x !== id); }
+        // [OLD 2026-11-09 v0.15.1->v0.16.0] for (const c of q.cast) { c.anchors = c.anchors.filter(x => x !== id); if (c.voice === id) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => x !== id); }
         for (const c of q.cast) { c.anchors = c.anchors.filter(x => x !== id); if (c.voice === id) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => x !== id);
-          c.video_anchors = (c.video_anchors || []).filter(x => x.asset !== id); } // added 2026-11-12 v0.16.0: video anchors
+          c.video_anchors = (c.video_anchors || []).filter(x => x.asset !== id); } // added 2026-11-09 v0.16.0: video anchors
         if (q.global.merge.score.asset === id) q.global.merge.score.asset = "";
         q.soundtrack = q.soundtrack.filter(t => t.asset !== id); // added 2026-11-03 v0.5.0
       // [OLD 2026-11-03 v0.5.1->v0.6.0] });
@@ -501,7 +501,7 @@ export function mountEditor(container, host) {
       // [OLD 2026-11-03 v0.5.1->v0.6.0] });
       }, { label: "Move scene" });
     },
-    // added 2026-11-12 v0.13.1: put a scene at position `to` (0-based, in the order without it), e.g. a drag on the
+    // added 2026-11-08 v0.13.1: put a scene at position `to` (0-based, in the order without it), e.g. a drag on the
     // timeline (Sencer: "I should be able to reorganise scenes, move/drag them left/right"). One undo step; the first
     // scene starts fresh, as with Move left / right. Returns true when the order changed.
     moveSceneTo(id, to) {
@@ -803,14 +803,14 @@ export function mountEditor(container, host) {
   }
   ctx.pendingCount = pendingCount;
 
-  // added 2026-11-12 v0.13.0: a tab with a `when` shows only while it holds (Chat: an LLM is set); the tab shown when the
+  // added 2026-11-08 v0.13.0: a tab with a `when` shows only while it holds (Chat: an LLM is set); the tab shown when the
   // project's tab is hidden is the Timeline
   const tabShown = id => !!TABS[id] && (!TABS[id].when || TABS[id].when(ctx));
   const currentTabId = () => (tabShown(store.project.ui.tab) ? store.project.ui.tab : "timeline");
   ctx.tabShown = tabShown;
   function renderTabbar() {
     const p = store.project;
-    // [OLD 2026-11-12 v0.12.0->v0.13.0] const active = p.ui.tab;
+    // [OLD 2026-11-08 v0.12.0->v0.13.0] const active = p.ui.tab;
     const active = currentTabId();
     const idx = Math.max(0, sceneIndex(p, ctx.scene?.id)) + 1;
     const pend = pendingCount();
@@ -822,7 +822,7 @@ export function mountEditor(container, host) {
     };
     tabbar.replaceChildren(
       h("div", { class: "rw-brand", help: "app.brand" }, icon("clapper", 15), h("b", null, "Reelwright"), h("span", { class: "mono rw-dim" }, "v" + VERSION)),
-      // [OLD 2026-11-12 v0.12.0->v0.13.0] ...Object.entries(TABS).map(([id, t]) => h("button", {
+      // [OLD 2026-11-08 v0.12.0->v0.13.0] ...Object.entries(TABS).map(([id, t]) => h("button", {
       ...Object.entries(TABS).filter(([id]) => tabShown(id)).map(([id, t]) => h("button", {
         type: "button", class: ["rw-tab", id === active && "on"], help: "tab." + id,
         onClick: () => actions.setTab(id),
@@ -1046,10 +1046,10 @@ export function mountEditor(container, host) {
     const helpPos = helpId ? [...root.querySelectorAll(`${focused.tagName}[data-help="${CSS.escape(helpId)}"]`)].indexOf(focused) : -1;
 
     renderTabbar();
-    // [OLD 2026-11-12 v0.12.0->v0.13.0] const tab = TABS[store.project.ui.tab] || TABS.timeline;
-    const tab = TABS[currentTabId()]; // added 2026-11-12 v0.13.0: a hidden tab shows the Timeline
-    // [OLD 2026-11-12 v0.14.0->v0.14.1] body.replaceChildren(tab.mod.render(ctx));
-    body.replaceChildren(foldScope(ctx, () => tab.mod.render(ctx))); // added 2026-11-12 v0.14.1: every card folds
+    // [OLD 2026-11-08 v0.12.0->v0.13.0] const tab = TABS[store.project.ui.tab] || TABS.timeline;
+    const tab = TABS[currentTabId()]; // added 2026-11-08 v0.13.0: a hidden tab shows the Timeline
+    // [OLD 2026-11-09 v0.14.0->v0.14.1] body.replaceChildren(tab.mod.render(ctx));
+    body.replaceChildren(foldScope(ctx, () => tab.mod.render(ctx))); // added 2026-11-09 v0.14.1: every card folds
     bodyTab = store.project.ui.tab; // added 2026-11-03 v0.6.0 review
     bodyVersion = typeof store.project.__rwv === "number" ? store.project.__rwv : -2; // added 2026-11-03 v0.6.0 review
     renderFooter();
@@ -1161,8 +1161,8 @@ export function mountEditor(container, host) {
     // duplicates a scene, Cmd+← and Alt+← go back again, Ctrl+J opens the downloads)
     if (!plainKey(e)) return;
     if (e.key === "?") { e.preventDefault(); tips.openPopover("tab." + store.project.ui.tab, root.querySelector(".rw-tab.on") || root); return; }
-    // [OLD 2026-11-12 v0.12.0->v0.13.0] const tab = TABS[store.project.ui.tab];
-    const tab = TABS[currentTabId()]; // added 2026-11-12 v0.13.0
+    // [OLD 2026-11-08 v0.12.0->v0.13.0] const tab = TABS[store.project.ui.tab];
+    const tab = TABS[currentTabId()]; // added 2026-11-08 v0.13.0
     if (tab.mod.onKey?.(ctx, e)) { e.preventDefault(); return; }
     if (timeline.sceneKeys(ctx, e)) e.preventDefault();
   });
@@ -1253,8 +1253,8 @@ export function mountEditor(container, host) {
     if (d.phase === "error") actions.toast(`${titleOf(d.scene_id)} failed${d.message ? ": " + d.message : ""}. Scenes that don't depend on it keep rendering.`, "error");
     let changed = !prev || prev.phase !== d.phase || prev.pass !== d.pass || final || lastProgressScene !== d.scene_id;
     lastProgressScene = d.scene_id;
-    // [OLD 2026-11-12 v0.12.0->v0.13.0] const tab = TABS[store.project.ui.tab] || TABS.timeline;
-    const tab = TABS[currentTabId()]; // added 2026-11-12 v0.13.0
+    // [OLD 2026-11-08 v0.12.0->v0.13.0] const tab = TABS[store.project.ui.tab] || TABS.timeline;
+    const tab = TABS[currentTabId()]; // added 2026-11-08 v0.13.0
     if (tab.mod.onProgress) {
       try { tab.mod.onProgress(ctx, d); } catch (err) { console.warn("Reelwright: onProgress failed", err); changed = true; }
       if (changed) { lastProgressRender.at = Date.now(); store.notify(); } else footerSoon();
@@ -1284,13 +1284,13 @@ export function mountEditor(container, host) {
   on("reelwright.llm", d => {
     if (!d?.job || !ownJobs.has(d.job)) return;
     store.eph.llmJobs[d.job] = d;
-    // added 2026-11-12 v0.15.0: keep what the request received (llmjob.feedStream) and update the output popup
+    // added 2026-11-09 v0.15.0: keep what the request received (llmjob.feedStream) and update the output popup
     try { feedStream(d); } catch { /* the progress line still updates */ }
     for (const el of root.querySelectorAll(".rw-llm-out")) { try { el.__rwFeed?.(d); } catch { /* keep the old text */ } }
     for (const el of root.querySelectorAll("[data-llm-job]")) {
       if (el.dataset.llmJob !== d.job) continue;
-      // [OLD 2026-11-12 v0.12.0->v0.13.0] try { el.textContent = (el.__rwJobText || jobLine)(d); } catch { /* keep the old text */ }
-      // added 2026-11-12 v0.13.0: an element can draw the event itself (the Chat tab's answer, as Markdown)
+      // [OLD 2026-11-08 v0.12.0->v0.13.0] try { el.textContent = (el.__rwJobText || jobLine)(d); } catch { /* keep the old text */ }
+      // added 2026-11-08 v0.13.0: an element can draw the event itself (the Chat tab's answer, as Markdown)
       try { if (el.__rwJobRender) el.__rwJobRender(el, d); else el.textContent = (el.__rwJobText || jobLine)(d); } catch { /* keep the old text */ }
     }
   });
@@ -1651,7 +1651,7 @@ export function mountEditor(container, host) {
   if (hasInitial) { store.refreshPlan(); actions.refreshTakes(); }
   actions.refreshModels();
   actions.refreshInfo();
-  // added 2026-11-12 v0.13.0: the LLM settings stored on the server (its base URL shows the Chat tab); the Global tab
+  // added 2026-11-08 v0.13.0: the LLM settings stored on the server (its base URL shows the Chat tab); the Global tab
   // loaded them only when it was opened
   if (!store.eph.llm) {
     store.eph.llm = {};

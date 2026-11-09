@@ -4,7 +4,7 @@
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips, confirmInline } from "../ui.js";  (confirmInline is no longer used; deletes go through editor.deleteAsset and its dialog)
 import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips } from "../ui.js";
 import { kept } from "../ui.js"; // added 2026-11-06 v0.10.0: pictures that survive re-renders
-import { foldAll, foldMenu, setFolded, pauseMediaIn } from "../ui.js"; // added 2026-11-12 v0.14.1: groups fold like cards
+import { foldAll, foldMenu, setFolded, pauseMediaIn } from "../ui.js"; // added 2026-11-09 v0.14.1: groups fold like cards
 import { rw, viewURL } from "../api.js";
 import { assetMenu } from "./timeline.js"; // added 2026-11-02 v0.3.0
 import {
@@ -250,9 +250,9 @@ function groupsView(ctx, match, filtered) {
 function groupSection(ctx, g, i, items, total, filtered) {
   const p = ctx.p;
   const id = g ? g.id : "";
-  // [OLD 2026-11-12 v0.14.0->v0.14.1] const closedMap = ctx.eph.assetGroupsClosed || {};
-  // [OLD 2026-11-12 v0.14.0->v0.14.1] const closed = !!closedMap[id || "-"];
-  // added 2026-11-12 v0.14.1: a group folds like every card: project.ui.collapsed["agroup:<id>"] (kept with the
+  // [OLD 2026-11-09 v0.14.0->v0.14.1] const closedMap = ctx.eph.assetGroupsClosed || {};
+  // [OLD 2026-11-09 v0.14.0->v0.14.1] const closed = !!closedMap[id || "-"];
+  // added 2026-11-09 v0.14.1: a group folds like every card: project.ui.collapsed["agroup:<id>"] (kept with the
   // project, no undo step), with the cards' right-click menu and Alt+click (fold or open everything on the tab)
   const foldId = "agroup:" + (id || "-");
   const closed = !!p.ui?.collapsed?.[foldId];
@@ -274,20 +274,20 @@ function groupSection(ctx, g, i, items, total, filtered) {
     ctx.actions.edit(q => { const x = q.assets.find(y => y.id === aid); if (x) x.group = id; }, { label: `Move ${a.code} to ${g ? name : "no group"}` });
   };
   return h("section", {
-    // [OLD 2026-11-12 v0.14.0->v0.14.1] class: ["rw-card", "rw-agroup", !g && "loose", closed && "closed"], key: "agroup-" + (id || "-"), help: g ? "assets.group" : "assets.group.none",
-    class: ["rw-card", "rw-agroup", !g && "loose", closed && "closed", closed && "folded"], key: "agroup-" + (id || "-"), help: g ? "assets.group" : "assets.group.none", dataset: { fold: foldId }, // added 2026-11-12 v0.14.1
+    // [OLD 2026-11-09 v0.14.0->v0.14.1] class: ["rw-card", "rw-agroup", !g && "loose", closed && "closed"], key: "agroup-" + (id || "-"), help: g ? "assets.group" : "assets.group.none",
+    class: ["rw-card", "rw-agroup", !g && "loose", closed && "closed", closed && "folded"], key: "agroup-" + (id || "-"), help: g ? "assets.group" : "assets.group.none", dataset: { fold: foldId }, // added 2026-11-09 v0.14.1
     onDragover: e => { if (e.dataTransfer.types.includes("application/x-rw-asset")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; e.currentTarget.classList.add("over"); } },
     onDragleave: e => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove("over"); },
     onDrop: drop,
   },
-  /* [OLD 2026-11-12 v0.14.0->v0.14.1] the group's fold was kept for the session only; no menu, no Alt+click
+  /* [OLD 2026-11-09 v0.14.0->v0.14.1] the group's fold was kept for the session only; no menu, no Alt+click
   h("div", { class: "rw-card-head" },
     h("button", { type: "button", class: "rw-agroup-caret", help: "assets.group.collapse", key: "agroup-caret-" + (id || "-"), "aria-expanded": closed ? "false" : "true",
       onClick: () => ctx.store.setEph({ assetGroupsClosed: { ...closedMap, [id || "-"]: !closed } }) }, icon(closed ? "chevRight" : "chevDown", 12)),
     h("span", { class: g ? "rw-c-accent" : "rw-dim" }, icon("folder", 13)),
     h("span", { class: "rw-card-title" }, name),
   [/OLD] */
-  // added 2026-11-12 v0.14.1
+  // added 2026-11-09 v0.14.1
   h("div", { class: "rw-card-head", menu: e => foldMenu(ctx, foldId, closed, e.target.closest(".rw-card"), "group") },
     h("button", { type: "button", class: "rw-agroup-caret", help: "assets.group.collapse", key: "agroup-caret-" + (id || "-"), "aria-expanded": closed ? "false" : "true",
       onClick: flip }, icon(closed ? "chevRight" : "chevDown", 12)),
@@ -665,8 +665,8 @@ function inspector(ctx) {
       actions: h("span", { class: "rw-dim small" }, "any scene can override"),
       children: [
         a.kind === "image" && field("Role", segmented({ small: true, value: a.defaults.role, help: "assets.defaults.role",
-          // [OLD 2026-11-12 v0.11.0->v0.12.0] options: ROLES.map(r => ({ value: r, label: { reference: "reference", first_frame: "first", last_frame: "last", keyframe: "keyframe" }[r], help: "scene.refs.role" })), onChange: v => edit(x => { x.defaults.role = v; }) }), { help: "assets.defaults.role", wide: true }),
-          options: ROLES.map(r => ({ value: r, label: { reference: "reference", first_frame: "first", last_frame: "last", keyframe: "keyframe", pose: "pose" }[r] || r, help: "scene.refs.role" })), onChange: v => edit(x => { x.defaults.role = v; }) }), { help: "assets.defaults.role", wide: true }), // added 2026-11-12 v0.12.0: pose
+          // [OLD 2026-11-08 v0.11.0->v0.12.0] options: ROLES.map(r => ({ value: r, label: { reference: "reference", first_frame: "first", last_frame: "last", keyframe: "keyframe" }[r], help: "scene.refs.role" })), onChange: v => edit(x => { x.defaults.role = v; }) }), { help: "assets.defaults.role", wide: true }),
+          options: ROLES.map(r => ({ value: r, label: { reference: "reference", first_frame: "first", last_frame: "last", keyframe: "keyframe", pose: "pose" }[r] || r, help: "scene.refs.role" })), onChange: v => edit(x => { x.defaults.role = v; }) }), { help: "assets.defaults.role", wide: true }), // added 2026-11-08 v0.12.0: pose
         field("Retention", h("div", { class: "rw-ret-grid" }, retentionOptions(a.kind).map(r => h("button", {
           type: "button", class: ["rw-ret", a.defaults.retention === r && "on", "rw-ret-" + kc], help: "retention." + r,
           onClick: () => edit(x => { x.defaults.retention = r; }),
@@ -691,9 +691,9 @@ function inspector(ctx) {
       ],
       children: [castUse.map(u => h("div", { class: "rw-list-row", help: "assets.usage.cast" },
         h("span", { class: "rw-c-pic" }, icon("cast", 13)),
-        // [OLD 2026-11-12 v0.15.1->v0.16.0] h("button", { type: "button", class: "link grow", help: "assets.usage.cast", onClick: () => { ctx.store.setEph({ selectedCast: u.cast.id }); ctx.actions.setTab("cast"); } }, `${u.as === "anchor" ? "Anchor" : "Voice"} of ${u.cast.name}`),
+        // [OLD 2026-11-09 v0.15.1->v0.16.0] h("button", { type: "button", class: "link grow", help: "assets.usage.cast", onClick: () => { ctx.store.setEph({ selectedCast: u.cast.id }); ctx.actions.setTab("cast"); } }, `${u.as === "anchor" ? "Anchor" : "Voice"} of ${u.cast.name}`),
         h("button", { type: "button", class: "link grow", help: "assets.usage.cast", onClick: () => { ctx.store.setEph({ selectedCast: u.cast.id }); ctx.actions.setTab("cast"); } },
-          `${u.as === "anchor" ? "Anchor" : u.as === "video anchor" ? "Video anchor" : "Voice"} of ${u.cast.name}`), // added 2026-11-12 v0.16.0
+          `${u.as === "anchor" ? "Anchor" : u.as === "video anchor" ? "Video anchor" : "Voice"} of ${u.cast.name}`), // added 2026-11-09 v0.16.0
         h("span", { class: "rw-dim small" }, `${u.scenes} scene${u.scenes === 1 ? "" : "s"}`))),
       usage.length ? h("div", { class: "rw-table usage" }, usage.map(u => {
         const over = (u.ref.retention && u.ref.retention !== a.defaults.retention) || u.ref.role !== a.defaults.role;

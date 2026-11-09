@@ -68,9 +68,9 @@ def test_a_part_in_a_packed_sheet_is_named_without_a_picture(harbor, roots):
     p = _with_belly(harbor, roots)
     p["cast"][0]["pack_sheet"] = True
     prompt = _build(p, 0)["prompt"]
-    # [OLD 2026-11-12 v0.15.1->v0.16.0] assert "<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>, with Beer belly (a big round beer belly)." in prompt
+    # [OLD 2026-11-09 v0.15.1->v0.16.0] assert "<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>, with Beer belly (a big round beer belly)." in prompt
     assert ("<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>, a sheet of 3 views of the same "
-            "person, with Beer belly (a big round beer belly).") in prompt  # added 2026-11-12 v0.16.0: the sheet is named
+            "person, with Beer belly (a big round beer belly).") in prompt  # added 2026-11-09 v0.16.0: the sheet is named
     assert "<Picture 2>" not in prompt
     assert scene_media_counts(p, p["scenes"][0])["pictures"] == 1
 

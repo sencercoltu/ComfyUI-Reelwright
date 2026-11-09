@@ -966,6 +966,8 @@ async def llm_script(request):
     job = _job_id(b)
     # [OLD 2026-11-03 v0.5.1->v0.6.0] part, parts = max(1, int(b.get("part") or 1)), max(1, int(b.get("parts") or 1))
     part, parts = max(1, _int(b.get("part") or 1, "part")), max(1, _int(b.get("parts") or 1, "parts"))
+    if part > parts:  # added 2026-11-09 v0.17.1 (third review): part 5 of 3 was accepted
+        raise ValueError("part must be between 1 and parts")
     if not isinstance(b.get("known_cast") or [], list):  # added 2026-11-03 v0.6.0
         raise ValueError("known_cast must be a list")
     # added 2026-11-03 v0.6.0 review: [{"name": 5}] answered 500 ("'int' object has no attribute 'lower'")
@@ -1030,7 +1032,7 @@ async def _llm_job(job, coro):
         LLM_CANCELLED.discard(task)
 
 
-# added 2026-11-12 v0.13.0: Chat tab: a general question to the configured LLM, with the conversation so far. Progress
+# added 2026-11-08 v0.13.0: Chat tab: a general question to the configured LLM, with the conversation so far. Progress
 # events carry the answer as it comes ("text"); Stop is /reelwright/llm/cancel with the same job id.
 @routes.post("/reelwright/llm/chat")
 @json_route

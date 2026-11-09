@@ -1,4 +1,4 @@
-"""added 2026-11-12 v0.16.0: anchor sheets named in the subject line, a warning when their pictures reach H3 too small,
+"""added 2026-11-09 v0.16.0: anchor sheets named in the subject line, a warning when their pictures reach H3 too small,
 and video anchors of cast members.
 
 Sencer: "if one character has multiple anchor pictures, and a sheet of say 9x9 is created, how does H3 assign the single
@@ -263,3 +263,19 @@ def test_the_editor_counts_and_sizes_the_same(harbor):
     assert out["tiles"] == [tile_pixels(sq * n, 1344, 768, r) for n, r in ((4, "match"), (9, "match"), (81, "match"),
                                                                            (81, "max"), (16, "match"))]
     assert out["scene_tiles"][0][0] > 0  # Mara's sheet in the first scene
+
+
+def test_a_video_anchor_under_2_s_is_not_sent(harbor):
+    """added 2026-11-09 v0.17.1 (third review 4): a clip under 2 s is left out ("short"), as the Cast tab says; it was
+    sent unless it had been cut to the seconds left."""
+    p = _clips(harbor, 1.5)
+    p["cast"][0]["video_anchors"] = [{"id": "va_s", "asset": "a_clip0"}]
+    p = normalize_project(p)
+    recs = scene_people(p, p["scenes"][0])[0]
+    n = {"videos": 0, "video_seconds": 0.0, "audio": 0, "audio_seconds": 0.0, "files": 0}
+    picked, left = pick_video_anchors(recs, {a["id"]: a for a in p["assets"]}, n)
+    assert picked == [] and [(x["anchor"], x["why"]) for x in left] == [("va_s", "short")]
+    b = _build(p, 0)
+    assert not any(v.get("anchor") for v in b["videos"])
+    assert any("is not sent: its clip is under 2 s" in i["message"] for i in b["issues"])
+    assert any(m.startswith("Mara: video anchor V2 is a 1.50 s clip, so it is not sent") for m in (x["message"] for x in _lint(p)))

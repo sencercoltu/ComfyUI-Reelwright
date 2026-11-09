@@ -1,4 +1,4 @@
-"""added 2026-11-12 v0.14.2: a scene written without shots gets its shots and spoken lines (Sencer: "when creating a
+"""added 2026-11-09 v0.14.2: a scene written without shots gets its shots and spoken lines (Sencer: "when creating a
 single shot scene, the shot section (and dialogues) are not populated. They should be populated. currently everything
 shows only in detailed_description section").
 
@@ -38,9 +38,9 @@ for (const c of req.cases) {
   const sc = p.scenes.find(s => s.id === c.scene);
   if (c.op === "read") out.push(f.readWritten(p, sc, c.text, null));
   else if (c.op === "fillable") out.push(f.fillable(p, sc) !== null);
-  else if (c.op === "camera") out.push(f.cameraOf(p, c.text));  // added 2026-11-12 v0.14.3
-  else if (c.op === "write") { const n = f.writeShots(p, sc); out.push({ n, scene: sc }); }  // added 2026-11-12 v0.14.3
-  else if (c.op === "passes") {  // added 2026-11-12 v0.14.4: the written passes of a scene of several passes
+  else if (c.op === "camera") out.push(f.cameraOf(p, c.text));  // added 2026-11-09 v0.14.3
+  else if (c.op === "write") { const n = f.writeShots(p, sc); out.push({ n, scene: sc }); }  // added 2026-11-09 v0.14.3
+  else if (c.op === "passes") {  // added 2026-11-09 v0.14.4: the written passes of a scene of several passes
     const plan = m.planScene(p, sc, 0);
     const n = f.takePassShots(p, sc, plan, c.items);
     out.push({ n, scene: sc, items: c.items, plan: plan.passes.map(x => x.shots.map(s => [s.id, s.continuing])) });
@@ -94,18 +94,18 @@ def test_shots_and_lines_are_read_from_the_description():
     one, three, vo, tail, nolabel, style = run([{"op": "read", "project": project(), "scene": "s_1", "text": t}
                                                 for t in texts])
     assert one["pre"] == "Cinematic, rain-soaked night, teal and amber palette."
-    # [OLD 2026-11-12 v0.14.2->v0.14.3] the framing and the camera sentence stayed in the text
+    # [OLD 2026-11-09 v0.14.2->v0.14.3] the framing and the camera sentence stayed in the text
     # assert one["shots"] == [{"t": 0, "text": "A medium shot of @Mara at the harbor wall in a navy pea coat; behind her "
     #                          "the lamps glow. The camera slowly pushes in. @{Old Keeper} steps out of the shadows. She "
     #                          "turns toward him, startled."}]
     # [/OLD]
-    # [OLD 2026-11-12 v0.16.1->v0.17.0] the actions after a line lost their place (no time)
+    # [OLD 2026-11-09 v0.16.1->v0.17.0] the actions after a line lost their place (no time)
     # assert one["shots"] == [{"t": 0, "text": "@Mara at the harbor wall in a navy pea coat; behind her the lamps glow. "
     #                          "@{Old Keeper} steps out of the shadows. She turns toward him, startled.",
     #                          "camera": "the camera pushes in", "camera_amp": "", "camera_speed": "slow",
-    #                          "framing": "medium"}]  # added 2026-11-12 v0.14.3
+    #                          "framing": "medium"}]  # added 2026-11-09 v0.14.3
     # [/OLD]
-    # added 2026-11-12 v0.17.0: an action written after a spoken line opens with the time the line ends, so the prompt
+    # added 2026-11-09 v0.17.0: an action written after a spoken line opens with the time the line ends, so the prompt
     # puts the line before it
     assert one["shots"] == [{"t": 0, "text": "@Mara at the harbor wall in a navy pea coat; behind her the lamps glow. "
                              "At 00:01.500, @{Old Keeper} steps out of the shadows. At 00:03.000, she turns toward him, "
@@ -116,24 +116,24 @@ def test_shots_and_lines_are_read_from_the_description():
         ("c_mara", "English", "mutters", "Almost home."), ("c_keep", "English", "calls", "You're late again.")]
     assert 0 < one["lines"][0]["t"] < one["lines"][1]["t"] < 10
 
-    # [OLD 2026-11-12 v0.14.2->v0.14.3] the framing stayed in the text
+    # [OLD 2026-11-09 v0.14.2->v0.14.3] the framing stayed in the text
     # assert [(s["t"], s["text"]) for s in three["shots"]] == [
     #     (0, "A wide shot: the pier at dusk. @Mara walks toward the camera."), (4.5, "A close-up of @Mara."),
     #     (7, "@{Old Keeper}.")]
     # [/OLD]
-    assert [(s["t"], s["framing"], s["text"]) for s in three["shots"]] == [  # added 2026-11-12 v0.14.3
+    assert [(s["t"], s["framing"], s["text"]) for s in three["shots"]] == [  # added 2026-11-09 v0.14.3
         (0, "wide", "The pier at dusk. @Mara walks toward the camera."), (4.5, "close-up", "@Mara."),
         (7, "", "@{Old Keeper}.")]
     assert [(d["speaker"], d["language"], d["delivery"]) for d in three["lines"]] == [
         ("c_mara", "English", "whispers"), ("c_keep", "Turkish", "replies")]
     assert 4.5 <= three["lines"][0]["t"] < 7 <= three["lines"][1]["t"] < 10
 
-    # [OLD 2026-11-12 v0.16.1->v0.17.0] assert vo["pre"] == "Soft morning light." and vo["shots"][0]["text"] == "An aerial view of the harbor. Boats bob gently."
+    # [OLD 2026-11-09 v0.16.1->v0.17.0] assert vo["pre"] == "Soft morning light." and vo["shots"][0]["text"] == "An aerial view of the harbor. Boats bob gently."
     assert vo["pre"] == "Soft morning light." and vo["shots"][0]["text"] == \
         "An aerial view of the harbor. At 00:02.500, Boats bob gently."  # v0.17.0: after the line, at its end
     assert (vo["lines"][0]["speaker"], vo["lines"][0]["delivery"]) == ("c_narr", "voiceover")
 
-    # [OLD 2026-11-12 v0.14.2->v0.14.3] assert tail["shots"][0]["text"] == "The camera holds still."
+    # [OLD 2026-11-09 v0.14.2->v0.14.3] assert tail["shots"][0]["text"] == "The camera holds still."
     assert tail["shots"][0]["text"] == "" and tail["shots"][0]["camera"] == "the camera holds a static shot"  # v0.14.3
     assert tail["lines"][0]["delivery"] == "mutters as the rain starts, her voice breaking"
 
@@ -186,13 +186,13 @@ def test_filled_scene_builds_the_same_lines():
     text = b["prompt"]
     assert text.count("Almost home.") == 1 and text.count("You're late again.") == 1
     assert "(S1)" in text and "(S2)" in text and "mutters, <d>[English] Almost home.</d>" in text
-    # [OLD 2026-11-12 v0.14.2->v0.14.3] assert "[Shot 1] A medium shot of" in text and "Cinematic, rain-soaked night" in text
-    # added 2026-11-12 v0.14.3: the framing and camera move come back from the shot's fields, once each
+    # [OLD 2026-11-09 v0.14.2->v0.14.3] assert "[Shot 1] A medium shot of" in text and "Cinematic, rain-soaked night" in text
+    # added 2026-11-09 v0.14.3: the framing and camera move come back from the shot's fields, once each
     assert "[Shot 1] A medium shot: The camera pushes in at slow speed. <Subject 1> at the harbor wall" in text
     assert text.count("pushes in") == 1 and "Cinematic, rain-soaked night" in text
 
 
-# ---- added 2026-11-12 v0.14.3: framing and camera move (Sencer: "camera movements are not reflected to shots when using
+# ---- added 2026-11-09 v0.14.3: framing and camera move (Sencer: "camera movements are not reflected to shots when using
 # Write prompts") ----
 
 @needs_node
@@ -214,9 +214,9 @@ def test_framing_and_camera_move_are_read_from_a_shot():
         ("wide", "the camera pushes in", "small", "slow", "The pier at dusk."),
         ("close-up", "the camera holds a static shot", "", "", "@Mara."),
         ("low angle", "the camera tilts up", "", "fast", "The lighthouse against the sky."),
-        # [OLD 2026-11-12 v0.14.4->v0.15.0] a camera sentence that says more than the move is the camera text as written
+        # [OLD 2026-11-09 v0.14.4->v0.15.0] a camera sentence that says more than the move is the camera text as written
         # ("", "the camera tracks her as she walks past the boats", "", "", "@Mara walks along the seawall."),
-        # added 2026-11-12 v0.15.0: the move is still the preset; the sentence stays in the text
+        # added 2026-11-09 v0.15.0: the move is still the preset; the sentence stays in the text
         ("", "the camera tracks the moving subject", "", "",
          "@Mara walks along the seawall. The camera tracks her as she walks past the boats."),
         ("", "the camera pushes in", "", "slow", "Wide on the pier."),  # "Wide on" is not a framing
@@ -244,18 +244,18 @@ def test_write_prompts_puts_the_camera_in_the_shots():
     u = [(s["id"], s["t"], s["framing"], s["camera"], s["text"]) for s in updated["scene"]["shots"]]
     assert u == [("h_1", 0, "medium", "the camera pushes in", "@Mara at the wall."),
                  ("h_2", 6, "close-up", "the camera holds a static shot", "@Mara.")]
-    # [OLD 2026-11-12 v0.14.3->v0.14.4] assert updated["n"] == {"shots": 2, "lines": 0, "updated": True}
+    # [OLD 2026-11-09 v0.14.3->v0.14.4] assert updated["n"] == {"shots": 2, "lines": 0, "updated": True}
     assert updated["n"] == {"shots": 2, "lines": 0, "updated": True, "added": 0, "kept": 0}  # v0.14.4: added, kept
     assert [d["id"] for d in updated["scene"]["dialogue"]] == ["d_1"]
     assert updated["scene"]["prompt"]["sections"]["detailed_description"] == "Night."
-    # [OLD 2026-11-12 v0.14.3->v0.14.4] a [Shot N] count that is not the scene's: left as written
+    # [OLD 2026-11-09 v0.14.3->v0.14.4] a [Shot N] count that is not the scene's: left as written
     # assert other["n"] is None and other["scene"]["shots"][0]["camera"] == "Wide"
-    # added 2026-11-12 v0.14.4: it replaces the shots too; the second written shot joins the timeline
+    # added 2026-11-09 v0.14.4: it replaces the shots too; the second written shot joins the timeline
     assert other["n"]["added"] == 1 and [s["camera"] for s in other["scene"]["shots"]] == [
         "the camera pushes in", "the camera holds a static shot"]
 
 
-# ---- added 2026-11-12 v0.14.4 (Sencer: "when using Write prompt and a Shot section exists, the new text goes into
+# ---- added 2026-11-09 v0.14.4 (Sencer: "when using Write prompt and a Shot section exists, the new text goes into
 # detailed_description instead of replacing the shot") ----
 
 @needs_node
@@ -322,8 +322,8 @@ def test_write_prompts_asks_for_the_shot_and_lines_of_a_scene_without_shots():
     assert "none on the timeline yet: write it as one shot; the editor puts it on the timeline" in body
     assert "when the whole-scene note or the instruction has someone speak, write those lines" in body
     assert llm.FILL_LINES_RULE in body
-    assert llm.FILL_CAMERA_RULE in body  # added 2026-11-12 v0.14.3
-    # [OLD 2026-11-12 v0.14.2->v0.14.3] a scene with shots is asked as before
+    assert llm.FILL_CAMERA_RULE in body  # added 2026-11-09 v0.14.3
+    # [OLD 2026-11-09 v0.14.2->v0.14.3] a scene with shots is asked as before
     # s2 = copy.deepcopy(s)
     # s2["shots"] = [{"id": "h_1", "t": 0.0, "camera": "", "text": "rain"}]
     # p["scenes"][0] = s2
@@ -331,7 +331,7 @@ def test_write_prompts_asks_for_the_shot_and_lines_of_a_scene_without_shots():
     # assert not llm.fills_timeline(s2, plan2)
     # assert llm.FILL_LINES_RULE not in llm.pass_request(p, s2, plan2, builds2, 1)
     # [/OLD]
-    # added 2026-11-12 v0.14.3: a one-pass scene with shots takes the written shots into them too (writes_shots), so
+    # added 2026-11-09 v0.14.3: a one-pass scene with shots takes the written shots into them too (writes_shots), so
     # it is asked for the same forms; a scene with automatic shot lines off is asked as before
     s2 = copy.deepcopy(s)
     s2["shots"] = [{"id": "h_1", "t": 0.0, "camera": "", "text": "rain"}]
@@ -346,10 +346,10 @@ def test_write_prompts_asks_for_the_shot_and_lines_of_a_scene_without_shots():
     s3["duration"] = 40.0
     p["scenes"][0] = s3
     plan3, builds3 = llm.scene_builds(p, s3)
-    # [OLD 2026-11-12 v0.14.3->v0.14.4] a scene of several passes was asked as before
+    # [OLD 2026-11-09 v0.14.3->v0.14.4] a scene of several passes was asked as before
     # assert len(plan3["passes"]) > 1 and not llm.writes_shots(s3, plan3)
     # assert llm.FILL_CAMERA_RULE not in llm.pass_request(p, s3, plan3, builds3, 1)
-    # added 2026-11-12 v0.14.4: its shots take what each pass writes too (takePassShots)
+    # added 2026-11-09 v0.14.4: its shots take what each pass writes too (takePassShots)
     assert len(plan3["passes"]) > 1 and llm.writes_shots(s3, plan3)
     assert llm.FILL_CAMERA_RULE in llm.pass_request(p, s3, plan3, builds3, 1)
 
@@ -413,7 +413,7 @@ def test_tidy_rewrite_new_shots():
         prop["detailed_description"]
 
 
-# ---- added 2026-11-12 v0.15.0: the Write prompts brief (Sencer: "Add a separate text field for "Write prompts" input,
+# ---- added 2026-11-09 v0.15.0: the Write prompts brief (Sencer: "Add a separate text field for "Write prompts" input,
 # whose content stay persistent between "Write prompts" ... my original text i write in summary gets overwritten") --
 
 def test_brief_is_kept_and_sent_to_the_llm(monkeypatch):

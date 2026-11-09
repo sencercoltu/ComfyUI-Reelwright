@@ -155,7 +155,7 @@ def _duration(path):
 
 
 # [OLD 2026-11-05 v0.7.0->v0.8.0] def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_frames=None):
-# [OLD 2026-11-12 v0.13.1->v0.14.0] def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_frames=None, exact=False):
+# [OLD 2026-11-08 v0.13.1->v0.14.0] def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_frames=None, exact=False):
 def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_frames=None, exact=False, start=0.0):
     """Frames at 24 fps [N,H,W,3] and the matching audio dict (or None).
 
@@ -164,7 +164,7 @@ def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_
     added 2026-11-05 v0.8.0: exact=True (files Reelwright wrote itself: pass cache, tail.mp4) reads an RGB stream (a
     lossless pass cache file) with PyAV straight to 8-bit RGB, so the frames are exactly the ones written; other
     streams are read as before.
-    added 2026-11-12 v0.14.0: start = where the part read from the start of the file begins (a reference's From), in
+    added 2026-11-08 v0.14.0: start = where the part read from the start of the file begins (a reference's From), in
     seconds; max_seconds / max_frames then count from there."""
     if last_frames is None and last_seconds:
         last_frames = int(round(float(last_seconds) * spec.FPS))
@@ -192,9 +192,9 @@ def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_
     limit = float(max_seconds) if max_seconds else None
     if max_frames:
         limit = min(limit or float("inf"), int(max_frames) / spec.FPS)
-    # [OLD 2026-11-12 v0.13.1->v0.14.0] comp, _ = _window(path, 0.0, limit or 0.0)
-    # [OLD 2026-11-12 v0.13.1->v0.14.0] images = comp.images
-    # added 2026-11-12 v0.14.0: from `start`; a ComfyUI that cannot trim decodes from 0 and the frames before it are
+    # [OLD 2026-11-08 v0.13.1->v0.14.0] comp, _ = _window(path, 0.0, limit or 0.0)
+    # [OLD 2026-11-08 v0.13.1->v0.14.0] images = comp.images
+    # added 2026-11-08 v0.14.0: from `start`; a ComfyUI that cannot trim decodes from 0 and the frames before it are
     # dropped here (the sound is cut the same way below)
     start = max(0.0, float(start or 0.0))
     comp, used = _window(path, start, limit or 0.0)
@@ -204,9 +204,9 @@ def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_
         images = images[min(images.shape[0], int(round(skip * float(comp.frame_rate or spec.FPS)))):]
     # added 2026-11-04 v0.6.1: no picture decoded (an audio-only or broken file) used to raise IndexError below
     if not images.shape[0]:
-        # [OLD 2026-11-12 v0.13.1->v0.14.0] raise ValueError("no video frames could be decoded from {}".format(os.path.basename(path)))
+        # [OLD 2026-11-08 v0.13.1->v0.14.0] raise ValueError("no video frames could be decoded from {}".format(os.path.basename(path)))
         raise ValueError("no video frames could be decoded from {}{}".format(
-            os.path.basename(path), " after {:.3f} s".format(start) if start else ""))  # added 2026-11-12 v0.14.0
+            os.path.basename(path), " after {:.3f} s".format(start) if start else ""))  # added 2026-11-08 v0.14.0
     rate = Fraction(comp.frame_rate or spec.FPS)
     src_seconds = images.shape[0] / float(rate) if images.shape[0] else 0.0
     seconds = min(src_seconds, limit) if limit else src_seconds
@@ -218,8 +218,8 @@ def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_
     frames = images[frame_positions(images.shape[0], rate, n_out)].contiguous()
     audio = None
     if comp.audio is not None:
-        # [OLD 2026-11-12 v0.13.1->v0.14.0] audio = slice_audio(comp.audio, 0.0, n_out / spec.FPS)
-        audio = slice_audio(comp.audio, skip, skip + n_out / spec.FPS)  # added 2026-11-12 v0.14.0: from `start`
+        # [OLD 2026-11-08 v0.13.1->v0.14.0] audio = slice_audio(comp.audio, 0.0, n_out / spec.FPS)
+        audio = slice_audio(comp.audio, skip, skip + n_out / spec.FPS)  # added 2026-11-08 v0.14.0: from `start`
     return frames, audio
 
 
@@ -228,15 +228,15 @@ def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_
 #     waveform, sr = load_audio_file(path)
 #     return {"waveform": waveform[None], "sample_rate": sr}
 # [/OLD]
-# [OLD 2026-11-12 v0.13.1->v0.14.0] def load_audio(path, max_seconds=None):
+# [OLD 2026-11-08 v0.13.1->v0.14.0] def load_audio(path, max_seconds=None):
 def load_audio(path, max_seconds=None, start=0.0):
     """The audio file as {waveform [1,C,S], sample_rate}; with `max_seconds` only its start.
-    added 2026-11-12 v0.14.0: start = where to begin (a reference's From), in seconds; max_seconds counts from there."""
+    added 2026-11-08 v0.14.0: start = where to begin (a reference's From), in seconds; max_seconds counts from there."""
     from comfy_extras.nodes_audio import load as load_audio_file  # added 2026-11-03 v0.6.0: imported when used
     waveform, sr = load_audio_file(path)
-    a = max(0, int(round(float(start or 0.0) * sr)))  # added 2026-11-12 v0.14.0
-    # [OLD 2026-11-12 v0.13.1->v0.14.0] if max_seconds:
-    # [OLD 2026-11-12 v0.13.1->v0.14.0]     waveform = waveform[..., :int(round(float(max_seconds) * sr))]
+    a = max(0, int(round(float(start or 0.0) * sr)))  # added 2026-11-08 v0.14.0
+    # [OLD 2026-11-08 v0.13.1->v0.14.0] if max_seconds:
+    # [OLD 2026-11-08 v0.13.1->v0.14.0]     waveform = waveform[..., :int(round(float(max_seconds) * sr))]
     waveform = waveform[..., a:a + int(round(float(max_seconds) * sr))] if max_seconds else waveform[..., a:]
     return {"waveform": waveform[None], "sample_rate": sr}
 

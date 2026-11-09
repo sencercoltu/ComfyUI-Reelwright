@@ -7,7 +7,7 @@ feedback; this module is what the renderer trusts.
 import copy
 import hashlib
 import json
-import math  # added 2026-11-12 v0.14.0: snap_frame
+import math  # added 2026-11-08 v0.14.0: snap_frame
 import re
 import secrets
 import unicodedata  # added 2026-11-03 v0.6.0: slugify transliterates accents (NFKD)
@@ -206,11 +206,11 @@ def default_prompt():
     # [OLD 2026-11-05 v0.7.0->v0.8.0] return {"mode": "structured", "auto": {"subjects": True, "retention": True, "shots": True},
     #                                          "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}}
     # passes: added 2026-11-05 v0.8.0, each pass's own six sections (see pass_texts)
-    # [OLD 2026-11-12 v0.14.4->v0.15.0] no brief field
+    # [OLD 2026-11-09 v0.14.4->v0.15.0] no brief field
     # return {"mode": "structured", "auto": {"subjects": True, "retention": True, "shots": True},
     #         "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}, "passes": []}
     # [/OLD]
-    # brief: added 2026-11-12 v0.15.0, the author's own words for Write prompts (llm.pass_request / rewrite read it);
+    # brief: added 2026-11-09 v0.15.0, the author's own words for Write prompts (llm.pass_request / rewrite read it);
     # it is never overwritten by what the LLM writes, so it stays the same from one Write prompts to the next
     return {"mode": "structured", "auto": {"subjects": True, "retention": True, "shots": True},
             "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}, "passes": [], "brief": ""}
@@ -657,7 +657,7 @@ def _norm_cast(c, lang):
     lora = c["lora"] = c["lora"] if isinstance(c.get("lora"), dict) else {}
     _text_field(lora, "name", "")
     lora["strength"] = spec.num(lora.get("strength"), 0.8)
-    # added 2026-11-12 v0.16.0: video anchors (Sencer: "why didn't we add video anchors? if possible, lets add them as
+    # added 2026-11-09 v0.16.0: video anchors (Sencer: "why didn't we add video anchors? if possible, lets add them as
     # well"): [{"id", "asset" (a video asset), "in", "out" (the clip sent, as a scene reference's From / To: whole
     # frames, out None = the asset's end), "soundtrack" (send its sound too, default off)}]; see pick_video_anchors
     c["video_anchors"] = _objects(c.get("video_anchors"))
@@ -709,11 +709,11 @@ def _norm_scene(s, d, lang, used_ids):
         _text_field(r, "asset", "")
         r["role"] = r["role"] if r.get("role") in spec.ROLES else "reference"
         r["time"] = spec.num(r.get("time"), 0.0)
-        _text_field(r, "cast", "")  # added 2026-11-12 v0.12.0: the character a pose reference is for
+        _text_field(r, "cast", "")  # added 2026-11-08 v0.12.0: the character a pose reference is for
         _text_field(r, "retention", "")
         r["keep"] = _texts(r.get("keep"))
         r["soundtrack"] = spec.flag(r.get("soundtrack"), False)
-        # added 2026-11-12 v0.14.0: the part of a video or audio asset the reference sends (ref_clip): "in" where it
+        # added 2026-11-08 v0.14.0: the part of a video or audio asset the reference sends (ref_clip): "in" where it
         # starts in the asset, "out" where it ends (None = the asset's end), both on whole frames
         r["in"] = snap_frame(max(0.0, spec.num(r.get("in"), 0.0)))
         o = spec.num(r.get("out"), None)
@@ -762,7 +762,7 @@ def _norm_scene(s, d, lang, used_ids):
     for k in SECTION_KEYS:
         _text_field(sec, k, "")
     _text_field(pr, "raw", "")
-    _text_field(pr, "brief", "")  # added 2026-11-12 v0.15.0: the Write prompts brief (default_prompt)
+    _text_field(pr, "brief", "")  # added 2026-11-09 v0.15.0: the Write prompts brief (default_prompt)
     pp = pr.get("pass_prompts") if isinstance(pr.get("pass_prompts"), dict) else {}
     pr["pass_prompts"] = {k: spec.text(v) for k, v in pp.items() if spec.text(v, None) is not None}
     # added 2026-11-05 v0.8.0: each pass's own six sections (see pass_texts); an item that is not an object becomes an
@@ -959,7 +959,7 @@ def cast_pictures(c, entry, assets):
     return outfit, ids
 
 
-# ---- added 2026-11-12 v0.16.0: video anchors of a cast member (cast.video_anchors). H3 can define a subject by a video
+# ---- added 2026-11-09 v0.16.0: video anchors of a cast member (cast.video_anchors). H3 can define a subject by a video
 # as well as by pictures (ref-en.txt 2.1: "<Subject 1> is the man in <Video 1>"), so a character's clips show how it
 # moves, talks and looks from every side. They go to every pass of a scene the character is in, after everything else
 # the pass sends, while H3's budget has room: 3 videos, 15 s of video in all, 12 files; a clip is shortened to the
@@ -977,7 +977,8 @@ def pick_video_anchors(recs, assets, n):
     updated with what is picked. Returns (picked, left):
     picked: [{"cast", "anchor", "asset", "in", "seconds", "sound", "cut", "mute"}] (cut: shortened to the seconds
     left; mute: its sound was asked for but no audio slot was free); left: [{"cast", "anchor", "asset", "why"}], why
-    "videos" | "files" | "seconds" (under 2 s left) | "clip" (the clip has no length)."""
+    "videos" | "files" | "seconds" (under 2 s left) | "clip" (the clip has no length) | "short" (a clip under 2 s,
+    added 2026-11-09 v0.17.1)."""
     picked, left = [], []
     for x in recs:
         c = x["cast"]
@@ -988,7 +989,14 @@ def pick_video_anchors(recs, assets, n):
             room = spec.REF_MEDIA_TOTAL_SECONDS - n["video_seconds"]
             secs = full if full <= room + 1e-6 else math.floor(room * spec.FPS + 1e-6) / spec.FPS
             cut = secs < full - 1e-6
-            why = ("clip" if full <= 0 else "videos" if n["videos"] >= spec.MAX_REF_VIDEOS else
+            # [OLD 2026-11-09 v0.17.0->v0.17.1] a clip under 2 s was sent (only a clip cut to the seconds left was refused)
+            # why = ("clip" if full <= 0 else "videos" if n["videos"] >= spec.MAX_REF_VIDEOS else
+            #        "files" if n["files"] >= spec.MAX_REF_FILES else
+            #        "seconds" if secs <= 0 or (cut and secs < spec.REF_MEDIA_MIN_SECONDS - 1e-6) else "")
+            # [/OLD]
+            # added 2026-11-09 v0.17.1 (third review): a clip under 2 s is not sent ("short"), as the Cast tab says
+            why = ("clip" if full <= 0 else "short" if full < spec.REF_MEDIA_MIN_SECONDS - 1e-6 else
+                   "videos" if n["videos"] >= spec.MAX_REF_VIDEOS else
                    "files" if n["files"] >= spec.MAX_REF_FILES else
                    "seconds" if secs <= 0 or (cut and secs < spec.REF_MEDIA_MIN_SECONDS - 1e-6) else "")
             if why:
@@ -1007,7 +1015,7 @@ def pick_video_anchors(recs, assets, n):
     return picked, left
 
 
-# ---- added 2026-11-12 v0.16.0: how big one picture of a packed anchor sheet reaches H3 (model.js tilePixels gives the
+# ---- added 2026-11-09 v0.16.0: how big one picture of a packed anchor sheet reaches H3 (model.js tilePixels gives the
 # same number). The sheet is ceil(sqrt(n)) columns of 768-pixel cells shaped like the median picture (media.sheet_image);
 # the H3 node scales the whole sheet down to the output's pixel area ("match") or to a 2048 px short edge ("max").
 SHEET_CELL = 768
@@ -1070,12 +1078,12 @@ def scene_people(p, scene, idx=None):
     return people, left_out
 
 
-# added 2026-11-12 v0.12.0: a pose reference (scene reference, role "pose"): a picture whose body pose one character of
+# added 2026-11-08 v0.12.0: a pose reference (scene reference, role "pose"): a picture whose body pose one character of
 # the scene takes, in the shot at its time. It is cited in that character's subject line ("whose pose in [Shot 2]
 # comes from <Picture 4>") and analysed as attribute_transfer, as MiniMax's Ref2VA guide does for a characteristic
 # transferred from one reference to another subject; it is never a subject of its own (H3 would put the person in it
 # in the shot). It goes to the pass whose time span holds its time, like a keyframe.
-# ---- added 2026-11-12 v0.14.0: clips of video and audio references (Sencer: "allow to select from-to timestamps/frames
+# ---- added 2026-11-08 v0.14.0: clips of video and audio references (Sencer: "allow to select from-to timestamps/frames
 # of source video. we should be able to use the same video/audio asset in a single scene multiple times, with different
 # start/end timestamps/durations, with or without audio"). model.js has the same functions (snapFrame, refClip,
 # refTrimmed, refTokens; tests/test_model_parity.py compares them).
@@ -1433,7 +1441,7 @@ def continuation_frames(p, i, pass_, mode=None):
 
 
 # [OLD 2026-11-05 v0.6.1->v0.7.0] def scene_media_counts(p, scene, pass_=None, starts=None):
-# [OLD 2026-11-12 v0.15.1->v0.16.0] def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True):  # mode, continuation: v0.7.0
+# [OLD 2026-11-09 v0.15.1->v0.16.0] def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True):  # mode, continuation: v0.7.0
 def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True, video_anchors=True):  # video_anchors: v0.16.0
     """What one pass of `scene` sends H3, counted the way prompt.collect_refs presents references:
 
@@ -1458,7 +1466,7 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
         from .planner import plan_scene  # planner imports model
         i = next((k for k, s in enumerate(p["scenes"]) if s["id"] == scene["id"]), 0)
         # [OLD 2026-11-05 v0.6.1->v0.7.0] outs = [scene_media_counts(p, scene, x, starts) for x in plan_scene(p, scene, i)["passes"]]
-        # [OLD 2026-11-12 v0.15.1->v0.16.0] outs = [scene_media_counts(p, scene, x, starts, mode, continuation) for x in plan_scene(p, scene, i)["passes"]]
+        # [OLD 2026-11-09 v0.15.1->v0.16.0] outs = [scene_media_counts(p, scene, x, starts, mode, continuation) for x in plan_scene(p, scene, i)["passes"]]
         outs = [scene_media_counts(p, scene, x, starts, mode, continuation, video_anchors)
                 for x in plan_scene(p, scene, i)["passes"]]
         out = {k: max(o[k] for o in outs) for k in COUNT_KEYS}
@@ -1484,19 +1492,19 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
     #         ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in ids]
     #     people.append((c, ids))
     # [/OLD]
-    # [OLD 2026-11-12 v0.11.0->v0.12.0] people = [(x["cast"], x["ids"]) for x in scene_people(p, scene, idx)[0]]  # added 2026-11-08 v0.11.0
-    recs = scene_people(p, scene, idx)[0]  # added 2026-11-12 v0.12.0: the records, for pose_refs
+    # [OLD 2026-11-08 v0.11.0->v0.12.0] people = [(x["cast"], x["ids"]) for x in scene_people(p, scene, idx)[0]]  # added 2026-11-08 v0.11.0
+    recs = scene_people(p, scene, idx)[0]  # added 2026-11-08 v0.12.0: the records, for pose_refs
     people = [(x["cast"], x["ids"]) for x in recs]
     anchors = {a for _, ids in people for a in ids}
     ref_pics = {r["asset"] for r in scene["refs"]
                 if r["role"] == "reference" and r["asset"] in assets and assets[r["asset"]]["kind"] == "image"}
-    # added 2026-11-12 v0.12.0: the pose pictures of this pass, after the cast's pictures (prompt.collect_refs)
+    # added 2026-11-08 v0.12.0: the pose pictures of this pass, after the cast's pictures (prompt.collect_refs)
     pose_pics = list(dict.fromkeys(a["id"] for _, a, _ in pose_refs(p, scene, pass_, recs, idx)))
     # added 2026-11-05 v0.7.0: the continuation reference of this pass; a picture counts for "auto" packing
     i = next((k for k, s in enumerate(p["scenes"]) if s["id"] == scene["id"]), None)
     cont = pass_continuation(p, i, pass_, mode) if continuation else ""
     # [OLD 2026-11-05 v0.6.1->v0.7.0] auto_pack = len(anchors) + len(ref_pics - anchors) > spec.MAX_REF_IMAGES
-    # [OLD 2026-11-12 v0.11.0->v0.12.0] auto_pack = len(anchors) + len(ref_pics - anchors) + (1 if cont == "picture" else 0) > spec.MAX_REF_IMAGES
+    # [OLD 2026-11-08 v0.11.0->v0.12.0] auto_pack = len(anchors) + len(ref_pics - anchors) + (1 if cont == "picture" else 0) > spec.MAX_REF_IMAGES
     auto_pack = len(anchors) + len((ref_pics | set(pose_pics)) - anchors) + (1 if cont == "picture" else 0) > \
         spec.MAX_REF_IMAGES
     if starts is None:
@@ -1513,11 +1521,11 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
         v = assets.get(c.get("voice"))
         if v and v["kind"] == "audio" and not song and c["id"] in speaking:
             sounds.append(v)
-    for aid in pose_pics:  # added 2026-11-12 v0.12.0
+    for aid in pose_pics:  # added 2026-11-08 v0.12.0
         if aid not in sent:
             sent.add(aid)
             out["pictures"] += 1
-    # [OLD 2026-11-12 v0.13.1->v0.14.0] every video reference counted its asset's whole length, and an audio asset
+    # [OLD 2026-11-08 v0.13.1->v0.14.0] every video reference counted its asset's whole length, and an audio asset
     # counted once however often it was used
     # for r in scene["refs"]:
     #     a = assets.get(r["asset"])
@@ -1540,7 +1548,7 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
     # for a in sounds:
     #     out["audio_seconds"] += float(a.get("duration") or 0)
     # [/OLD]
-    # added 2026-11-12 v0.14.0: each reference sends its clip (ref_clip): every video reference as before, an audio
+    # added 2026-11-08 v0.14.0: each reference sends its clip (ref_clip): every video reference as before, an audio
     # clip once (prompt.collect_refs; a voice sample is the whole file)
     sounds = [((a["id"], 0.0, None), float(a.get("duration") or 0)) for a in sounds]
     for r in scene["refs"]:
@@ -1572,7 +1580,7 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
     out["continuation"] = ""
     if cont == "picture":
         if out["pictures"] + 1 > spec.MAX_REF_IMAGES or out["files"] + 1 > spec.MAX_REF_FILES:
-            # [OLD 2026-11-12 v0.15.1->v0.16.0] return scene_media_counts(p, scene, pass_, starts, mode, continuation=False)
+            # [OLD 2026-11-09 v0.15.1->v0.16.0] return scene_media_counts(p, scene, pass_, starts, mode, continuation=False)
             return scene_media_counts(p, scene, pass_, starts, mode, continuation=False, video_anchors=video_anchors)
         out["pictures"] += 1
         out["files"] += 1
@@ -1587,7 +1595,7 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
             out["audio"] += 1
             out["audio_seconds"] += secs
             out["continuation"] = "video_audio"
-    if video_anchors:  # added 2026-11-12 v0.16.0: the cast's video anchors, after everything else (pick_video_anchors)
+    if video_anchors:  # added 2026-11-09 v0.16.0: the cast's video anchors, after everything else (pick_video_anchors)
         pick_video_anchors(recs, assets, out)
     return out
 

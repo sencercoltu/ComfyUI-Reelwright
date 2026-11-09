@@ -1,4 +1,4 @@
-// Chat tab (added 2026-11-12 v0.13.0): ask the configured LLM general questions (Sencer: "a simple chat interface where
+// Chat tab (added 2026-11-08 v0.13.0): ask the configured LLM general questions (Sencer: "a simple chat interface where
 // we can ask LLM general questions; show the tab only if the LLM is enabled"). The conversation lives in this editor
 // session (eph.chat), not in the project. The answer streams in: POST /reelwright/llm/chat sends reelwright.llm
 // progress events with the text so far, which editor.js writes into the pending bubble in place (llmjob.jobText).

@@ -6,8 +6,8 @@ import { h, icon, button, toggle, segmented, select, number, text, textarea, sec
 import { rw } from "../api.js";
 import { newJob, jobLine } from "../llmjob.js"; // added 2026-11-03 v0.4.2
 import { jobText } from "../llmjob.js"; // added 2026-11-06 v0.10.2: progress lines updated in place
-import { outputButton } from "../llmjob.js"; // added 2026-11-12 v0.15.0: the reasoning and answer as they arrive
-import { sortable, dragGrip, moveItem } from "../ui.js"; // added 2026-11-12 v0.15.0: drag the LoRAs into order
+import { outputButton } from "../llmjob.js"; // added 2026-11-09 v0.15.0: the reasoning and answer as they arrive
+import { sortable, dragGrip, moveItem } from "../ui.js"; // added 2026-11-09 v0.15.0: drag the LoRAs into order
 import {
   ASPECTS, START_MODES, STABLE_LANGUAGES, OVERRIDE_KEYS, adaptCanvas, newId, slugify, defaultScene, effective, FPS,
   sceneIndex, // added 2026-11-02 v0.3.1
@@ -301,8 +301,8 @@ function lorasCard(ctx) {
     actions: h("span", { class: "rw-dim small" }, "applied to every scene first"),
     children: [
       loras.length === 0 && h("div", { class: "rw-empty sm", help: "global.loras" }, "No global LoRAs."),
-      // [OLD 2026-11-12 v0.14.4->v0.15.0] loras.map((l, i) => {  (moved one place up with a button, no dragging)
-      // added 2026-11-12 v0.15.0: drag a LoRA's grip to put it elsewhere in the stack (one undo step)
+      // [OLD 2026-11-09 v0.14.4->v0.15.0] loras.map((l, i) => {  (moved one place up with a button, no dragging)
+      // added 2026-11-09 v0.15.0: drag a LoRA's grip to put it elsewhere in the stack (one undo step)
       sortable({ id: "global-loras", onMove: (from, to) => ctx.actions.edit(q => { moveItem(q.global.loras, from, to); }, { label: "Reorder global LoRAs" }), rows: loras.map((l, i) => {
         const overriders = ctx.p.scenes.filter(s => s.overrides.loras?.strengths?.[l.id] !== undefined || s.overrides.loras?.mode === "replace").length;
         /* [OLD 2026-11-03 v0.5.1->v0.6.0] no keys: after a reorder the focus went back to the row in the same position
@@ -315,16 +315,16 @@ function lorasCard(ctx) {
         [/OLD] */
         // added 2026-11-03 v0.6.0: stable keys (the LoRA's id) so focus stays on the same LoRA after a re-render
         return h("div", { class: ["rw-lora-row", !l.enabled && "off"] },
-          dragGrip({ help: "global.loras.order", key: `glora-grip-${l.id || i}` }), // added 2026-11-12 v0.15.0
+          dragGrip({ help: "global.loras.order", key: `glora-grip-${l.id || i}` }), // added 2026-11-09 v0.15.0
           toggle({ value: l.enabled, key: `glora-on-${l.id || i}`, help: "global.loras.enabled", onChange: v => edit(ls => { ls[i].enabled = v; }) }),
           h("div", { class: "grow" },
             select({ options: list, value: l.name, key: `glora-name-${l.id || i}`, placeholder: "choose LoRA", mono: true, help: "global.loras.name", onChange: v => edit(ls => { ls[i].name = v; }) }),
             overriders > 0 && h("div", { class: "rw-c-accent small" }, `${overriders} scene${overriders > 1 ? "s" : ""} override this`)),
           number({ value: l.strength, key: `glora-str-${l.id || i}`, min: -4, max: 4, step: 0.05, width: "74px", help: "global.loras.strength", onChange: v => edit(ls => { ls[i].strength = v ?? 1; }) }),
-          // [OLD 2026-11-12 v0.14.4->v0.15.0] button({ icon: "chevLeft", small: true, variant: "ghost", help: "global.loras.order", disabled: i === 0, onClick: () => edit(ls => { [ls[i - 1], ls[i]] = [ls[i], ls[i - 1]]; }) }),  (the grip replaces it)
+          // [OLD 2026-11-09 v0.14.4->v0.15.0] button({ icon: "chevLeft", small: true, variant: "ghost", help: "global.loras.order", disabled: i === 0, onClick: () => edit(ls => { [ls[i - 1], ls[i]] = [ls[i], ls[i - 1]]; }) }),  (the grip replaces it)
           button({ icon: "trash", small: true, variant: "ghost", help: "global.loras.remove", onClick: () => edit(ls => { ls.splice(i, 1); }) }));
-      // [OLD 2026-11-12 v0.14.4->v0.15.0] }),
-      }) }), // added 2026-11-12 v0.15.0: end of sortable
+      // [OLD 2026-11-09 v0.14.4->v0.15.0] }),
+      }) }), // added 2026-11-09 v0.15.0: end of sortable
       button({ label: "Add LoRA", icon: "plus", small: true, help: "global.loras.add", onClick: () => edit(ls => { ls.push({ id: newId("l"), name: list[0] || "", strength: 0.8, enabled: true }); }) }),
     ],
   });
@@ -870,7 +870,7 @@ function writeBatchBox(ctx) {
   return h("div", { class: "rw-write-box", help: "global.script.write" },
     h("div", { class: "rw-row" },
       h("b", { class: "small grow" }, run.running ? `Writing scene ${run.at + 1} of ${run.items.length}: ${cur ? num(cur.sid) + " · " + title(cur.sid) : ""}` : `Wrote ${doneN} of ${run.items.length} scene${run.items.length === 1 ? "" : "s"}`),
-      // added 2026-11-12 v0.15.0: what the LLM thinks and writes, following the batch from scene to scene
+      // added 2026-11-09 v0.15.0: what the LLM thinks and writes, following the batch from scene to scene
       run.running && outputButton(ctx, { job: run.job, follow: () => (ctx.eph.passWrite?.running ? ctx.eph.passWrite.job : null), title: "Write prompts · LLM output", key: "write-batch-out" }),
       run.running && button({ label: run.stop ? "Stopping…" : "Stop", icon: "close", small: true, key: "write-batch-stop", help: "global.script.writeStop", disabled: !!run.stop, onClick: () => stopWrite(ctx) }),
       !run.running && retry.length > 0 && button({ label: `Retry ${retry.length}`, icon: "refresh", small: true, key: "write-batch-retry", help: "global.script.writeRetry",
@@ -980,7 +980,7 @@ function partsView(ctx, draft) {
       // [OLD 2026-11-06 v0.10.1->v0.10.2] h("span", { class: ["small", p.status === "failed" ? "rw-c-err" : p.status === "done" ? "rw-c-aud" : "rw-dim"] }, status));
       p.status === "run" ? jobText(draft.job, ctx.eph.llmJobs[draft.job], { class: "small rw-dim" }) // added 2026-11-06 v0.10.2
         : h("span", { class: ["small", p.status === "failed" ? "rw-c-err" : p.status === "done" ? "rw-c-aud" : "rw-dim"] }, status),
-      // added 2026-11-12 v0.15.0: what the LLM thinks and writes, following the import from part to part
+      // added 2026-11-09 v0.15.0: what the LLM thinks and writes, following the import from part to part
       p.status === "run" && outputButton(ctx, { job: draft.job, follow: () => (ctx.eph.scriptDraft?.busy ? ctx.eph.scriptDraft.job : null), title: "Import a script · LLM output", key: "script-out", label: false }));
   });
   const show = many || draft.parts.some(p => p.status !== "done");

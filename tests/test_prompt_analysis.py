@@ -187,9 +187,9 @@ def test_ref2va_sections_follow_the_guide(harbor):
                      "overall_soundscape:", "non_diegetic_music:"]
     for old in ("Subjects:", "Retention:", "Shots:", "Single continuous take", "[Shot1]"):
         assert old not in b["prompt"]
-    # [OLD 2026-11-12 v0.15.1->v0.16.0] assert "<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>." in b["prompt"]
+    # [OLD 2026-11-09 v0.15.1->v0.16.0] assert "<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>." in b["prompt"]
     assert ("<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>, a sheet of 2 views of the same "
-            "person.") in b["prompt"]  # added 2026-11-12 v0.16.0: the sheet is named
+            "person.") in b["prompt"]  # added 2026-11-09 v0.16.0: the sheet is named
     assert "<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - identity and appearance are retained." in b["prompt"]
     # v0.7.0: [Shot 1] cites the tail clip it continues from (<Video 1>)
     assert "[Shot 1] The shot continues seamlessly from the final frames of <Video 1>. A wide shot: Mara leaves the " \
@@ -244,9 +244,9 @@ def test_asset_description_reaches_every_scene_and_character(harbor):
     assert cast_description(mara, project_index(p)["assets"]) == ("a woman in her thirties with short auburn hair", "a_front")
     p["scenes"][1]["cast"] = [{"id": "c_mara", "outfit": ""}]
     b, _ = _build(p, 1)
-    # [OLD 2026-11-12 v0.15.1->v0.16.0] assert "<Subject 1> is Mara, a woman in her thirties with short auburn hair, shown in <Picture 1>." in b["prompt"]
+    # [OLD 2026-11-09 v0.15.1->v0.16.0] assert "<Subject 1> is Mara, a woman in her thirties with short auburn hair, shown in <Picture 1>." in b["prompt"]
     assert ("<Subject 1> is Mara, a woman in her thirties with short auburn hair, shown in <Picture 1>, a sheet of 2 "
-            "views of the same person.") in b["prompt"]  # added 2026-11-12 v0.16.0: the sheet is named
+            "views of the same person.") in b["prompt"]  # added 2026-11-09 v0.16.0: the sheet is named
     # an edit to the asset changes the prompt; the character's own description still wins
     p["assets"][0]["description"] = "a woman with a grey wool coat"
     b, _ = _build(p, 1)
@@ -361,7 +361,7 @@ def test_auto_packing(harbor):
     p["scenes"][0]["refs"] = [{"id": "r%d" % i, "asset": a["id"], "role": "reference"} for i, a in enumerate(extra[5:])]
     b, _ = _build(p, 0)
     assert [len(x["assets"]) for x in b["images"]] == [7, 1, 1, 1]                     # 10 pictures: the anchors pack
-    # [OLD 2026-11-12 v0.15.1->v0.16.0] assert "<Subject 1> is Mara" in b["prompt"] and "shown in <Picture 1>." in b["prompt"]
+    # [OLD 2026-11-09 v0.15.1->v0.16.0] assert "<Subject 1> is Mara" in b["prompt"] and "shown in <Picture 1>." in b["prompt"]
     assert "<Subject 1> is Mara" in b["prompt"] and "shown in <Picture 1>, a sheet of 7 views of the same person." in b["prompt"]  # v0.16.0
     p["cast"][0]["pack_sheet"] = False
     assert len(_build(p, 0)[0]["images"]) == 10

@@ -1,6 +1,22 @@
 # Changelog
 
-## v0.17.0 — 2026-11-12
+## v0.17.1 — 2026-11-09
+
+Fixes from a third outside review of v0.17.0.
+
+- **Write prompts on a scene of several passes kept the pass's times in the shots.** The "At MM:SS.mmm," times it writes into a shot are now moved to scene time, and an action written after a spoken line gets that line's time, as in a scene of one pass. Before, in pass 2 and later the times read too early and the lines lost their place.
+- **Short scenes read their written times 2 × the trim too early.** For a scene shorter than one generation that keeps the middle or the end (Trim), Write prompts subtracted the kept part's start twice, so cut times and line times came out early and were then clamped or spread. This was there since v0.14.2.
+- **A time that opens a shot's text.** A shot whose text starts with a time ("At 00:02.000, she turns.", which Write prompts writes for a shot that opens with a spoken line) now follows the shot's opening as a sentence of its own, and its time places the lines. Before, a line at 0.5 s could come after it, and a later shot read "the shot cuts to at 00:06.000, she turns." A shot that opens with a spoken line now starts with its speaker ("@Keeper. At 00:06.500, he leaves.").
+- **A written line time before the line before it** is no longer taken: the line follows the one before it.
+- **Video anchors under 2 s are not sent**, as the Cast tab said; the issues list says so (it was an info line, and the clip was sent).
+- **The LLM output popup lost characters after an emoji**: the backend counted characters, the editor UTF-16 units. Both count UTF-16 units now.
+- **The same timing cues in the editor and the backend**: "At" only, also after "…" and after a colon ("A close-up: At 00:02.000, …").
+- **Deleting the starred take** stars the newest take by time made (as Repair does), not the last in the list.
+- `/reelwright/llm/script` refuses a part past the number of parts.
+- **Dates:** the changelog and the code comments of v0.11.0–v0.17.0 said 2026-11-12; they say when each version was made (2026-11-08 or 2026-11-09).
+- **For developers:** `prompt.CUE_AT`, `CUT_WORDS`, `LEAD_CUE`; `CUE_TIME` takes "…" and ":"; `shot_parts` puts a text that opens with a cue after the shot's opening. `shotfill.lineTimes` (shared by `readWritten` and `takePassShots`), `readWritten` offset = the pass's start, `placedText` opens with the speaker. `model.pick_video_anchors` / `pickVideoAnchors` why "short"; `prompt.ANCHOR_LEFT["short"]`. `llm.chat` offsets in UTF-16 units. `storage.delete_take` uses `_take_order`. Tests: `test_line_times` +4, `test_video_anchors` +1, `test_storage` +1, `test_routes` +1, `test_llm` +1.
+
+## v0.17.0 — 2026-11-09
 
 Sencer: "The dialogues are not added to shots at the given time index. the dialogue should have it's proper place and time index in the shot"
 
@@ -10,14 +26,14 @@ Sencer: "The dialogues are not added to shots at the given time index. the dialo
 - Every scene with spoken lines gets a new prompt, so it renders again.
 - **For developers:** `prompt._timed_line`, `_place_lines`, `_cue_points`; `shot_parts` entries have `times` and `line` (the shot with its lines in place); timeline shot text cues go through `_rebase_shot`; `_keep_dialogue` places missing lines with `_place_lines`. `llm.PASS_RULES`, `FILL_LINES_RULE` and `H3_RULES` ask for and keep the times. `shotfill.takeLines` returns `pieces` / `cutLines` and each line's written `at`; `readWritten` times lines from it and builds the text with `placedText` (`shiftCues`, `cueLower`). New `tests/test_line_times.py`; `test_continuation` normalizes the line times; `test_shot_fill` expects the timed actions.
 
-## v0.16.1 — 2026-11-12
+## v0.16.1 — 2026-11-09
 
 - **Video anchors get the scene's clip editor.** Sencer: "add the same options to video anchors as in scene tab/reference card/video reference. preview, from and to buttons etc." Each video anchor on the Cast tab now has what a scene's video reference has: **Preview** plays the video in place, **From here / To here** take its position, **Play clip** plays From to To; the bar under the fields shows the clip in the whole video, with ends you drag; **From / To / Length** (typing a length moves To); **Whole file** when a part is picked; and the same notes (starts after the end, ends before it starts, only the first 15 s is sent, under 2 s so it is not sent). **With sound** stays on the line above.
 - **Dragging a clip's end through a re-render.** When the editor redrew while you dragged an end of a clip's bar (an autosave, a render's progress), the drag measured the old bar, which was no longer on screen, and To jumped to the end of the file. The drag now follows the bar on screen. This was in the scene's references too.
 - **Reset scene clears the shots and dialogue too.** Sencer: "reset scene's doesn't remove the shots." Reset scene now clears the six sections, every pass's own text, the shots and the dialogue lines, so Write prompts starts the scene from scratch; the dialog says how many shots and lines go. References, cast, LoRAs, the Write prompts brief and the raw prompt stay; Ctrl+Z brings it all back.
 - **For developers:** `scene.js clipEditor(ctx, s, r, a, edit, opts)` is exported and takes `opts` (`help` name → help key, `key` data-key prefix, `token: false`, `tok`, `short`); `clipBar` / `clipPreview` take the same help keys and prefix. Video anchors use the prefix `va` (`va-in-`, `va-out-`, `va-len-`, `va-prev-`, `va-here-in-`, `va-here-out-`, `va-play-`, `va-reset-`). New help entries `cast.videoAnchors.clip*`. The clip bar has `data-clip-bar` and its drag finds the bar on screen by it. Reset scene sets `shots` and `dialogue` to []. `interact.py` runs `v0161_checks()`; `v0150_checks()` expects the shots and dialogue cleared.
 
-## v0.16.0 — 2026-11-12
+## v0.16.0 — 2026-11-09
 
 Sencer asked how H3 knows a packed sheet of anchor pictures is one subject, then: "do both please. also, why didn't we add video anchors? if possible, lets add them as well."
 
@@ -30,7 +46,7 @@ Sencer asked how H3 knows a packed sheet of anchor pictures is one subject, then
   - Drag the grips to order them (the first go first when room is short). Deleting the video asset removes its video anchors; the asset's Usage lists them. A part of a character (Part of) sends its pictures with the character, not its video anchors.
 - **For developers:** `cast.video_anchors` [{id, asset, in, out, soundtrack}] (model.py `_norm_cast` / model.js `normCast`); `model.video_anchors_of`, `model.pick_video_anchors` (model.js `videoAnchorsOf`, `pickVideoAnchors`), `scene_media_counts(video_anchors=)` / `sceneBudget(…, videoAnchors)`; build video entries with `cast`, `anchor`, `in`, `out`, `seconds` (render.clip_window sends them as they are); `prompt.anchor_issues`, `prompt.sheet_words`; `model.tile_pixels`, `model.sheet_grid`, `SMALL_TILE_PX` (model.js `tilePixels`, `sceneTilePixels`, `sceneOutputSize`); lint: small sheets, video anchors that cannot be sent. `scene.js clipTimeField` is exported. New `tests/test_video_anchors.py`; snapshot tests skip the sheet words; `interact.py` runs `v0160_checks()`.
 
-## v0.15.1 — 2026-11-12
+## v0.15.1 — 2026-11-09
 
 - **Dialogs open next to what opened them.** Sencer: "All confirmation dialogs should pop up near the cursor or triggering button, not center of the node. It's easy to miss if the node grows high."
   - Every confirmation and choice dialog (Delete scene, Reset scene, Apply to all…, New project, and the rest) now opens just below the button you pressed, or above it when there is no room below in the window. It always stays inside the part of the node that is on screen, so a node taller than the window (Nodes 2.0) no longer hides it.
@@ -38,7 +54,7 @@ Sencer asked how H3 knows a packed sheet of anchor pictures is one subject, then
   - The rest of the node is dimmed as before; Escape or a click outside still cancels.
 - **For developers:** `ui.dialogAnchor(root)` (the last press or key press, recorded on `window` in the capture phase), `ui.placeNear(root, box, anchor)`; `choiceDialog` / `confirmDialog` take `anchor` (element or screen rect). `.rw-modal.anchored`. `interact.py` runs `v0151_checks()`.
 
-## v0.15.0 — 2026-11-12
+## v0.15.0 — 2026-11-09
 
 Sencer: "In scene tab, let me re-order contents of "references", "cast in this scene" and "Scene LORA's" by dragging them. Same goes for LORAs in other tabs. Also add a "reset scene" button with confirmation, which clears all 6 sections. The Write prompt LLM response sometimes never ends, after a while times out. When waiting for response, we receive thinking, but cannot see what it thinks. Add the thinking progress and received content as output so we can see what's going on. It should only be shown by a toggle button inside a popup. In shots card, the camera action generated by LLM generates shows exact wording text instead of our camera presets name. Add a separate text field for "Write prompts" input, whose content stay persistent between "Write prompts". Make it visible by toggle button. (when using "write prompts", my original text i write in summary gets overwritten) Latent preview should update properly, it updates only once or twice."
 
@@ -50,7 +66,7 @@ Sencer: "In scene tab, let me re-order contents of "references", "cast in this s
 - **Latent preview follows the sampling.** The preview now shows a frame from the middle of the part a pass generates. ComfyUI's previewers show the first latent frame, which in a pass that continues the previous one or starts from a guide picture is fixed from the first step, so the preview seemed to update only once or twice.
 - **For developers:** `scene.prompt.brief` (model.py `default_prompt` / model.js `defaultPrompt`, normalized as text; not in the cache key). `llm.brief_text`, `llm.BRIEF_HEAD` (in `pass_request` and `rewrite`). `llm.chat` progress events carry `think_at` / `think_add` and `text_at` / `text_add`. `render.preview_frame(pass)`, `preview_jpeg(previewer, x0, frame)`. `ui.sortable`, `ui.dragGrip`, `ui.moveItem`; `llmjob.feedStream`, `streamOf`, `splitThink`, `outputPopup`, `outputButton`, `closeOutput`; `passes.keepBrief`. `project.ui.brief_open`. Mock: `llmWork` streams think/text deltas; `passCalls[].brief`. New `tests/test_llm_output.py`; `test_llm.py` (+2), `test_shot_fill.py` (+2), `test_render_flow.py` (+1); `interact.py` runs `v0150_checks()`.
 
-## v0.14.4 — 2026-11-12
+## v0.14.4 — 2026-11-09
 
 - **Write prompts replaces the shots it writes.** Sencer: "when using Write prompt and a Shot section exists, the new text goes into detailed_description instead of replacing the shot."
   - A scene made in one pass: the written [Shot N] lines now replace the scene's shots **whatever their count**. Before, they did only when the LLM wrote exactly one line per shot; otherwise everything stayed in detailed_description. Each shot takes its written text, framing and camera move and keeps its time; a shot written past the scene's last one joins the timeline at its written start (or spread over the time left); a shot the LLM did not write keeps its text. The toast says which ("Updated 1 shot and added 1 shot …").
@@ -59,7 +75,7 @@ Sencer: "In scene tab, let me re-order contents of "references", "cast in this s
   - Scenes with "auto shots + dialogue" off and raw prompts are written as before.
 - **For developers:** `shotfill.writeShots` returns `{shots, lines, updated, added, kept}`; new `shotfill.takePassShots(p, sc, plan, items)` (called by `passes.applyWritten` before `model.writePassTexts`); `passes.fillToast`. `llm.writes_shots` is true for any scene with automatic shot lines. Mock: `mockFlags.writeText[sid]` may be a list (one text per pass). `tests/test_shot_fill.py` (+2); `interact.py` runs `v0144_checks()`.
 
-## v0.14.3 — 2026-11-12
+## v0.14.3 — 2026-11-09
 
 - **Write prompts puts the camera into the shots.** Sencer: "camera movements are not reflected to shots when using Write prompts. (tried in single shot mode)"
   - Each shot it writes now fills the shot's **framing** (from its start: "A medium shot: …", "A close-up of …", "Low angle, …") and its **camera move**, **amplitude** and **speed** (from its camera sentence: "The camera slowly pushes in." → Push In · Slow; "The camera pans left with small amplitude at slow speed." → Pan Left · Small · Slow; "The camera holds still." → Static Shot). The text keeps the rest. A camera sentence that says more than the move ("The camera tracks her as she walks past the boats.") becomes the shot's camera text as written, so nothing is lost.
@@ -69,7 +85,7 @@ Sencer: "In scene tab, let me re-order contents of "references", "cast in this s
   - Scenes of several passes, raw prompts and scenes with "auto shots + dialogue" off are written as before.
 - **For developers:** `shotfill.cameraOf(p, text)` and `writeShots(p, sc)` (used by `passes.applyWritten`; `report.fill.updated`); `readWritten` shots carry `camera`, `camera_amp`, `camera_speed`, `framing`. `llm.FILL_CAMERA_RULE`, `llm.writes_shots(scene, plan)`. `tests/test_shot_fill.py` (+2); `interact.py` runs `v0143_checks()`.
 
-## v0.14.2 — 2026-11-12
+## v0.14.2 — 2026-11-09
 
 - **A scene written without shots gets its shots and spoken lines.** Sencer: "when creating a single shot scene, the shot section (and dialogues) are not populated. They should be populated. currently everything shows only in detailed_description section."
   - **Write prompts** and the **Prompt rewriter** on a scene made in one pass with no shots now put what the LLM writes on the timeline: each [Shot N] becomes a shot (its "At MM:SS" cut time is its start) and each spoken line a dialogue line, with its speaker (the @name or (S1) before it), language and delivery ("mutters", "whispers", "voiceover"; "as the rain starts" or ", her voice breaking" go with it). Lines are timed one after another inside their shot. Speakers, and cast members named with @ in a shot, join "Cast in this scene". The description keeps the style sentences before [Shot 1]: with "auto shots + dialogue" on, the editor writes the shot and its lines back into the prompt, so H3 gets the same scene and the timeline lanes, captions, subtitles and voices have it.
@@ -78,7 +94,7 @@ Sencer: "In scene tab, let me re-order contents of "references", "cast in this s
   - Scenes with shots on the timeline, scenes of several passes and raw prompts are written as before.
 - **For developers:** new `web/rw/shotfill.js` (`readWritten`, `fillable`, `fillScene`, `fillWords`), called by `passes.applyWritten` (single pass, `report.fill`), the rewriter's Accept and `scene.js fillNote`. `llm.fills_timeline`, `llm.FILL_LINES_RULE`; `tidy_pass(free_lines=)`; `prompt.tidy_rewrite(new_shots=)`. Mock: `mockFlags.writeText`. New `tests/test_shot_fill.py` (shotfill.js runs under node); `interact.py` runs `v0142_checks()`.
 
-## v0.14.1 — 2026-11-12
+## v0.14.1 — 2026-11-09
 
 - **Every card on every tab folds.** Sencer: "make every section under every tab collapsible."
   - Every card on the Scene, Assets, Cast, Render, Files and Global tabs has the arrow before its title: click it (or the title) to fold the card to its title, click again to open it. Before, only Shots, Dialogue and What H3 receives did. The Assets tab's groups fold the same way, and now stay folded when you reopen the workflow.
@@ -87,7 +103,7 @@ Sencer: "In scene tab, let me re-order contents of "references", "cast in this s
   - Folding is not an edit: Ctrl+Z does not undo it and nothing renders again. A card stays folded until you open it (on the Scene tab, in every scene). Folding pauses a preview playing in the card.
 - **For developers:** `ui.js foldScope(ctx, fn)` (editor.js wraps each tab's render in it): `section()` without `collapse` folds under its help id, else `"t:" + title`; `collapse: false` keeps a card open. New `foldBlock`, `foldMenu`, `foldAll`, `setFolded`, `pauseMediaIn`, `foldArea`; foldable parts carry `data-fold`. Asset groups moved from `eph.assetGroupsClosed` to `ui.collapsed["agroup:<id>"]`. `interact.py` runs `v0141_checks()`.
 
-## v0.14.0 — 2026-11-12
+## v0.14.0 — 2026-11-08
 
 - **Clips of video and audio references.** Sencer: "when using video or audio references, allow to select from-to timestamps/frames of source video. we should be able to use the same video/audio asset in a single scene multiple times, with different start/end timestamps/durations, with or without audio (for videos)."
   - Each video or audio reference under Scene → References now has **From**, **To** and **Length**: the part of the file it sends (To empty = to the end). Type seconds (`4.5`), frames (`108f`) or a time (`0:04.5`); times are kept on whole frames. The bar under them shows the clip in the whole file: drag its ends. **Whole file** sends all of it again.
@@ -100,7 +116,7 @@ Sencer: "In scene tab, let me re-order contents of "references", "cast in this s
 - Nothing renders again: references without a From or To keep their prompts and takes. (A scene that already used the same motion or style video twice now names it as one subject shown in both clips, so that rare scene renders again.)
 - **For developers:** `ref.in` / `ref.out`; `model.snap_frame`, `ref_trimmed`, `ref_clip`, `clip_key`, `media_ref_ids`, `ref_tokens` (and their model.js twins); trimmed build entries carry `in` / `out` / `seconds`, keyed in `cache.pass_key`; `prompt.NTH_CLIP` and `PassRefs.video_of_ref` / `audio_of_ref` / `subject_of_ref` / `ref_alias`; `media.load_video(start=)`, `media.load_audio(start=)`, `render.clip_window`; `model.js tagCandidates(project, scene)`; `scene.js clipEditor`, `parseClipTime`. New `tests/test_ref_clips.py`; parity fixtures and a clip-helper parity test; `interact.py` runs `v0140_checks()`.
 
-## v0.13.1 — 2026-11-12
+## v0.13.1 — 2026-11-08
 
 - **A duplicated scene and its sections.** Sencer: "when duplicating a scene, whatever I write in sections, the source scene is rendered." The copy is a full copy, and the sections are only part of what H3 gets. These are kept from the original and decide what happens on screen whatever the sections say:
   - its **shots and spoken lines**: with "auto shots + dialogue" on, each becomes a [Shot N] line after the description, and in a scene of several passes they also make each pass's summary;
@@ -115,7 +131,7 @@ Sencer: "In scene tab, let me re-order contents of "references", "cast in this s
 - Nothing renders again; editor only (no restart needed).
 - **For developers:** `actions.moveSceneTo(id, index)`; `editor.js copyKeeps(scene)`; `scene.js sharedUse`, `shotLines`; `timeline.js sceneDrag` (`.rw-scene-drop`, `.rw-scene.dragging`, `.rw-root.rw-scene-moving`). `web-test/interact.py` runs `v0131_checks()`; the v0.3.3 check now pans with Alt + drag.
 
-## v0.13.0 — 2026-11-12
+## v0.13.0 — 2026-11-08
 
 - **Chat tab:** ask the LLM general questions. The tab shows only while an LLM is set (a base URL in Global → Prompt rewriter, or the one stored on the server).
   - The answer appears as it is written, with lists, code and bold drawn as they come. **Stop** keeps what came so far; an error offers **Retry**; **Clear** starts a new conversation. Enter sends, Shift+Enter starts a new line.
@@ -126,7 +142,7 @@ Sencer: "In scene tab, let me re-order contents of "references", "cast in this s
 - Nothing renders again; only the editor and a new backend route changed (restart ComfyUI for the Chat tab).
 - **For developers:** `POST /reelwright/llm/chat` (`llm.chat_turn`, `llm.CHAT_SYSTEM`); `llm.chat()` takes `history` and `with_text` (progress events with the text so far). `tabs/chat.js` (`enabled`, `markdown`, `visibleText`); `TABS.<id>.when` hides a tab (`ctx.tabShown`); an element of a job can draw its progress itself (`el.__rwJobRender`). `timeline.js toggleFull`; icon `expand`. `web-test/interact.py` runs `v0130_checks()`.
 
-## v0.12.0 — 2026-11-12
+## v0.12.0 — 2026-11-08
 
 - **Pose references** (Scene → References → role **pose**). Sencer: "can we add reference assets, so the real characters can use the same pose as from a given picture?"
   - Add a picture under References, set its role to **pose**, pick whose pose it is (it starts with the scene's first character) and when (the shot at that time).

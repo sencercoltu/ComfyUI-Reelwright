@@ -31,9 +31,9 @@ export const mockFlags = { slugConflict: "", mergeBusy: false, mergeMs: 0, autos
   // [OLD 2026-11-06 v0.10.0] voiceCuts added below
   // speechCalls: [], speechShift: 0.6 }; // added 2026-11-06 v0.10.0: /speech requests and how late the mock hears the lines
   // [/OLD]
-  // [OLD 2026-11-12 v0.14.1->v0.14.2] speechCalls: [], speechShift: 0.6, voiceCuts: [] }; // added 2026-11-06 v0.10.0: /speech requests, how late the mock hears the lines, /voice_from_take bodies
+  // [OLD 2026-11-09 v0.14.1->v0.14.2] speechCalls: [], speechShift: 0.6, voiceCuts: [] }; // added 2026-11-06 v0.10.0: /speech requests, how late the mock hears the lines, /voice_from_take bodies
   speechCalls: [], speechShift: 0.6, voiceCuts: [], // added 2026-11-06 v0.10.0: /speech requests, how late the mock hears the lines, /voice_from_take bodies
-  writeText: {} }; // added 2026-11-12 v0.14.2: scene id -> the detailed description /llm/passes and /llm/rewrite write
+  writeText: {} }; // added 2026-11-09 v0.14.2: scene id -> the detailed description /llm/passes and /llm/rewrite write
 if (typeof window !== "undefined") window.__mockFlags = mockFlags;
 const mergeJobs = {};
 
@@ -549,7 +549,7 @@ if (typeof window !== "undefined") window.__mockProfiles = profileStore;
 // added 2026-11-03 v0.4.2: a fake LLM request that sends reelwright.llm progress events and can be cancelled
 const llmLive = {};
 const llmCancelled = new Set();
-const chatCalls = []; // added 2026-11-12 v0.13.0: what /reelwright/llm/chat was sent
+const chatCalls = []; // added 2026-11-08 v0.13.0: what /reelwright/llm/chat was sent
 if (typeof window !== "undefined") window.__mockChat = chatCalls;
 const failedOnce = new Set();
 export const scriptCalls = [];
@@ -562,13 +562,13 @@ async function llmWork(job, ms, tokens, sendWith = null) {
   const send = sendWith || (d => { for (const cb of listeners["reelwright.llm"] || []) cb({ job, budget: 16384, input: 2400, context: 32768, ...d }); });
   send({ phase: "waiting", elapsed: 0, tokens: 0, reasoning: 0 });
   const steps = 6;
-  // added 2026-11-12 v0.15.0: the reasoning (first half) and the answer (second half) as they come, like llm.py chat
+  // added 2026-11-09 v0.15.0: the reasoning (first half) and the answer (second half) as they come, like llm.py chat
   const think = ["The user wants ", "the scene written. ", "Shots first, then the sound."], answer = ["{\"summary\": ", "\"Mara at the pier\", ", "\"detailed_description\": \"...\"}"];
   const at = { think: 0, text: 0 };
   for (let i = 1; i <= steps; i++) {
     await new Promise(r => setTimeout(r, ms / steps));
     if (llmCancelled.has(job)) { delete llmLive[job]; llmCancelled.delete(job); return true; }
-    // [OLD 2026-11-12 v0.14.4->v0.15.0] send({ phase: "writing", elapsed: (ms / 1000) * (i / steps), tokens: Math.round(tokens * i / steps), reasoning: 0 });
+    // [OLD 2026-11-09 v0.14.4->v0.15.0] send({ phase: "writing", elapsed: (ms / 1000) * (i / steps), tokens: Math.round(tokens * i / steps), reasoning: 0 });
     const k = i <= 3 ? "think" : "text", add = (k === "think" ? think : answer)[(i - 1) % 3];
     send({ phase: "writing", elapsed: (ms / 1000) * (i / steps), tokens: Math.round(tokens * i / steps), reasoning: 0, [k + "_at"]: at[k], [k + "_add"]: add });
     at[k] += add.length;
@@ -621,20 +621,21 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-06 v0.10.1->v0.10.2] case "/reelwright/info": return json({ version: "0.10.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-07 v0.10.2->v0.10.3] case "/reelwright/info": return json({ version: "0.10.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-08 v0.10.3->v0.11.0] case "/reelwright/info": return json({ version: "0.10.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.11.0->v0.12.0] case "/reelwright/info": return json({ version: "0.11.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.12.0->v0.13.0] case "/reelwright/info": return json({ version: "0.12.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.13.0->v0.13.1] case "/reelwright/info": return json({ version: "0.13.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.13.1->v0.14.0] case "/reelwright/info": return json({ version: "0.13.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.14.0->v0.14.1] case "/reelwright/info": return json({ version: "0.14.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.14.1->v0.14.2] case "/reelwright/info": return json({ version: "0.14.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.14.2->v0.14.3] case "/reelwright/info": return json({ version: "0.14.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.14.3->v0.14.4] case "/reelwright/info": return json({ version: "0.14.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.14.4->v0.15.0] case "/reelwright/info": return json({ version: "0.14.4", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.15.0->v0.15.1] case "/reelwright/info": return json({ version: "0.15.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.15.1->v0.16.0] case "/reelwright/info": return json({ version: "0.15.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.16.0->v0.16.1] case "/reelwright/info": return json({ version: "0.16.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    // [OLD 2026-11-12 v0.16.1->v0.17.0] case "/reelwright/info": return json({ version: "0.16.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    case "/reelwright/info": return json({ version: "0.17.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-08 v0.11.0->v0.12.0] case "/reelwright/info": return json({ version: "0.11.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-08 v0.12.0->v0.13.0] case "/reelwright/info": return json({ version: "0.12.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-08 v0.13.0->v0.13.1] case "/reelwright/info": return json({ version: "0.13.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-08 v0.13.1->v0.14.0] case "/reelwright/info": return json({ version: "0.13.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-09 v0.14.0->v0.14.1] case "/reelwright/info": return json({ version: "0.14.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-09 v0.14.1->v0.14.2] case "/reelwright/info": return json({ version: "0.14.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-09 v0.14.2->v0.14.3] case "/reelwright/info": return json({ version: "0.14.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-09 v0.14.3->v0.14.4] case "/reelwright/info": return json({ version: "0.14.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-09 v0.14.4->v0.15.0] case "/reelwright/info": return json({ version: "0.14.4", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-09 v0.15.0->v0.15.1] case "/reelwright/info": return json({ version: "0.15.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-09 v0.15.1->v0.16.0] case "/reelwright/info": return json({ version: "0.15.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-09 v0.16.0->v0.16.1] case "/reelwright/info": return json({ version: "0.16.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-09 v0.16.1->v0.17.0] case "/reelwright/info": return json({ version: "0.16.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-09 v0.17.0->v0.17.1] case "/reelwright/info": return json({ version: "0.17.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.17.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -794,8 +795,8 @@ async function route(path, opts = {}) {
       const s = body.project.scenes.find(x => x.id === body.scene_id);
       // added 2026-11-03 v0.4.2: progress events and Stop
       if (body.job && await llmWork(body.job, 600, 900)) return json({ cancelled: true });
-      // [OLD 2026-11-12 v0.14.1->v0.14.2] return json({ sections: { ...s.prompt.sections, summary: (s.prompt.sections.summary || "") + " The candle gutters as she reads.", detailed_description: "Extreme close-ups, warm key light from the candle, shallow depth of field." }, warnings: [] });
-      // added 2026-11-12 v0.14.2: mockFlags.writeText[scene id] is the detailed description the LLM writes
+      // [OLD 2026-11-09 v0.14.1->v0.14.2] return json({ sections: { ...s.prompt.sections, summary: (s.prompt.sections.summary || "") + " The candle gutters as she reads.", detailed_description: "Extreme close-ups, warm key light from the candle, shallow depth of field." }, warnings: [] });
+      // added 2026-11-09 v0.14.2: mockFlags.writeText[scene id] is the detailed description the LLM writes
       return json({ sections: { ...s.prompt.sections, summary: (s.prompt.sections.summary || "") + " The candle gutters as she reads.", detailed_description: mockFlags.writeText?.[s.id] || "Extreme close-ups, warm key light from the candle, shallow depth of field." }, warnings: [] });
     }
     // added 2026-11-05 v0.8.0: write the sections of a scene's passes, one fake request per pass, each with progress
@@ -804,7 +805,7 @@ async function route(path, opts = {}) {
       const p = body.project, i = p.scenes.findIndex(x => x.id === body.scene_id), s = p.scenes[i];
       if (!s) return json({ error: "Unknown scene " + body.scene_id }, 400);
       // [OLD 2026-11-06 v0.9.0->v0.10.0] mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job });
-      // [OLD 2026-11-12 v0.14.4->v0.15.0] mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job, instruction: body.instruction || "" }); // added 2026-11-06 v0.10.0: the rewriter on a pass tab sends one
+      // [OLD 2026-11-09 v0.14.4->v0.15.0] mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job, instruction: body.instruction || "" }); // added 2026-11-06 v0.10.0: the rewriter on a pass tab sends one
       mockFlags.passCalls.push({ scene_id: body.scene_id, passes: body.passes, job: body.job, instruction: body.instruction || "", brief: s?.prompt?.brief ?? null }); // v0.10.0: instruction; v0.15.0: the scene's Write prompts brief
       if (mockFlags.passesFail === body.scene_id) return json({ error: "No answer from http://llm.local:30000/v1 for 120 s. (tried 3 times)", reason: "stall" }, 502);
       const plan = modelPlanScene(p, s, i).passes;
@@ -818,9 +819,9 @@ async function route(path, opts = {}) {
         const shots = (ps.shots || []).map((x, j) => (j ? `[Shot ${j + 1}] At ${fmt(x.t)}, the camera cuts to ` : "[Shot 1] Live-action, cinematic, ") + `${x.text || "the scene continues"}`);
         out.push({ index: k, start: ps.start, end: ps.end, sections: {
           subject_definitions: "", summary: `Pass ${k} of ${s.title}: ${(ps.shots || []).map(x => x.text).filter(Boolean).join(" ") || s.prompt.sections.summary || "the action continues."}`.slice(0, 220),
-          // [OLD 2026-11-12 v0.14.1->v0.14.2] retention_analysis: "", detailed_description: (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.",
-          // [OLD 2026-11-12 v0.14.2->v0.14.3] retention_analysis: "", detailed_description: mockFlags.writeText?.[s.id] || (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.", // added 2026-11-12 v0.14.2: writeText
-          // added 2026-11-12 v0.14.4: writeText[scene id] may be a list, one text per pass
+          // [OLD 2026-11-09 v0.14.1->v0.14.2] retention_analysis: "", detailed_description: (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.",
+          // [OLD 2026-11-09 v0.14.2->v0.14.3] retention_analysis: "", detailed_description: mockFlags.writeText?.[s.id] || (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.", // added 2026-11-09 v0.14.2: writeText
+          // added 2026-11-09 v0.14.4: writeText[scene id] may be a list, one text per pass
           retention_analysis: "", detailed_description: (Array.isArray(mockFlags.writeText?.[s.id]) ? mockFlags.writeText[s.id][k - 1] : mockFlags.writeText?.[s.id]) || (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.",
           overall_soundscape: s.prompt.sections.overall_soundscape || "Wind and distant surf.", non_diegetic_music: "N/A" } });
       }
@@ -831,7 +832,7 @@ async function route(path, opts = {}) {
     // added 2026-11-03 v0.4.2: script import in parts. Table rows become one scene each; a part containing CUT is
     // "cut off" while it can still be split; a part containing FAILONCE fails the first time it is sent.
     case "/reelwright/llm/script/parts": return json(mockSplit(body.script || "", body.part_chars || 0));
-    // added 2026-11-12 v0.13.0: Chat tab: the answer streams in reelwright.llm events ("text"); "FAIL" in the question fails
+    // added 2026-11-08 v0.13.0: Chat tab: the answer streams in reelwright.llm events ("text"); "FAIL" in the question fails
     case "/reelwright/llm/chat": {
       const msgs = body.messages || [];
       const q = String(msgs[msgs.length - 1]?.content || "");

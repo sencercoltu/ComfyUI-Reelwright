@@ -140,7 +140,7 @@ def harbor_like():
         {"id": "a_song", "kind": "audio", "name": "song", "file": "x/song.wav", "duration": 40.0},
         {"id": "a_nofile", "kind": "audio", "name": "lost", "file": "", "duration": 30.0},
         {"id": "a_belly", "kind": "image", "name": "belly", "file": "x/belly.png"},  # added 2026-11-08 v0.11.0
-        {"id": "a_pose", "kind": "image", "name": "pose", "file": "x/pose.png"},  # added 2026-11-12 v0.12.0
+        {"id": "a_pose", "kind": "image", "name": "pose", "file": "x/pose.png"},  # added 2026-11-08 v0.12.0
     ]
     p["cast"] = [
         {"id": "c_mara", "name": "Mara", "speaker": "S1", "anchors": ["a_front", "a_side"], "voice": "a_voice",
@@ -167,15 +167,15 @@ def harbor_like():
                   {"id": "r_first", "asset": "a_front", "role": "first_frame"},
                   {"id": "r_last", "asset": "a_side", "role": "last_frame"},
                   {"id": "r_amb2", "asset": "a_amb", "role": "reference"},
-                  # [OLD 2026-11-12 v0.12.0] {"id": "r_amb3", "asset": "a_amb", "role": "reference"}],
+                  # [OLD 2026-11-08 v0.12.0] {"id": "r_amb3", "asset": "a_amb", "role": "reference"}],
                   {"id": "r_amb3", "asset": "a_amb", "role": "reference"},
-                  # added 2026-11-12 v0.12.0: pose references: Mara in pass 2, Tom (only speaks here) at the very end,
+                  # added 2026-11-08 v0.12.0: pose references: Mara in pass 2, Tom (only speaks here) at the very end,
                   # one for nobody of this scene, one on a sound (no picture)
                   {"id": "r_pose", "asset": "a_pose", "role": "pose", "cast": "c_mara", "time": 20.0},
                   {"id": "r_pose_end", "asset": "a_pose", "role": "pose", "cast": "c_tom", "time": 99.0},
                   {"id": "r_pose_x", "asset": "a_belly", "role": "pose", "cast": "c_nobody", "time": 1.0},
                   {"id": "r_pose_snd", "asset": "a_amb", "role": "pose", "cast": "c_mara", "time": 1.0},
-                  # added 2026-11-12 v0.14.0: clips: the dolly again from 1 s to 3.5 s with its sound, from 2 s to its
+                  # added 2026-11-08 v0.14.0: clips: the dolly again from 1 s to 3.5 s with its sound, from 2 s to its
                   # end, the rain from 2 s to 4 s (twice: sent once), Mara's voice from 0.5 s (a clip of its own), a To
                   # past the end, a From past the end
                   {"id": "r_dolly_b", "asset": "a_dolly", "role": "reference", "in": 1.0, "out": 3.5, "soundtrack": True},
@@ -236,11 +236,11 @@ def malformed():
         {"scenes": [{
             "shots": [{"t": 5, "id": "h_1"}, {"t": "2", "id": "h_1"}, {"t": "abc"}, None, {"t": -1, "camera": 3}],
             "dialogue": [{"t": 4, "speaker": 5}, {"t": 1, "id": "d"}, {"t": 1, "id": "d"}, "x"],
-            # [OLD 2026-11-12 v0.12.0] "refs": [{"id": "r", "asset": 3, "role": "x", "time": "1.5", "keep": ["a", 1, None, {}],
-            # [OLD 2026-11-12 v0.12.0]           "soundtrack": 1}, {"id": "r"}, 7],
+            # [OLD 2026-11-08 v0.12.0] "refs": [{"id": "r", "asset": 3, "role": "x", "time": "1.5", "keep": ["a", 1, None, {}],
+            # [OLD 2026-11-08 v0.12.0]           "soundtrack": 1}, {"id": "r"}, 7],
             "refs": [{"id": "r", "asset": 3, "role": "x", "time": "1.5", "keep": ["a", 1, None, {}],
                       "soundtrack": 1}, {"id": "r"}, 7, {"role": "pose", "cast": 5, "time": "x"},  # v0.12.0: pose
-                     # added 2026-11-12 v0.14.0: From / To as text, negative, past a frame, zero, not a number
+                     # added 2026-11-08 v0.14.0: From / To as text, negative, past a frame, zero, not a number
                      {"in": "1.02", "out": "3.51"}, {"in": -2, "out": -1}, {"in": 1.0208333, "out": 0},
                      {"in": "x", "out": True}, {"in": None, "out": "4"}],
             "cast": ["c_1", {"id": 2, "outfit": None}, 3, None],
@@ -744,7 +744,7 @@ def test_v080_seam_video_ref_off_budget_matches_the_build():
 
 
 def test_v0140_clip_helpers_match(tmp_path):
-    """added 2026-11-12 v0.14.0: model.ref_clip / ref_trimmed / clip_key / ref_tokens = model.js refClip / refTrimmed /
+    """added 2026-11-08 v0.14.0: model.ref_clip / ref_trimmed / clip_key / ref_tokens = model.js refClip / refTrimmed /
     clipKey / refTokens."""
     p = model.normalize_project(harbor_like())
     p["assets"].append({"id": "a_v2", "kind": "video", "code": "V9", "name": "x", "file": "x/v.mp4", "duration": 0})
