@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.17.2 — 2026-11-09
+
+The review's second pass.
+
+- **A spoken line's time that opens a shot is no longer taken for the shot's cut.** v0.17.0 asks the LLM to open each line with its time ("At 00:01.500, @Mara (S1) says, …"), but a time at the start of a shot was read as the cut: in [Shot 1] it was dropped and the line was spread instead; in a later shot Write prompts set it to the shot's start, and the prompt had no "the shot cuts to" for that shot. A leading time is now the cut only with the cut's words ("the shot cuts to", "the camera cuts to", "transitions to" …) or when no spoken line follows in its sentence. A later shot that opens with a timed line reads "At 00:05.000, the shot cuts to a new angle. At 00:05.800, <Subject 2> (S2) says, …".
+- **A line without a time stays in its shot.** After a timed line, the next one followed it by its length and could land in the next shot; it now goes halfway to the shot's end when there is no room.
+- **Subtitles of lines spoken close together no longer overlap**: each lasts at least 0.4 s, but ends before the next one starts.
+- **For developers:** `prompt.CUT_STRICT`, `_lead_kind` (cut / line / time), used by `_drop_cut_lead`, `written_shots` and `llm.tidy_pass`; `shotfill.js CUT_STRICT`, `leadKind` in `readWritten` and `takePassShots`; `lineTimes` bounds untimed lines; `speech.align` takes the minimum length before the next line's start. Tests: `test_line_times` +3, `test_speech` +1.
+
 ## v0.17.1 — 2026-11-09
 
 Fixes from a third outside review of v0.17.0.

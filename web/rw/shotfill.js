@@ -21,6 +21,18 @@ import { FPS, newId, planScene, sceneIndex, dialogueSeconds, snapFrame, DEFAULT_
 const LABEL = /\[\s*shot\s*(\d+)\s*\]/gi;
 const SPAN = /<d>([\s\S]*?)<\/d>/gi;
 const CUT = /^At\s+(\d{1,2}):(\d{2}(?:\.\d{1,3})?)\s*,\s*(?:the\s+shot\s+cuts\s+to\s*)?/i;
+// added 2026-11-09 v0.17.2 (third review, second pass 11): a leading time is a cut with the cut's words (prompt.py CUT_STRICT),
+// or when no spoken line follows in its sentence; "At 00:01.500, @Mara (S1) says, <d>…</d>" is that line's time
+const CUT_STRICT = /^At\s+(\d{1,2}):(\d{2}(?:\.\d{1,3})?)\s*,\s*the\s+(?:shot|camera)\s+(?:cuts|transitions|changes|switches|dissolves|fades)\s+to\s*/i;
+function leadKind(body) {
+  const m = CUT.exec(body);
+  if (!m) return "";
+  if (CUT_STRICT.test(body)) return "cut";
+  const rest = body.slice(m[0].length);
+  const d = rest.indexOf("<d>");
+  const stop = /[.!?…](?=\s|$)/.exec(rest);
+  return d >= 0 && (!stop || d < stop.index) ? "line" : "time";
+}
 const LANG = /^\s*\[([^\]\n]{1,40})\]\s*/;
 const NAME = "[\\p{L}\\p{N}\\p{M}_]+(?:['’.\\-][\\p{L}\\p{N}\\p{M}_]+)*";
 const tagRe = () => new RegExp("@\\{([^}\\n]+)\\}|(?<![\\p{L}\\p{N}\\p{M}_@])@(?!@)(" + NAME + ")", "gu");
@@ -354,7 +366,11 @@ function lineTimes(lines, start, end, offset, duration, known = []) {
     at = [];
     let cur = start + Math.min(0.5, Math.max(0, end - start) * 0.1), prev = -Infinity;
     given.forEach((g, k) => {
-      const v = g !== null && g >= start - 1e-6 && g < end - 1e-6 && g > prev + 1e-6 ? g : Math.max(cur, prev + 1 / FPS);
+      // [OLD 2026-11-09 v0.17.1->v0.17.2] const v = g !== null && g >= start - 1e-6 && g < end - 1e-6 && g > prev + 1e-6 ? g : Math.max(cur, prev + 1 / FPS);
+      // added 2026-11-09 v0.17.2 (third review, second pass 12): a line without a time stays inside its shot (it could spill
+      // into the next one): past the end it goes halfway between the line before and the shot's end
+      let v = g !== null && g >= start - 1e-6 && g < end - 1e-6 && g > prev + 1e-6 ? g : Math.max(cur, prev + 1 / FPS);
+      if (v > end - 1 / FPS) v = Math.max(start, prev) + (end - Math.max(start, prev)) / 2;
       at.push(v);
       prev = v;
       cur = v + (lengths[k] || 1) + 0.3;
@@ -385,9 +401,18 @@ export function readWritten(p, sc, desc, x = null) {
     let body = c.trim();
     let t = i === 0 ? 0 : null;
     const cut = CUT.exec(body);
+    /* [OLD 2026-11-09 v0.17.1->v0.17.2] any leading time was the cut and left the text (a spoken line's time was lost)
     if (cut) {
       if (i > 0) t = Number(cut[1]) * 60 + Number(cut[2]) + offset;
       body = body.slice(cut[0].length);
+    }
+    [/OLD] */
+    // added 2026-11-09 v0.17.2: a later shot starts at its leading time; the time leaves the text when it is the cut (not a
+    // spoken line's time, and in [Shot 1] only with the cut's words: the first shot has no cut)
+    if (cut) {
+      const kind = leadKind(body);
+      if (i > 0) t = Number(cut[1]) * 60 + Number(cut[2]) + offset;
+      if (kind === "cut" || (kind === "time" && i > 0)) body = body.slice((CUT_STRICT.exec(body) || cut)[0].length);
     }
     const got = takeLines(body, cf, sMap);
     // [OLD 2026-11-09 v0.16.1->v0.17.0] the text and its camera were read here, before the lines had their times
@@ -603,7 +628,8 @@ export function takePassShots(p, sc, plan, items) {
       if (ps.continuing || !sh) { keep.push(whole); return; }
       let body = whole.slice(m[0].length).trim();
       const cut = CUT.exec(body);
-      if (cut) body = body.slice(cut[0].length);
+      // [OLD 2026-11-09 v0.17.1->v0.17.2] if (cut) body = body.slice(cut[0].length);
+      if (cut && leadKind(body) !== "line") body = body.slice((CUT_STRICT.exec(body) || cut)[0].length); // v0.17.2: a line's time stays
       const got = takeLines(body, cf, new Map());
       // [OLD 2026-11-09 v0.17.0->v0.17.1] takeShot(sh, cameraOf(p, sentence(got.text || got.lines[0]?.who || "")));  (its
       // "At MM:SS," cues stayed in pass time, and the actions after a line lost their place)

@@ -159,8 +159,11 @@ def align(lines, segs, end_time=None):
                 end = b
         else:
             end = starts[i] + durs[i]
-        end = min(end, nxt - 0.05)
+        # [OLD 2026-11-09 v0.17.1->v0.17.2] end = min(end, nxt - 0.05)
+        # [OLD 2026-11-09 v0.17.1->v0.17.2] end = max(end, starts[i] + 0.4)  (lines under 0.45 s apart overlapped)
+        # added 2026-11-09 v0.17.2 (third review 13): at least 0.4 s, but never into the next line (lines are 0.2 s apart at least)
         end = max(end, starts[i] + 0.4)
+        end = max(min(end, nxt - 0.05), starts[i] + 0.05)
         out.append({"id": ls[i].get("id", ""), "t": round(starts[i], 3), "end": round(end, 3),
                     "matched": match[i] is not None, "planned": planned[i]})
     return out

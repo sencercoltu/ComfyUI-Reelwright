@@ -1830,8 +1830,13 @@ def tidy_pass(sections, x, build, auto, k=1, known=None, guides=(), free_lines=F
                     body = _prompt._drop_cut_lead(body)
                 else:
                     t = float(shots[j - 1]["t"])
-                    m = _CUT_TIME.match(body)
-                    if m:
+                    # [OLD 2026-11-09 v0.17.1->v0.17.2] m = _CUT_TIME.match(body)  (a shot that opens with a timed spoken line
+                    # had the line's time rewritten to the shot's start)
+                    timed_line = _prompt._lead_kind(body) == "line"  # added 2026-11-09 v0.17.2 (third review 11)
+                    m = None if timed_line else _CUT_TIME.match(body)
+                    if timed_line:
+                        body = "At {}, the shot cuts to a new angle. {}".format(spec.fmt_time(t), body)
+                    elif m:
                         said = int(m.group(1)) * 60 + float(m.group(2))
                         if abs(said - t) > 0.0005:
                             body = "At {}{}{}".format(spec.fmt_time(t), m.group(3), body[m.end():])

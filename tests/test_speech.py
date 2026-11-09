@@ -100,3 +100,11 @@ def test_timed_lines_and_merge_subtitles_follow_the_speech(tmp_path):
     bad = [dict(entries[0], path=str(tmp_path / "missing.mp4"))]
     assert assemble.speech_timed(bad)[0]["dialogue"][0]["t"] == 1.0
     os.remove(take)
+
+
+def test_align_never_runs_a_line_into_the_next():
+    """added 2026-11-09 v0.17.2 (third review 13): lines 0.2 s apart showed 0.4 s each and overlapped."""
+    out = speech.align([{"id": "a", "t": 1.0, "duration": 1}, {"id": "b", "t": 1.2, "duration": 1},
+                        {"id": "c", "t": 1.4, "duration": 1}], [], 5.0)
+    for x, y in zip(out, out[1:]):
+        assert x["t"] < x["end"] <= y["t"] - 0.05 + 1e-9, out

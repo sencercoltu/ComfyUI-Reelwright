@@ -244,3 +244,53 @@ def test_write_prompts_on_a_scene_of_several_passes_keeps_scene_times(tmp_path, 
     first = next(s for s in x["shots"] if not s["continuing"])
     shot = next(s for s in res["shots"] if s["id"] == first["id"])
     assert "At {}, she stops.".format(prompt.spec.fmt_time(first["t"] + x["start"] + 1.0)) in shot["text"], (shot, x["start"])
+
+
+# ---- added 2026-11-09 v0.17.2: the review's second pass ------------------------------------------------------------
+
+def test_a_timed_line_that_opens_a_shot_is_not_its_cut():
+    """Review 11: "At 00:01.500, @Mara (S1) says, <d>…</d>" opening a shot is that line's time; the cut lead regexes
+    took it for the cut (the first shot dropped it, a later one got no cut marker)."""
+    line = "At 00:06.200, @Mara (S1) says, <d>[English] Hi.</d> She leaves."
+    assert prompt._lead_kind(line) == "line"
+    assert prompt._lead_kind("At 00:06.000, the camera cuts to a door.") == "cut"
+    assert prompt._lead_kind("At 00:06.000, a close-up of the door. <d>[English] x</d>") == "time"
+    assert prompt._lead_kind("Rain.") == ""
+    assert prompt._drop_cut_lead(line) == line
+    assert prompt._drop_cut_lead("At 00:06.000, the shot cuts to a door.") == "A door."
+    scene = {"duration": 10.0}
+    plan = {"passes": [{"index": 1, "start": 0.0, "shots": [{"number": 1, "t": 0.0}, {"number": 2, "t": 6.0}]}]}
+    got = prompt.written_shots(scene, plan, plan["passes"][0], "[Shot 1] At 00:01.500, @Mara (S1) says, <d>[English] One."
+                               "</d>\n[Shot 2] " + line)
+    assert got["text"] == "[Shot 1] At 00:01.500, @Mara (S1) says, <d>[English] One.</d>\n[Shot 2] At 00:06.000, the shot " \
+                          "cuts to a new angle. " + line, got
+
+
+def test_tidy_pass_keeps_a_timed_line_that_opens_a_shot(harbor):
+    from reelwright import llm
+    from tests.test_llm import long_scene
+    p, scene = long_scene(harbor)
+    plan, builds = llm.scene_builds(p, scene)
+    x, b = plan["passes"][1], builds[1]
+    t2 = prompt.spec.fmt_time(float(x["shots"][1]["t"]))
+    desc = "[Shot 1] Rain.\n[Shot 2] At 00:05.900, @Mara (S1) mutters, <d>[English] Almost home.</d>"
+    out, _ = llm.tidy_pass({"detailed_description": desc}, x, b, {"subjects": True, "retention": True, "shots": True}, 2)
+    assert out["detailed_description"].endswith("[Shot 2] At {}, the shot cuts to a new angle. At 00:05.900, @Mara (S1) "
+                                                "mutters, <d>[English] Almost home.</d>".format(t2)), out
+
+
+@pytest.mark.skipif(not NODE, reason="node is not installed")
+def test_write_prompts_second_pass_fixes(tmp_path, harbor):
+    """Review 11: a shot's leading line time stays the line's (shot 1 too); a later shot opening with a timed line starts
+    there. Review 12: a line without a time stays inside its shot."""
+    p = copy.deepcopy(harbor)
+    p["scenes"][0]["duration"] = 10.0
+    p = normalize_project(p)
+    one, spill = _run2(tmp_path, p, [
+        {"op": "read", "scene": "s_one", "text": "[Shot 1] At 00:01.500, @Mara (S1) says, <d>[English] One.</d> She sits."
+         "\n[Shot 2] At 00:05.000, @Mara (S1) says, <d>[English] Two.</d>"},
+        {"op": "read", "scene": "s_one", "text": "[Shot 1] At 00:01.000, @Mara (S1) says, <d>[English] A long line of many "
+         "many words that goes on and on.</d> @Mara (S1) adds, <d>[English] More words follow here again and again "
+         "for a while.</d>\n[Shot 2] At 00:03.000, the shot cuts to the door."}])
+    assert [round(d["t"] * 24) for d in one["lines"]] == [36, 120] and [s["t"] for s in one["shots"]] == [0, 5], one
+    assert spill["shots"][1]["t"] == 3 and spill["lines"][1]["t"] < 3, spill

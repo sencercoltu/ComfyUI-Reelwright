@@ -1955,8 +1955,33 @@ def _cut_object(body):
     return body
 
 
+# added 2026-11-09 v0.17.2 (third review, second pass 11): a leading "At MM:SS.mmm," is a cut only with the cut's words or
+# when no spoken line follows in its sentence; "At 00:01.500, @Mara (S1) says, <d>…</d>" is that line's time (v0.17.0
+# asks the LLM for it), and CUT_LEAD (the words optional) took it for the cut
+CUT_STRICT = re.compile(r"^At\s+\d{1,2}:\d{2}(?:\.\d{1,3})?\s*,\s*the\s+(?:shot|camera)\s+"
+                        r"(?:cuts|transitions|changes|switches|dissolves|fades)\s+to\s+", re.I)
+SENTENCE_STOP = re.compile(r"[.!?\u2026](?=\s|$)")
+
+
+def _lead_kind(body):
+    """What a leading "At MM:SS.mmm," of a written shot is: "cut" (with the cut's words), "line" (a spoken line <d>…</d>
+    follows in the same sentence: its time), "time" (anything else: read as the cut, as before) or "" (none)."""
+    body = (body or "").lstrip()
+    m = CUT_LEAD.match(body)
+    if not m:
+        return ""
+    if CUT_STRICT.match(body):
+        return "cut"
+    rest = body[m.end():]
+    d = rest.find("<d>")
+    stop = SENTENCE_STOP.search(rest)
+    return "line" if d >= 0 and (stop is None or d < stop.start()) else "time"
+
+
 def _drop_cut_lead(body):
     """'At 00:14.375, the shot cuts to a medium shot: ...' -> 'A medium shot: ...' (the first shot has no cut)."""
+    if _lead_kind(body) == "line":  # added 2026-11-09 v0.17.2: a spoken line's time stays
+        return body
     m = CUT_LEAD.match(body)
     if not m:
         return body
@@ -2000,6 +2025,9 @@ def written_shots(scene, plan, pass_, text):
                 body = _drop_cut_lead(body)
                 if sh.get("continuing") and pass_["index"] > 1 and "continues" not in body.lower():
                     body = (CONTINUES + " " + body).strip()
+            # [OLD 2026-11-09 v0.17.1->v0.17.2] elif not CUT_LEAD.match(body):  (a spoken line's time was taken for the cut)
+            elif _lead_kind(body) == "line":  # added 2026-11-09 v0.17.2: the cut first, then the timed line
+                body = "At {}, the shot cuts to a new angle. {}".format(spec.fmt_time(float(sh["t"])), body)
             elif not CUT_LEAD.match(body):
                 body = "At {}, the shot cuts to {}".format(spec.fmt_time(float(sh["t"])), _cut_object(body))
         elif k in placed or not last:
