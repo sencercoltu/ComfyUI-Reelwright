@@ -1138,3 +1138,6 @@ body.rw-sorting, body.rw-sorting * { cursor: grabbing !important; user-select: n
 .rw-llm-ans-head { color: var(--dim); }
 .rw-llm-ans-text { color: var(--text); }
 .rw-llm-notes:empty { display: none; }
+/* added 2026-11-12 v0.15.1: a dialog opens next to what opened it (ui.js placeNear); without .anchored it is centred */
+.rw-modal.anchored { display: block; }
+.rw-modal.anchored > .rw-modal-box { position: absolute; margin: 0; }

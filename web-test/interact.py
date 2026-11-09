@@ -1523,6 +1523,7 @@ def main():
         v0143_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.3: framing and camera moves of written shots go into the shots
         v0144_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.4: written shots replace the shots whatever their count; scenes of several passes too
         v0150_checks(page, check, saved, shots)  # added 2026-11-12 v0.15.0: drag to reorder, Reset scene, the LLM output popup, the Write prompts brief
+        v0151_checks(page, check, saved, shots)  # added 2026-11-12 v0.15.1: dialogs open next to what opened them
         browser.close()
     httpd.shutdown()
 
@@ -5443,8 +5444,11 @@ def v0150_checks(page, check, saved, shots):
     undo = lambda: (page.evaluate("window.__editor.store.undo()"), page.wait_for_timeout(300))
 
     def drag(src, dst, below=True):  # press a grip, move over the middle of another row (just below it), release
-        page.locator(dst).scroll_into_view_if_needed()
-        page.locator(src).scroll_into_view_if_needed()
+        # [OLD 2026-11-12 v0.15.0->v0.15.1] page.locator(dst).scroll_into_view_if_needed()
+        # [OLD 2026-11-12 v0.15.0->v0.15.1] page.locator(src).scroll_into_view_if_needed()
+        # added 2026-11-12 v0.15.1: a redraw (plan refresh) during Playwright's "stable" wait failed it now and then
+        page.wait_for_timeout(300)
+        page.locator(src).evaluate("e => e.scrollIntoView({ block: 'center' })")
         page.wait_for_timeout(150)
         a, b = page.locator(src).bounding_box(), page.locator(dst).bounding_box()
         page.mouse.move(a["x"] + a["width"] / 2, a["y"] + a["height"] / 2)
@@ -5515,8 +5519,9 @@ def v0150_checks(page, check, saved, shots):
       { id: 'g_c', name: 'gc.safetensors', strength: 1, enabled: true }]; }, { label: 'v0150 global loras' })""")
     page.click(".rw-tab:has-text('Global')")
     page.wait_for_timeout(400)
-    grip = page.locator("[data-key='glora-grip-g_a']")
-    grip.scroll_into_view_if_needed()
+    # [OLD 2026-11-12 v0.15.0->v0.15.1] grip = page.locator("[data-key='glora-grip-g_a']")
+    # [OLD 2026-11-12 v0.15.0->v0.15.1] grip.scroll_into_view_if_needed()
+    page.wait_for_timeout(800)  # added 2026-11-12 v0.15.1: let the plan refresh redraw first (drag scrolls the grip into view)
     drag("[data-key='glora-grip-g_a']", "[data-key='glora-grip-g_c'] >> xpath=ancestor::div[contains(@class,'rw-sort-item')][1]")
     got = [x["id"] for x in cur()["global"]["loras"]]
     check(got == ["g_b", "g_c", "g_a"] and labels()[-1] == "Reorder global LoRAs", f"Global LoRAs: dragged to the end: {got} {labels()[-1:]}")
@@ -5616,6 +5621,99 @@ def v0150_checks(page, check, saved, shots):
         page.locator(".rw-llm-out button[data-help='common.close']").click()
         page.wait_for_timeout(200)
     page.evaluate("() => { window.__mockFlags.passesMs = 0; }")
+
+
+
+def v0151_checks(page, check, saved, shots):
+    """v0.15.1 (Sencer): "All confirmation dialogs should pop up near the cursor or triggering button, not center of the
+    node. It's easy to miss if the node grows high." A node taller than the window: the dialog opens just below the
+    button pressed (above it near the window's bottom), next to the focused button after a key press, and in the middle
+    of the part of the node on screen when nothing opened it."""
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    box = lambda sel: page.evaluate("s => { const r = document.querySelector(s)?.getBoundingClientRect(); return r ? { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height } : null; }", sel)
+    inner = lambda: page.evaluate("[window.innerWidth, window.innerHeight]")
+
+    def cancel():
+        page.locator(".rw-modal button:has-text('Cancel')").click()
+        page.wait_for_timeout(250)
+
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="scene", selected="s_03")
+    q["ui"].pop("collapsed", None)
+    load(q)
+    # a node taller than the window, starting 900 px down the page
+    page.evaluate("() => { const n = document.getElementById('node'); Object.assign(n.style, { top: '900px', bottom: 'auto', height: '2600px' }); window.scrollTo(0, 0); }")
+    page.wait_for_timeout(500)
+    btn = "[data-key='reset-s_03']"
+    w, hgt = inner()
+
+    # 1. pressed near the top of the window: the dialog opens just below the button, on screen
+    page.evaluate("() => window.scrollTo(0, 840)")
+    page.wait_for_timeout(300)
+    b = box(btn)
+    page.click(btn)
+    page.wait_for_timeout(300)
+    d = box(".rw-modal-box")
+    check(d and 0 <= d["t"] - b["b"] <= 24 and d["l"] < b["r"] and d["r"] > b["l"] and d["b"] <= hgt and d["t"] >= 0,
+          f"the dialog opens just below the button that opened it: button {b} dialog {d}")
+    page.screenshot(path=str(shots / "v0151_below.png"))
+    audit("Dialog below its button")
+    cancel()
+
+    # 2. a button near the window's bottom (In the cut → Apply to all…): the dialog opens above it, still on screen
+    apply = page.locator("button:has-text('Apply to all')").first
+    apply.scroll_into_view_if_needed()
+    page.evaluate("""() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.includes('Apply to all'));
+      const r = b.getBoundingClientRect(); window.scrollTo(0, window.scrollY + r.bottom - window.innerHeight + 30); }""")
+    page.wait_for_timeout(300)
+    b = apply.bounding_box()
+    b = {"l": b["x"], "t": b["y"], "r": b["x"] + b["width"], "b": b["y"] + b["height"]}
+    apply.click()
+    page.wait_for_timeout(300)
+    d = box(".rw-modal-box")
+    check(b["b"] > hgt - 60 and d and d["b"] <= b["t"] and b["t"] - d["b"] <= 24 and d["t"] >= 0,
+          f"near the window's bottom the dialog opens above the button: button {b} dialog {d} window {hgt}")
+    page.screenshot(path=str(shots / "v0151_above.png"))
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(250)
+
+    # 3. opened from the keyboard: next to the focused button
+    page.evaluate("() => window.scrollTo(0, 840)")
+    page.wait_for_timeout(300)
+    page.locator(btn).focus()
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(300)
+    b, d = box(btn), box(".rw-modal-box")
+    check(d and 0 <= d["t"] - b["b"] <= 24, f"Enter on a focused button opens the dialog below it: button {b} dialog {d}")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(250)
+
+    # 4. nothing pressed lately: in the middle of the part of the node on screen (not of the whole node)
+    page.evaluate("() => window.scrollTo(0, 1800)")
+    page.wait_for_timeout(4300)
+    page.evaluate("async () => { const ui = await import('/web/rw/ui.js'); window.__dlg = ui.confirmDialog(window.__editor.root || document.querySelector('.rw-root'), { title: 'Test', message: 'x' }); }")
+    page.wait_for_timeout(300)
+    d = box(".rw-modal-box")
+    root = box(".rw-root")
+    vis_mid = (max(root["t"], 0) + min(root["b"], hgt)) / 2
+    check(d and abs((d["t"] + d["b"]) / 2 - vis_mid) < 30 and d["t"] >= 0 and d["b"] <= hgt,
+          f"without a trigger the dialog is in the middle of what is on screen: dialog {d} visible middle {vis_mid}")
+    page.screenshot(path=str(shots / "v0151_middle.png"))
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(250)
+    check(page.locator(".rw-modal").count() == 0, "Escape closes it")
+
+    page.evaluate("() => { const n = document.getElementById('node'); n.removeAttribute('style'); window.scrollTo(0, 0); }")
+    page.wait_for_timeout(400)
 
 
 if __name__ == "__main__":

@@ -753,6 +753,62 @@ export function confirmDialog(root, { title, message, confirmLabel = "Delete", d
 }
 [/OLD] */
 
+// ---- added 2026-11-12 v0.15.1: dialogs open next to what opened them (Sencer: "All confirmation dialogs should pop up
+// near the cursor or triggering button, not center of the node. It's easy to miss if the node grows high.")
+// The last press and the last key press anywhere on the page (window, capture phase: before ComfyUI or the editor can
+// stop them). dialogAnchor(root) gives the screen rect to open next to: the control that was pressed (still on screen
+// and small), else the point pressed; after a key press, the focused control; null when none is recent or in the editor.
+const LAST = { x: 0, y: 0, t: -1e9, el: null, key: -1e9 };
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("pointerdown", e => {
+    Object.assign(LAST, { x: e.clientX, y: e.clientY, t: performance.now(), el: e.target instanceof Element ? e.target : null });
+  }, true);
+  window.addEventListener("keydown", () => { LAST.key = performance.now(); }, true);
+}
+const ANCHOR_MS = 4000;
+const pointRect = (x, y) => ({ left: x, right: x, top: y, bottom: y, width: 0, height: 0 });
+export function dialogAnchor(root, now = performance.now()) {
+  const sc = rootScale(root) || 1;
+  const small = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.height / sc <= 80 ? r : null; };
+  const a = document.activeElement;
+  if (LAST.key > LAST.t && now - LAST.key < ANCHOR_MS && a && a !== root && root.contains(a) && !a.classList.contains("rw-keys")) {
+    const r = small(a);
+    if (r) return r;
+  }
+  if (now - LAST.t > ANCHOR_MS) return null;
+  const rr = root.getBoundingClientRect();
+  if (LAST.x < rr.left || LAST.x > rr.right || LAST.y < rr.top || LAST.y > rr.bottom) return null;
+  const ctl = LAST.el?.closest?.("button, [role=button], [role=menuitem], a, input, select, label, [data-key]");
+  const r = ctl && ctl.isConnected && root.contains(ctl) ? small(ctl) : null;
+  return r || pointRect(LAST.x, LAST.y);
+}
+
+// Put `box` (absolutely positioned in `root`) just below `anchor` (a screen rect), centred on it, or above it when there
+// is no room below; always inside the part of the root that is on screen (a node can be taller than the window).
+// Without an anchor, in the middle of that visible part. Screen pixels are turned into the root's CSS pixels
+// (ComfyUI's canvas zoom scales the root).
+export function placeNear(root, box, anchor, gap = 8) {
+  const rr = root.getBoundingClientRect(), sc = rootScale(root) || 1;
+  const m = 8 * sc;
+  const vis = { left: Math.max(rr.left, 0) + m, top: Math.max(rr.top, 0) + m,
+    right: Math.min(rr.right, window.innerWidth) - m, bottom: Math.min(rr.bottom, window.innerHeight) - m };
+  if (vis.right <= vis.left || vis.bottom <= vis.top) Object.assign(vis, { left: rr.left + m, top: rr.top + m, right: rr.right - m, bottom: rr.bottom - m });
+  const b = box.getBoundingClientRect();
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  let left, top;
+  if (anchor) {
+    left = anchor.left + anchor.width / 2 - b.width / 2;
+    const below = anchor.bottom + gap * sc, above = anchor.top - gap * sc - b.height;
+    top = below + b.height <= vis.bottom ? below : above >= vis.top ? above : vis.bottom - b.height;
+  } else {
+    left = (vis.left + vis.right) / 2 - b.width / 2;
+    top = (vis.top + vis.bottom) / 2 - b.height / 2;
+  }
+  left = clamp(left, vis.left, Math.max(vis.left, vis.right - b.width));
+  top = clamp(top, vis.top, Math.max(vis.top, vis.bottom - b.height));
+  Object.assign(box.style, { left: `${Math.round((left - rr.left) / sc)}px`, top: `${Math.round((top - rr.top) / sc)}px` });
+}
+
 // added 2026-11-03 v0.6.0: a modal dialog inside the editor with any number of buttons. Resolves with the `value`
 // of the button pressed, or `cancelValue` (Escape, a click outside the box, the editor closing, or another dialog
 // opening). Keyboard: Tab / Shift+Tab stay on the dialog's buttons; Enter presses the focused button only (Enter
@@ -760,8 +816,12 @@ export function confirmDialog(root, { title, message, confirmLabel = "Delete", d
 // reach ComfyUI (Ctrl moves focus to a hidden field first). Other keys don't reach the editor's shortcuts.
 //   choices: [{value, label, variant?: "primary"|"danger"|"default", help?}] in display order
 //   focus: the value whose button has focus at first (default: the cancel button when danger, else the last button)
-export function choiceDialog(root, { title, message, choices, cancelValue = null, focus, danger = false, help } = {}) {
+//   anchor (added 2026-11-12 v0.15.1): an element or screen rect to open next to; default dialogAnchor(root)
+// [OLD 2026-11-12 v0.15.0->v0.15.1] export function choiceDialog(root, { title, message, choices, cancelValue = null, focus, danger = false, help } = {}) {
+export function choiceDialog(root, { title, message, choices, cancelValue = null, focus, danger = false, help, anchor } = {}) {
   return new Promise(resolve => {
+    // added 2026-11-12 v0.15.1: taken before anything changes focus
+    const near = anchor instanceof Element ? anchor.getBoundingClientRect() : anchor || dialogAnchor(root);
     root.__rwModalClose?.(); // a dialog still open is cancelled, so its promise and listeners never leak
     root.querySelectorAll(".rw-modal").forEach(m => m.remove());
     const prev = document.activeElement;
@@ -807,6 +867,7 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
     const cancel = () => finish(cancelValue);
     const btns = choices.map(c => button({ label: c.label, variant: c.variant || "default", help: c.help || (c.value === cancelValue ? "common.cancel" : "common.confirm"),
       onClick: () => finish(c.value) }));
+    /* [OLD 2026-11-12 v0.15.0->v0.15.1] the box was centred in the node (out of sight when the node is taller than the window)
     const overlay = h("div", { class: "rw-modal", onPointerdown: e => { if (e.target === overlay) finish(cancelValue); } },
       h("div", { class: ["rw-modal-box", choices.length > 2 && "wide"], role: "alertdialog", "aria-modal": "true", help },
         h("div", { class: "rw-modal-title" }, danger ? icon("warn", 15) : null, h("span", null, title)),
@@ -814,6 +875,16 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
         h("div", { class: "rw-modal-actions" }, btns),
         sink));
     root.appendChild(overlay);
+    [/OLD] */
+    // added 2026-11-12 v0.15.1: the box opens next to what opened it (placeNear)
+    const box = h("div", { class: ["rw-modal-box", choices.length > 2 && "wide"], role: "alertdialog", "aria-modal": "true", help },
+      h("div", { class: "rw-modal-title" }, danger ? icon("warn", 15) : null, h("span", null, title)),
+      message ? h("div", { class: "rw-modal-msg" }, message) : null,
+      h("div", { class: "rw-modal-actions" }, btns),
+      sink);
+    const overlay = h("div", { class: "rw-modal anchored", onPointerdown: e => { if (e.target === overlay) finish(cancelValue); } }, box);
+    root.appendChild(overlay);
+    try { placeNear(root, box, near); } catch { overlay.classList.remove("anchored"); } // centred, as before
     root.__rwModalClose = cancel;
     document.addEventListener("keydown", key, true);
     setTimeout(() => { if (!closed) window.addEventListener("pointerdown", outside, true); }, 0);
@@ -827,9 +898,12 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
 // A confirmation: Cancel and OK. Resolves true/false. Options: {title, message, confirmLabel | okLabel,
 // cancelLabel, danger = true, help}. A dangerous one opens with Cancel focused, so Enter alone never deletes.
 // added 2026-11-03 v0.6.0: built on choiceDialog
-export function confirmDialog(root, { title, message, confirmLabel, okLabel, danger = true, cancelLabel = "Cancel", help } = {}) {
+// [OLD 2026-11-12 v0.15.0->v0.15.1] export function confirmDialog(root, { title, message, confirmLabel, okLabel, danger = true, cancelLabel = "Cancel", help } = {}) {
+// [OLD 2026-11-12 v0.15.0->v0.15.1]   return choiceDialog(root, {
+// [OLD 2026-11-12 v0.15.0->v0.15.1]     title, message, danger, help, cancelValue: false,
+export function confirmDialog(root, { title, message, confirmLabel, okLabel, danger = true, cancelLabel = "Cancel", help, anchor } = {}) { // anchor: added 2026-11-12 v0.15.1
   return choiceDialog(root, {
-    title, message, danger, help, cancelValue: false,
+    title, message, danger, help, anchor, cancelValue: false,
     choices: [
       { value: false, label: cancelLabel, help: "common.cancel" },
       { value: true, label: okLabel || confirmLabel || "Delete", variant: danger ? "danger" : "primary", help: "common.confirm" },
