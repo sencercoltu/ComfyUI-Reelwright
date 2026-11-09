@@ -102,6 +102,17 @@ def _no_sheet_words(b):
     return dict(b, prompt=SHEET_WORDS.sub("", b["prompt"])) if isinstance(b.get("prompt"), str) else b
 
 
+# added 2026-11-12 v0.17.0: every spoken line opens with its time ("At 00:02.400, <Subject 1> (S1) says, …"); without
+# the time a build is v0.6.1's. A scene with spoken lines gets new keys (re-renders).
+LINE_TIME = re.compile(r"At \d{2}:\d{2}\.\d{3}, (<Subject \d+>|an off-screen voice|[A-Z][^,(<]{0,40}?) (\(S\d+(?:,S\d+)*\))")
+
+
+def _no_line_times(b):
+    if not isinstance(b.get("prompt"), str):
+        return b
+    return dict(b, prompt=LINE_TIME.sub(lambda m: m.group(1)[0].upper() + m.group(1)[1:] + " " + m.group(2), b["prompt"]))
+
+
 def _sends_sheet(builds):
     return any(len(x["assets"]) > 1 for b in builds for x in b["images"])
 
@@ -129,13 +140,16 @@ def test_off_gives_the_v061_builds_and_cache_keys(v061, roots):
                 g["tag_map"] = {k: v for k, v in g["tag_map"].items() if not re.fullmatch(r"@[PVA]\d+\.\d+", k)}
             # [OLD 2026-11-12 v0.15.1->v0.16.0] assert json.loads(json.dumps(got)) == want["builds"], sid
             got = [_no_sheet_words(g) for g in got]  # added 2026-11-12 v0.16.0
+            timed = any(LINE_TIME.search(g["prompt"] or "") for g in got)  # added 2026-11-12 v0.17.0
+            got = [_no_line_times(g) for g in got]  # added 2026-11-12 v0.17.0
             assert json.loads(json.dumps(got)) == want["builds"], sid
             assert all(b["continuation"] is None for b in sr["builds"]), sid
             # [OLD 2026-11-12 v0.15.1->v0.16.0] assert sr["pass_keys"] == want["pass_keys"], sid
             # [OLD 2026-11-12 v0.15.1->v0.16.0] assert sr["key"] == want["key"], sid
             # added 2026-11-12 v0.16.0: the sheet words change its prompt, so its keys, and the keys of the scenes that
             # continue from it
-            if _sends_sheet(sr["builds"]) or (i > 0 and model.effective_start(q, i) != "fresh" and
+            # [OLD 2026-11-12 v0.16.1->v0.17.0] if _sends_sheet(sr["builds"]) or (i > 0 and model.effective_start(q, i) != "fresh" and
+            if _sends_sheet(sr["builds"]) or timed or (i > 0 and model.effective_start(q, i) != "fresh" and  # v0.17.0: timed lines
                                               q["scenes"][i - 1]["id"] in moved):
                 moved.add(sid)
                 assert sr["key"] != want["key"], sid
@@ -165,7 +179,8 @@ def test_v080_changes_only_the_summary_of_multi_pass_scenes_with_a_written_summa
                         was["images"][-1]["assets"] == ["a_letter"] and b["guides"] == was["guides"]
                     continue
                 # [OLD 2026-11-12 v0.15.1->v0.16.0] now, old = _sections(b["prompt"]), _sections(was["prompt"])
-                now, old = _sections(_no_sheet_words(b)["prompt"]), _sections(was["prompt"])  # added 2026-11-12 v0.16.0
+                # [OLD 2026-11-12 v0.16.1->v0.17.0] now, old = _sections(_no_sheet_words(b)["prompt"]), _sections(was["prompt"])  # added 2026-11-12 v0.16.0
+                now, old = _sections(_no_line_times(_no_sheet_words(b))["prompt"]), _sections(was["prompt"])  # v0.17.0: line times
                 assert {k: v for k, v in now.items() if k != "summary"} == \
                     {k: v for k, v in old.items() if k != "summary"}, s["id"]
                 # [OLD 2026-11-12 v0.13.1->v0.14.0] assert {k: b[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")} == \
@@ -180,10 +195,15 @@ def test_v080_changes_only_the_summary_of_multi_pass_scenes_with_a_written_summa
             elif i > 0 and model.effective_start(p, i) != "fresh" and p["scenes"][i - 1]["id"] in chained:
                 chained.add(s["id"])  # continues from a scene that renders again: same prompts, new key
                 # [OLD 2026-11-12 v0.15.1->v0.16.0] assert [b["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]
-                assert [_no_sheet_words(b)["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]
+                # [OLD 2026-11-12 v0.16.1->v0.17.0] assert [_no_sheet_words(b)["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]
+                assert [_no_line_times(_no_sheet_words(b))["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]  # v0.17.0
                 assert sr["key"] != want["key"], s["id"]
                 continue
             elif _sends_sheet(sr["builds"]):  # added 2026-11-12 v0.16.0: its sheet is named now (new prompt, new key)
+                chained.add(s["id"])
+                assert sr["key"] != want["key"], s["id"]
+                continue
+            elif any(LINE_TIME.search(b["prompt"] or "") for b in sr["builds"]):  # added 2026-11-12 v0.17.0: timed lines
                 chained.add(s["id"])
                 assert sr["key"] != want["key"], s["id"]
                 continue
@@ -202,13 +222,17 @@ def test_on_changes_only_the_passes_that_continue(v061, roots):
         for i, s in enumerate(p["scenes"]):
             sr, want = r["scenes"][s["id"]], expect[s["id"]]
             named = [b["continuation"] is not None for b in sr["builds"]]
+            timed = [bool(LINE_TIME.search(b["prompt"] or "")) for b in sr["builds"]]  # added 2026-11-12 v0.17.0
             for n, (b, was) in enumerate(zip(sr["builds"], want["builds"])):
                 same_so_far = not any(named[:n + 1]) and (i == 0 or not sr["continues"])
                 if same_so_far:
-                    assert b["prompt"] == was["prompt"] and sr["pass_keys"][n] == want["pass_keys"][n], (s["id"], n)
+                    # [OLD 2026-11-12 v0.16.1->v0.17.0] assert b["prompt"] == was["prompt"] and sr["pass_keys"][n] == want["pass_keys"][n], (s["id"], n)
+                    # added 2026-11-12 v0.17.0: the same prompt but for the lines' times; a pass with lines has a new key
+                    assert _no_line_times(b)["prompt"] == was["prompt"] and (timed[n] or sr["pass_keys"][n] == want["pass_keys"][n]), (s["id"], n)
                 if named[n]:
                     assert b["prompt"] != was["prompt"] and sr["pass_keys"][n] != want["pass_keys"][n], (s["id"], n)
-            if not sr["continues"] and not any(named):
+            # [OLD 2026-11-12 v0.16.1->v0.17.0] if not sr["continues"] and not any(named):
+            if not sr["continues"] and not any(named) and not any(timed):  # v0.17.0
                 assert sr["key"] == want["key"], s["id"]
             if any(named):
                 assert sr["key"] != want["key"], s["id"]

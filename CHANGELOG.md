@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.17.0 — 2026-11-12
+
+Sencer: "The dialogues are not added to shots at the given time index. the dialogue should have it's proper place and time index in the shot"
+
+- **Every spoken line has its time in the prompt.** A line is written into its shot opening with its time in the pass, the way H3's guide times a cut: "At 00:02.400, <Subject 1> (S1) says, <d>[English] Not tonight.</d>". Before, the lines of a shot came after its text with no time.
+- **And its place in the shot.** A sentence of a shot's text that opens with a time ("At 00:04.600, she pockets the key.") is a timing cue: each line goes after the sentences timed at or before it and before the later ones, so the action and the speech read in the order they happen. With no time in the text, the lines follow it as before (now with their times). The text's times are scene times, like the shot's start; each pass gets them in its own time. A detailed description written by hand that leaves a line out gets it back at its time among its own timed sentences.
+- **Write prompts keeps the time and place it writes.** It is asked to open every spoken line, and an action that follows one, with its time ("At 00:03.200, @Mara (S1) mutters, …"). When the editor takes the shots and lines out of the answer (a scene without shots), a line's time is the time written before it; before, it was spread over the shot and the time ended up in its delivery ("mutters at 00:03.200"). An action written after a line opens with the time that line ends, so the line keeps its place before it.
+- Every scene with spoken lines gets a new prompt, so it renders again.
+- **For developers:** `prompt._timed_line`, `_place_lines`, `_cue_points`; `shot_parts` entries have `times` and `line` (the shot with its lines in place); timeline shot text cues go through `_rebase_shot`; `_keep_dialogue` places missing lines with `_place_lines`. `llm.PASS_RULES`, `FILL_LINES_RULE` and `H3_RULES` ask for and keep the times. `shotfill.takeLines` returns `pieces` / `cutLines` and each line's written `at`; `readWritten` times lines from it and builds the text with `placedText` (`shiftCues`, `cueLower`). New `tests/test_line_times.py`; `test_continuation` normalizes the line times; `test_shot_fill` expects the timed actions.
+
 ## v0.16.1 — 2026-11-12
 
 - **Video anchors get the scene's clip editor.** Sencer: "add the same options to video anchors as in scene tab/reference card/video reference. preview, from and to buttons etc." Each video anchor on the Cast tab now has what a scene's video reference has: **Preview** plays the video in place, **From here / To here** take its position, **Play clip** plays From to To; the bar under the fields shows the clip in the whole video, with ends you drag; **From / To / Length** (typing a length moves To); **Whole file** when a part is picked; and the same notes (starts after the end, ends before it starts, only the first 15 s is sent, under 2 s so it is not sent). **With sound** stays on the line above.

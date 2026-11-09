@@ -39,4 +39,5 @@
 // [OLD 2026-11-12 v0.15.0->v0.15.1] export const VERSION = "0.15.0";
 // [OLD 2026-11-12 v0.15.1->v0.16.0] export const VERSION = "0.15.1";
 // [OLD 2026-11-12 v0.16.0->v0.16.1] export const VERSION = "0.16.0";
-export const VERSION = "0.16.1";
+// [OLD 2026-11-12 v0.16.1->v0.17.0] export const VERSION = "0.16.1";
+export const VERSION = "0.17.0";

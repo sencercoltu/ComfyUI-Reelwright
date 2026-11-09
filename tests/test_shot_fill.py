@@ -99,10 +99,19 @@ def test_shots_and_lines_are_read_from_the_description():
     #                          "the lamps glow. The camera slowly pushes in. @{Old Keeper} steps out of the shadows. She "
     #                          "turns toward him, startled."}]
     # [/OLD]
+    # [OLD 2026-11-12 v0.16.1->v0.17.0] the actions after a line lost their place (no time)
+    # assert one["shots"] == [{"t": 0, "text": "@Mara at the harbor wall in a navy pea coat; behind her the lamps glow. "
+    #                          "@{Old Keeper} steps out of the shadows. She turns toward him, startled.",
+    #                          "camera": "the camera pushes in", "camera_amp": "", "camera_speed": "slow",
+    #                          "framing": "medium"}]  # added 2026-11-12 v0.14.3
+    # [/OLD]
+    # added 2026-11-12 v0.17.0: an action written after a spoken line opens with the time the line ends, so the prompt
+    # puts the line before it
     assert one["shots"] == [{"t": 0, "text": "@Mara at the harbor wall in a navy pea coat; behind her the lamps glow. "
-                             "@{Old Keeper} steps out of the shadows. She turns toward him, startled.",
-                             "camera": "the camera pushes in", "camera_amp": "", "camera_speed": "slow",
-                             "framing": "medium"}]  # added 2026-11-12 v0.14.3
+                             "At 00:01.500, @{Old Keeper} steps out of the shadows. At 00:03.000, she turns toward him, "
+                             "startled.", "camera": "the camera pushes in", "camera_amp": "", "camera_speed": "slow",
+                             "framing": "medium"}]
+    assert [round(d["t"] * 24) for d in one["lines"]] == [12, 43] and "at" not in one["lines"][0]  # frames
     assert [(d["speaker"], d["language"], d["delivery"], d["text"]) for d in one["lines"]] == [
         ("c_mara", "English", "mutters", "Almost home."), ("c_keep", "English", "calls", "You're late again.")]
     assert 0 < one["lines"][0]["t"] < one["lines"][1]["t"] < 10
@@ -119,7 +128,9 @@ def test_shots_and_lines_are_read_from_the_description():
         ("c_mara", "English", "whispers"), ("c_keep", "Turkish", "replies")]
     assert 4.5 <= three["lines"][0]["t"] < 7 <= three["lines"][1]["t"] < 10
 
-    assert vo["pre"] == "Soft morning light." and vo["shots"][0]["text"] == "An aerial view of the harbor. Boats bob gently."
+    # [OLD 2026-11-12 v0.16.1->v0.17.0] assert vo["pre"] == "Soft morning light." and vo["shots"][0]["text"] == "An aerial view of the harbor. Boats bob gently."
+    assert vo["pre"] == "Soft morning light." and vo["shots"][0]["text"] == \
+        "An aerial view of the harbor. At 00:02.500, Boats bob gently."  # v0.17.0: after the line, at its end
     assert (vo["lines"][0]["speaker"], vo["lines"][0]["delivery"]) == ("c_narr", "voiceover")
 
     # [OLD 2026-11-12 v0.14.2->v0.14.3] assert tail["shots"][0]["text"] == "The camera holds still."

@@ -1688,7 +1688,8 @@ def shot_descriptions(p, scene, refs, pass_, ids, unknown, ctx=None):  # ctx: ad
     # [OLD 2026-11-03 v0.4.0->v0.4.1] the lines were built here; the body moved to shot_parts(), which keeps each
     # shot's spoken lines apart so a written [Shot N] can keep them
     # [OLD 2026-11-03 v0.5.1->v0.6.0] return [" ".join([x["text"]] + x["dialogue"]) for x in shot_parts(p, scene, refs, pass_, ids, unknown)]
-    return [" ".join([x["text"]] + x["dialogue"]) for x in shot_parts(p, scene, refs, pass_, ids, unknown, ctx=ctx)]
+    # [OLD 2026-11-12 v0.16.1->v0.17.0] return [" ".join([x["text"]] + x["dialogue"]) for x in shot_parts(p, scene, refs, pass_, ids, unknown, ctx=ctx)]
+    return [x["line"] for x in shot_parts(p, scene, refs, pass_, ids, unknown, ctx=ctx)]  # v0.17.0: lines in place
 
 
 # added 2026-11-03 v0.4.1: one entry per shot: {label, text (without dialogue), dialogue: [sentences]}
@@ -1704,6 +1705,9 @@ def shot_parts(p, scene, refs, pass_, ids, unknown, ctx=None, issues=None):  # c
         # [OLD 2026-11-06 v0.8.0 lead review] cam, body = sub(sh.get("camera", "")), sub(sh.get("text", ""))  ("Tracking Shot" became "A tracking Shot:")
         # added 2026-11-06 v0.8.0 (lead review): an official move's name is written as its phrase
         cam, body = sub(_model.official_camera(sh.get("camera", ""))), sub(sh.get("text", ""))
+        # added 2026-11-12 v0.17.0: "At MM:SS.mmm," cues in the shot's text are scene times, like its start: this
+        # pass's time (as in written [Shot N] lines, written_shots)
+        body = _rebase_shot(body, float(pass_.get("start") or 0.0), scene.get("duration"))
         parts = ["[Shot {}]".format(n)]
         short = _camera_phrase(cam)
         # added 2026-11-05 v0.8.0: a shot with a framing, camera amplitude or speed is written in the form of H3's
@@ -1728,6 +1732,7 @@ def shot_parts(p, scene, refs, pass_, ids, unknown, ctx=None, issues=None):  # c
                 if cam:
                     parts.append(_sentence(cam))
         spoken = []
+        times = []  # added 2026-11-12 v0.17.0
         for d in pass_["dialogue"]:
             if float(d["t"]) < float(sh["t"]) - 1e-6 and n > 1:
                 continue
@@ -1736,20 +1741,80 @@ def shot_parts(p, scene, refs, pass_, ids, unknown, ctx=None, issues=None):  # c
             # [OLD 2026-11-03 v0.4.0->v0.4.1] parts.append(_dialogue_sentence(p, refs, d, ids))
             # [OLD 2026-11-03 v0.5.1->v0.6.0] spoken.append(_dialogue_sentence(p, refs, d, ids))
             # [OLD 2026-11-06 v0.9.0->v0.10.0] spoken.append(_dialogue_sentence(p, refs, d, ids, ctx))
-            spoken.append(_dialogue_sentence(p, refs, d, ids, ctx, voiced))  # added 2026-11-06 v0.10.0: voiced
+            # [OLD 2026-11-12 v0.16.1->v0.17.0] spoken.append(_dialogue_sentence(p, refs, d, ids, ctx, voiced))  # added 2026-11-06 v0.10.0: voiced
+            # added 2026-11-12 v0.17.0: each line opens with its time in the pass (Sencer: "The dialogues are not added
+            # to shots at the given time index. the dialogue should have it's proper place and time index in the shot")
+            spoken.append(_timed_line(float(d["t"]), _dialogue_sentence(p, refs, d, ids, ctx, voiced)))
+            times.append(float(d["t"]))
         # [OLD 2026-11-03 v0.4.0->v0.4.1] out.append(" ".join(parts))
-        out.append({"label": "[Shot {}]".format(n), "text": " ".join(parts), "dialogue": spoken})
+        # [OLD 2026-11-12 v0.16.1->v0.17.0] out.append({"label": "[Shot {}]".format(n), "text": " ".join(parts), "dialogue": spoken})
+        # added 2026-11-12 v0.17.0: "line" is the shot with its spoken lines where they happen (_place_lines); "times"
+        # the lines' times in the pass
+        text = " ".join(parts)
+        out.append({"label": "[Shot {}]".format(n), "text": text, "dialogue": spoken, "times": times,
+                    "line": _place_lines(text, list(zip(times, spoken)))})
     return out
+
+
+# ---- added 2026-11-12 v0.17.0: spoken lines at their time and place in the shot (Sencer: "The dialogues are not
+# added to shots at the given time index. the dialogue should have it's proper place and time index in the shot").
+# Every line opens with its time in the pass, the way H3's guide times a cut: "At 00:02.400, <Subject 1> (S1) says,
+# <d>[English] …</d>". In the shot's text, a sentence that opens with "At MM:SS.mmm," is a timing cue: a line goes
+# after the cues at or before its time and before the later ones; with no cue, after the shot's text (as before).
+def _timed_line(t, sentence):
+    """'At 00:02.400, <Subject 1> (S1) says, <d>...</d>' ('An off-screen voice' reads 'an off-screen voice')."""
+    s = (sentence or "").strip()
+    for w in ("An ", "A ", "The "):
+        if s.startswith(w):
+            s = w.lower() + s[len(w):]
+            break
+    return "At {}, {}".format(spec.fmt_time(max(0.0, float(t))), s)
+
+
+def _cue_points(text):
+    """[(index, seconds)] of the sentences of `text` that open with "At MM:SS.mmm," (not inside <d>...</d>)."""
+    out, pos = [], 0
+    for k, x in enumerate(DIALOGUE_SPAN_SPLIT.split(text or "")):
+        if k % 2 == 0:
+            for m in CUE_TIME.finditer(x):
+                out.append((pos + m.start(2), int(m.group(3)) * 60 + float(m.group(4))))
+        pos += len(x)
+    return out
+
+
+def _place_lines(text, lines):
+    """`text` (a shot) with `lines` [(t, sentence)] put where they happen: after the sentences of the text that open
+    with a time at or before theirs, before the later ones; in their order when they share a place."""
+    if not lines:
+        return text
+    cues = _cue_points(text)
+    cuts = [0] + [i for i, _ in cues] + [len(text)]
+    slots = [[] for _ in range(len(cues) + 1)]
+    for t, s in lines:
+        k = sum(1 for _, c in cues if c <= float(t) + 1e-6)
+        slots[k].append(s)
+    out = []
+    for k in range(len(cues) + 1):
+        piece = text[cuts[k]:cuts[k + 1]].strip()
+        out += ([piece] if piece else []) + slots[k]
+    return " ".join(out)
 
 
 def _keep_dialogue(parts):
     """fix() for shot lines: a written [Shot N] that left out a spoken line gets it back (word for word)."""
-    spoken = {x["label"]: x["dialogue"] for x in parts}
+    # [OLD 2026-11-12 v0.16.1->v0.17.0] spoken = {x["label"]: x["dialogue"] for x in parts}
+    spoken = {x["label"]: list(zip(x.get("times") or [0.0] * len(x["dialogue"]), x["dialogue"])) for x in parts}
 
     def fix(label, chunk, line):
-        missing = [d for d in spoken.get(label, []) if line is not None and
+        # [OLD 2026-11-12 v0.16.1->v0.17.0] appended at the end of the written shot
+        # missing = [d for d in spoken.get(label, []) if line is not None and
+        #            not any(span in chunk for span in DIALOGUE_SPAN.findall(d))]
+        # return " ".join([chunk] + missing)
+        # [/OLD]
+        # added 2026-11-12 v0.17.0: at its time among the written shot's own timing cues
+        missing = [(t, d) for t, d in spoken.get(label, []) if line is not None and
                    not any(span in chunk for span in DIALOGUE_SPAN.findall(d))]
-        return " ".join([chunk] + missing)
+        return _place_lines(chunk, missing)
     return fix
 
 
@@ -2127,7 +2192,9 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
                      sec["retention_analysis"], LABEL_START)
         # [OLD 2026-11-03 v0.5.1->v0.6.0] parts = shot_parts(p, scene, refs, pass_, ids, unknown) if auto.get("shots") else []
         parts = shot_parts(p, scene, refs, pass_, ids, unknown, ctx=ctx, issues=issues) if auto.get("shots") else []
-        desc = _merge([(x["label"], " ".join([x["text"]] + x["dialogue"])) for x in parts],
+        # [OLD 2026-11-12 v0.16.1->v0.17.0] desc = _merge([(x["label"], " ".join([x["text"]] + x["dialogue"])) for x in parts],
+        # [OLD 2026-11-12 v0.16.1->v0.17.0]               sec["detailed_description"], SHOT_START, _keep_dialogue(parts), pre_first=True)
+        desc = _merge([(x["label"], x["line"]) for x in parts],  # added 2026-11-12 v0.17.0: the lines at their time
                       sec["detailed_description"], SHOT_START, _keep_dialogue(parts), pre_first=True)
         # added 2026-11-05 v0.7.0: the continuation is defined, analysed and cited in [Shot 1], also when those
         # sections are written by hand (automatic lines already have it)

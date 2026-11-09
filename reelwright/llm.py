@@ -42,11 +42,12 @@ IMPORT_MAX_TOKENS = 24576
 # - One main action per shot, physically achievable in the time given. State camera framing and movement or say the camera is static.
 # - Concrete visual and sound detail; no camera brand names, no meta commentary."""
 # [/OLD]
+# [OLD 2026-11-12 v0.16.1->v0.17.0] H3_RULES: "- Keep shot markers like [Shot 2] and cut times like "At 00:05.000" unless asked to change them; cut times mark cuts and the first shot has none." (the times of spoken lines were not mentioned)
 H3_RULES = """You write prompts for MiniMax H3 Ref2VA, a reference-to-video-with-audio model.
 Rules you must follow:
 - Keep every reference token exactly as written: @P1, @V2, @A1, @Name, @{Two Words}, @tail. Never invent new ones, never rename them. The editor turns them into <Subject N>, <Picture N>, <Video N> and <Audio N> labels later.
 - Keep every dialogue span <d>[Language] ...</d> exactly as written, word for word.
-- Keep shot markers like [Shot 2] and cut times like "At 00:05.000" unless asked to change them; cut times mark cuts and the first shot has none.
+- Keep shot markers like [Shot 2], cut times like "At 00:05.000, the shot cuts to" and the time that opens a spoken line or an action ("At 00:06.200, <Subject 1> (S1) says, ...") unless asked to change them; cut times mark cuts and the first shot has none.
 - Write in English. Describe each shot by composition, subject appearance and position, environment and lighting, action, camera movement and sound.
 - One main action per shot, physically achievable in the time given. Concrete visual and sound detail; no plot summaries, no meta commentary."""
 
@@ -1150,6 +1151,9 @@ PASS_WORDS_WARN = (300, 650)   # an answer outside this range gets a warning
 PASS_MIN_TOKENS = 4096         # one pass answers with about 1,000-1,500 tokens
 PASS_MIN_TOKENS_THINKING = 8192  # ... and a thinking model reasons before it
 
+# [OLD 2026-11-12 v0.16.1->v0.17.0] PASS_RULES said: "Every spoken line of the pass appears exactly once, word for
+# word, in the shot where it is spoken, after its speaker and speaker ID, for example: @Mara (S1) mutters, <d>[English]
+# Almost home.</d>" (no time, no place in the action) and the Voices example had no time either
 PASS_RULES = """How these requests work: H3 makes at most about 15 seconds per generation, so a longer scene is made \
 in passes, one after another, and every pass gets its own prompt. Each request asks for the prompt of ONE pass:
 - Write only what happens in this pass, from its first frame to its last, with its own shots and spoken lines. The \
@@ -1162,13 +1166,15 @@ pass, numbered from [Shot 1] inside the pass. [Shot 1] has no time; every later 
 cuts to" with its start time inside the pass, as listed. Describe each shot by composition, subject appearance and \
 position in the frame, environment and lighting, action, camera movement (type, amplitude, speed) and sound. Write \
 350-500 English words in detailed_description; when the pass is dense with dialogue, fit every spoken line first.
-- Every spoken line of the pass appears exactly once, word for word, in the shot where it is spoken, after its \
-speaker and speaker ID, for example: @Mara (S1) mutters, <d>[English] Almost home.</d> Speaker IDs (S1), (S2) follow \
-the order in which voices are first heard in this pass. Write no other spoken words: never a line of the pass before \
-or after, and never a line twice.
+- Every spoken line of the pass appears exactly once, word for word, in the shot where it is spoken, at the place in \
+the shot's action where it is spoken, as a sentence that opens with its time in the pass as listed, then its speaker \
+and speaker ID, for example: At 00:03.200, @Mara (S1) mutters, <d>[English] Almost home.</d> An action that follows \
+a spoken line in the same shot opens with its time too ("At 00:04.600, she pockets the key."). Speaker IDs (S1), (S2) \
+follow the order in which voices are first heard in this pass. Write no other spoken words: never a line of the pass \
+before or after, and never a line twice.
 - When the request lists Voices, describe each speaker's voice at their first spoken line in this pass with those \
-words, for example: @Mara (S1), with a husky low voice, mutters, <d>[English] Almost home.</d> The same voice in \
-every pass keeps H3 from changing it.
+words, for example: At 00:03.200, @Mara (S1), with a husky low voice, mutters, <d>[English] Almost home.</d> The same \
+voice in every pass keeps H3 from changing it.
 - A pass that starts at an overlap seam continues the same shot: its [Shot 1] carries on seamlessly from the final \
 frames of the pass before (@tail), without restarting the action or introducing the setting again.
 - overall_soundscape: the ambience and physical sounds of this pass, no dialogue. non_diegetic_music: the score only \
@@ -1417,9 +1423,17 @@ def pass_voices(p, x):
 # lines, and the editor puts them on the timeline (web/rw/shotfill.js). The request asks for every spoken line as a
 # sentence of its own, so the editor can take it out of the shot's text, and, when the scene has no lines yet, lets
 # the LLM write the lines the note calls for (tidy_pass keeps them: free_lines).
-FILL_LINES_RULE = ("Write every spoken line as a sentence of its own: the speaker's @name, the speaker ID and how they "
-                   "speak, then the line, for example: @Mara (S1) mutters, <d>[English] Almost home.</d> Describe the "
-                   "action in sentences of their own. The editor puts the shot and its spoken lines on the timeline.")
+# [OLD 2026-11-12 v0.16.1->v0.17.0] FILL_LINES_RULE = ("Write every spoken line as a sentence of its own: the speaker's @name, the speaker ID and how they "
+#                    "speak, then the line, for example: @Mara (S1) mutters, <d>[English] Almost home.</d> Describe the "
+#                    "action in sentences of their own. The editor puts the shot and its spoken lines on the timeline.")
+# added 2026-11-12 v0.17.0: each line (and each action after one) opens with its time, so the editor puts it on the
+# timeline at that time and keeps its place in the shot (web/rw/shotfill.js)
+FILL_LINES_RULE = ("Write every spoken line as a sentence of its own, where it is spoken in the shot's action, opening "
+                   "with the time it is spoken in the pass: the time, the speaker's @name, the speaker ID and how they "
+                   "speak, then the line, for example: At 00:03.200, @Mara (S1) mutters, <d>[English] Almost home.</d> "
+                   "Describe the action in sentences of their own; an action that follows a spoken line in the same "
+                   "shot opens with its time too (\"At 00:04.600, she pockets the key.\"). The editor puts the shot and "
+                   "its spoken lines on the timeline at those times.")
 
 
 def fills_timeline(scene, plan):

@@ -15,7 +15,8 @@
 // (timeline lanes, captions, subtitles, voices) has it.
 
 // [OLD 2026-11-12 v0.14.2->v0.14.3] import { FPS, newId, planScene, sceneIndex, dialogueSeconds, snapFrame } from "./model.js";
-import { FPS, newId, planScene, sceneIndex, dialogueSeconds, snapFrame, DEFAULT_CAMERA, FRAMINGS } from "./model.js"; // v0.14.3: DEFAULT_CAMERA, FRAMINGS
+// [OLD 2026-11-12 v0.16.1->v0.17.0] import { FPS, newId, planScene, sceneIndex, dialogueSeconds, snapFrame, DEFAULT_CAMERA, FRAMINGS } from "./model.js"; // v0.14.3: DEFAULT_CAMERA, FRAMINGS
+import { FPS, newId, planScene, sceneIndex, dialogueSeconds, snapFrame, DEFAULT_CAMERA, FRAMINGS, fmtTime } from "./model.js"; // v0.17.0: fmtTime
 
 const LABEL = /\[\s*shot\s*(\d+)\s*\]/gi;
 const SPAN = /<d>([\s\S]*?)<\/d>/gi;
@@ -32,6 +33,12 @@ const STOP = /[.!?…](?=\s)|\n/g;
 const TAIL = /^\s*[.!?…]|^(?:\s*[,;:—–-]|\s+(?=[a-z]))[^<.!?\n]{0,120}[.!?…]/;
 const VOICE = /,?\s*\b(?:with|in)\s+(?:(?:a|an|the|his|her|their|its)\s+)?[^,<:]*?\bvoice\b(?![\w-])[^,<:]*/gi;
 const LEADS = /^(?:(?:as|while|when)\s+(?:he|she|they|it|we|i|you)\s+|who\s+|and\s+|then\s+)/i;
+// added 2026-11-12 v0.17.0: the time that opens a spoken line's sentence ("At 00:03.200, @Mara (S1) mutters, <d>…")
+// or an action's, and the "At MM:SS.mmm," cues of a text (prompt.py CUE_TIME)
+const LINE_CUE = /^\s*At\s+(\d{1,2}):(\d{2}(?:\.\d{1,3})?)\s*,\s*/i;
+const CUES = /(^\s*|[.!?…]\s+)(At\s+)(\d{1,2}):(\d{2}(?:\.\d{1,3})?)(?=\s*,)/g;
+// a word that reads in lower case after "At 00:04.600, " (names keep their capital)
+const CUE_LOWER = /^(?:The|A|An|He|She|They|It|His|Her|Their|Its|Then|As|While|When|We|You|Both|Everyone|Someone|Nobody|This|That|These|Those|There|Now|Finally|Suddenly)\b/;
 
 const key = s => String(s ?? "").replace(/’/g, "'").split(/\s+/).filter(Boolean).join(" ").toLowerCase();
 const wordCount = s => String(s || "").split(/\s+/).filter(w => /[\p{L}\p{N}]/u.test(w)).length;
@@ -204,7 +211,13 @@ function takeLines(body, cf, sMap) {
     const at = m.index, end0 = at + m[0].length;
     let start = floor;
     for (const s of body.slice(floor, at).matchAll(STOP)) start = floor + s.index + s[0].length;
-    const lead = body.slice(start, at);
+    // [OLD 2026-11-12 v0.16.1->v0.17.0] const lead = body.slice(start, at);  (a time before the speaker went into the delivery: "says at 00:03.200")
+    // added 2026-11-12 v0.17.0: "At 00:03.200," opening the line's sentence is the line's time (pass time)
+    let lead = body.slice(start, at);
+    const lc = LINE_CUE.exec(lead);
+    const cueAt = lc ? Number(lc[1]) * 60 + Number(lc[2]) : null;
+    const cueText = lc ? `At ${lc[1]}:${lc[2]}, ` : "";
+    if (lc) lead = lead.slice(lc[0].length);
     const men = lastMention(lead, cf);
     let speaker = "";
     if (men?.cast) speaker = men.cast.id;
@@ -242,10 +255,15 @@ function takeLines(body, cf, sMap) {
       const more = [extra, after].filter(Boolean).join(", ");
       if (more && (delivery + " " + more).length <= 80) delivery = extra && !after ? `${delivery} ${extra}` : after && !extra ? `${delivery}, ${after}` : `${delivery} ${extra}, ${after}`;
     }
-    if (words) lines.push({ speaker, sid: men?.sid || null, who: named, language: lang ? lang[1].trim() : "", delivery, text: words });
-    cuts.push([start, end, kept ? sentence(kept) : ""]);
+    // [OLD 2026-11-12 v0.16.1->v0.17.0] if (words) lines.push({ speaker, sid: men?.sid || null, who: named, language: lang ? lang[1].trim() : "", delivery, text: words });
+    // [OLD 2026-11-12 v0.16.1->v0.17.0] cuts.push([start, end, kept ? sentence(kept) : ""]);
+    // added 2026-11-12 v0.17.0: the line's written time (at), and which line each cut took out; an action kept from
+    // the line's sentence keeps the time ("At 00:03.200, she turns.")
+    if (words) lines.push({ speaker, sid: men?.sid || null, who: named, language: lang ? lang[1].trim() : "", delivery, text: words, at: cueAt });
+    cuts.push([start, end, kept ? sentence(cueText ? cueText + cueLower(edges(kept)) : kept) : "", words ? lines.length - 1 : -1]);
     floor = end;
   }
+  /* [OLD 2026-11-12 v0.16.1->v0.17.0] the text only (where each line was is lost)
   let out = "", pos = 0;
   for (const [a, z, kept] of cuts) {
     out += body.slice(pos, a) + (kept ? " " + kept + " " : " ");
@@ -253,6 +271,53 @@ function takeLines(body, cf, sMap) {
   }
   out += body.slice(pos);
   return { text: squash(out), lines };
+  [/OLD] */
+  // added 2026-11-12 v0.17.0: also the text between the lines (pieces[k] before cut k, the last one after them) and the
+  // line each cut took out (cutLines[k], -1 for an empty <d></d>), so readWritten can keep each line's place
+  let out = "", pos = 0;
+  const pieces = [], cutLines = [];
+  for (const [a, z, kept, li] of cuts) {
+    const piece = body.slice(pos, a) + (kept ? " " + kept + " " : " ");
+    out += piece;
+    pieces.push(squash(piece));
+    cutLines.push(li);
+    pos = z;
+  }
+  out += body.slice(pos);
+  pieces.push(squash(body.slice(pos)));
+  return { text: squash(out), lines, pieces, cutLines };
+}
+
+// added 2026-11-12 v0.17.0: "she pockets the key" after "At 00:04.600, " (a name keeps its capital)
+function cueLower(s) {
+  return CUE_LOWER.test(s) ? s[0].toLowerCase() + s.slice(1) : s;
+}
+
+// added 2026-11-12 v0.17.0: the "At MM:SS.mmm," cues of a text moved by `offset` seconds (pass time -> scene time)
+function shiftCues(text, offset) {
+  if (!text || Math.abs(offset) < 1e-9) return text;
+  return text.replace(CUES, (m, pre, at, mm, ss) => pre + at + fmtTime(Math.max(0, snapFrame(Number(mm) * 60 + Number(ss) + offset))));
+}
+
+// added 2026-11-12 v0.17.0: a shot's text with each spoken line's place kept: an action written after a line (with no
+// time of its own) opens with the time between that line and the next one, at the line's end when there is room
+// ("At 00:04.600, she pockets the key."), so the prompt puts the line before it (prompt.py _place_lines). Its own
+// "At MM:SS.mmm," cues move from pass time to scene time.
+function placedText(got, times, end, offset) {
+  if (!got.pieces) return shiftCues(got.text, offset); // no spoken line
+  const parts = [];
+  got.pieces.forEach((piece, k) => {
+    let s = shiftCues(piece, offset);
+    const li = k > 0 ? got.cutLines[k - 1] : -1;
+    if (s && li >= 0 && !LINE_CUE.test(s)) {
+      const t0 = times[li];
+      const next = li + 1 < times.length ? times[li + 1] : end;
+      const tc = snapFrame(Math.min(Math.max(t0 + dialogueSeconds({ text: got.lines[li].text }), t0 + 1 / FPS), next - 1 / FPS));
+      if (tc > t0 + 1e-6) s = `At ${fmtTime(tc)}, ${cueLower(s)}`;
+    }
+    if (s) parts.push(s);
+  });
+  return squash(parts.join(" "));
 }
 
 // times inside a window, each after the one before, never past `end`
@@ -293,10 +358,13 @@ export function readWritten(p, sc, desc, x = null) {
       body = body.slice(cut[0].length);
     }
     const got = takeLines(body, cf, sMap);
-    // a shot that was only its speaker's line ("the shot cuts to @Bob (S2), who replies, <d>…</d>") shows the speaker
-    const text = got.text || (got.lines[0]?.who || "");
-    // [OLD 2026-11-12 v0.14.2->v0.14.3] return { t, text: sentence(text), lines: got.lines };
-    return { t, ...cameraOf(p, sentence(text)), lines: got.lines }; // added 2026-11-12 v0.14.3: framing and camera move
+    // [OLD 2026-11-12 v0.16.1->v0.17.0] the text and its camera were read here, before the lines had their times
+    // // a shot that was only its speaker's line ("the shot cuts to @Bob (S2), who replies, <d>…</d>") shows the speaker
+    // const text = got.text || (got.lines[0]?.who || "");
+    // // [OLD 2026-11-12 v0.14.2->v0.14.3] return { t, text: sentence(text), lines: got.lines };
+    // return { t, ...cameraOf(p, sentence(text)), lines: got.lines }; // added 2026-11-12 v0.14.3: framing and camera move
+    // [/OLD]
+    return { t, got, lines: got.lines }; // added 2026-11-12 v0.17.0: text and camera after the lines' times (below)
   });
   // a start that is missing, outside the scene or not after the one before is spread between its neighbours
   const minGap = Math.min(0.5, duration / (shots.length + 1));
@@ -316,10 +384,37 @@ export function readWritten(p, sc, desc, x = null) {
   }
   for (const sh of shots) sh.t = Math.max(0, Math.min(snapFrame(sh.t), duration - 1 / FPS));
   const lines = [];
+  /* [OLD 2026-11-12 v0.16.1->v0.17.0] every line spread over its shot, whatever time was written before it
   shots.forEach((sh, i) => {
     const end = i + 1 < shots.length ? shots[i + 1].t : duration;
     const at = spread(sh.lines.length, sh.t, end, sh.lines.map(d => dialogueSeconds({ text: d.text })));
     sh.lines.forEach((d, k) => lines.push({ ...d, t: Math.max(0, Math.min(snapFrame(at[k]), duration - 1 / FPS)) }));
+  });
+  [/OLD] */
+  // added 2026-11-12 v0.17.0 (Sencer: "The dialogues are not added to shots at the given time index. the dialogue
+  // should have it's proper place and time index in the shot"): a line whose sentence opens with "At MM:SS.mmm," is
+  // at that time (inside its shot); a line without one follows the line before it (spread over the shot as before
+  // when no line of the shot has a time). The shot's text keeps each line's place (placedText).
+  shots.forEach((sh, i) => {
+    const end = i + 1 < shots.length ? shots[i + 1].t : duration;
+    const lengths = sh.lines.map(d => dialogueSeconds({ text: d.text }));
+    const given = sh.lines.map(d => (d.at === null || d.at === undefined ? null : d.at + offset));
+    let at;
+    if (given.every(g => g === null)) at = spread(sh.lines.length, sh.t, end, lengths);
+    else {
+      at = [];
+      let cur = sh.t + Math.min(0.5, Math.max(0, end - sh.t) * 0.1);
+      given.forEach((g, k) => {
+        const v = g !== null && g >= sh.t - 1e-6 && g < end - 1e-6 ? g : cur;
+        at.push(v);
+        cur = v + (lengths[k] || 1) + 0.3;
+      });
+    }
+    const times = at.map(v => Math.max(0, Math.min(snapFrame(v), duration - 1 / FPS)));
+    sh.lines.forEach((d, k) => { const { at: _at, ...line } = d; lines.push({ ...line, t: times[k] }); });
+    // a shot that was only its speaker's line ("the shot cuts to @Bob (S2), who replies, <d>…</d>") shows the speaker
+    const text = placedText(sh.got, times, end, offset) || (sh.got.lines[0]?.who || "");
+    Object.assign(sh, cameraOf(p, sentence(text)));
   });
   // [OLD 2026-11-12 v0.14.2->v0.14.3] return { pre, shots: shots.map(sh => ({ t: sh.t, text: sh.text })), lines };
   return { pre, shots: shots.map(sh => ({ t: sh.t, text: sh.text, camera: sh.camera, camera_amp: sh.camera_amp, camera_speed: sh.camera_speed, framing: sh.framing })), lines };
