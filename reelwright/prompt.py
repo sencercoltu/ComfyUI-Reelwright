@@ -2131,7 +2131,8 @@ def as_text(value):
     return str(value)
 
 
-def tidy_rewrite(proposal, before, auto, tag_map=None):
+# [OLD 2026-11-12 v0.14.1->v0.14.2] def tidy_rewrite(proposal, before, auto, tag_map=None):
+def tidy_rewrite(proposal, before, auto, tag_map=None, new_shots=False):  # new_shots: added 2026-11-12 v0.14.2
     """proposal / before: the six sections. auto: the scene's automatic parts. tag_map: pass 1's "@P1" -> "<Picture 1>".
 
     - a whole six-section prompt returned inside one key is split back into its sections;
@@ -2140,7 +2141,9 @@ def tidy_rewrite(proposal, before, auto, tag_map=None):
       still works when a pass numbers references differently;
     - parts the editor writes automatically are not taken from the LLM: subject definitions and retention lines
       keep their previous text, and detailed_description keeps only what comes before [Shot 1], plus the [Shot N]
-      lines that were written by hand before (the LLM's version of them when it returned one; v0.6.0).
+      lines that were written by hand before (the LLM's version of them when it returned one; v0.6.0);
+    - new_shots (added 2026-11-12 v0.14.2): the scene has no shots on the timeline and the LLM was asked to write
+      them, so detailed_description keeps every [Shot N] line it wrote (the editor puts them on the timeline).
     """
     # [OLD 2026-11-03 v0.5.1->v0.6.0] out = {k: str(proposal.get(k) or "") for k in REF2VA_SECTIONS}  (a list or object became a repr)
     out = {k: as_text(proposal.get(k)) for k in REF2VA_SECTIONS}
@@ -2180,7 +2183,11 @@ def tidy_rewrite(proposal, before, auto, tag_map=None):
             rewritten.setdefault(label, chunk)
         if "detailed_description" not in given:
             pre = _chunks(str(before.get("detailed_description") or ""), SHOT_START)[0]
-        out["detailed_description"] = "\n".join([pre] + [rewritten.get(label, chunk) for label, chunk in mine]).strip()
+        # [OLD 2026-11-12 v0.14.1->v0.14.2] out["detailed_description"] = "\n".join([pre] + [rewritten.get(label, chunk) for label, chunk in mine]).strip()
+        if new_shots and theirs and "detailed_description" in given:  # added 2026-11-12 v0.14.2
+            out["detailed_description"] = "\n".join([pre] + [chunk for label, chunk in theirs]).strip()
+        else:
+            out["detailed_description"] = "\n".join([pre] + [rewritten.get(label, chunk) for label, chunk in mine]).strip()
         given.add("detailed_description")
     for k in REF2VA_SECTIONS:  # sections the reply left out keep their text
         # [OLD 2026-11-04 v0.6.0->v0.6.1] with auto subjects / retention off, a reply without the key emptied the hand-written text

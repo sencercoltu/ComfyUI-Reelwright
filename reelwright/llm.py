@@ -986,18 +986,45 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
     # text, _, _ = await chat(cfg, H3_RULES + "\n" + preset, user)
     # [/OLD]
     auto = pr["auto"]
+    # added 2026-11-12 v0.14.2: a scene made in one pass with no shots is written as its [Shot 1] line with its spoken
+    # lines, which the editor puts on the timeline (fills_timeline, web/rw/shotfill.js)
+    i = next((n for n, x in enumerate(p["scenes"]) if x["id"] == scene["id"]), None)
+    fill = bool(auto.get("shots")) and i is not None and fills_timeline(scene, plan_scene(p, scene, i))
+    # [OLD 2026-11-12 v0.14.1->v0.14.2] added = [x for x, on in (("the <Subject N>/<Picture N>/<Audio N> definition lines", auto.get("subjects")),
+    # [OLD 2026-11-12 v0.14.1->v0.14.2]                          ("the retention lines for every reference", auto.get("retention")),
+    # [OLD 2026-11-12 v0.14.1->v0.14.2]                          ("the [Shot N] lines with their cut times and the dialogue", auto.get("shots"))) if on]
     added = [x for x, on in (("the <Subject N>/<Picture N>/<Audio N> definition lines", auto.get("subjects")),
                              ("the retention lines for every reference", auto.get("retention")),
-                             ("the [Shot N] lines with their cut times and the dialogue", auto.get("shots"))) if on]
+                             ("the [Shot N] lines with their cut times and the dialogue", auto.get("shots") and not fill))
+             if on]
+    desc_rule = ("In detailed_description write the one or two style sentences that open the description and any extra "
+                 "direction.")
+    if fill:
+        desc_rule = ("This scene has no shots on the timeline yet: in detailed_description write the one or two style "
+                     "sentences, then the scene as one [Shot 1] line (composition, subject appearance and position, "
+                     "environment and lighting, action, camera movement and sound){}. {}").format(
+            ", with every spoken line of the scene, word for word" if scene.get("dialogue") else
+            "; when the summary or the instruction has someone speak, write those lines in it", FILL_LINES_RULE)
+    # [OLD 2026-11-12 v0.14.1->v0.14.2] the description rule was always the style sentences
+    # user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}Instruction: {}\n\n"
+    #         "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
+    #         "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
+    #         "Do not repeat what the editor adds automatically: {}. In detailed_description write the one or two "
+    #         "style sentences that open the description and any extra direction. Write overall_soundscape and "
+    #         "non_diegetic_music as the guide describes.").format(
+    #     ctx, before,
+    #     ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
+    #     instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing")
+    # [/OLD]
     user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}Instruction: {}\n\n"
             "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
             "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
-            "Do not repeat what the editor adds automatically: {}. In detailed_description write the one or two "
-            "style sentences that open the description and any extra direction. Write overall_soundscape and "
+            "Do not repeat what the editor adds automatically: {}. {} Write overall_soundscape and "
             "non_diegetic_music as the guide describes.").format(
         ctx, before,
         ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
-        instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing")
+        instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing",
+        desc_rule)
     # [OLD 2026-11-03 v0.4.1->v0.4.2] an unreadable or cut-off answer raised a bare JSON error
     # text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
     # data = parse_json(text)
@@ -1009,7 +1036,9 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
                      progress=progress)
     # [OLD 2026-11-03 v0.4.0->v0.4.1] the reply was used as it came: repeated automatic parts, "<Subject 1>" instead of @Name, labels inside values
     # out = {k: str(data.get(k, sections.get(k, "")) or "") for k in sections}
-    out = dict(sections, **tidy_rewrite(data if isinstance(data, dict) else {}, sections, auto, tag_map))  # added 2026-11-03 v0.4.1
+    # [OLD 2026-11-12 v0.14.1->v0.14.2] out = dict(sections, **tidy_rewrite(data if isinstance(data, dict) else {}, sections, auto, tag_map))  # added 2026-11-03 v0.4.1
+    out = dict(sections, **tidy_rewrite(data if isinstance(data, dict) else {}, sections, auto, tag_map,
+                                        new_shots=fill))  # new_shots: added 2026-11-12 v0.14.2
     return {"sections": out, "warnings": preserved_warnings(before, json.dumps(out, ensure_ascii=False))}
 
 
@@ -1354,6 +1383,21 @@ def pass_voices(p, x):
     return out
 
 
+# added 2026-11-12 v0.14.2 (Sencer: "when creating a single shot scene, the shot section (and dialogues) are not
+# populated"): a scene made in one pass with no shots on the timeline is written as [Shot N] lines with its spoken
+# lines, and the editor puts them on the timeline (web/rw/shotfill.js). The request asks for every spoken line as a
+# sentence of its own, so the editor can take it out of the shot's text, and, when the scene has no lines yet, lets
+# the LLM write the lines the note calls for (tidy_pass keeps them: free_lines).
+FILL_LINES_RULE = ("Write every spoken line as a sentence of its own: the speaker's @name, the speaker ID and how they "
+                   "speak, then the line, for example: @Mara (S1) mutters, <d>[English] Almost home.</d> Describe the "
+                   "action in sentences of their own. The editor puts the shot and its spoken lines on the timeline.")
+
+
+def fills_timeline(scene, plan):
+    """Is the scene written into the timeline (a structured prompt, one pass, no shots)?"""
+    return (scene.get("prompt") or {}).get("mode") != "raw" and len(plan["passes"]) == 1 and not scene.get("shots")
+
+
 def pass_request(p, scene, plan, builds, k, written=None, stored=None, instruction=""):
     """The user message that asks for pass k (1-based) of a scene: the scene and cast (scene_context), the whole-scene
     note, this pass's range, shots and spoken lines in pass and scene time, the references it sends, the pass before
@@ -1389,8 +1433,19 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
     elif cont.get("source") == "prev_scene_tail" or (k == 1 and plan.get("start_mode") == "tail"):
         head += " It continues seamlessly from the end of the scene before (@tail)."
     shot_lines, spoken = _pass_lines(p, scene, x, k - 1 if k > 1 else 0)
-    parts.append(head + "\nIts shots:\n" + ("\n".join(shot_lines) or "(no shots on the timeline: write it as one shot)") +
-                 "\nIts spoken lines:\n" + ("\n".join(spoken) or "(none)"))
+    # [OLD 2026-11-12 v0.14.1->v0.14.2] a scene without shots or lines got no lines: the rules forbid other spoken words
+    # parts.append(head + "\nIts shots:\n" + ("\n".join(shot_lines) or "(no shots on the timeline: write it as one shot)") +
+    #              "\nIts spoken lines:\n" + ("\n".join(spoken) or "(none)"))
+    # added 2026-11-12 v0.14.2: a scene written into the timeline (fills_timeline)
+    fill = fills_timeline(scene, plan)
+    free = fill and not scene.get("dialogue")
+    parts.append(head + "\nIts shots:\n" + ("\n".join(shot_lines) or (
+        "(none on the timeline yet: write it as one shot; the editor puts it on the timeline)" if fill else
+        "(no shots on the timeline: write it as one shot)")) +
+        "\nIts spoken lines:\n" + ("\n".join(spoken) or (
+            "(none on the timeline yet: when the whole-scene note or the instruction has someone speak, write those "
+            "lines, word for word as the note gives them, and only those; the editor puts them on the timeline)"
+            if free else "(none)")))
     # added 2026-11-06 v0.10.0: how each speaker of this pass sounds (cast voice_desc), to describe at their first line
     voices = pass_voices(p, x)
     if voices:
@@ -1464,6 +1519,8 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
         m, "s" if m > 1 else "", int(round(sum(PASS_WORDS) / 2.0 / m)), *PASS_WORDS)]
     if auto.get("shots"):
         rules.append("Your [Shot N] lines replace the editor's automatic shot lines, so describe every shot in full.")
+    if fill:  # added 2026-11-12 v0.14.2
+        rules.append(FILL_LINES_RULE)
     rules.append("Leave subject_definitions empty: the editor writes a definition line for every reference this pass "
                  "sends." if auto.get("subjects") else
                  "subject_definitions: one line per reference this pass sends, for example \"@Mara is the woman in ...\".")
@@ -1617,7 +1674,8 @@ def drop_foreign_lines(text, belongs):
     return text.strip(), removed, twice
 
 
-def tidy_pass(sections, x, build, auto, k=1, known=None, guides=()):
+# [OLD 2026-11-12 v0.14.1->v0.14.2] def tidy_pass(sections, x, build, auto, k=1, known=None, guides=()):
+def tidy_pass(sections, x, build, auto, k=1, known=None, guides=(), free_lines=False):  # free_lines: added v0.14.2
     """(six sections as text, warnings) of one pass's answer, ready to store as scene.prompt.passes[k-1].sections:
     - a whole six-section prompt inside one key is split into its sections; a value's own label is dropped;
     - <Subject N>, <Picture N>, <Video N>, <Audio N> become the @ tokens of this pass's tag_map (the clip's own sound
@@ -1629,7 +1687,9 @@ def tidy_pass(sections, x, build, auto, k=1, known=None, guides=()):
       shots are numbered from 1 in order, [Shot 1] has no cut time and every other shot's "At MM:SS.mmm," is its
       start time in the pass (the timeline's).
     Warnings: the description's length, spoken lines missing or added, unknown @ names, labels left as written,
-    a [Shot N] count that does not match the pass's shots, cut times moved, a frame guide (pass_guides) not named."""
+    a [Shot N] count that does not match the pass's shots, cut times moved, a frame guide (pass_guides) not named.
+    free_lines (added 2026-11-12 v0.14.2): the scene has no spoken lines yet and the LLM may write them
+    (fills_timeline), so only a second copy of a line is taken out."""
     warnings = []
     out = {key: _prompt.as_text(sections.get(key)).strip() if sections.get(key) is not None else ""
            for key in _prompt.REF2VA_SECTIONS}
@@ -1720,8 +1780,10 @@ def tidy_pass(sections, x, build, auto, k=1, known=None, guides=()):
     # added 2026-11-06 v0.10.0: a spoken line that is not one of this pass's, and a second copy of one that is, are
     # taken out of the text with their sentence ("Mara (S1) says, <d>…</d>"); the warning says which
     own = [_core(t) for t in lines if _core(t)]
+    # [OLD 2026-11-12 v0.14.1->v0.14.2] out["detailed_description"], extra, twice = drop_foreign_lines(
+    # [OLD 2026-11-12 v0.14.1->v0.14.2]     out["detailed_description"], lambda c: any(t in c or c in t for t in own))
     out["detailed_description"], extra, twice = drop_foreign_lines(
-        out["detailed_description"], lambda c: any(t in c or c in t for t in own))
+        out["detailed_description"], lambda c: free_lines or any(t in c or c in t for t in own))
     if extra:
         warnings.append("removed spoken lines that are not this pass's (H3 would have said them): " +
                         " | ".join('"{}"'.format(t) for t in extra))
@@ -1796,8 +1858,11 @@ async def write_passes(cfg, p, scene, wanted=None, instruction="", progress=None
             state["warnings"].append("Pass {} was not written: {}".format(k, e))
             return state
         state["tokens"] += int(info.get("tokens") or 0)
+        # [OLD 2026-11-12 v0.14.1->v0.14.2] sections, warns = tidy_pass(secs, x, b, pr.get("auto") or {}, k, _scene_tokens(p, scene),
+        # [OLD 2026-11-12 v0.14.1->v0.14.2]                             pass_guides(p, scene, x))
         sections, warns = tidy_pass(secs, x, b, pr.get("auto") or {}, k, _scene_tokens(p, scene),
-                                    pass_guides(p, scene, x))
+                                    pass_guides(p, scene, x),
+                                    free_lines=fills_timeline(scene, plan) and not scene.get("dialogue"))  # v0.14.2
         override = overrides.get(str(k))
         if isinstance(override, str) and override.strip():
             warns.append("its prompt was edited by hand (or by Split), and that prompt is sent instead of these "

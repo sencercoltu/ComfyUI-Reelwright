@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.14.2 — 2026-11-12
+
+- **A scene written without shots gets its shots and spoken lines.** Sencer: "when creating a single shot scene, the shot section (and dialogues) are not populated. They should be populated. currently everything shows only in detailed_description section."
+  - **Write prompts** and the **Prompt rewriter** on a scene made in one pass with no shots now put what the LLM writes on the timeline: each [Shot N] becomes a shot (its "At MM:SS" cut time is its start) and each spoken line a dialogue line, with its speaker (the @name or (S1) before it), language and delivery ("mutters", "whispers", "voiceover"; "as the rain starts" or ", her voice breaking" go with it). Lines are timed one after another inside their shot. Speakers, and cast members named with @ in a shot, join "Cast in this scene". The description keeps the style sentences before [Shot 1]: with "auto shots + dialogue" on, the editor writes the shot and its lines back into the prompt, so H3 gets the same scene and the timeline lanes, captions, subtitles and voices have it.
+  - For such a scene the LLM is now asked to write each spoken line as a sentence of its own (`@Mara (S1) mutters, <d>[English] Almost home.</d>`), and, when the scene has no lines yet, it may write the lines the scene note calls for. Before, those lines were removed as "not this pass's", or the rewriter dropped its [Shot 1].
+  - A scene written before this version: its empty **Shots** and **Dialogue** cards say "No shots on the timeline yet, but the description has 1 shot and 2 spoken lines" with **Take … from it** (one undo step).
+  - Scenes with shots on the timeline, scenes of several passes and raw prompts are written as before.
+- **For developers:** new `web/rw/shotfill.js` (`readWritten`, `fillable`, `fillScene`, `fillWords`), called by `passes.applyWritten` (single pass, `report.fill`), the rewriter's Accept and `scene.js fillNote`. `llm.fills_timeline`, `llm.FILL_LINES_RULE`; `tidy_pass(free_lines=)`; `prompt.tidy_rewrite(new_shots=)`. Mock: `mockFlags.writeText`. New `tests/test_shot_fill.py` (shotfill.js runs under node); `interact.py` runs `v0142_checks()`.
+
 ## v0.14.1 — 2026-11-12
 
 - **Every card on every tab folds.** Sencer: "make every section under every tab collapsible."

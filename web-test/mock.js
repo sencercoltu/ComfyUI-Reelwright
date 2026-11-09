@@ -31,7 +31,9 @@ export const mockFlags = { slugConflict: "", mergeBusy: false, mergeMs: 0, autos
   // [OLD 2026-11-06 v0.10.0] voiceCuts added below
   // speechCalls: [], speechShift: 0.6 }; // added 2026-11-06 v0.10.0: /speech requests and how late the mock hears the lines
   // [/OLD]
-  speechCalls: [], speechShift: 0.6, voiceCuts: [] }; // added 2026-11-06 v0.10.0: /speech requests, how late the mock hears the lines, /voice_from_take bodies
+  // [OLD 2026-11-12 v0.14.1->v0.14.2] speechCalls: [], speechShift: 0.6, voiceCuts: [] }; // added 2026-11-06 v0.10.0: /speech requests, how late the mock hears the lines, /voice_from_take bodies
+  speechCalls: [], speechShift: 0.6, voiceCuts: [], // added 2026-11-06 v0.10.0: /speech requests, how late the mock hears the lines, /voice_from_take bodies
+  writeText: {} }; // added 2026-11-12 v0.14.2: scene id -> the detailed description /llm/passes and /llm/rewrite write
 if (typeof window !== "undefined") window.__mockFlags = mockFlags;
 const mergeJobs = {};
 
@@ -618,7 +620,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-12 v0.13.0->v0.13.1] case "/reelwright/info": return json({ version: "0.13.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-12 v0.13.1->v0.14.0] case "/reelwright/info": return json({ version: "0.13.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-12 v0.14.0->v0.14.1] case "/reelwright/info": return json({ version: "0.14.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    case "/reelwright/info": return json({ version: "0.14.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-12 v0.14.1->v0.14.2] case "/reelwright/info": return json({ version: "0.14.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.14.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -778,7 +781,9 @@ async function route(path, opts = {}) {
       const s = body.project.scenes.find(x => x.id === body.scene_id);
       // added 2026-11-03 v0.4.2: progress events and Stop
       if (body.job && await llmWork(body.job, 600, 900)) return json({ cancelled: true });
-      return json({ sections: { ...s.prompt.sections, summary: (s.prompt.sections.summary || "") + " The candle gutters as she reads.", detailed_description: "Extreme close-ups, warm key light from the candle, shallow depth of field." }, warnings: [] });
+      // [OLD 2026-11-12 v0.14.1->v0.14.2] return json({ sections: { ...s.prompt.sections, summary: (s.prompt.sections.summary || "") + " The candle gutters as she reads.", detailed_description: "Extreme close-ups, warm key light from the candle, shallow depth of field." }, warnings: [] });
+      // added 2026-11-12 v0.14.2: mockFlags.writeText[scene id] is the detailed description the LLM writes
+      return json({ sections: { ...s.prompt.sections, summary: (s.prompt.sections.summary || "") + " The candle gutters as she reads.", detailed_description: mockFlags.writeText?.[s.id] || "Extreme close-ups, warm key light from the candle, shallow depth of field." }, warnings: [] });
     }
     // added 2026-11-05 v0.8.0: write the sections of a scene's passes, one fake request per pass, each with progress
     // events (phase + pass) and Stop. window.__mockFlags.passesMs: time per pass; passesFail: a scene id that fails
@@ -799,7 +804,8 @@ async function route(path, opts = {}) {
         const shots = (ps.shots || []).map((x, j) => (j ? `[Shot ${j + 1}] At ${fmt(x.t)}, the camera cuts to ` : "[Shot 1] Live-action, cinematic, ") + `${x.text || "the scene continues"}`);
         out.push({ index: k, start: ps.start, end: ps.end, sections: {
           subject_definitions: "", summary: `Pass ${k} of ${s.title}: ${(ps.shots || []).map(x => x.text).filter(Boolean).join(" ") || s.prompt.sections.summary || "the action continues."}`.slice(0, 220),
-          retention_analysis: "", detailed_description: (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.",
+          // [OLD 2026-11-12 v0.14.1->v0.14.2] retention_analysis: "", detailed_description: (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.",
+          retention_analysis: "", detailed_description: mockFlags.writeText?.[s.id] || (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.", // added 2026-11-12 v0.14.2: writeText
           overall_soundscape: s.prompt.sections.overall_soundscape || "Wind and distant surf.", non_diegetic_music: "N/A" } });
       }
       return json({ scene_id: s.id, pass_count: plan.length, passes: out, warnings: [], tokens: 700 * out.length, ms: 900 * out.length });

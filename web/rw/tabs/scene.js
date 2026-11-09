@@ -18,6 +18,7 @@ import {
   runWrite, stopWrite, stillMove,
 } from "../passes.js";
 import { applyWritten } from "../passes.js"; // added 2026-11-06 v0.10.0: the rewriter on a pass tab
+import { fillScene, fillable, fillWords } from "../shotfill.js"; // added 2026-11-12 v0.14.2: shots and lines from the description
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { sceneMenu } from "./timeline.js"; // added 2026-11-02 v0.2.2
 import { sceneMenu, setSceneDuration, autoRollOn } from "./timeline.js"; // added 2026-11-02 v0.2.2; v0.6.0: auto-roll
 import { beatTimes } from "./soundtrack.js"; // added 2026-11-03 v0.6.0: shot times on the beat
@@ -931,7 +932,8 @@ function shotsCard(ctx, s) {
     ],
     children: [
       ctx.eph.beatShots === s.id && songs && beatPlanNote(ctx, s, beatPlan),
-      s.shots.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.shots" }, "No shots: the scene is written as one continuous take.")
+      // [OLD 2026-11-12 v0.14.1->v0.14.2] s.shots.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.shots" }, "No shots: the scene is written as one continuous take.")
+      s.shots.length === 0 ? fillNote(ctx, s, "shots") // added 2026-11-12 v0.14.2: or take them from the description
         // [OLD 2026-11-06 v0.8.0->v0.9.0] : h("div", { class: "rw-rows" }, s.shots.map((sh, i) => shotRow(ctx, s, sh, i, { plan, lens, proposed: proposed.get(sh.id) }))),
         : rowsBox(ctx, "shots", "shots-" + s.id, s.shots.map((sh, i) => shotRow(ctx, s, sh, i, { plan, lens, proposed: proposed.get(sh.id) }))), // added 2026-11-06 v0.9.0
       over && h("div", { class: "rw-note warn rw-overrun", help: "scene.shots.overrun" }, icon("warn", 12),
@@ -1140,7 +1142,8 @@ function dialogueCard(ctx, s) {
     } })],
     children: [
       !speakers.length && h("div", { class: "rw-note", help: "scene.dialogue.noCast" }, "Add a character in the Cast tab to give lines a speaker and a voice."),
-      s.dialogue.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.dialogue" }, "No spoken lines.")
+      // [OLD 2026-11-12 v0.14.1->v0.14.2] s.dialogue.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.dialogue" }, "No spoken lines.")
+      s.dialogue.length === 0 ? fillNote(ctx, s, "lines") // added 2026-11-12 v0.14.2: or take them from the description
         // [OLD 2026-11-06 v0.8.0->v0.9.0] : h("div", { class: "rw-rows" }, s.dialogue.map(d => dialogueRow(ctx, s, d, { plan }))),
         : rowsBox(ctx, "lines", "lines-" + s.id, s.dialogue.map(d => dialogueRow(ctx, s, d, { plan }))), // added 2026-11-06 v0.9.0
       s.dialogue.some(d => d.language && !STABLE_LANGUAGES.includes(d.language)) && h("div", { class: "rw-note" }, "Some lines use a language outside H3's 11 stable ones."),
@@ -1357,6 +1360,23 @@ function excerptRow(ctx, s, open) {
   return h("div", { class: "rw-row rw-excerpt", help: "scene.preview.excerpt" }, icon("music", 12), h("b", { class: "small" }, `Pass ${open + 1} song`), ...body);
 }
 
+// added 2026-11-12 v0.14.2: the empty Shots / Dialogue card of a scene whose description holds [Shot N] lines or
+// spoken lines (written before v0.14.2, or by hand) offers to put them on the timeline (shotfill.fillScene)
+function fillNote(ctx, s, what) {
+  const empty = what === "shots" ? "No shots: the scene is written as one continuous take." : "No spoken lines.";
+  const got = fillable(ctx.p, s);
+  const n = got && { shots: got.shots.length, lines: s.dialogue.length ? 0 : got.lines.length };
+  if (!got || (what === "lines" && !n.lines)) return h("div", { class: "rw-empty sm", help: what === "shots" ? "scene.shots" : "scene.dialogue" }, empty);
+  return h("div", { class: "rw-note rw-fill-note", help: "scene.shots.fill" }, icon("wand", 12),
+    h("span", { class: "grow" }, `${what === "shots" ? "No shots" : "No spoken lines"} on the timeline yet, but the description has ${fillWords(n)}.`),
+    button({ label: `Take ${fillWords(n)} from it`, icon: "wand", small: true, help: "scene.shots.fill", key: `fill-${what}-${s.id}`,
+      onClick: () => {
+        let done = null;
+        ctx.actions.editScene(s.id, (sc, q) => { done = fillScene(q, sc); }, { label: "Shots from the description" });
+        if (done) ctx.actions.toast(`Put ${fillWords(done)} on the timeline; the description keeps the style. Undo with Ctrl+Z.`, "ok");
+      } }));
+}
+
 function rewriteCard(ctx, s) {
   // added 2026-11-06 v0.10.0: on a pass tab the rewriter rewrites that pass's own sections (Write prompts' request for
   // one pass, with the instruction); a proposal made for another pass or tab is not shown
@@ -1440,10 +1460,25 @@ function rewriteCard(ctx, s) {
     if (prop.pass) {
       ctx.actions.editScene(s.id, (sc, q) => { applyWritten(sc, q, { passes: [{ ...prop.pass, sections: prop.sections }] }); }, { label: `Rewrite pass ${passK + 1}` });
     } else {
+      /* [OLD 2026-11-12 v0.14.1->v0.14.2] the shots and lines written for a scene without shots stayed in the description
       ctx.actions.editScene(s.id, sc => {
         if (prop.raw !== undefined && prop.raw !== null) { sc.prompt.raw = prop.raw; sc.prompt.mode = "raw"; }
         if (prop.sections) for (const k of SECTION_KEYS) if (prop.sections[k] !== undefined) sc.prompt.sections[k] = prop.sections[k];
       }, { label: "Rewrite" });
+    }
+    ctx.store.setEph({ rewrite: null });
+    ctx.actions.toast("Rewrite applied. Undo with Ctrl+Z.", "ok");
+    [/OLD] */
+      // added 2026-11-12 v0.14.2: a scene without shots takes the shots and spoken lines the rewrite wrote
+      let filled = null;
+      ctx.actions.editScene(s.id, (sc, q) => {
+        if (prop.raw !== undefined && prop.raw !== null) { sc.prompt.raw = prop.raw; sc.prompt.mode = "raw"; }
+        if (prop.sections) for (const k of SECTION_KEYS) if (prop.sections[k] !== undefined) sc.prompt.sections[k] = prop.sections[k];
+        filled = fillScene(q, sc);
+      }, { label: "Rewrite" });
+      ctx.store.setEph({ rewrite: null });
+      ctx.actions.toast(filled ? `Rewrite applied: ${fillWords(filled)} put on the timeline. Undo with Ctrl+Z.` : "Rewrite applied. Undo with Ctrl+Z.", "ok");
+      return;
     }
     ctx.store.setEph({ rewrite: null });
     ctx.actions.toast("Rewrite applied. Undo with Ctrl+Z.", "ok");

@@ -1519,6 +1519,7 @@ def main():
         v0131_checks(page, check, saved, shots)  # added 2026-11-12 v0.13.1: what a duplicated scene keeps; drag scenes to reorder
         v0140_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.0: clips of video and audio references
         v0141_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.1: every card folds; the Timeline inspector's parts too
+        v0142_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.2: shots and lines written for a scene without shots go on the timeline
         browser.close()
     httpd.shutdown()
 
@@ -5166,6 +5167,111 @@ def v0141_checks(page, check, saved, shots):
     check(not any(f for _, f in parts()) and page.locator(".rw-insp-now").count() == 1 and page.locator(".rw-insp-now").inner_text().strip() != "",
           "Expand everything opens every part, the playhead line filled again")
     check(len(labels()) == n0, f"still no undo steps ({labels()[n0:]})")
+    load(json.loads(saved))
+
+
+def v0142_checks(page, check, saved, shots):
+    """v0.14.2 (Sencer): "when creating a single shot scene, the shot section (and dialogues) are not populated. They
+    should be populated. currently everything shows only in detailed_description section." Write prompts and the
+    rewriter put the shot and spoken lines they write for a scene without shots on the timeline; an empty Shots or
+    Dialogue card offers to take them from a description written before."""
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    scene_of = lambda sid: next(x for x in cur()["scenes"] if x["id"] == sid)
+    labels = lambda: [x["label"] for x in page.evaluate("window.__editor.store.history()") if x["done"]]
+    toasts = lambda: " | ".join(page.locator(".rw-toast").all_inner_texts())
+    text = ("Cinematic, rain-soaked night, teal and amber palette.\n[Shot 1] A medium shot of @Mara at the harbor wall; "
+            "the lamps glow behind her. The camera slowly pushes in. @Mara (S1), with a husky low voice, mutters, "
+            "<d>[English] Almost home.</d> @{The Keeper} steps out of the shadows and (S2) calls, <d>[English] You're "
+            "late again.</d> She turns toward him.")
+
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="scene", selected="s_03")
+    q["ui"].pop("collapsed", None)
+    load(q)
+
+    def new_scene():
+        page.evaluate("window.__editor.actions.addScene('s_03')")
+        page.wait_for_timeout(300)
+        sid = cur()["ui"]["selected"]
+        page.evaluate("""sid => window.__editor.store.update(q => { const s = q.scenes.find(x => x.id === sid);
+          s.duration = 10; s.shots = []; s.dialogue = []; s.prompt.sections.summary = 'Mara comes home; the keeper waits.'; },
+          { label: 'test scene' })""", sid)
+        page.wait_for_timeout(300)
+        page.evaluate("([sid, t]) => { window.__mockFlags.writeText[sid] = t; window.__mockFlags.passesMs = 0; }", [sid, text])
+        return sid
+
+    # 1. Write prompts on a new scene without shots: the shot and the two lines go on the timeline
+    sid = new_scene()
+    page.evaluate("window.__editor.actions.setTab('scene')")
+    page.wait_for_timeout(300)
+    check(page.locator(f"[data-key='fill-shots-{sid}']").count() == 0, "a scene with nothing written offers nothing")
+    n0 = len(labels())
+    page.click(f"[data-key='write-{sid}']")
+    page.wait_for_function(f"() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
+    page.wait_for_timeout(400)
+    sc = scene_of(sid)
+    check(len(sc["shots"]) == 1 and sc["shots"][0]["t"] == 0 and sc["shots"][0]["text"].startswith("A medium shot of @Mara")
+          and "Almost home" not in sc["shots"][0]["text"], f"Write prompts put the shot on the timeline: {sc['shots']}")
+    check([(d["speaker"], d["delivery"], d["text"]) for d in sc["dialogue"]] == [("c_mara", "mutters", "Almost home."), ("c_keeper", "calls", "You're late again.")],
+          f"and both spoken lines with their speakers: {[(d['speaker'], d['delivery'], d['text']) for d in sc['dialogue']]}")
+    check(sc["prompt"]["sections"]["detailed_description"] == "Cinematic, rain-soaked night, teal and amber palette.",
+          f"the description keeps the style: {sc['prompt']['sections']['detailed_description']!r}")
+    check({c["id"] for c in sc["cast"]} >= {"c_mara", "c_keeper"}, f"the speakers are in the scene: {sc['cast']}")
+    check(len(labels()) == n0 + 1 and "1 shot and 2 spoken lines" in toasts(), f"one undo step, and a toast: {labels()[n0:]} {toasts()!r}")
+    check(page.locator(".rw-card:has(.rw-card-title:has-text('Shots')) .rw-shot-row").count() == 1
+          and page.locator(".rw-card:has(.rw-card-title:has-text('Dialogue')) .rw-dlg-row").count() == 2, "the Shots and Dialogue cards show them")
+    page.screenshot(path=str(shots / "v0142_written.png"))
+    audit("Written scene")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(300)
+    check(not scene_of(sid)["shots"] and not scene_of(sid)["dialogue"], "Ctrl+Z takes the write back")
+
+    # 2. a description written before v0.14.2: the empty Shots / Dialogue cards offer to take them from it
+    page.evaluate("([sid, t]) => window.__editor.store.update(q => { q.scenes.find(x => x.id === sid).prompt.sections.detailed_description = t; }, { label: 'old text' })", [sid, text])
+    page.wait_for_timeout(300)
+    note = page.locator(".rw-fill-note")
+    check(note.count() == 2 and "the description has 1 shot and 2 spoken lines" in note.first.inner_text(), f"both empty cards say so: {note.all_inner_texts()}")
+    page.screenshot(path=str(shots / "v0142_fill_note.png"))
+    audit("Fill note")
+    page.click(f"[data-key='fill-lines-{sid}']")
+    page.wait_for_timeout(300)
+    sc = scene_of(sid)
+    check(len(sc["shots"]) == 1 and len(sc["dialogue"]) == 2 and labels()[-1] == "Shots from the description" and note.count() == 0,
+          f"one click fills both: {len(sc['shots'])} shots, {len(sc['dialogue'])} lines, {labels()[-1]!r}")
+
+    # 3. the rewriter on a scene without shots
+    sid2 = new_scene()
+    page.evaluate("window.__editor.actions.setTab('scene')")
+    page.wait_for_timeout(300)
+    page.click(f"[data-key='rewrite-run-{sid2}']")
+    page.wait_for_selector(".rw-diff", timeout=5000)
+    page.click("button[data-help='scene.rewrite.accept']")
+    page.wait_for_timeout(300)
+    sc = scene_of(sid2)
+    check(len(sc["shots"]) == 1 and len(sc["dialogue"]) == 2 and labels()[-1] == "Rewrite" and "put on the timeline" in toasts(),
+          f"Rewrite fills them too: {len(sc['shots'])} shots, {len(sc['dialogue'])} lines, {toasts()!r}")
+    # a scene that has shots keeps its description as written
+    page.evaluate("window.__editor.store.setEph({ toasts: [] })")
+    page.evaluate("window.__editor.actions.select('s_03')")
+    page.wait_for_timeout(300)
+    page.evaluate("t => { window.__mockFlags.writeText['s_03'] = t; }", text)
+    before = scene_of("s_03")["shots"]
+    page.click("[data-key='rewrite-run-s_03']")
+    page.wait_for_selector(".rw-diff", timeout=5000)
+    page.click("button[data-help='scene.rewrite.accept']")
+    page.wait_for_timeout(300)
+    check(scene_of("s_03")["shots"] == before and "put on the timeline" not in toasts(), "a scene with shots is not changed by it")
+    page.evaluate("window.__mockFlags.writeText = {}")
     load(json.loads(saved))
 
 

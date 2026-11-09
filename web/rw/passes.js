@@ -8,6 +8,7 @@
 import * as model from "./model.js";
 import { rw } from "./api.js";
 import { newJob } from "./llmjob.js";
+import { fillScene, fillWords } from "./shotfill.js"; // added 2026-11-12 v0.14.2: a scene written without shots gets them
 
 const { FPS, SECTION_KEYS, planScene, sceneIndex } = model;
 
@@ -193,7 +194,10 @@ export function writeBusy(ctx) {
 
 // Put a written answer into a scene being edited: a single-pass scene gets it in its own sections (it has no tabs; its
 // pass 1 uses them), a multi-pass scene in scene.prompt.passes (the current layout, then the written passes).
-export function applyWritten(sc, p, res) {
+// added 2026-11-12 v0.14.2: a single-pass scene with no shots on the timeline takes the shots and spoken lines the
+// answer wrote (shotfill.fillScene); report.fill gets the counts
+// [OLD 2026-11-12 v0.14.1->v0.14.2] export function applyWritten(sc, p, res) {
+export function applyWritten(sc, p, res, report = null) {
   const plan = passLayout(p, sc);
   const got = (Array.isArray(res?.passes) ? res.passes : []).filter(x => x && typeof x === "object" && x.sections);
   if (!got.length) return 0;
@@ -205,6 +209,8 @@ export function applyWritten(sc, p, res) {
     const sec = clean(one.sections);
     for (const k of SECTION_KEYS) if (sec[k].trim()) sc.prompt.sections[k] = sec[k];
     sc.prompt.passes = [];
+    const filled = fillScene(p, sc); // added 2026-11-12 v0.14.2
+    if (report) report.fill = filled;
     return 1;
   }
   // passes that were written for another range (the scene changed while the LLM wrote) keep the range they were
@@ -253,7 +259,11 @@ export async function runWrite(ctx, items, { origin = "scene", label = "" } = {}
       if (n && store.project.scenes.some(x => x.id === it.sid)) {
         const multi = passLayout(store.project, store.project.scenes.find(x => x.id === it.sid)).passes.length > 1;
         const what = it.passes?.length === 1 && multi ? `Write pass ${it.passes[0]}` : "Write prompts";
-        ctx.actions.editScene(it.sid, (sc, q) => { applyWritten(sc, q, res); }, { label: origin === "import" ? `${what}: ${scene.title}` : what });
+        // [OLD 2026-11-12 v0.14.1->v0.14.2] ctx.actions.editScene(it.sid, (sc, q) => { applyWritten(sc, q, res); }, { label: origin === "import" ? `${what}: ${scene.title}` : what });
+        // added 2026-11-12 v0.14.2: say when the answer's shots and spoken lines were put on the timeline
+        const rep = {};
+        ctx.actions.editScene(it.sid, (sc, q) => { applyWritten(sc, q, res, rep); }, { label: origin === "import" ? `${what}: ${scene.title}` : what });
+        if (rep.fill && origin !== "import") ctx.actions.toast(`Put ${fillWords(rep.fill)} on the timeline from what the LLM wrote; the description keeps the style.`, "ok");
         wrote++;
       }
       if (Array.isArray(res?.warnings) && res.warnings.length) it.warnings = res.warnings.map(String);
