@@ -20,6 +20,7 @@ import { h, icon, button, comboState, contextMenu } from "./ui.js";
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { h, icon, button, comboState, contextMenu, confirmDialog } from "./ui.js";
 import { h, icon, button, comboState, contextMenu, confirmDialog, choiceDialog, focusGuard, isTextField } from "./ui.js";
 import { copyMenuItems, copyButton } from "./ui.js"; // added 2026-11-06 v0.10.0: right-click Copy text, Issues → Copy all
+import { foldScope } from "./ui.js"; // added 2026-11-12 v0.14.1: every card on every tab folds
 import { VERSION } from "./version.js";
 import {
   normalizeProject, defaultScene, newId, sceneIndex, sceneStarts, assembledDuration, fmtTime,
@@ -1044,7 +1045,8 @@ export function mountEditor(container, host) {
     renderTabbar();
     // [OLD 2026-11-12 v0.12.0->v0.13.0] const tab = TABS[store.project.ui.tab] || TABS.timeline;
     const tab = TABS[currentTabId()]; // added 2026-11-12 v0.13.0: a hidden tab shows the Timeline
-    body.replaceChildren(tab.mod.render(ctx));
+    // [OLD 2026-11-12 v0.14.0->v0.14.1] body.replaceChildren(tab.mod.render(ctx));
+    body.replaceChildren(foldScope(ctx, () => tab.mod.render(ctx))); // added 2026-11-12 v0.14.1: every card folds
     bodyTab = store.project.ui.tab; // added 2026-11-03 v0.6.0 review
     bodyVersion = typeof store.project.__rwv === "number" ? store.project.__rwv : -2; // added 2026-11-03 v0.6.0 review
     renderFooter();

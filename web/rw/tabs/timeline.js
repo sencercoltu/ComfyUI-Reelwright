@@ -9,6 +9,7 @@
 // [OLD 2026-11-02 v0.2.2->v0.3.0] import { h, icon, button, toggle, segmented, chip, dot, slider } from "../ui.js";
 // [OLD 2026-11-06 v0.8.0->v0.9.0] import { h, icon, button, toggle, segmented, chip, dot, slider, select } from "../ui.js";
 import { h, icon, button, toggle, segmented, chip, dot, slider, select, splitter, uiNum, rootScale } from "../ui.js"; // added 2026-11-06 v0.9.0: panel bars
+import { foldBlock } from "../ui.js"; // added 2026-11-12 v0.14.1: the inspector's parts fold
 // [OLD 2026-11-05 v0.6.1->v0.7.0] import { viewURL } from "../api.js";
 import { rw, viewURL } from "../api.js"; // added 2026-11-05 v0.7.0: rw.filmstrip
 import { joinOf, TRANSITION, DIRECTED, DIRECTIONS, transitionLabel } from "../cut.js"; // added 2026-11-05 v0.7.0: cut marks
@@ -775,6 +776,8 @@ function addMarker(ctx) {
 
 // ---- Inspector ----
 
+const START_WORD = { fresh: "fresh", last_frame: "from the last frame", tail: "tail clip" }; // added 2026-11-12 v0.14.1: folded Details
+
 function renderInspector(ctx) {
   const p = ctx.p;
   // added 2026-11-03 v0.5.0: a soundtrack track selected on its lane
@@ -827,6 +830,7 @@ function renderInspector(ctx) {
       h("span", { class: ["rw-status", "st-" + status], help: "status." + status }, h("span", { class: "rw-led" }), STATUS_LABEL[status] || status),
       h("span", { class: "rw-flex" }),
       button({ label: "Open in Scene tab", icon: "chevRight", help: "timeline.inspector.open", variant: "link", small: true, onClick: () => ctx.actions.setTab("scene") })),
+    /* [OLD 2026-11-12 v0.14.0->v0.14.1] the details, summary, chips and prompt could not be folded
     h("div", { class: "rw-kv-grid" },
       h("div", { class: "rw-kv", help: "timeline.inspector.duration" }, h("span", null, "Duration"),
         h("b", { class: "mono" }, s.duration.toFixed(2) + " s ", h("small", null, framesOf(s.duration) + " f"))),
@@ -851,6 +855,50 @@ function renderInspector(ctx) {
     h("div", { class: "rw-chips" }, refChips(ctx, s)),
     h("pre", { class: "rw-prompt-preview mono", help: "timeline.inspector.prompt", html: prompt ? highlightHTML(prompt) : "" },
       prompt ? null : h("span", { class: "rw-dim" }, ctx.eph.backend === "online" ? "The prompt preview appears once the scene has a prompt." : "Prompt preview needs the Reelwright backend (start ComfyUI with the node installed).")),
+    [/OLD] */
+    // added 2026-11-12 v0.14.1: every part folds (Sencer: "make every section under every tab collapsible"); a folded
+    // part shows a short summary on its line
+    foldBlock({
+      ctx, id: "tl.details", label: "Details", help: "timeline.inspector.details",
+      summary: `${s.duration.toFixed(2)} s · ${passes > 1 ? passes + " passes" : "1 pass"} · ${START_WORD[s.start.mode] || s.start.mode}`,
+      children: [
+        h("div", { class: "rw-kv-grid" },
+          h("div", { class: "rw-kv", help: "timeline.inspector.duration" }, h("span", null, "Duration"),
+            h("b", { class: "mono" }, s.duration.toFixed(2) + " s ", h("small", null, framesOf(s.duration) + " f"))),
+          h("div", { class: "rw-kv", help: "timeline.inspector.passes" }, h("span", null, "Generation"),
+            h("b", null, passes > 1 ? `${passes} passes` : est.short ? `1 pass · trimmed from ${(MIN_PASS_FRAMES / FPS).toFixed(2)} s` : "1 pass")),
+          h("div", { class: "rw-kv", help: "timeline.inspector.overrides" }, h("span", null, "Overrides"),
+            h("b", null, overrideCount(s) ? h("span", { class: "rw-c-accent" }, "● " + overrideCount(s)) : h("span", { class: "rw-dim" }, "none")))),
+        h("div", { class: "rw-field", help: "scene.start" }, h("span", { class: "rw-field-label" }, "Starts from"),
+          segmented({
+            small: true, value: s.start.mode, help: "scene.start",
+            options: [
+              { value: "fresh", label: "Fresh", icon: "cut", help: "scene.start.fresh" },
+              { value: "last_frame", label: "Last frame", icon: "link", help: "scene.start.last_frame" },
+              { value: "tail", label: "Tail clip", icon: "tail", help: "scene.start.tail" },
+            ],
+            onChange: v => {
+              if (v !== "fresh" && !prev) { ctx.actions.toast("The first scene has nothing to continue from.", "warn"); return; }
+              ctx.actions.editScene(s.id, sc => { sc.start.mode = v; });
+            },
+          }))],
+    }),
+    summaryBlock(ctx, s),
+    (() => {
+      const chips = refChips(ctx, s);
+      const n = s.cast.length + s.refs.length;
+      return foldBlock({
+        ctx, id: "tl.refs", label: "Cast and references", help: "timeline.inspector.refs",
+        summary: n ? `${n} item${n === 1 ? "" : "s"}` : "none",
+        children: h("div", { class: "rw-chips" }, chips),
+      });
+    })(),
+    foldBlock({
+      ctx, id: "tl.prompt", label: "Prompt", help: "timeline.inspector.prompt", cls: "grow",
+      summary: prompt ? `${prompt.length} characters` : "",
+      children: h("pre", { class: "rw-prompt-preview mono", help: "timeline.inspector.prompt", html: prompt ? highlightHTML(prompt) : "" },
+        prompt ? null : h("span", { class: "rw-dim" }, ctx.eph.backend === "online" ? "The prompt preview appears once the scene has a prompt." : "Prompt preview needs the Reelwright backend (start ComfyUI with the node installed).")),
+    }),
     h("div", { class: "rw-row" },
       button({ label: "Render scene", icon: "play", help: "timeline.inspector.render", onClick: () => ctx.actions.run("selected", [s.id]) }),
       button({ label: "New take", icon: "refresh", help: "timeline.inspector.take", onClick: () => ctx.actions.run("take", [s.id]) }),
@@ -868,15 +916,31 @@ function summaryBlock(ctx, s) {
   const txt = (raw ? s.prompt.raw : s.prompt.sections.summary || "").trim();
   const now = h("div", { class: "rw-insp-now", help: "timeline.inspector.now" });
   ctx.tl = ctx.tl || {};
-  Object.assign(ctx.tl, { now, nowScene: s.id, nowPlan: plan, nowTexts: multi ? passTextsOf(p, s, plan).texts : null, nowKey: null });
+  // [OLD 2026-11-12 v0.14.0->v0.14.1] Object.assign(ctx.tl, { now, nowScene: s.id, nowPlan: plan, nowTexts: multi ? passTextsOf(p, s, plan).texts : null, nowKey: null });
+  // added 2026-11-12 v0.14.1: the summary folds; folded, "at the playhead" is not built or kept up to date
+  const folded = !!p.ui?.collapsed?.["tl.summary"];
+  Object.assign(ctx.tl, { now: folded ? null : now, nowScene: s.id, nowPlan: plan, nowTexts: multi && !folded ? passTextsOf(p, s, plan).texts : null, nowKey: null });
   const { starts } = sceneStarts(p);
   nowAt(ctx, sceneAt(p, p.ui.playhead), p.ui.playhead - (starts[sceneAt(p, p.ui.playhead).id] ?? 0));
+  /* [OLD 2026-11-12 v0.14.0->v0.14.1] the summary could not be folded
   return h("div", { class: "rw-insp-sum" },
     h("div", { class: "rw-insp-label", help: multi && !raw ? "scene.prompt.sceneNote" : "timeline.inspector.summary" },
       raw ? "Raw prompt" : multi ? `Scene note · ${plan.passes.length} passes` : "Summary"),
     txt ? h("div", { class: "rw-insp-text", help: "timeline.inspector.summary" }, txt)
       : h("div", { class: "rw-insp-text rw-dim", help: "timeline.inspector.summary" }, raw ? "No raw prompt yet." : "No summary yet: write one in the Scene tab, or let Write prompts do it."),
     now);
+  [/OLD] */
+  // added 2026-11-12 v0.14.1: a folded summary shows its start on its line
+  const short = txt.replace(/\s+/g, " ");
+  return foldBlock({
+    ctx, id: "tl.summary", cls: "rw-insp-sum", help: multi && !raw ? "scene.prompt.sceneNote" : "timeline.inspector.summary",
+    label: raw ? "Raw prompt" : multi ? `Scene note · ${plan.passes.length} passes` : "Summary",
+    summary: short ? (short.length > 70 ? short.slice(0, 69).trimEnd() + "…" : short) : "none yet",
+    children: [
+      txt ? h("div", { class: "rw-insp-text", help: "timeline.inspector.summary" }, txt)
+        : h("div", { class: "rw-insp-text rw-dim", help: "timeline.inspector.summary" }, raw ? "No raw prompt yet." : "No summary yet: write one in the Scene tab, or let Write prompts do it."),
+      now],
+  });
 }
 
 // added 2026-11-06 v0.9.0: fill the inspector's "at the playhead" line (called by setPlayhead on every frame while

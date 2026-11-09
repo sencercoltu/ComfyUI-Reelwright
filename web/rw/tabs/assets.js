@@ -4,6 +4,7 @@
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips, confirmInline } from "../ui.js";  (confirmInline is no longer used; deletes go through editor.deleteAsset and its dialog)
 import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips } from "../ui.js";
 import { kept } from "../ui.js"; // added 2026-11-06 v0.10.0: pictures that survive re-renders
+import { foldAll, foldMenu, setFolded, pauseMediaIn } from "../ui.js"; // added 2026-11-12 v0.14.1: groups fold like cards
 import { rw, viewURL } from "../api.js";
 import { assetMenu } from "./timeline.js"; // added 2026-11-02 v0.3.0
 import {
@@ -249,8 +250,18 @@ function groupsView(ctx, match, filtered) {
 function groupSection(ctx, g, i, items, total, filtered) {
   const p = ctx.p;
   const id = g ? g.id : "";
-  const closedMap = ctx.eph.assetGroupsClosed || {};
-  const closed = !!closedMap[id || "-"];
+  // [OLD 2026-11-12 v0.14.0->v0.14.1] const closedMap = ctx.eph.assetGroupsClosed || {};
+  // [OLD 2026-11-12 v0.14.0->v0.14.1] const closed = !!closedMap[id || "-"];
+  // added 2026-11-12 v0.14.1: a group folds like every card: project.ui.collapsed["agroup:<id>"] (kept with the
+  // project, no undo step), with the cards' right-click menu and Alt+click (fold or open everything on the tab)
+  const foldId = "agroup:" + (id || "-");
+  const closed = !!p.ui?.collapsed?.[foldId];
+  const flip = e => {
+    e.stopPropagation();
+    if (e.altKey) { foldAll(ctx, e.currentTarget, !closed); return; }
+    if (!closed) pauseMediaIn([e.currentTarget.closest(".rw-card")]);
+    setFolded(ctx, [foldId], !closed);
+  };
   const editing = !!g && ctx.eph.editGroup === g.id;
   const name = g ? (g.name.trim() || "Unnamed group") : "No group";
   const editG = (fn, label) => ctx.actions.edit(q => { const x = q.asset_groups.find(y => y.id === id); if (x) fn(x, q); }, { label });
@@ -263,16 +274,25 @@ function groupSection(ctx, g, i, items, total, filtered) {
     ctx.actions.edit(q => { const x = q.assets.find(y => y.id === aid); if (x) x.group = id; }, { label: `Move ${a.code} to ${g ? name : "no group"}` });
   };
   return h("section", {
-    class: ["rw-card", "rw-agroup", !g && "loose", closed && "closed"], key: "agroup-" + (id || "-"), help: g ? "assets.group" : "assets.group.none",
+    // [OLD 2026-11-12 v0.14.0->v0.14.1] class: ["rw-card", "rw-agroup", !g && "loose", closed && "closed"], key: "agroup-" + (id || "-"), help: g ? "assets.group" : "assets.group.none",
+    class: ["rw-card", "rw-agroup", !g && "loose", closed && "closed", closed && "folded"], key: "agroup-" + (id || "-"), help: g ? "assets.group" : "assets.group.none", dataset: { fold: foldId }, // added 2026-11-12 v0.14.1
     onDragover: e => { if (e.dataTransfer.types.includes("application/x-rw-asset")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; e.currentTarget.classList.add("over"); } },
     onDragleave: e => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove("over"); },
     onDrop: drop,
   },
+  /* [OLD 2026-11-12 v0.14.0->v0.14.1] the group's fold was kept for the session only; no menu, no Alt+click
   h("div", { class: "rw-card-head" },
     h("button", { type: "button", class: "rw-agroup-caret", help: "assets.group.collapse", key: "agroup-caret-" + (id || "-"), "aria-expanded": closed ? "false" : "true",
       onClick: () => ctx.store.setEph({ assetGroupsClosed: { ...closedMap, [id || "-"]: !closed } }) }, icon(closed ? "chevRight" : "chevDown", 12)),
     h("span", { class: g ? "rw-c-accent" : "rw-dim" }, icon("folder", 13)),
     h("span", { class: "rw-card-title" }, name),
+  [/OLD] */
+  // added 2026-11-12 v0.14.1
+  h("div", { class: "rw-card-head", menu: e => foldMenu(ctx, foldId, closed, e.target.closest(".rw-card"), "group") },
+    h("button", { type: "button", class: "rw-agroup-caret", help: "assets.group.collapse", key: "agroup-caret-" + (id || "-"), "aria-expanded": closed ? "false" : "true",
+      onClick: flip }, icon(closed ? "chevRight" : "chevDown", 12)),
+    h("span", { class: g ? "rw-c-accent" : "rw-dim" }, icon("folder", 13)),
+    h("span", { class: "rw-card-title clickable", onClick: flip }, name),
     h("span", { class: "mono rw-dim small" }, filtered && items.length !== total ? `${items.length} of ${total}` : String(total)),
     g && g.description && !editing ? h("span", { class: "rw-dim small rw-ellipsis rw-agroup-desc", title: g.description }, g.description) : null,
     h("span", { class: "rw-flex" }),

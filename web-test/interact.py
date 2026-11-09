@@ -79,7 +79,9 @@ def main():
         check(page.locator(".rw-ac.on .rw-ac-item").count() > 0, "autocomplete list did not open")
         page.keyboard.press("Enter")
         page.wait_for_timeout(300)
-        page.locator(".rw-card-title:has-text('Duration')").click()
+        # [OLD 2026-11-12 v0.14.0->v0.14.1] a click on a card title folds every card now; click beside it to leave the field
+        # page.locator(".rw-card-title:has-text('Duration')").click()
+        page.locator(".rw-card:has(.rw-card-title:has-text('Duration'))").click(position={"x": 4, "y": 4})  # added 2026-11-12 v0.14.1: the card's corner
         page.wait_for_timeout(500)
         summary = project(page)["scenes"][2]["prompt"]["sections"]["summary"]
         check("@P1" in summary, f"autocomplete did not insert @P1: {summary!r}")
@@ -1516,6 +1518,7 @@ def main():
         v0130_checks(page, check, saved, shots)  # added 2026-11-12 v0.13.0: Chat tab; a new take keeps playing; full screen
         v0131_checks(page, check, saved, shots)  # added 2026-11-12 v0.13.1: what a duplicated scene keeps; drag scenes to reorder
         v0140_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.0: clips of video and audio references
+        v0141_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.1: every card folds; the Timeline inspector's parts too
         browser.close()
     httpd.shutdown()
 
@@ -5031,6 +5034,138 @@ def v0140_checks(page, check, saved, shots):
     lane = page.evaluate("() => [...document.querySelectorAll('.rw-lane-body')].map(x => x.textContent).join(' | ')")
     check("V1.2" in lane, f"the timeline names the second clip V1.2: {lane[:300]}")
     page.evaluate("""() => { const host = window.__host; if (host.__origApiURL) host.apiURL = host.__origApiURL; }""")
+    load(json.loads(saved))
+
+
+def v0141_checks(page, check, saved, shots):
+    """v0.14.1 (Sencer): "make every section under every tab collapsible": every card on every tab folds (chevron or
+    title; Alt+click and the head's right-click menu fold or open every card of the tab), and so do the Timeline
+    inspector's parts. Folding is not an edit (no undo step) and pauses media playing in the card."""
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def tab(name):
+        page.evaluate(f"window.__editor.actions.setTab('{name}')")
+        page.wait_for_timeout(400)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    collapsed = lambda: cur()["ui"].get("collapsed") or {}
+    labels = lambda: [x["label"] for x in page.evaluate("window.__editor.store.history()") if x["done"]]
+    parts = lambda: page.evaluate("() => [...document.querySelectorAll('.rw-body [data-fold]')].map(x => [x.dataset.fold, x.classList.contains('folded')])")
+
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="scene", selected="s_03")
+    q["ui"].pop("collapsed", None)
+    load(q)
+    n0 = len(labels())
+
+    # 1. every card on every tab has a chevron, a fold id, and folds and opens again
+    for t in ("scene", "assets", "cast", "render", "files", "global"):
+        tab(t)
+        r = page.evaluate("""() => { const cards = [...document.querySelectorAll('.rw-body .rw-card')];
+          return { n: cards.length, bare: cards.filter(c => !c.querySelector(':scope > .rw-card-head > button[aria-expanded]') || !c.dataset.fold)
+                   .map(c => c.querySelector('.rw-card-title')?.textContent || c.className) }; }""")
+        check(r["n"] > 0 and not r["bare"], f"{t}: every card folds ({r['n']} cards, without a chevron: {r['bare']})")
+        audit(f"{t} tab, open")
+        first = page.locator(".rw-body .rw-card").first
+        fid = first.get_attribute("data-fold")
+        first.locator(":scope > .rw-card-head > button[aria-expanded]").click()
+        page.wait_for_timeout(250)
+        card = page.locator(f".rw-body [data-fold='{fid}']")
+        check(card.count() == 1 and "folded" in (card.get_attribute("class") or "") and collapsed().get(fid) is True
+              and card.locator(":scope > :not(.rw-card-head)").count() == 0, f"{t}: the first card ({fid}) folds to its head")
+        audit(f"{t} tab, a card folded")
+        card.locator(":scope > .rw-card-head > button[aria-expanded]").click()
+        page.wait_for_timeout(250)
+        check(fid not in collapsed(), f"{t}: and opens again ({collapsed()})")
+    check(len(labels()) == n0, f"folding is not an edit: no undo steps ({labels()[n0:]})")
+
+    # 2. a folded card stays folded in another scene; the title folds it too
+    tab("scene")
+    page.locator(".rw-card-title:has-text('References')").click()
+    page.wait_for_timeout(250)
+    check(collapsed().get("scene.refs") is True, f"a click on the title folds References: {collapsed()}")
+    page.evaluate("window.__editor.actions.select('s_02')")
+    page.wait_for_timeout(350)
+    check(page.locator(".rw-body .rw-card.folded[data-fold='scene.refs']").count() == 1, "References stays folded in another scene")
+    page.screenshot(path=str(shots / "v0141_scene_folded.png"))
+
+    # 3. right-click a card head: fold or open every card of the tab
+    page.locator(".rw-card-title:has-text('Duration')").click(button="right")
+    page.wait_for_timeout(200)
+    items = page.locator(".rw-ctx .rw-ctx-item").all_inner_texts()
+    check(any("Collapse this card" in x for x in items) and any("Collapse everything here" in x for x in items)
+          and any("Expand everything here" in x for x in items), f"the head's menu: {items}")
+    audit("fold menu")
+    page.locator(".rw-ctx .rw-ctx-item:has-text('Collapse everything here')").click()
+    page.wait_for_timeout(300)
+    pp = parts()
+    check(pp and all(f for _, f in pp), f"Collapse everything here folds every card: {pp}")
+    page.screenshot(path=str(shots / "v0141_scene_all_folded.png"))
+    audit("every card folded")
+    page.locator(".rw-card-title:has-text('Duration')").click(button="right")
+    page.wait_for_timeout(200)
+    dis = page.evaluate("() => [...document.querySelectorAll('.rw-ctx .rw-ctx-item')].filter(b => b.disabled).map(b => b.textContent)")
+    check(any("Collapse everything" in x for x in dis), f"everything folded: Collapse everything is off ({dis})")
+    page.locator(".rw-ctx .rw-ctx-item:has-text('Expand everything here')").click()
+    page.wait_for_timeout(300)
+    check(not any(f for _, f in parts()) and collapsed() == {}, f"Expand everything here opens them: {collapsed()}")
+
+    # 4. Alt+click on a chevron folds every card, and opens them again
+    page.locator("[data-key='fold-scene.duration']").click(modifiers=["Alt"])
+    page.wait_for_timeout(300)
+    check(all(f for _, f in parts()), f"Alt+click folds every card: {parts()}")
+    page.locator("[data-key='fold-scene.duration']").click(modifiers=["Alt"])
+    page.wait_for_timeout(300)
+    check(not any(f for _, f in parts()), f"Alt+click again opens every card: {parts()}")
+
+    # 5. folding pauses what plays in the card (kept media elements outlive renders)
+    page.evaluate("""() => { const c = document.querySelector(".rw-body [data-fold='scene.refs']"); const a = document.createElement('audio');
+      a.pause = () => { window.__rwPaused = (window.__rwPaused || 0) + 1; }; window.__rwPaused = 0; c.appendChild(a); }""")
+    page.locator("[data-key='fold-scene.refs']").click()
+    page.wait_for_timeout(250)
+    check(page.evaluate("window.__rwPaused") == 1, f"folding paused the card's audio ({page.evaluate('window.__rwPaused')})")
+    page.locator("[data-key='fold-scene.refs']").click()
+    page.wait_for_timeout(250)
+
+    # 6. the Timeline inspector's parts fold, with a summary on their line
+    page.evaluate("window.__editor.store.update(q => { q.ui.selected = 's_03'; }, { history: false })")
+    tab("timeline")
+    ids = [i for i, _ in parts()]
+    check(ids == ["tl.details", "tl.summary", "tl.refs", "tl.prompt"], f"the inspector's parts: {ids}")
+    check(page.locator(".rw-insp-now").count() == 1, "the summary shows what is at the playhead")
+    audit("Timeline, open")
+    page.locator(".rw-fblock[data-fold='tl.summary'] .rw-fblock-head .rw-insp-label").click()
+    page.wait_for_timeout(250)
+    blk = page.locator(".rw-fblock[data-fold='tl.summary']")
+    check("folded" in blk.get_attribute("class") and page.locator(".rw-insp-now").count() == 0 and blk.locator(".rw-card-fold-sum").count() == 1,
+          f"Summary folds to one line with its start: {blk.inner_text()!r}")
+    page.evaluate("window.__editor.store.update(q => { q.ui.playhead = 3.2; }, { history: false })")
+    page.wait_for_timeout(200)
+    page.locator("[data-key='fold-tl.details']").click(modifiers=["Alt"])
+    page.wait_for_timeout(250)
+    check(all(f for _, f in parts()), f"Alt+click folds every part: {parts()}")
+    sums = page.locator(".rw-insp .rw-card-fold-sum").all_inner_texts()
+    check(any(" s · " in x for x in sums), f"folded Details says the length: {sums}")
+    page.screenshot(path=str(shots / "v0141_timeline_folded.png"))
+    audit("Timeline, folded")
+    check(page.locator(".rw-insp .rw-row button:has-text('Render scene')").count() == 1, "the buttons stay")
+    page.locator(".rw-fblock[data-fold='tl.prompt'] .rw-fblock-head").click(button="right")
+    page.wait_for_timeout(200)
+    items = page.locator(".rw-ctx .rw-ctx-item").all_inner_texts()
+    check(any("Expand this block" in x for x in items), f"the part's menu: {items}")
+    page.locator(".rw-ctx .rw-ctx-item:has-text('Expand everything here')").click()
+    page.wait_for_timeout(300)
+    check(not any(f for _, f in parts()) and page.locator(".rw-insp-now").count() == 1 and page.locator(".rw-insp-now").inner_text().strip() != "",
+          "Expand everything opens every part, the playhead line filled again")
+    check(len(labels()) == n0, f"still no undo steps ({labels()[n0:]})")
     load(json.loads(saved))
 
 

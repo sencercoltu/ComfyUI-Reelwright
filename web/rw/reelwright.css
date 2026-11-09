@@ -1100,3 +1100,14 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-clip-prev { display: flex; flex-direction: column; gap: 6px; }
 .rw-clip-media { width: 100%; max-height: 220px; border-radius: 6px; background: #000; }
 audio.rw-clip-media { height: 34px; background: transparent; }
+/* added 2026-11-12 v0.14.1: foldable blocks (the Timeline inspector's parts) */
+.rw-fblock { display: flex; flex-direction: column; gap: 4px; flex: none; min-width: 0; }
+.rw-fblock-head { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 18px; }
+.rw-fblock-head .rw-card-fold { width: 18px; height: 18px; }
+.rw-fblock-head .rw-insp-label { flex: none; }
+.rw-fblock-head .rw-card-fold-sum { flex: 1 1 auto; min-width: 0; max-width: none; text-transform: none; letter-spacing: 0; }
+.rw-insp-label.clickable { cursor: pointer; }
+.rw-fblock.folded { gap: 0; }
+.rw-insp > .rw-fblock.grow:not(.folded) { flex: 1 1 auto; min-height: 0; }
+.rw-insp > .rw-fblock.grow .rw-prompt-preview { flex: 1 1 auto; min-height: 80px; }
+.rw-insp > .rw-fblock > .rw-kv-grid + .rw-field { margin-top: 5px; }

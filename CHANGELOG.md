@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.14.1 — 2026-11-12
+
+- **Every card on every tab folds.** Sencer: "make every section under every tab collapsible."
+  - Every card on the Scene, Assets, Cast, Render, Files and Global tabs has the arrow before its title: click it (or the title) to fold the card to its title, click again to open it. Before, only Shots, Dialogue and What H3 receives did. The Assets tab's groups fold the same way, and now stay folded when you reopen the workflow.
+  - The Timeline inspector's parts fold too: **Details**, **Summary** (with "at the playhead"), **Cast and references** and **Prompt**. A folded part shows a short summary on its line (length and passes, the summary's start, the number of references, the prompt's length).
+  - Right-click a card's title: **Collapse this card** / **Expand this card**, **Collapse everything here**, **Expand everything here**. Alt+click the arrow or the title folds or opens every card on the tab.
+  - Folding is not an edit: Ctrl+Z does not undo it and nothing renders again. A card stays folded until you open it (on the Scene tab, in every scene). Folding pauses a preview playing in the card.
+- **For developers:** `ui.js foldScope(ctx, fn)` (editor.js wraps each tab's render in it): `section()` without `collapse` folds under its help id, else `"t:" + title`; `collapse: false` keeps a card open. New `foldBlock`, `foldMenu`, `foldAll`, `setFolded`, `pauseMediaIn`, `foldArea`; foldable parts carry `data-fold`. Asset groups moved from `eph.assetGroupsClosed` to `ui.collapsed["agroup:<id>"]`. `interact.py` runs `v0141_checks()`.
+
 ## v0.14.0 — 2026-11-12
 
 - **Clips of video and audio references.** Sencer: "when using video or audio references, allow to select from-to timestamps/frames of source video. we should be able to use the same video/audio asset in a single scene multiple times, with different start/end timestamps/durations, with or without audio (for videos)."

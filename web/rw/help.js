@@ -63,8 +63,15 @@ tip("common.close", "Close.");
 tip("common.copy", "Copy this text to the clipboard.");
 tip("common.copySelection", "Copy the selected text.");
 tip("common.copyText", "Copy the text of what you right-clicked (a spoken line or camera phrase in full, an issue, a note, a row).");
-tip("common.collapse", "Fold this card to its title. It stays folded in every scene until you open it again.");
-tip("common.expand", "Open this card.");
+// [OLD 2026-11-12 v0.14.0->v0.14.1] tip("common.collapse", "Fold this card to its title. It stays folded in every scene until you open it again.");
+// [OLD 2026-11-12 v0.14.0->v0.14.1] tip("common.expand", "Open this card.");
+// added 2026-11-12 v0.14.1: every card folds; right-click and Alt+click fold every card of the tab
+tip("common.collapse", "Fold this card to its title (or click the title). It stays folded, in every scene too, until you open it again. Alt+click folds every card on this tab; right-click the title for more.");
+tip("common.expand", "Open this card. Alt+click opens every card on this tab; right-click the title for more.");
+tip("common.collapseBlock", "Fold this part to its line (or click its name). It stays folded until you open it again. Alt+click folds every part; right-click for more.");
+tip("common.expandBlock", "Open this part. Alt+click opens every part; right-click for more.");
+tip("common.foldAll", "Fold every card on this tab to its title (every part, on the Timeline). Folding is not an edit: it is not undone with Ctrl+Z.");
+tip("common.unfoldAll", "Open every card on this tab (every part, on the Timeline).");
 tip("common.cancel", "Cancel and keep things as they are.");
 tip("common.confirm", "Yes, do it. You can still undo with Ctrl+Z.");
 tip("common.remove", "Remove this item.");
@@ -120,6 +127,8 @@ tip("timeline.inspector.index", "Scene number in timeline order.");
 tip("timeline.inspector.duration", "Target length on the timeline, in seconds and frames at 24 fps.");
 tip("timeline.inspector.passes", "How H3 generates this scene: one pass (124–362 frames), several passes for long scenes, or one minimum pass trimmed down for short scenes.");
 tip("timeline.inspector.overrides", "How many Global settings this scene overrides. Edit them on the Scene tab.");
+tip("timeline.inspector.details", "The scene's length, how H3 generates it, its overrides and what it starts from."); // added 2026-11-12 v0.14.1
+tip("timeline.inspector.refs", "The cast and references this scene sends to H3, each clip with its tag and range. Edit them on the Scene tab."); // added 2026-11-12 v0.14.1
 tip("timeline.inspector.prompt", "The prompt of the first pass exactly as H3 receives it, with @tags turned into <Picture n>, <Subject n>, <Video n> and <Audio n>.");
 tip("timeline.inspector.open", "Open this scene on the Scene tab.");
 tip("timeline.inspector.render", "Queue this scene now, even if its take is up to date.");
@@ -1049,7 +1058,8 @@ tip("assets.view", "By group: your groups in their order, then the assets in no 
 more("assets.group", "Asset group", "A group keeps related assets together: a character's pictures and voice, a set, the music. Its description says what belongs in it.\n\nDrag cards onto a group to move them, or pick the group in an asset's settings. The arrow folds a group away; ↑ and ↓ change the order; deleting a group keeps its assets (they have no group then).\n\nGroups and tags only sort this tab. Pickers elsewhere show an asset's group before its name. Nothing is sent to H3 and nothing renders again.", "A group of assets. Drag cards here to move them.");
 tip("assets.group.none", "Assets that are in no group.");
 tip("assets.group.add", "Make a new group and name it.");
-tip("assets.group.collapse", "Fold the group away or open it.");
+// [OLD 2026-11-12 v0.14.0->v0.14.1] tip("assets.group.collapse", "Fold the group away or open it.");
+tip("assets.group.collapse", "Fold the group away or open it (or click its name). It stays that way until you change it. Alt+click folds or opens every group and card on this tab; right-click the group's title for more."); // added 2026-11-12 v0.14.1
 tip("assets.group.edit", "Rename the group and write what belongs in it.");
 tip("assets.group.name", "The group's name. Pickers show it before the asset.");
 tip("assets.group.description", "What belongs in this group. Shown next to its name.");

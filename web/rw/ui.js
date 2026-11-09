@@ -493,6 +493,7 @@ export function section({ title, help, actions, children, cls, tint }) {
     children);
 }
 [/OLD] */
+/* [OLD 2026-11-12 v0.14.0->v0.14.1] only cards given `collapse` could fold; no menu, no fold-all
 // added 2026-11-06 v0.10.0: collapse: {ctx, id, summary?} makes the card collapsible: a chevron before the title (and
 // a click on the title) folds it to its head, which then shows `summary` instead of the actions. The state is kept
 // per card id in project.ui.collapsed (no undo step), so a folded card stays folded in every scene.
@@ -516,6 +517,102 @@ export function section({ title, help, actions, children, cls, tint, collapse })
       h("span", { class: "rw-flex" }),
       // [OLD 2026-11-06 v0.10.0->v0.10.1] folded ? (collapse.summary ? h("span", { class: "rw-dim small rw-fold-sum" }, collapse.summary) : null) : actions),
       folded ? (collapse.summary ? h("span", { class: "rw-dim small rw-card-fold-sum" }, collapse.summary) : null) : actions), // added 2026-11-06 v0.10.1
+    folded ? null : children);
+}
+[/OLD] */
+// added 2026-11-12 v0.14.1: every card folds (Sencer: "make every section under every tab collapsible"). While a tab
+// renders (editor.js wraps the tab's render in foldScope), a card without its own `collapse` folds under its help id,
+// else its title; `collapse: false` keeps a card open. The state is project.ui.collapsed[id] as before (no undo step).
+// The head's right-click menu folds or opens this card or every card in the tab; Alt+click on the chevron or the title
+// does it for every card. Folding pauses the video or audio playing in the card: kept media elements outlive renders
+// and would play on, out of sight.
+let FOLD_CTX = null;
+export function foldScope(ctx, fn) {
+  const prev = FOLD_CTX;
+  FOLD_CTX = ctx;
+  try { return fn(); } finally { FOLD_CTX = prev; }
+}
+
+export function setFolded(ctx, ids, fold) {
+  ctx.store.update(q => {
+    q.ui = q.ui && typeof q.ui === "object" ? q.ui : {};
+    const c = q.ui.collapsed && typeof q.ui.collapsed === "object" ? q.ui.collapsed : (q.ui.collapsed = {});
+    for (const id of ids) { if (fold) c[id] = true; else delete c[id]; }
+  }, { history: false, plan: false, autosave: false });
+}
+
+export function pauseMediaIn(els) {
+  for (const el of els) el?.querySelectorAll?.("video, audio").forEach(m => { try { m.pause(); } catch { /* not playing */ } });
+}
+
+// the tab body around `el` (the body element outlives re-renders, the cards in it do not), and its foldable parts,
+// folded ones too: cards and the Timeline inspector's blocks
+export function foldArea(el) { return el?.closest?.(".rw-body") || el?.closest?.(".rw-root") || null; }
+function foldParts(area) { return area ? [...area.querySelectorAll("[data-fold]")] : []; }
+function foldPart(area, id) { return foldParts(area).find(x => x.dataset.fold === id) || null; }
+
+export function foldAll(ctx, from, fold) {
+  const parts = foldParts(foldArea(from));
+  if (fold) pauseMediaIn(parts);
+  setFolded(ctx, [...new Set(parts.map(x => x.dataset.fold))], fold);
+}
+
+// the right-click menu of a foldable head
+export function foldMenu(ctx, id, folded, from, what = "card") {
+  const area = foldArea(from);
+  const parts = foldParts(area);
+  const shut = parts.filter(x => x.classList.contains("folded")).length;
+  return [
+    { label: folded ? `Expand this ${what}` : `Collapse this ${what}`, icon: folded ? "chevDown" : "chevRight", help: folded ? "common.expand" : "common.collapse",
+      onClick: () => { if (!folded) pauseMediaIn([foldPart(area, id)]); setFolded(ctx, [id], !folded); } },
+    { sep: true },
+    { label: "Collapse everything here", icon: "chevRight", help: "common.foldAll", disabled: shut === parts.length, onClick: () => foldAll(ctx, area, true) },
+    { label: "Expand everything here", icon: "chevDown", help: "common.unfoldAll", disabled: !shut, onClick: () => foldAll(ctx, area, false) },
+  ];
+}
+
+export function section({ title, help, actions, children, cls, tint, collapse }) {
+  if (collapse === undefined && FOLD_CTX) {
+    const id = help || (typeof title === "string" && title ? "t:" + title : "");
+    if (id) collapse = { ctx: FOLD_CTX, id };
+  }
+  if (collapse === false) collapse = null;
+  const folded = !!(collapse && collapse.ctx.p.ui?.collapsed?.[collapse.id]);
+  const flip = collapse && (e => {
+    e?.stopPropagation?.();
+    const card = e?.currentTarget?.closest?.(".rw-card");
+    if (e?.altKey && card) { foldAll(collapse.ctx, card, !folded); return; }
+    if (!folded && card) pauseMediaIn([card]);
+    setFolded(collapse.ctx, [collapse.id], !folded);
+  });
+  return h("section", { class: ["rw-card", cls, tint && "rw-card-" + tint, collapse && "foldable", folded && "folded"], dataset: collapse ? { fold: collapse.id } : undefined },
+    h("div", { class: "rw-card-head", menu: collapse ? (e => foldMenu(collapse.ctx, collapse.id, folded, e.target.closest(".rw-card"))) : undefined },
+      collapse && h("button", { type: "button", class: "rw-card-fold", help: folded ? "common.expand" : "common.collapse", key: "fold-" + collapse.id,
+        "aria-expanded": folded ? "false" : "true", onClick: flip }, icon(folded ? "chevRight" : "chevDown", 13)),
+      h("span", { class: ["rw-card-title", collapse && "clickable"], onClick: flip || undefined }, title),
+      help && helpButton(help),
+      h("span", { class: "rw-flex" }),
+      folded ? (collapse.summary ? h("span", { class: "rw-dim small rw-card-fold-sum" }, collapse.summary) : null) : actions),
+    folded ? null : children);
+}
+
+// added 2026-11-12 v0.14.1: a foldable block inside a panel (the Timeline inspector has blocks, not cards): a chevron
+// and a label on one line, the block's content below. Same state, menu, Alt+click and media pause as a card.
+export function foldBlock({ ctx, id, label, help, summary, children, cls }) {
+  const folded = !!ctx.p.ui?.collapsed?.[id];
+  const flip = e => {
+    e?.stopPropagation?.();
+    const el = e?.currentTarget?.closest?.(".rw-fblock");
+    if (e?.altKey && el) { foldAll(ctx, el, !folded); return; }
+    if (!folded && el) pauseMediaIn([el]);
+    setFolded(ctx, [id], !folded);
+  };
+  return h("div", { class: ["rw-fblock", cls, folded && "folded"], dataset: { fold: id } },
+    h("div", { class: "rw-fblock-head", menu: e => foldMenu(ctx, id, folded, e.target.closest(".rw-fblock"), "block") },
+      h("button", { type: "button", class: "rw-card-fold", help: folded ? "common.expandBlock" : "common.collapseBlock", key: "fold-" + id,
+        "aria-expanded": folded ? "false" : "true", onClick: flip }, icon(folded ? "chevRight" : "chevDown", 12)),
+      h("span", { class: "rw-insp-label clickable", help, onClick: flip }, label),
+      folded && summary ? h("span", { class: "rw-dim small rw-card-fold-sum" }, summary) : null),
     folded ? null : children);
 }
 
