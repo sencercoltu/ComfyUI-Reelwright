@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.14.4 — 2026-11-12
+
+- **Write prompts replaces the shots it writes.** Sencer: "when using Write prompt and a Shot section exists, the new text goes into detailed_description instead of replacing the shot."
+  - A scene made in one pass: the written [Shot N] lines now replace the scene's shots **whatever their count**. Before, they did only when the LLM wrote exactly one line per shot; otherwise everything stayed in detailed_description. Each shot takes its written text, framing and camera move and keeps its time; a shot written past the scene's last one joins the timeline at its written start (or spread over the time left); a shot the LLM did not write keeps its text. The toast says which ("Updated 1 shot and added 1 shot …").
+  - A scene of several passes: each shot that starts in a pass now takes the text, framing and camera move that pass wrote for it (when the pass has one [Shot N] line per shot), and the line leaves the pass's description. A shot that runs on from the pass before keeps that pass's own line for its continuation, so the action is not played again. Before, every pass kept all its lines in its own description.
+  - The LLM is asked for the framing first and the camera move as its own sentence in scenes of several passes too.
+  - Scenes with "auto shots + dialogue" off and raw prompts are written as before.
+- **For developers:** `shotfill.writeShots` returns `{shots, lines, updated, added, kept}`; new `shotfill.takePassShots(p, sc, plan, items)` (called by `passes.applyWritten` before `model.writePassTexts`); `passes.fillToast`. `llm.writes_shots` is true for any scene with automatic shot lines. Mock: `mockFlags.writeText[sid]` may be a list (one text per pass). `tests/test_shot_fill.py` (+2); `interact.py` runs `v0144_checks()`.
+
 ## v0.14.3 — 2026-11-12
 
 - **Write prompts puts the camera into the shots.** Sencer: "camera movements are not reflected to shots when using Write prompts. (tried in single shot mode)"

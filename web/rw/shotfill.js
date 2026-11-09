@@ -350,6 +350,8 @@ export function fillScene(p, sc) {
   return { shots: sc.shots.length, lines };
 }
 
+/* [OLD 2026-11-12 v0.14.3->v0.14.4] a [Shot N] count other than the scene's left the written shots in the description,
+   and a scene of several passes was not handled
 // added 2026-11-12 v0.14.3: after Write prompts on a scene made in one pass. No shots yet: fillScene. Shots already
 // on the timeline, and the answer has one [Shot N] per shot: each shot takes its written text, framing and camera
 // move (a shot whose line names none keeps its own), the times stay the timeline's, and the description keeps the
@@ -380,6 +382,93 @@ export function writeShots(p, sc) {
   }
   sc.prompt.sections.detailed_description = got.pre;
   return { shots: sc.shots.length, lines, updated: true };
+}
+[/OLD] */
+// added 2026-11-12 v0.14.4 (Sencer: "when using Write prompt and a Shot section exists, the new text goes into
+// detailed_description instead of replacing the shot"): after Write prompts on a scene made in one pass. No shots
+// yet: fillScene. Shots on the timeline: the written [Shot N] lines replace them in order, whatever their count:
+// each shot takes its written text, framing and camera move (a shot whose line names none keeps its own) and keeps
+// its time; written shots past the scene's last one join the timeline at their written start (or spread over the
+// time left); shots the answer did not write keep their text. The description keeps the text before [Shot 1];
+// spoken lines the scene does not have yet are added. Only with automatic shots + dialogue on (else the written lines
+// are what H3 gets). Returns {shots, lines, updated, added, kept} or null.
+function takeShot(sh, w) {
+  if (w.text) sh.text = w.text;
+  if (w.framing) sh.framing = w.framing;
+  if (w.camera) Object.assign(sh, { camera: w.camera, camera_amp: w.camera_amp, camera_speed: w.camera_speed });
+}
+
+export function writeShots(p, sc) {
+  if (!sc || sc.prompt?.mode === "raw") return null;
+  if (!(sc.shots || []).length) return fillScene(p, sc);
+  if (!sc.prompt.auto?.shots) return null;
+  const i = sceneIndex(p, sc.id);
+  const plan = planScene(p, sc, i < 0 ? undefined : i);
+  if (plan.passes.length !== 1) return null;
+  const got = readWritten(p, sc, sc.prompt.sections.detailed_description, plan.passes[0]);
+  if (!got || !got.shots.length) return null;
+  const order = [...sc.shots].sort((a, b) => a.t - b.t);
+  const n = Math.min(order.length, got.shots.length);
+  for (let k = 0; k < n; k++) takeShot(order[k], got.shots[k]);
+  const duration = Number(sc.duration) || 0;
+  const extra = got.shots.slice(n);
+  let last = order[order.length - 1].t;
+  extra.forEach((w, j) => {
+    const left = extra.length - j;
+    const gap = Math.min(0.5, (duration - last) / (left + 1));
+    let t = w.t;
+    if (!(t >= last + gap && t < duration - gap / 2)) t = last + (duration - last) / (left + 1);
+    t = Math.max(0, Math.min(snapFrame(t), duration - 1 / FPS));
+    sc.shots.push({ id: newId("h"), t, camera: w.camera, camera_amp: w.camera_amp, camera_speed: w.camera_speed, framing: w.framing, text: w.text });
+    last = t;
+  });
+  sc.shots.sort((a, b) => a.t - b.t);
+  let lines = 0;
+  if (!(sc.dialogue || []).length && got.lines.length) {
+    const lang = id => (p.cast || []).find(c => c.id === id)?.language || p.global?.defaults?.language || "English";
+    sc.dialogue = got.lines.map(d => ({ id: newId("d"), speaker: d.speaker, t: d.t, language: d.language || lang(d.speaker), delivery: d.delivery || "says", text: d.text }));
+    lines = sc.dialogue.length;
+    sc.cast = Array.isArray(sc.cast) ? sc.cast : [];
+    for (const d of sc.dialogue) if (d.speaker && !sc.cast.some(c => c.id === d.speaker)) sc.cast.push({ id: d.speaker, outfit: "" });
+  }
+  sc.prompt.sections.detailed_description = got.pre;
+  return { shots: n + extra.length, lines, updated: true, added: extra.length, kept: order.length - n };
+}
+
+// added 2026-11-12 v0.14.4: Write prompts on a scene made in several passes. items: the written passes of the current
+// layout [{index (1-based), sections}], changed in place before they are stored. In each pass whose [Shot N] lines
+// match its shots one to one, a shot that starts in that pass takes its written text, framing and camera move, and
+// its line leaves the pass's description; a shot that continues from the pass before keeps its written line there
+// (the pass's own part of that shot, which replaces the automatic one). Returns {shots, lines, updated} or null.
+export function takePassShots(p, sc, plan, items) {
+  if (!sc || sc.prompt?.mode === "raw" || !sc.prompt.auto?.shots) return null;
+  const byId = new Map((sc.shots || []).map(x => [x.id, x]));
+  const cf = castFinder(p);
+  let n = 0;
+  for (const it of items || []) {
+    const x = plan.passes[it.index - 1];
+    if (!x || !x.shots.length || !it.sections) continue;
+    const text = String(it.sections.detailed_description || "").replace(/\r\n?/g, "\n");
+    const spans = [...text.matchAll(SPAN)].map(m => [m.index, m.index + m[0].length]);
+    const labels = [...text.matchAll(LABEL)].filter(m => !spans.some(([a, b]) => m.index > a && m.index < b));
+    if (labels.length !== x.shots.length) continue;
+    const pre = squash(text.slice(0, labels[0].index));
+    const keep = [];
+    labels.forEach((m, j) => {
+      const whole = text.slice(m.index, j + 1 < labels.length ? labels[j + 1].index : text.length).trim();
+      const ps = x.shots[j];
+      const sh = byId.get(ps.id);
+      if (ps.continuing || !sh) { keep.push(whole); return; }
+      let body = whole.slice(m[0].length).trim();
+      const cut = CUT.exec(body);
+      if (cut) body = body.slice(cut[0].length);
+      const got = takeLines(body, cf, new Map());
+      takeShot(sh, cameraOf(p, sentence(got.text || got.lines[0]?.who || "")));
+      n++;
+    });
+    it.sections.detailed_description = [pre, ...keep].filter(Boolean).join("\n");
+  }
+  return n ? { shots: n, lines: 0, updated: true, added: 0, kept: 0 } : null;
 }
 
 // "1 shot and 2 spoken lines"

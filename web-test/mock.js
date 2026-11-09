@@ -622,7 +622,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-12 v0.14.0->v0.14.1] case "/reelwright/info": return json({ version: "0.14.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-12 v0.14.1->v0.14.2] case "/reelwright/info": return json({ version: "0.14.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-12 v0.14.2->v0.14.3] case "/reelwright/info": return json({ version: "0.14.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    case "/reelwright/info": return json({ version: "0.14.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-12 v0.14.3->v0.14.4] case "/reelwright/info": return json({ version: "0.14.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.14.4", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -806,7 +807,9 @@ async function route(path, opts = {}) {
         out.push({ index: k, start: ps.start, end: ps.end, sections: {
           subject_definitions: "", summary: `Pass ${k} of ${s.title}: ${(ps.shots || []).map(x => x.text).filter(Boolean).join(" ") || s.prompt.sections.summary || "the action continues."}`.slice(0, 220),
           // [OLD 2026-11-12 v0.14.1->v0.14.2] retention_analysis: "", detailed_description: (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.",
-          retention_analysis: "", detailed_description: mockFlags.writeText?.[s.id] || (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.", // added 2026-11-12 v0.14.2: writeText
+          // [OLD 2026-11-12 v0.14.2->v0.14.3] retention_analysis: "", detailed_description: mockFlags.writeText?.[s.id] || (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.", // added 2026-11-12 v0.14.2: writeText
+          // added 2026-11-12 v0.14.4: writeText[scene id] may be a list, one text per pass
+          retention_analysis: "", detailed_description: (Array.isArray(mockFlags.writeText?.[s.id]) ? mockFlags.writeText[s.id][k - 1] : mockFlags.writeText?.[s.id]) || (shots.join("\n") || "[Shot 1] Live-action, cinematic, one continuous take.") + "\nThe light stays low and blue; rain beads on her coat as the wind pulls at her scarf.",
           overall_soundscape: s.prompt.sections.overall_soundscape || "Wind and distant surf.", non_diegetic_music: "N/A" } });
       }
       return json({ scene_id: s.id, pass_count: plan.length, passes: out, warnings: [], tokens: 700 * out.length, ms: 900 * out.length });

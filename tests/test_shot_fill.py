@@ -40,6 +40,11 @@ for (const c of req.cases) {
   else if (c.op === "fillable") out.push(f.fillable(p, sc) !== null);
   else if (c.op === "camera") out.push(f.cameraOf(p, c.text));  // added 2026-11-12 v0.14.3
   else if (c.op === "write") { const n = f.writeShots(p, sc); out.push({ n, scene: sc }); }  // added 2026-11-12 v0.14.3
+  else if (c.op === "passes") {  // added 2026-11-12 v0.14.4: the written passes of a scene of several passes
+    const plan = m.planScene(p, sc, 0);
+    const n = f.takePassShots(p, sc, plan, c.items);
+    out.push({ n, scene: sc, items: c.items, plan: plan.passes.map(x => x.shots.map(s => [s.id, s.continuing])) });
+  }
   else { const n = f.fillScene(p, sc); out.push({ n, scene: sc, words: f.fillWords(n) }); }
 }
 process.stdout.write(JSON.stringify(out));
@@ -225,11 +230,70 @@ def test_write_prompts_puts_the_camera_in_the_shots():
     u = [(s["id"], s["t"], s["framing"], s["camera"], s["text"]) for s in updated["scene"]["shots"]]
     assert u == [("h_1", 0, "medium", "the camera pushes in", "@Mara at the wall."),
                  ("h_2", 6, "close-up", "the camera holds a static shot", "@Mara.")]
-    assert updated["n"] == {"shots": 2, "lines": 0, "updated": True}
+    # [OLD 2026-11-12 v0.14.3->v0.14.4] assert updated["n"] == {"shots": 2, "lines": 0, "updated": True}
+    assert updated["n"] == {"shots": 2, "lines": 0, "updated": True, "added": 0, "kept": 0}  # v0.14.4: added, kept
     assert [d["id"] for d in updated["scene"]["dialogue"]] == ["d_1"]
     assert updated["scene"]["prompt"]["sections"]["detailed_description"] == "Night."
-    # a [Shot N] count that is not the scene's: left as written
-    assert other["n"] is None and other["scene"]["shots"][0]["camera"] == "Wide"
+    # [OLD 2026-11-12 v0.14.3->v0.14.4] a [Shot N] count that is not the scene's: left as written
+    # assert other["n"] is None and other["scene"]["shots"][0]["camera"] == "Wide"
+    # added 2026-11-12 v0.14.4: it replaces the shots too; the second written shot joins the timeline
+    assert other["n"]["added"] == 1 and [s["camera"] for s in other["scene"]["shots"]] == [
+        "the camera pushes in", "the camera holds a static shot"]
+
+
+# ---- added 2026-11-12 v0.14.4 (Sencer: "when using Write prompt and a Shot section exists, the new text goes into
+# detailed_description instead of replacing the shot") ----
+
+@needs_node
+def test_written_shots_replace_the_shots_whatever_their_count():
+    two = ("Night.\n[Shot 1] A medium shot of @Mara at the wall. The camera slowly pushes in.\n[Shot 2] At 00:05.000, the "
+           "shot cuts to a close-up of @Mara. The camera holds a static shot.")
+    one_shot = project(desc=two, shots=[{"id": "h_1", "t": 0, "camera": "Wide", "text": "the wall"}])
+    three = project(desc=two, shots=[{"id": "h_1", "t": 0, "text": "a"}, {"id": "h_2", "t": 4.0, "text": "b"},
+                                     {"id": "h_3", "t": 8.0, "text": "c"}])
+    late = project(desc=two.replace("00:05.000", "00:09.900"), shots=[{"id": "h_1", "t": 0, "text": "a"}])
+    more, fewer, spread = run([{"op": "write", "project": x, "scene": "s_1"} for x in (one_shot, three, late)])
+    # more lines than shots: the first takes line 1, line 2 joins the timeline at its written start
+    m = [(x["id"][:2], x["t"], x["framing"], x["camera"], x["text"]) for x in more["scene"]["shots"]]
+    assert m == [("h_", 0, "medium", "the camera pushes in", "@Mara at the wall."),
+                 ("h_", 5, "close-up", "the camera holds a static shot", "@Mara.")]
+    assert more["scene"]["shots"][0]["id"] == "h_1" and more["n"]["added"] == 1 and more["n"]["shots"] == 2
+    assert more["scene"]["prompt"]["sections"]["detailed_description"] == "Night."
+    # fewer lines than shots: the shots it wrote are replaced, the rest keep their text and time
+    f = [(x["id"], x["t"], x["text"]) for x in fewer["scene"]["shots"]]
+    assert f == [("h_1", 0, "@Mara at the wall."), ("h_2", 4, "@Mara."), ("h_3", 8, "c")]
+    assert fewer["n"]["kept"] == 1 and fewer["scene"]["prompt"]["sections"]["detailed_description"] == "Night."
+    # a written start the scene has no room for is spread over the time left
+    assert [x["t"] for x in spread["scene"]["shots"]] == [0, 5]
+
+
+@needs_node
+def test_shots_of_a_scene_of_several_passes_take_what_each_pass_writes():
+    shots = [{"id": "h_1", "t": 0, "text": "a"}, {"id": "h_2", "t": 6.0, "text": "b"}, {"id": "h_3", "t": 13.0, "text": "c"}]
+    cut = project(desc="", duration=24.0, shots=shots)
+    items = [{"index": 1, "sections": {"detailed_description": "Dusk.\n[Shot 1] A wide shot of the pier. The camera "
+                                                                  "pans left.\n[Shot 2] At 00:06.000, the shot cuts to a "
+                                                                  "close-up of @Mara."}},
+             {"index": 2, "sections": {"detailed_description": "[Shot 1] A medium shot of the door. The camera holds "
+                                                                  "still.\n[Shot 2] At 00:05.000, the shot cuts to rain."}}]
+    one = project(desc="", duration=24.0, shots=[{"id": "h_1", "t": 0, "text": "a"}])
+    cont = [{"index": 1, "sections": {"detailed_description": "[Shot 1] A wide shot of @Mara walking. The camera "
+                                                                 "tracks the moving subject."}},
+            {"index": 2, "sections": {"detailed_description": "[Shot 1] The shot continues seamlessly: @Mara reaches "
+                                                                 "the door."}}]
+    a, b = run([{"op": "passes", "project": cut, "scene": "s_1", "items": items},
+                {"op": "passes", "project": one, "scene": "s_1", "items": cont}])
+    assert a["plan"] == [[["h_1", False], ["h_2", False]], [["h_3", False]]]
+    got = [(x["id"], x["framing"], x["camera"], x["text"]) for x in a["scene"]["shots"]]
+    assert got == [("h_1", "wide", "the camera pans left", "The pier."), ("h_2", "close-up", "", "@Mara."),
+                   ("h_3", "", "", "c")]  # pass 2 wrote 2 lines for its 1 shot: left as written
+    assert a["items"][0]["sections"]["detailed_description"] == "Dusk."
+    assert a["items"][1]["sections"]["detailed_description"].startswith("[Shot 1] A medium shot of the door.")
+    # a shot that runs on into the next pass: its start goes into the shot, its continuation stays that pass's line
+    assert b["plan"] == [[["h_1", False]], [["h_1", True]]]
+    assert b["scene"]["shots"][0]["text"] == "@Mara walking." and b["scene"]["shots"][0]["camera"] == "the camera tracks the moving subject"
+    assert b["items"][0]["sections"]["detailed_description"] == ""
+    assert b["items"][1]["sections"]["detailed_description"].startswith("[Shot 1] The shot continues seamlessly")
 
 
 # ---- the backend: Write prompts and the rewriter ----------------------------------------------------------------
@@ -254,7 +318,7 @@ def test_write_prompts_asks_for_the_shot_and_lines_of_a_scene_without_shots():
     # assert llm.FILL_LINES_RULE not in llm.pass_request(p, s2, plan2, builds2, 1)
     # [/OLD]
     # added 2026-11-12 v0.14.3: a one-pass scene with shots takes the written shots into them too (writes_shots), so
-    # it is asked for the same forms; a scene of several passes, or with automatic shot lines off, is asked as before
+    # it is asked for the same forms; a scene with automatic shot lines off is asked as before
     s2 = copy.deepcopy(s)
     s2["shots"] = [{"id": "h_1", "t": 0.0, "camera": "", "text": "rain"}]
     p["scenes"][0] = s2
@@ -268,8 +332,12 @@ def test_write_prompts_asks_for_the_shot_and_lines_of_a_scene_without_shots():
     s3["duration"] = 40.0
     p["scenes"][0] = s3
     plan3, builds3 = llm.scene_builds(p, s3)
-    assert len(plan3["passes"]) > 1 and not llm.writes_shots(s3, plan3)
-    assert llm.FILL_CAMERA_RULE not in llm.pass_request(p, s3, plan3, builds3, 1)
+    # [OLD 2026-11-12 v0.14.3->v0.14.4] a scene of several passes was asked as before
+    # assert len(plan3["passes"]) > 1 and not llm.writes_shots(s3, plan3)
+    # assert llm.FILL_CAMERA_RULE not in llm.pass_request(p, s3, plan3, builds3, 1)
+    # added 2026-11-12 v0.14.4: its shots take what each pass writes too (takePassShots)
+    assert len(plan3["passes"]) > 1 and llm.writes_shots(s3, plan3)
+    assert llm.FILL_CAMERA_RULE in llm.pass_request(p, s3, plan3, builds3, 1)
 
 
 def test_lines_written_for_a_scene_without_lines_are_kept():

@@ -1414,12 +1414,19 @@ FILL_CAMERA_RULE = ("Start each [Shot N] line with its framing, for example \"[S
                     "the framing and the camera move in the shot's fields.")
 
 
+# [OLD 2026-11-12 v0.14.3->v0.14.4] only a scene made in one pass
+# def writes_shots(scene, plan):
+#     """Does the editor take the written shots into the scene's shots (fills_timeline, or a scene made in one pass
+#     whose shot lines are automatic)?"""
+#     pr = scene.get("prompt") or {}
+#     return fills_timeline(scene, plan) or (pr.get("mode") != "raw" and len(plan["passes"]) == 1 and
+#                                           bool((pr.get("auto") or {}).get("shots")))
+# [/OLD]
 def writes_shots(scene, plan):
-    """Does the editor take the written shots into the scene's shots (fills_timeline, or a scene made in one pass
-    whose shot lines are automatic)?"""
+    """Does the editor take the written shots into the scene's shots (fills_timeline, or a scene whose shot lines are
+    automatic; added 2026-11-12 v0.14.4: in a scene of several passes too, web/rw/shotfill.js takePassShots)?"""
     pr = scene.get("prompt") or {}
-    return fills_timeline(scene, plan) or (pr.get("mode") != "raw" and len(plan["passes"]) == 1 and
-                                          bool((pr.get("auto") or {}).get("shots")))
+    return fills_timeline(scene, plan) or (pr.get("mode") != "raw" and bool((pr.get("auto") or {}).get("shots")))
 
 
 def pass_request(p, scene, plan, builds, k, written=None, stored=None, instruction=""):

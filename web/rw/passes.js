@@ -9,7 +9,8 @@ import * as model from "./model.js";
 import { rw } from "./api.js";
 import { newJob } from "./llmjob.js";
 // [OLD 2026-11-12 v0.14.2->v0.14.3] import { fillScene, fillWords } from "./shotfill.js"; // added 2026-11-12 v0.14.2: a scene written without shots gets them
-import { writeShots, fillWords } from "./shotfill.js"; // v0.14.2: a scene written without shots gets them; v0.14.3: shots on the timeline take their written text, framing and camera move
+// [OLD 2026-11-12 v0.14.3->v0.14.4] import { writeShots, fillWords } from "./shotfill.js"; // v0.14.2: a scene written without shots gets them; v0.14.3: shots on the timeline take their written text, framing and camera move
+import { writeShots, takePassShots, fillWords } from "./shotfill.js"; // v0.14.2-v0.14.4: the written shots go into the scene's shots
 
 const { FPS, SECTION_KEYS, planScene, sceneIndex } = model;
 
@@ -224,6 +225,9 @@ export function applyWritten(sc, p, res, report = null) {
   });
   if (typeof model.writePassTexts === "function" && !moved) {
     const items = got.map(x => ({ index: Math.round(num(x.index, 0)), sections: clean(x.sections) })).filter(x => x.index >= 1 && x.index <= plan.passes.length);
+    // added 2026-11-12 v0.14.4: the shots that start in a written pass take their written text, framing and move
+    const took = takePassShots(p, sc, plan, items);
+    if (report) report.fill = took;
     model.writePassTexts(p, sc, plan, items);
     return items.length;
   }
@@ -236,6 +240,15 @@ export function applyWritten(sc, p, res, report = null) {
     n++;
   }
   return n;
+}
+
+// added 2026-11-12 v0.14.4: what Write prompts did with the shots it wrote (shotfill.writeShots / takePassShots)
+function fillToast(f) {
+  const s = n => `${n} shot${n === 1 ? "" : "s"}`;
+  if (!f.updated) return `Put ${fillWords(f)} on the timeline from what the LLM wrote, with framing and camera moves; the description keeps the style.`;
+  const done = f.added ? `Updated ${s(f.shots - f.added)} and added ${s(f.added)}` : `Updated ${s(f.shots)}`;
+  const kept = f.kept ? `; the LLM wrote no line for ${f.kept === 1 ? "the last shot, which keeps its text" : `the last ${f.kept}, which keep their text`}` : "";
+  return `${done}${f.lines ? ` and ${f.lines} spoken line${f.lines === 1 ? "" : "s"}` : ""} from what the LLM wrote (text, framing, camera move)${kept}. The description keeps the style.`;
 }
 
 // Run "Write prompts" for scenes [{sid, passes}] one after another. Resolves when done, stopped or failed.
@@ -266,9 +279,12 @@ export async function runWrite(ctx, items, { origin = "scene", label = "" } = {}
         const rep = {};
         ctx.actions.editScene(it.sid, (sc, q) => { applyWritten(sc, q, res, rep); }, { label: origin === "import" ? `${what}: ${scene.title}` : what });
         // [OLD 2026-11-12 v0.14.2->v0.14.3] if (rep.fill && origin !== "import") ctx.actions.toast(`Put ${fillWords(rep.fill)} on the timeline from what the LLM wrote; the description keeps the style.`, "ok");
+        /* [OLD 2026-11-12 v0.14.3->v0.14.4] no word on added shots or shots the answer left out
         if (rep.fill && origin !== "import") ctx.actions.toast(rep.fill.updated // added 2026-11-12 v0.14.3
           ? `Updated ${fillWords(rep.fill)} from what the LLM wrote (text, framing, camera move); the description keeps the style.`
           : `Put ${fillWords(rep.fill)} on the timeline from what the LLM wrote, with framing and camera moves; the description keeps the style.`, "ok");
+        [/OLD] */
+        if (rep.fill && origin !== "import") ctx.actions.toast(fillToast(rep.fill), "ok"); // added 2026-11-12 v0.14.4
         wrote++;
       }
       if (Array.isArray(res?.warnings) && res.warnings.length) it.warnings = res.warnings.map(String);

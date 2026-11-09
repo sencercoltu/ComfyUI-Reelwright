@@ -1521,6 +1521,7 @@ def main():
         v0141_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.1: every card folds; the Timeline inspector's parts too
         v0142_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.2: shots and lines written for a scene without shots go on the timeline
         v0143_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.3: framing and camera moves of written shots go into the shots
+        v0144_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.4: written shots replace the shots whatever their count; scenes of several passes too
         browser.close()
     httpd.shutdown()
 
@@ -1783,7 +1784,8 @@ def f2a_checks(page, check, saved, shots):
     # [/OLD]
     # added 2026-11-12 v0.13.1: a pointer keeps moving while it drags; nudge it until the tip is there (at most ~1 s)
     tip = ""
-    for k in range(5):
+    # [OLD 2026-11-12 v0.14.3->v0.14.4] for k in range(5):  (about 1 s was sometimes too short while a render landed)
+    for k in range(15):  # added 2026-11-12 v0.14.4: up to ~3 s
         page.mouse.move(bx["x"] + 30 + 3 * z * sc + (k % 2), bx["y"] + bx["height"] / 2)
         page.wait_for_timeout(200)
         tl = page.locator(".rw-track-clip[data-tid='t_song'] .rw-drag-tip")
@@ -5338,6 +5340,79 @@ def v0143_checks(page, check, saved, shots):
           and s1["text"] == "@Mara at the harbor wall, rain on her face.", f"the same shot, rewritten: {s1}")
     check(len(sc["dialogue"]) == 1 and sc["prompt"]["sections"]["detailed_description"] == "Rain-soaked night." and "Updated 1 shot" in toasts(),
           f"its line stays, the description keeps the style: {len(sc['dialogue'])} {sc['prompt']['sections']['detailed_description']!r} {toasts()!r}")
+    page.evaluate("window.__mockFlags.writeText = {}")
+    load(json.loads(saved))
+
+
+def v0144_checks(page, check, saved, shots):
+    """v0.14.4 (Sencer): "when using Write prompt and a Shot section exists, the new text goes into detailed_description
+    instead of replacing the shot": the written shots replace the scene's shots whatever their count, and in a scene of
+    several passes each shot that starts in a pass takes what that pass wrote."""
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    scene_of = lambda sid: next(x for x in cur()["scenes"] if x["id"] == sid)
+    toasts = lambda: " | ".join(page.locator(".rw-toast").all_inner_texts())
+
+    def write(sid, text):
+        page.evaluate("([sid, t]) => { window.__mockFlags.writeText[sid] = t; window.__mockFlags.passesMs = 0; window.__editor.store.setEph({ toasts: [] }); }", [sid, text])
+        page.evaluate(f"window.__editor.actions.select('{sid}', 'scene')")
+        page.wait_for_timeout(300)
+        page.click(f"[data-key='write-{sid}']")
+        page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
+        page.wait_for_timeout(400)
+
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="scene", selected="s_03")
+    q["ui"].pop("collapsed", None)
+    load(q)
+
+    # 1. a one-pass scene with one shot; the LLM writes two: the shot is replaced and the second one joins
+    page.evaluate("window.__editor.actions.addScene('s_03')")
+    page.wait_for_timeout(300)
+    sid = cur()["ui"]["selected"]
+    page.evaluate("""sid => window.__editor.store.update(q => { const s = q.scenes.find(x => x.id === sid);
+      s.duration = 10; s.dialogue = []; s.shots = [{ id: 'h_mine', t: 0, camera: '', text: 'my old shot' }]; }, { label: 'test scene' })""", sid)
+    write(sid, "Dusk.\n[Shot 1] A wide shot of the pier. The camera pans left.\n[Shot 2] At 00:05.000, the shot cuts to a "
+               "close-up of @Mara. The camera holds still.")
+    sc = scene_of(sid)
+    got = [(x["id"], x["t"], x["framing"], x["camera"], x["text"]) for x in sc["shots"]]
+    check(len(got) == 2 and got[0][:4] == ("h_mine", 0, "wide", "the camera pans left") and got[0][4] == "The pier."
+          and got[1][1:] == (5, "close-up", "the camera holds a static shot", "@Mara."), f"the shot is replaced and the second joins: {got}")
+    check(sc["prompt"]["sections"]["detailed_description"] == "Dusk." and "Updated 1 shot and added 1 shot" in toasts(),
+          f"the description keeps the style, the toast says what changed: {sc['prompt']['sections']['detailed_description']!r} {toasts()!r}")
+    page.screenshot(path=str(shots / "v0144_replaced.png"))
+    audit("Shots replaced")
+
+    # 2. a scene of several passes: each shot that starts in a pass takes what that pass wrote
+    s7 = scene_of("s_07")
+    plan = page.evaluate("""async () => { const m = await import('/web/rw/model.js'); const p = window.__editor.project;
+      const i = p.scenes.findIndex(s => s.id === 's_07'); return m.planScene(p, p.scenes[i], i).passes.map(x => x.shots.map(s => [s.id, s.continuing])); }""")
+    texts = []
+    for k, ps in enumerate(plan, 1):
+        lines = []
+        for j, (hid, cont) in enumerate(ps, 1):
+            lines.append(f"[Shot {j}] " + ("The shot continues: pass %d goes on." % k if cont else f"A medium shot of pass {k} shot {j}. The camera pushes in."))
+        texts.append("Rain at night.\n" + "\n".join(lines))
+    write("s_07", texts)
+    sc = scene_of("s_07")
+    starts = {hid for ps in plan for hid, cont in ps if not cont}
+    took = [x for x in sc["shots"] if x["id"] in starts]
+    check(took and all(x["text"].startswith("Pass ") and x["framing"] == "medium" and x["camera"] == "the camera pushes in" for x in took),
+          f"every shot that starts in a pass took its line: {[(x['id'], x['framing'], x['text'][:30]) for x in sc['shots']]}")
+    pp = sc["prompt"]["passes"]
+    conts = [k for k, ps in enumerate(plan) if any(c for _, c in ps)]
+    check(not any("A medium shot" in (x["sections"]["detailed_description"] or "") for x in pp)
+          and all("continues" in pp[k]["sections"]["detailed_description"] for k in conts),
+          f"the passes keep only the style and their continuing lines: {[x['sections']['detailed_description'][:60] for x in pp]}")
     page.evaluate("window.__mockFlags.writeText = {}")
     load(json.loads(saved))
 
