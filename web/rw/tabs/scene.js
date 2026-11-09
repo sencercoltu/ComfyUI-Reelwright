@@ -605,6 +605,7 @@ function promptCard(ctx, s) {
   // added 2026-11-12 v0.15.0: Reset scene (Sencer: "add a "reset scene" button with confirmation, which clears all 6
   // sections"): the six sections and every pass's own text go, as one undo step; shots, dialogue, references, cast,
   // LoRAs, the raw prompt and the brief stay
+  /* [OLD 2026-11-12 v0.16.0->v0.16.1] the shots and dialogue stayed (Sencer: "reset scene's doesn't remove the shots.")
   const sectionsUsed = SECTION_KEYS.some(k => String(s.prompt.sections[k] || "").trim()) || pt.stored ||
     Object.keys(s.prompt.pass_prompts || {}).length > 0;
   const reset = async () => {
@@ -619,6 +620,29 @@ function promptCard(ctx, s) {
       sc.prompt.pass_prompts = {};
     }, { label: "Reset scene" });
     ctx.actions.toast("Cleared the six sections. Ctrl+Z brings them back.", "ok");
+  };
+  [/OLD] */
+  // added 2026-11-12 v0.16.1: the shots and the dialogue lines go too (Sencer chose "shots and dialogue"), so Write
+  // prompts starts the scene from scratch; references, cast, LoRAs, the brief and the raw prompt stay
+  const nShots = (s.shots || []).length, nLines = (s.dialogue || []).length;
+  const sectionsUsed = SECTION_KEYS.some(k => String(s.prompt.sections[k] || "").trim()) || pt.stored ||
+    Object.keys(s.prompt.pass_prompts || {}).length > 0 || nShots > 0 || nLines > 0;
+  const reset = async () => {
+    const what = [multi || pt.stored ? "every pass's own text" : "",
+      nShots ? `the ${nShots} shot${nShots === 1 ? "" : "s"}` : "", nLines ? `the ${nLines} dialogue line${nLines === 1 ? "" : "s"}` : ""].filter(Boolean);
+    const ok = await confirmDialog(ctx.root, {
+      title: "Reset this scene?", okLabel: "Reset scene", danger: true, help: "scene.prompt.reset",
+      message: `Clears the six sections (subject definitions, summary, retention analysis, detailed description, soundscape, music)${what.length ? ", " + what.slice(0, -1).join(", ") + (what.length > 1 ? " and " : "") + what[what.length - 1] : ""}. The references, cast, LoRAs${hasBrief ? ", the Write prompts brief" : ""} and the raw prompt stay. Ctrl+Z undoes it.`,
+    });
+    if (!ok) return;
+    ctx.actions.editScene(s.id, sc => {
+      for (const k of SECTION_KEYS) sc.prompt.sections[k] = "";
+      sc.prompt.passes = [];
+      sc.prompt.pass_prompts = {};
+      sc.shots = [];
+      sc.dialogue = [];
+    }, { label: "Reset scene" });
+    ctx.actions.toast("Cleared the sections, shots and dialogue. Ctrl+Z brings them back.", "ok");
   };
   return section({
     title: "Prompt", help: "scene.prompt",
@@ -1720,6 +1744,7 @@ export function clipTimeField(ctx, { label, value, placeholder, help, key, onCom
     }));
 }
 
+/* [OLD 2026-11-12 v0.16.0->v0.16.1] scene references only; Cast → Video anchors uses the same editor now (see below)
 function clipEditor(ctx, s, r, a, edit) {
   const c = refClip(r, a);
   const dur = Number(a.duration) || 0;
@@ -1750,22 +1775,70 @@ function clipEditor(ctx, s, r, a, edit) {
     note && h("div", { class: ["rw-note", bad ? "err" : "warn", "rw-clip-note"], help: "scene.refs.clip" }, icon("warn", 12), `${tok} ${note}.`),
     open && clipPreview(ctx, r, a, c, edit));
 }
+[/OLD] */
+
+// added 2026-11-12 v0.16.1: the same clip editor for a scene reference and for a cast member's video anchor (Sencer:
+// "add the same options to video anchors as in scene tab/reference card/video reference. preview, from and to buttons
+// etc."). `r` is anything with id / in / out; `s` is the scene (null for a video anchor). opts:
+//   help  name -> help key (default "scene.refs." + name)       key   data-key prefix (default "clip")
+//   tok   the clip's name in its notes (default its @ tag)       token false: no @ tag chip (a video anchor has none)
+//   short the note for a clip under 2 s
+export function clipEditor(ctx, s, r, a, edit, opts = {}) {
+  const o = clipOpts(opts);
+  const c = refClip(r, a);
+  const dur = Number(a.duration) || 0;
+  const tok = opts.tok || (s && refTokens(ctx.p, s)[r.id]) || "@" + a.code;
+  const many = !!s && s.refs.filter(x => x.asset === a.id && x.role === "reference").length > 1;
+  const secs = c.seconds;
+  const bad = dur > 0 && c.start >= dur - 0.5 / FPS ? `starts after the end of ${a.code} (${fmtTime(dur)})`
+    : r.out !== null && r.out !== undefined && r.out <= c.start + 0.5 / FPS ? "ends before it starts"
+      : "";
+  const note = bad || (secs !== null && secs > 15 + 1e-6 ? "only the first 15 s is sent" : secs !== null && secs < 2 - 1e-6 ? (opts.short || "H3 references are 2–15 s") : "");
+  const open = !!ctx.eph.clipPreview?.[r.id];
+  const setOpen = v => ctx.store.setEph({ clipPreview: { ...(ctx.eph.clipPreview || {}), [r.id]: v } });
+  return h("div", { class: "rw-clip", help: o.hk("clip") },
+    h("div", { class: "rw-row rw-clip-row" },
+      opts.token !== false && h("button", { type: "button", class: ["rw-clip-tok mono", many && "many"], help: o.hk("token"), key: `${o.kp}-tok-${r.id}`,
+        onClick: e => copyWithToast(tok, e.currentTarget, "tag") }, tok),
+      h("span", { class: "rw-dim small rw-ellipsis" }, refTrimmed(r) ? "a part of the file" : "the whole file"),
+      h("span", { class: "rw-flex" }),
+      refTrimmed(r) && button({ label: "Whole file", small: true, variant: "ghost", help: o.hk("clipReset"), key: `${o.kp}-reset-${r.id}`, onClick: () => edit(r.id, x => { x.in = 0; x.out = null; }) }),
+      button({ label: open ? "Hide" : "Preview", icon: a.kind === "video" ? "video" : "audio", small: true, variant: "ghost", help: o.hk("clipPreview"), key: `${o.kp}-prev-${r.id}`, onClick: () => setOpen(!open) })),
+    h("div", { class: "rw-clip-grid" },
+      clipTimeField(ctx, { label: "From", value: r.in || 0, help: o.hk("clipFrom"), key: `${o.kp}-in-${r.id}`, onCommit: v => edit(r.id, x => { x.in = v ?? 0; }) }),
+      clipTimeField(ctx, { label: "To", value: r.out ?? null, placeholder: "end", help: o.hk("clipTo"), key: `${o.kp}-out-${r.id}`,
+        onCommit: v => edit(r.id, x => { x.out = v; }) }),
+      clipTimeField(ctx, { label: "Length", value: secs, placeholder: "?", help: o.hk("clipLength"), key: `${o.kp}-len-${r.id}`,
+        onCommit: v => edit(r.id, x => { x.out = v === null ? null : snapFrame((x.in || 0) + Math.max(1 / FPS, v)); }) })),
+    dur > 0 && clipBar(ctx, r, a, c, edit, o),
+    note && h("div", { class: ["rw-note", bad ? "err" : "warn", "rw-clip-note"], help: o.hk("clip") }, icon("warn", 12), `${tok} ${note}.`),
+    open && clipPreview(ctx, r, a, c, edit, o));
+}
+// added 2026-11-12 v0.16.1: help keys and data-key prefix of one clip editor
+function clipOpts(opts = {}) {
+  return { hk: name => (opts.help ? opts.help(name) : "scene.refs." + name), kp: opts.key || "clip" };
+}
 
 // the whole file as a bar with the clip on it; drag an end to move From / To (on frames)
-function clipBar(ctx, r, a, c, edit) {
+// [OLD 2026-11-12 v0.16.0->v0.16.1] function clipBar(ctx, r, a, c, edit) {
+function clipBar(ctx, r, a, c, edit, o = clipOpts()) { // added 2026-11-12 v0.16.1: o = help keys (video anchors)
   const dur = Number(a.duration) || 0;
   const end = c.end ?? dur;
   const pct = t => Math.max(0, Math.min(100, (t / dur) * 100)) + "%";
   const sel = h("span", { class: "rw-clip-sel", style: { left: pct(c.start), width: `calc(${pct(end)} - ${pct(c.start)})` } });
   const tip = h("span", { class: "rw-clip-tip mono" });
-  const bar = h("div", { class: "rw-clip-bar", help: "scene.refs.clipBar" }, sel, tip);
+  // [OLD 2026-11-12 v0.16.0->v0.16.1] const bar = h("div", { class: "rw-clip-bar", help: "scene.refs.clipBar" }, sel, tip);
+  const bar = h("div", { class: "rw-clip-bar", help: o.hk("clipBar"), dataset: { clipBar: `${o.kp}-${r.id}` } }, sel, tip); // added 2026-11-12 v0.16.1: found again after a re-render
   const handle = which => {
-    const el = h("span", { class: ["rw-clip-h", which], help: "scene.refs.clipBar", style: { left: pct(which === "in" ? c.start : end) } });
+    // [OLD 2026-11-12 v0.16.0->v0.16.1] const el = h("span", { class: ["rw-clip-h", which], help: "scene.refs.clipBar", style: { left: pct(which === "in" ? c.start : end) } });
+    const el = h("span", { class: ["rw-clip-h", which], help: o.hk("clipBar"), style: { left: pct(which === "in" ? c.start : end) } }); // added 2026-11-12 v0.16.1
     el.addEventListener("pointerdown", e => {
       if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       let v = which === "in" ? c.start : end;
+      /* [OLD 2026-11-12 v0.16.0->v0.16.1] measured and drew on this render's bar: a re-render during the drag (autosave,
+         a render's progress) detached it, its width became 0 and To jumped to the end of the file
       const move = ev => {
         const rect = bar.getBoundingClientRect();
         const t = snapFrame(Math.max(0, Math.min(dur, ((ev.clientX - rect.left) / Math.max(1, rect.width)) * dur)));
@@ -1778,11 +1851,31 @@ function clipBar(ctx, r, a, c, edit) {
         tip.style.left = pct(v);
         bar.classList.add("dragging");
       };
+      [/OLD] */
+      // added 2026-11-12 v0.16.1: the bar on screen now (a re-render replaces it; found by its data-clip-bar), and
+      // nothing measured on a bar that is not on screen
+      const root = bar.closest(".rw-root") || document;
+      const live = () => (bar.isConnected ? bar : root.querySelector(`.rw-clip-bar[data-clip-bar="${CSS.escape(bar.dataset.clipBar)}"]`));
+      const move = ev => {
+        const b = live();
+        const rect = b?.getBoundingClientRect();
+        if (!rect || rect.width < 1) return;
+        const t = snapFrame(Math.max(0, Math.min(dur, ((ev.clientX - rect.left) / rect.width) * dur)));
+        v = which === "in" ? Math.min(t, end - 1 / FPS) : Math.max(t, c.start + 1 / FPS);
+        const a0 = which === "in" ? v : c.start, b0 = which === "in" ? end : v;
+        const hEl = b.querySelector(`.rw-clip-h.${which}`), sEl = b.querySelector(".rw-clip-sel"), tEl = b.querySelector(".rw-clip-tip");
+        if (hEl) hEl.style.left = pct(v);
+        if (sEl) { sEl.style.left = pct(a0); sEl.style.width = `calc(${pct(b0)} - ${pct(a0)})`; }
+        if (tEl) { tEl.textContent = `${fmtTime(a0)} – ${fmtTime(b0)} · ${(b0 - a0).toFixed(2)} s`; tEl.style.left = pct(v); }
+        b.classList.add("dragging");
+      };
       const up = ev => {
         window.removeEventListener("pointermove", move, true);
         window.removeEventListener("pointerup", up, true);
         window.removeEventListener("pointercancel", up, true);
+        // [OLD 2026-11-12 v0.16.0->v0.16.1] bar.classList.remove("dragging");
         bar.classList.remove("dragging");
+        live()?.classList.remove("dragging"); // added 2026-11-12 v0.16.1
         if (ev.type === "pointercancel") return;
         if (which === "in" && v !== c.start) edit(r.id, x => { x.in = v; });
         if (which === "out" && v !== end) edit(r.id, x => { x.out = v >= dur - 0.5 / FPS ? null : v; });
@@ -1798,7 +1891,8 @@ function clipBar(ctx, r, a, c, edit) {
 }
 
 // the file in a player kept across renders; From here / To here / Play clip
-function clipPreview(ctx, r, a, c, edit) {
+// [OLD 2026-11-12 v0.16.0->v0.16.1] function clipPreview(ctx, r, a, c, edit) {
+function clipPreview(ctx, r, a, c, edit, o = clipOpts()) { // added 2026-11-12 v0.16.1: o = help keys and data-key prefix
   const url = viewURL(a.file, "input");
   const el = kept(ctx, "clip-" + r.id, url, () => {
     const m = h(a.kind === "video" ? "video" : "audio", { class: "rw-clip-media", src: url, controls: true, preload: "metadata", playsinline: true });
@@ -1806,6 +1900,7 @@ function clipPreview(ctx, r, a, c, edit) {
     return m;
   });
   const end = c.end;
+  /* [OLD 2026-11-12 v0.16.0->v0.16.1] fixed help keys and data-keys (scene references only)
   return h("div", { class: "rw-clip-prev", help: "scene.refs.clipPreview" }, el,
     h("div", { class: "rw-row wrap" },
       button({ label: "From here", small: true, help: "scene.refs.clipHere", key: `clip-here-in-${r.id}`, onClick: () => {
@@ -1818,6 +1913,25 @@ function clipPreview(ctx, r, a, c, edit) {
         edit(r.id, x => { x.out = t; });
       } }),
       button({ label: "Play clip", icon: "play", small: true, help: "scene.refs.clipPlay", key: `clip-play-${r.id}`, onClick: () => {
+        el.currentTime = c.start;
+        el.__rwStopAt = end ?? null;
+        el.play?.()?.catch?.(() => {});
+      } }),
+      h("span", { class: "rw-dim small mono" }, `${fmtTime(c.start)} – ${end !== null ? fmtTime(end) : "end"}`)));
+  [/OLD] */
+  // added 2026-11-12 v0.16.1: the help keys and data-keys of the editor it is in (a scene reference or a video anchor)
+  return h("div", { class: "rw-clip-prev", help: o.hk("clipPreview") }, el,
+    h("div", { class: "rw-row wrap" },
+      button({ label: "From here", small: true, help: o.hk("clipHere"), key: `${o.kp}-here-in-${r.id}`, onClick: () => {
+        const t = snapFrame(el.currentTime || 0);
+        edit(r.id, x => { x.in = t; if (x.out !== null && x.out !== undefined && x.out <= t) x.out = null; });
+      } }),
+      button({ label: "To here", small: true, help: o.hk("clipHere"), key: `${o.kp}-here-out-${r.id}`, onClick: () => {
+        const t = snapFrame(el.currentTime || 0);
+        if (t <= (r.in || 0)) { ctx.actions.toast("To must be after From.", "warn"); return; }
+        edit(r.id, x => { x.out = t; });
+      } }),
+      button({ label: "Play clip", icon: "play", small: true, help: o.hk("clipPlay"), key: `${o.kp}-play-${r.id}`, onClick: () => {
         el.currentTime = c.start;
         el.__rwStopAt = end ?? null;
         el.play?.()?.catch?.(() => {});

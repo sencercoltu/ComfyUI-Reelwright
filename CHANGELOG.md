@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.16.1 — 2026-11-12
+
+- **Video anchors get the scene's clip editor.** Sencer: "add the same options to video anchors as in scene tab/reference card/video reference. preview, from and to buttons etc." Each video anchor on the Cast tab now has what a scene's video reference has: **Preview** plays the video in place, **From here / To here** take its position, **Play clip** plays From to To; the bar under the fields shows the clip in the whole video, with ends you drag; **From / To / Length** (typing a length moves To); **Whole file** when a part is picked; and the same notes (starts after the end, ends before it starts, only the first 15 s is sent, under 2 s so it is not sent). **With sound** stays on the line above.
+- **Dragging a clip's end through a re-render.** When the editor redrew while you dragged an end of a clip's bar (an autosave, a render's progress), the drag measured the old bar, which was no longer on screen, and To jumped to the end of the file. The drag now follows the bar on screen. This was in the scene's references too.
+- **Reset scene clears the shots and dialogue too.** Sencer: "reset scene's doesn't remove the shots." Reset scene now clears the six sections, every pass's own text, the shots and the dialogue lines, so Write prompts starts the scene from scratch; the dialog says how many shots and lines go. References, cast, LoRAs, the Write prompts brief and the raw prompt stay; Ctrl+Z brings it all back.
+- **For developers:** `scene.js clipEditor(ctx, s, r, a, edit, opts)` is exported and takes `opts` (`help` name → help key, `key` data-key prefix, `token: false`, `tok`, `short`); `clipBar` / `clipPreview` take the same help keys and prefix. Video anchors use the prefix `va` (`va-in-`, `va-out-`, `va-len-`, `va-prev-`, `va-here-in-`, `va-here-out-`, `va-play-`, `va-reset-`). New help entries `cast.videoAnchors.clip*`. The clip bar has `data-clip-bar` and its drag finds the bar on screen by it. Reset scene sets `shots` and `dialogue` to []. `interact.py` runs `v0161_checks()`; `v0150_checks()` expects the shots and dialogue cleared.
+
 ## v0.16.0 — 2026-11-12
 
 Sencer asked how H3 knows a packed sheet of anchor pictures is one subject, then: "do both please. also, why didn't we add video anchors? if possible, lets add them as well."

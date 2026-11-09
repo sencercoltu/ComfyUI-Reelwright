@@ -1525,6 +1525,7 @@ def main():
         v0150_checks(page, check, saved, shots)  # added 2026-11-12 v0.15.0: drag to reorder, Reset scene, the LLM output popup, the Write prompts brief
         v0151_checks(page, check, saved, shots)  # added 2026-11-12 v0.15.1: dialogs open next to what opened them
         v0160_checks(page, check, saved, shots)  # added 2026-11-12 v0.16.0: video anchors; sheets too small; the sheet in the subject line
+        v0161_checks(page, check, saved, shots)  # added 2026-11-12 v0.16.1: a video anchor has the scene reference's clip editor
         browser.close()
     httpd.shutdown()
 
@@ -5574,7 +5575,9 @@ def v0150_checks(page, check, saved, shots):
     shots_before = len(scene_of(sid)["shots"])
     page.click(f"[data-key='reset-{sid}']")
     page.wait_for_timeout(250)
-    check(page.locator(".rw-modal").count() == 1 and "Write prompts brief" in page.locator(".rw-modal").inner_text(), "Reset scene asks first and says what stays")
+    # [OLD 2026-11-12 v0.16.0->v0.16.1] check(page.locator(".rw-modal").count() == 1 and "Write prompts brief" in page.locator(".rw-modal").inner_text(), "Reset scene asks first and says what stays")
+    ask = page.locator(".rw-modal").inner_text() if page.locator(".rw-modal").count() == 1 else ""
+    check("Write prompts brief" in ask and f"the {shots_before} shot" in ask, f"Reset scene asks first and says what goes and what stays: {ask!r}")  # added 2026-11-12 v0.16.1
     page.screenshot(path=str(shots / "v0150_reset_ask.png"))
     page.locator(".rw-modal button:has-text('Cancel')").click()
     page.wait_for_timeout(250)
@@ -5584,11 +5587,16 @@ def v0150_checks(page, check, saved, shots):
     page.locator(".rw-modal button:has-text('Reset scene')").click()
     page.wait_for_timeout(350)
     sc = scene_of(sid)
+    # [OLD 2026-11-12 v0.16.0->v0.16.1] check(all(v == "" for v in sc["prompt"]["sections"].values()) and sc["prompt"]["passes"] == [] and labels()[-1] == "Reset scene"
+    # [OLD 2026-11-12 v0.16.0->v0.16.1]       and sc["prompt"]["brief"] and len(sc["shots"]) == shots_before, f"Reset scene clears the sections only: {sc['prompt']} {labels()[-1:]}")
+    # added 2026-11-12 v0.16.1: the shots and dialogue go too (Sencer: "reset scene's doesn't remove the shots.")
     check(all(v == "" for v in sc["prompt"]["sections"].values()) and sc["prompt"]["passes"] == [] and labels()[-1] == "Reset scene"
-          and sc["prompt"]["brief"] and len(sc["shots"]) == shots_before, f"Reset scene clears the sections only: {sc['prompt']} {labels()[-1:]}")
+          and sc["prompt"]["brief"] and shots_before > 0 and sc["shots"] == [] and sc["dialogue"] == [],
+          f"Reset scene clears the sections, shots and dialogue: {sc['prompt']} shots {len(sc['shots'])}/{shots_before} lines {len(sc['dialogue'])} {labels()[-1:]}")
     check(page.locator(f"[data-key='reset-{sid}']").is_disabled(), "nothing left to clear: the button is off")
     undo()
     check(scene_of(sid)["prompt"]["sections"]["detailed_description"] != "", "Ctrl+Z brings the sections back")
+    check(len(scene_of(sid)["shots"]) == shots_before, "Ctrl+Z brings the shots back")  # added 2026-11-12 v0.16.1
 
     # 6. the LLM output popup: opened from the progress row, live, stays after the run, opens again from the card
     page.evaluate("() => { window.__mockFlags.passesMs = 2400; window.__editor.store.setEph({ toasts: [] }); }")
@@ -5771,7 +5779,8 @@ def v0160_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
     va = mara()["video_anchors"]
     check((va[0]["in"], va[0]["out"], va[0]["soundtrack"]) == (1.5, 4.0, True), f"From / To and with sound: {va[0]}")
-    check("2.50 s sent" in page.locator(".rw-vanchor").first.inner_text(), "the clip length shows")
+    # [OLD 2026-11-12 v0.16.0->v0.16.1] check("2.50 s sent" in page.locator(".rw-vanchor").first.inner_text(), "the clip length shows")
+    check(page.locator(f"input[data-key='va-len-{first}']").input_value() == "00:02.500", "the clip length shows")  # added 2026-11-12 v0.16.1: the Length field
     page.locator(f"[data-key='va-grip-{first}']").focus()
     page.keyboard.press("ArrowDown")
     page.wait_for_timeout(350)
@@ -5824,6 +5833,102 @@ def v0160_checks(page, check, saved, shots):
     small = page.locator("[data-help='scene.cast.smallSheet']")
     check(small.count() == 1 and "too small for identity" in small.inner_text(), "the scene's cast row warns too")
     audit("Small sheet (Scene)")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+# added 2026-11-12 v0.16.1
+def v0161_checks(page, check, saved, shots):
+    """v0.16.1 (Sencer: "add the same options to video anchors as in scene tab/reference card/video reference. preview,
+    from and to buttons etc."): a video anchor has Preview (From here / To here / Play clip), the bar with draggable
+    ends, From / To / Length, Whole file and the clip notes, like a scene's video reference."""
+    import os
+    import subprocess
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def typ(k, v):
+        loc = page.locator(f"input[data-key='{k}']")
+        loc.fill(v)
+        loc.press("Enter")
+        page.wait_for_timeout(300)
+
+    va = lambda: next(c for c in page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")["cast"] if c["id"] == "c_mara")["video_anchors"][0]
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="cast")
+    q["ui"].pop("collapsed", None)
+    next(c for c in q["cast"] if c["id"] == "c_mara")["video_anchors"] = [{"id": "va_t1", "asset": "a_v1", "in": 0, "out": None, "soundtrack": False}]
+    load(q)
+    page.evaluate("window.__editor.store.setEph({ selectedCast: 'c_mara' })")
+    page.wait_for_timeout(350)
+    row = page.locator(".rw-vanchor").first
+    check(row.locator(".rw-clip-bar").count() == 1 and page.locator("[data-key='va-prev-va_t1']").count() == 1
+          and page.locator("input[data-key='va-len-va_t1']").count() == 1 and page.locator("[data-key='va-tok-va_t1']").count() == 0,
+          "a video anchor has the clip editor (bar, Preview, Length; no @ tag)")
+    check(page.locator("[data-key='va-snd-va_t1']").count() == 1, "with sound stays")
+
+    # 1. Length moves To; a 1 s clip is not sent; Whole file resets
+    typ("va-len-va_t1", "3")
+    check((va()["in"], va()["out"]) == (0, 3.0), f"Length moves To: {va()}")
+    typ("va-in-va_t1", "1")
+    typ("va-out-va_t1", "2")
+    note = row.locator(".rw-clip-note").all_inner_texts()
+    check(any("V1 is under 2 s, so it is not sent" in n for n in note), f"a 1 s clip says it is not sent: {note}")
+    page.locator("[data-key='va-reset-va_t1']").click()
+    page.wait_for_timeout(300)
+    check((va()["in"], va()["out"]) == (0, None), f"Whole file resets: {va()}")
+
+    # 2. drag the end of the bar: To follows (on frames), also when the editor re-renders during the drag (autosave, a
+    # render's progress): the bar is found again (it used to measure the detached bar and jump to the end of the file)
+    bar = page.locator(".rw-vanchor .rw-clip-bar").first
+    bar.scroll_into_view_if_needed()
+    bb = bar.bounding_box()
+    hb = bar.locator(".rw-clip-h.out").bounding_box()
+    page.mouse.move(hb["x"] + hb["width"] / 2, hb["y"] + hb["height"] / 2)
+    page.mouse.down()
+    page.evaluate("window.__editor.store.notify()")
+    page.wait_for_timeout(150)
+    page.mouse.move(bb["x"] + bb["width"] * 0.5, hb["y"] + hb["height"] / 2, steps=6)
+    tipv = page.locator(".rw-vanchor .rw-clip-tip").first.inner_text()
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    out = va()["out"]
+    check(out is not None and 1.8 < out < 2.4 and abs(out * 24 - round(out * 24)) < 1e-9 and "00:00.000 –" in tipv, f"dragging To through a re-render: {out} tip {tipv!r}")
+
+    # 3. Preview: From here / To here take the player's position; Play clip plays From to To
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots")
+    path = os.path.join(d, "rw_take_a.webm")
+    if not os.path.exists(path):
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=160x90:r=24:d=10",
+                        "-c:v", "libvpx", "-b:v", "200k", path], check=True)
+    page.evaluate("""async () => {
+      const host = window.__host, orig = host.__origApiURL || host.apiURL.bind(host);
+      host.__origApiURL = orig;
+      const blob = URL.createObjectURL(await (await fetch('/web-test/shots/rw_take_a.webm')).blob());
+      host.apiURL = path => /dolly_in/.test(path) ? blob : orig(path);
+    }""")
+    page.locator("[data-key='va-prev-va_t1']").click()
+    page.wait_for_timeout(800)
+    t0 = page.evaluate("""async () => { const v = document.querySelector('.rw-vanchor .rw-clip-media');
+      if (!v) return 'none'; if (v.readyState < 1) await new Promise(r => { v.onloadedmetadata = r; setTimeout(r, 3000); });
+      v.currentTime = 1.0; await new Promise(r => setTimeout(r, 300)); return v.currentTime; }""")
+    page.locator("[data-key='va-here-in-va_t1']").click()
+    page.wait_for_timeout(300)
+    check(t0 == 1.0 and va()["in"] == 1.0, f"From here: {t0} {va()}")
+    page.evaluate("async () => { const v = document.querySelector('.rw-vanchor .rw-clip-media'); v.currentTime = 3.5; await new Promise(r => setTimeout(r, 300)); }")
+    page.locator("[data-key='va-here-out-va_t1']").click()
+    page.wait_for_timeout(300)
+    check(va()["out"] == 3.5, f"To here: {va()}")
+    page.locator("[data-key='va-play-va_t1']").click()
+    page.wait_for_timeout(3100)
+    st = page.evaluate("() => { const v = document.querySelector('.rw-vanchor .rw-clip-media'); return { t: v.currentTime, paused: v.paused }; }")
+    check(st["paused"] and 3.45 <= st["t"] <= 3.85, f"Play clip stops at To: {st}")
+    shots and page.screenshot(path=os.path.join(shots, "v0161_anchor_clip.png"))
+    r = page.evaluate(AUDIT_JS)
+    check(not r["missing"] and not r["noMore"] and not r["bare"], f"video anchor clip: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+    check(not r["dup"], f"video anchor clip: duplicate keys {r['dup'][:6]}")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 
