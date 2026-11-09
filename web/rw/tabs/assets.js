@@ -691,7 +691,9 @@ function inspector(ctx) {
       ],
       children: [castUse.map(u => h("div", { class: "rw-list-row", help: "assets.usage.cast" },
         h("span", { class: "rw-c-pic" }, icon("cast", 13)),
-        h("button", { type: "button", class: "link grow", help: "assets.usage.cast", onClick: () => { ctx.store.setEph({ selectedCast: u.cast.id }); ctx.actions.setTab("cast"); } }, `${u.as === "anchor" ? "Anchor" : "Voice"} of ${u.cast.name}`),
+        // [OLD 2026-11-12 v0.15.1->v0.16.0] h("button", { type: "button", class: "link grow", help: "assets.usage.cast", onClick: () => { ctx.store.setEph({ selectedCast: u.cast.id }); ctx.actions.setTab("cast"); } }, `${u.as === "anchor" ? "Anchor" : "Voice"} of ${u.cast.name}`),
+        h("button", { type: "button", class: "link grow", help: "assets.usage.cast", onClick: () => { ctx.store.setEph({ selectedCast: u.cast.id }); ctx.actions.setTab("cast"); } },
+          `${u.as === "anchor" ? "Anchor" : u.as === "video anchor" ? "Video anchor" : "Voice"} of ${u.cast.name}`), // added 2026-11-12 v0.16.0
         h("span", { class: "rw-dim small" }, `${u.scenes} scene${u.scenes === 1 ? "" : "s"}`))),
       usage.length ? h("div", { class: "rw-table usage" }, usage.map(u => {
         const over = (u.ref.retention && u.ref.retention !== a.defaults.retention) || u.ref.role !== a.defaults.role;

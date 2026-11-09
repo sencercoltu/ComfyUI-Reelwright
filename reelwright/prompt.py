@@ -220,6 +220,8 @@ class PassRefs:
         # added 2026-11-05 v0.7.0: the footage this pass continues from, sent as reference 1 (see continuation_of):
         # {"kind": "picture"|"video", "source", "frames", "label": "<Picture 1>"|"<Video 1>", "audio_number"} or None
         self.continuation = None
+        # added 2026-11-12 v0.16.0: the video anchors picked or left out (model.pick_video_anchors), for build_pass's notes
+        self.anchor_notes = []
 
     def number(self):
         for k, img in enumerate(self.images, 1):
@@ -301,6 +303,50 @@ def continuation_of(p, scene, scene_index, pass_, ctx=None):
         return {"kind": "picture", "source": "prev_scene_last", "frames": 1}
     return {"kind": "video", "source": "prev_pass_tail" if int(pass_["index"]) > 1 else "prev_scene_tail",
             "frames": _model.continuation_frames(p, scene_index, pass_, mode)}
+
+
+# added 2026-11-12 v0.16.0: what a pass sends so far, as model.scene_media_counts counts it, for pick_video_anchors
+def _sent_counts(refs, assets):
+    def secs(entry, a):
+        if entry.get("continuation"):
+            return float(entry.get("frames") or 0) / spec.FPS
+        if entry.get("song"):
+            return float(entry["song"]["length"])
+        if "seconds" in entry:
+            return float(entry["seconds"] or 0)
+        return float((a or {}).get("duration") or 0)
+    video = [(v, secs(v, assets.get(v.get("asset")))) for v in refs.videos]
+    audio = [secs(x, assets.get(x.get("asset"))) for x in refs.audios]
+    return {"videos": len(refs.videos), "video_seconds": sum(t for _, t in video),
+            "audio": len(refs.audios) + sum(1 for v, _ in video if v["soundtrack"]),
+            "audio_seconds": sum(audio) + sum(t for v, t in video if v["soundtrack"]), "files": refs.file_count}
+
+
+# added 2026-11-12 v0.16.0: what build_pass says about the video anchors of a pass (refs.anchor_notes)
+ANCHOR_LEFT = {
+    "videos": "H3 takes {} videos and the pass sends that many already".format(spec.MAX_REF_VIDEOS),
+    "files": "H3 takes {} files and the pass sends that many already".format(spec.MAX_REF_FILES),
+    "seconds": "H3 takes {:g} s of video in all and less than {:g} s are left".format(spec.REF_MEDIA_TOTAL_SECONDS,
+                                                                                   spec.REF_MEDIA_MIN_SECONDS),
+    "clip": "its From / To leave no clip (Cast -> Video anchors)",
+}
+
+
+def anchor_issues(refs, idx):
+    out = []
+    for x in refs.anchor_notes:
+        c, a = idx["cast"].get(x["cast"]), idx["assets"].get(x["asset"])
+        what = "{}'s video anchor {}".format(c["name"] if c else "a cast member", a["code"] if a else "")
+        if "why" in x:
+            out.append({"level": "warn", "tag": "", "message": "{} is not sent: {}".format(what, ANCHOR_LEFT[x["why"]])})
+            continue
+        if x["cut"]:
+            out.append({"level": "info", "tag": "", "message": "{} is sent as its first {:.2f} s: H3 takes {:g} s of "
+                        "video in all".format(what, x["seconds"], spec.REF_MEDIA_TOTAL_SECONDS)})
+        if x["mute"]:
+            out.append({"level": "info", "tag": "", "message": "{} is sent without its sound: the {} audio slots (or "
+                        "{:g} s of audio) are taken".format(what, spec.MAX_REF_AUDIOS, spec.REF_MEDIA_TOTAL_SECONDS)})
+    return out
 
 
 def over_budget(refs):
@@ -593,7 +639,23 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
     if cont and cont["kind"] == "video":
         refs.videos[0]["soundtrack"] = sum(1 for v in refs.videos if v["soundtrack"]) + len(refs.audios) < \
             spec.MAX_REF_AUDIOS
+    # added 2026-11-12 v0.16.0: the cast's video anchors, after everything else, while H3's budget has room
+    # (model.pick_video_anchors; scene_media_counts counts them the same way). Each is a <Video k> of its character's
+    # subject (below), with its own From / To, shortened to the seconds left when it has to be.
+    if any(x["cast"].get("video_anchors") for x in people):
+        picked, left = _model.pick_video_anchors(people, assets, _sent_counts(refs, assets))
+        for x in picked:
+            refs.videos.append({"asset": x["asset"], "soundtrack": x["sound"], "ref": None, "cast": x["cast"],
+                                "anchor": x["anchor"], "in": x["in"], "out": x["in"] + x["seconds"],
+                                "seconds": x["seconds"]})
+        refs.anchor_notes = picked + left
     refs.number()
+    # added 2026-11-12 v0.16.0: a video anchor is shown in its character's subject line
+    for k, v in enumerate(refs.videos, 1):
+        if v.get("anchor"):
+            subj = next((x for x in refs.subjects if x["cast"] == v["cast"]), None)
+            if subj is not None:
+                subj["videos"].append(k)
     # added 2026-11-12 v0.12.0: each character's poses in this pass: the picture and the shot (only when it has any,
     # so other builds and their cache keys stay as they were)
     for r, a, c in poses:
@@ -632,6 +694,8 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
         # added 2026-11-12 v0.14.0: each clip of a motion or style video is a subject of its own (a second clip of the
         # same video used to be named as a camera reference); @V1 stays the first one
         if v.get("guide") or a.get("category") not in SUBJECT_VIDEO_CATEGORIES:
+            continue
+        if v.get("anchor"):  # added 2026-11-12 v0.16.0: a video anchor belongs to its character's subject
             continue
         twin = next((s for s in refs.subjects if s.get("asset") == a["id"] and not s["cast"] and s["videos"] and
                      _clip_key_of(refs.videos[s["videos"][0] - 1], a) == _clip_key_of(v, a)), None)
@@ -1285,10 +1349,24 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
             # added 2026-11-08 v0.11.0: the pictures that show only a part are named with the part, below
             parts = s.get("parts") or []
             only_parts = {k for x in parts for k in x["pictures"]}
-            own_src = _labels("Picture", [k for k in s["pictures"] if k not in only_parts]) or \
-                _labels("Video", s["videos"])
-            if own_src:
-                text += ", shown in " + own_src
+            # [OLD 2026-11-12 v0.15.1->v0.16.0] a sheet read as one picture, and a cast subject never had videos
+            # own_src = _labels("Picture", [k for k in s["pictures"] if k not in only_parts]) or \
+            #     _labels("Video", s["videos"])
+            # if own_src:
+            #     text += ", shown in " + own_src
+            # [/OLD]
+            # added 2026-11-12 v0.16.0: a packed sheet says what it is (Sencer: "how does H3 assign the single sheet as
+            # a single subject?" -> "do both"), and the character's video anchors follow its pictures
+            own_pics = [k for k in s["pictures"] if k not in only_parts]
+            own_src = _labels("Picture", own_pics)
+            sheet = len(own_pics) == 1 and len(refs.images[own_pics[0] - 1]["assets"]) > 1
+            if sheet:
+                own_src += ", " + sheet_words(c, len(refs.images[own_pics[0] - 1]["assets"]))
+            vids = _labels("Video", s["videos"])
+            if own_src and vids:
+                text += ", shown in " + own_src + (", and in " if sheet else " and in ") + vids
+            elif own_src or vids:
+                text += ", shown in " + (own_src or vids)
             o = s["outfit"]
             # [OLD 2026-11-08 v0.10.3->v0.11.0] if o and o.get("name") and o["name"].strip().lower() != "default":
             # [OLD 2026-11-08 v0.10.3->v0.11.0]     text += ", wearing " + o["name"].strip()
@@ -1338,6 +1416,10 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
             lines.append("<Video {}> is the camera-movement and pacing reference{}.".format(k, ", showing " + desc if desc else ""))
     sub_of_cast = {s["cast"]: s["number"] for s in refs.subjects if s["cast"]}
     for v_k, v in enumerate(refs.videos, 1):
+        if v["soundtrack"] and v.get("anchor"):  # added 2026-11-12 v0.16.0: the voice of a video anchor's character
+            lines.append("<Audio {}> is the synchronized audio track of <Video {}>, the voice of <Subject {}>.".format(
+                v["audio_number"], v_k, sub_of_cast.get(v.get("cast"), "?")))
+            continue
         if v["soundtrack"]:
             lines.append("<Audio {}> is the synchronized audio track of <Video {}>.".format(v["audio_number"], v_k))
     for au in refs.audios:
@@ -1355,6 +1437,15 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):  # ctx: added 202
             desc = (a.get("description") or "").strip().rstrip(".")
             lines.append("<Audio {}> is {}.".format(n, desc or AUDIO_PHRASE.get(a.get("category"), "the audio reference")))
     return lines
+
+
+# added 2026-11-12 v0.16.0: what a packed anchor sheet is, in the subject line of its cast member
+SHEET_NOUN = {"character": "person", "location": "place", "prop": "object"}
+
+
+def sheet_words(c, n):
+    """"a sheet of 4 views of the same person" (place for a location, object for a prop)."""
+    return "a sheet of {} views of the same {}".format(n, SHEET_NOUN.get(c.get("kind"), "subject"))
 
 
 # added 2026-11-12 v0.12.0: a character's pose references in this pass
@@ -1456,6 +1547,11 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):  # ctx: added 2026-11-0
     for k, v in enumerate(refs.videos, 1):
         if v["soundtrack"] and v.get("continuation"):  # added 2026-11-05 v0.7.0: the sound it continues
             lines += continuation_retention(refs.continuation)[1:]
+            continue
+        if v["soundtrack"] and v.get("anchor"):  # added 2026-11-12 v0.16.0: a video anchor's sound is its character's voice
+            subj = next((x["number"] for x in refs.subjects if x["cast"] == v.get("cast")), "?")
+            lines.append("<Audio {n}>: reference - the voice timbre and delivery of <Subject {s}> follow the sound of "
+                         "<Video {k}> without copying the original signal.".format(n=v["audio_number"], s=subj, k=k))
             continue
         if v["soundtrack"]:
             r = ref_by_id.get(v["ref"], {})
@@ -1944,6 +2040,7 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
     elif refs.continuation and refs.continuation["kind"] == "video" and not refs.continuation["audio_number"]:
         issues.append({"level": "info", "tag": "", "message": "{} is sent as <Video 1> without its sound: the {} audio "
                        "slots are taken".format(CONT_WHAT[cont["source"]], spec.MAX_REF_AUDIOS)})
+    issues += anchor_issues(refs, ctx["index"])  # added 2026-11-12 v0.16.0: video anchors shortened, left out or muted
     tags = task_tags(p, scene, refs, ctx=ctx)
     tag_line = "[{}]".format(" + ".join(tags)) if tags else ""
     # [OLD 2026-11-05 v0.6.1->v0.7.0] unknown, issues = [], []

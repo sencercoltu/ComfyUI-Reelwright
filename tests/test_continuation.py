@@ -93,15 +93,33 @@ def _sections(text):
 
 # ---- switch off: exactly v0.6.1 ----------------------------------------------------------------------------------
 
+# added 2026-11-12 v0.16.0: a packed anchor sheet is named in its subject line ("shown in <Picture 1>, a sheet of 2 views
+# of the same person"); without those words a build is v0.6.1's. A scene that sends a sheet gets new keys (re-renders).
+SHEET_WORDS = re.compile(r", a sheet of \d+ views of the same (?:person|place|object|subject)")
+
+
+def _no_sheet_words(b):
+    return dict(b, prompt=SHEET_WORDS.sub("", b["prompt"])) if isinstance(b.get("prompt"), str) else b
+
+
+def _sends_sheet(builds):
+    return any(len(x["assets"]) > 1 for b in builds for x in b["images"])
+
+
 def test_off_gives_the_v061_builds_and_cache_keys(v061, roots):
     assert model.default_global()["continuity"]["name_continuation"] is True
     for raw, expect in zip(v061["projects"], v061["expect"]):
         # [OLD v0.7.0] r = _analyze(_project(raw, on=False), roots)
         # v0.8.0: with the scene summary written as each pass's own summary (a multi-pass scene no longer sends the
         # scene summary), every build and key is v0.6.1's
-        r = _analyze(_pass_summaries(_project(raw, on=False)), roots)
+        # [OLD 2026-11-12 v0.15.1->v0.16.0] r = _analyze(_pass_summaries(_project(raw, on=False)), roots)
+        q = _pass_summaries(_project(raw, on=False))  # added 2026-11-12 v0.16.0: the scene order, for chained keys
+        r = _analyze(q, roots)
         assert set(r["scenes"]) == set(expect)
-        for sid, want in expect.items():
+        moved = set()  # added 2026-11-12 v0.16.0: scenes with new keys (a sheet, or continuing from such a scene)
+        # [OLD 2026-11-12 v0.15.1->v0.16.0] for sid, want in expect.items():
+        for i, sid in enumerate(x["id"] for x in q["scenes"]):
+            want = expect[sid]
             sr = r["scenes"][sid]
             got = [{k: b[k] for k in BUILD_KEYS} for b in sr["builds"]]
             # [OLD 2026-11-12 v0.13.1->v0.14.0] assert json.loads(json.dumps(got)) == want["builds"], sid
@@ -109,8 +127,19 @@ def test_off_gives_the_v061_builds_and_cache_keys(v061, roots):
             # cache key does not read the tag map, so everything else is still v0.6.1's
             for g in got:
                 g["tag_map"] = {k: v for k, v in g["tag_map"].items() if not re.fullmatch(r"@[PVA]\d+\.\d+", k)}
+            # [OLD 2026-11-12 v0.15.1->v0.16.0] assert json.loads(json.dumps(got)) == want["builds"], sid
+            got = [_no_sheet_words(g) for g in got]  # added 2026-11-12 v0.16.0
             assert json.loads(json.dumps(got)) == want["builds"], sid
             assert all(b["continuation"] is None for b in sr["builds"]), sid
+            # [OLD 2026-11-12 v0.15.1->v0.16.0] assert sr["pass_keys"] == want["pass_keys"], sid
+            # [OLD 2026-11-12 v0.15.1->v0.16.0] assert sr["key"] == want["key"], sid
+            # added 2026-11-12 v0.16.0: the sheet words change its prompt, so its keys, and the keys of the scenes that
+            # continue from it
+            if _sends_sheet(sr["builds"]) or (i > 0 and model.effective_start(q, i) != "fresh" and
+                                              q["scenes"][i - 1]["id"] in moved):
+                moved.add(sid)
+                assert sr["key"] != want["key"], sid
+                continue
             assert sr["pass_keys"] == want["pass_keys"], sid
             assert sr["key"] == want["key"], sid
             assert sr["status"] == want["status"], sid
@@ -135,7 +164,8 @@ def test_v080_changes_only_the_summary_of_multi_pass_scenes_with_a_written_summa
                     assert [x["assets"] for x in b["images"]] == [x["assets"] for x in was["images"]][:-1] and \
                         was["images"][-1]["assets"] == ["a_letter"] and b["guides"] == was["guides"]
                     continue
-                now, old = _sections(b["prompt"]), _sections(was["prompt"])
+                # [OLD 2026-11-12 v0.15.1->v0.16.0] now, old = _sections(b["prompt"]), _sections(was["prompt"])
+                now, old = _sections(_no_sheet_words(b)["prompt"]), _sections(was["prompt"])  # added 2026-11-12 v0.16.0
                 assert {k: v for k, v in now.items() if k != "summary"} == \
                     {k: v for k, v in old.items() if k != "summary"}, s["id"]
                 # [OLD 2026-11-12 v0.13.1->v0.14.0] assert {k: b[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")} == \
@@ -149,7 +179,12 @@ def test_v080_changes_only_the_summary_of_multi_pass_scenes_with_a_written_summa
                 assert sr["key"] != want["key"]
             elif i > 0 and model.effective_start(p, i) != "fresh" and p["scenes"][i - 1]["id"] in chained:
                 chained.add(s["id"])  # continues from a scene that renders again: same prompts, new key
-                assert [b["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]
+                # [OLD 2026-11-12 v0.15.1->v0.16.0] assert [b["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]
+                assert [_no_sheet_words(b)["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]
+                assert sr["key"] != want["key"], s["id"]
+                continue
+            elif _sends_sheet(sr["builds"]):  # added 2026-11-12 v0.16.0: its sheet is named now (new prompt, new key)
+                chained.add(s["id"])
                 assert sr["key"] != want["key"], s["id"]
                 continue
             else:

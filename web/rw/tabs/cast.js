@@ -11,6 +11,10 @@ import { rw, viewURL } from "../api.js";
 import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription, sheetGrid, anchorPixels, sheetURL, castPacks } from "../model.js";
 import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
 import { partOwner } from "../model.js"; // added 2026-11-08 v0.11.0: a prop that is part of a character
+import { SMALL_TILE_PX } from "../model.js"; // added 2026-11-12 v0.16.0: sheet pictures too small for identity
+import { refClip, fmtTime } from "../model.js"; // added 2026-11-12 v0.16.0: video anchors
+import { sortable, dragGrip, moveItem } from "../ui.js"; // added 2026-11-12 v0.16.0: video anchors in the order you drag them to
+import { clipTimeField } from "./scene.js"; // added 2026-11-12 v0.16.0: From / To of a video anchor
 import { describeBox } from "./assets.js"; // added 2026-11-02 v0.2.0: describe from anchors
 
 const KINDS = [["character", "Characters"], ["location", "Locations"], ["prop", "Props"]];
@@ -187,7 +191,10 @@ function anchorsCard(ctx, c) {
               { value: "sheet", label: "One sheet", help: "cast.anchors.sheet.on" },
               { value: "separate", label: "Separate", help: "cast.anchors.sheet.off" }] }),
           h("div", { class: "rw-dim small" }, packNote),
-          sizeNote && h("div", { class: ["small", (packedSomewhere ? draftS : draftA) < 200 ? "rw-c-warn" : "rw-dim"], help: "cast.anchors.size" }, sizeNote)),
+          sizeNote && h("div", { class: ["small", (packedSomewhere ? draftS : draftA) < 200 ? "rw-c-warn" : "rw-dim"], help: "cast.anchors.size" }, sizeNote),
+          // added 2026-11-12 v0.16.0: say it plainly when the sheet makes each picture too small (model.tilePixels)
+          packedSomewhere && fullS < SMALL_TILE_PX && h("div", { class: "rw-note warn small", help: "cast.anchors.small" }, icon("warn", 12),
+            h("span", null, `In the ${cols}×${rows} sheet each picture reaches H3 at only about ${fullS} px, too small for a reliable identity. Keep a sheet to about 4 pictures (a clear face and a full body), pick Separate or Auto, or set Global → Output → Reference images to max.`))),
         packedSomewhere && h("img", { class: "rw-sheet-img", src: ctx.host.apiURL(sheetURL(p, c, 160)), alt: "", help: "cast.anchors.sheetPreview",
           onClick: () => window.open(ctx.host.apiURL(sheetURL(p, c, 768)), "_blank", "noopener") })),
       h("div", { class: "rw-row wrap", help: "cast.promote" },
@@ -196,6 +203,58 @@ function anchorsCard(ctx, c) {
           onChange: v => { ctx.eph.promoteScene = v; } }),
         button({ label: "First frame", small: true, help: "cast.promote", onClick: () => promote("first") }),
         button({ label: "Last frame", small: true, help: "cast.promote", onClick: () => promote("last") })),
+    ],
+  });
+}
+
+// ---- added 2026-11-12 v0.16.0: video anchors (Sencer: "why didn't we add video anchors? if possible, lets add them as
+// well"). Clips of the cast member that go with its pictures as part of its subject ("shown in <Picture 1> and in
+// <Video 2>"), to every scene it is in, after the scene's own videos while H3's budget has room (3 videos, 15 s of
+// video in all; model.pickVideoAnchors). Each has a From / To like a scene's video reference and sends its sound only
+// when "with sound" is on. Drag the grip to reorder: the first ones go first when room is short.
+function videoAnchorsCard(ctx, c) {
+  const p = ctx.p;
+  const edit = (fn, label = `Edit ${c.name}`) => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label });
+  const one = (id, fn) => edit(x => { const va = (x.video_anchors || []).find(y => y.id === id); if (va) fn(va); });
+  const videos = p.assets.filter(a => a.kind === "video").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) }));
+  const list = c.video_anchors || [];
+  const rows = list.map(va => {
+    const a = findAsset(p, va.asset);
+    if (!a || a.kind !== "video") {
+      return h("div", { class: "rw-note warn rw-vanchor" }, dragGrip({ help: "cast.videoAnchors.order", key: `va-grip-${va.id}` }),
+        h("span", { class: "grow" }, a ? `${a.code} is not a video, so it is not sent.` : "This video anchor's asset was deleted."),
+        button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => edit(x => { x.video_anchors = x.video_anchors.filter(y => y.id !== va.id); }, "Remove video anchor") }));
+    }
+    const clip = refClip(va, a);
+    const dur = Number(a.duration) || 0;
+    const secs = clip.seconds;
+    const note = secs !== null && secs <= 0 ? "From / To leave no clip: it is not sent"
+      : secs !== null && secs > 15 + 1e-6 ? `${secs.toFixed(1)} s: only its first 15 s are sent`
+        : secs !== null && secs < 2 - 1e-6 ? "under 2 s: H3 video references are 2–15 s" : "";
+    return h("div", { class: "rw-vanchor" },
+      dragGrip({ help: "cast.videoAnchors.order", key: `va-grip-${va.id}` }),
+      h("span", { class: "rw-vanchor-thumb rw-bg-vid-soft" }, icon("video", 16)),
+      h("div", { class: "rw-vanchor-body" },
+        h("div", { class: "rw-row" }, h("b", { class: "mono rw-c-vid" }, a.code), h("b", { class: "rw-ellipsis grow" }, a.name || a.file.split("/").pop()),
+          h("span", { class: "rw-dim small mono" }, dur ? fmtTime(dur) : ""),
+          button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => edit(x => { x.video_anchors = x.video_anchors.filter(y => y.id !== va.id); }, "Remove video anchor") })),
+        h("div", { class: "rw-row wrap rw-clip-row" },
+          clipTimeField(ctx, { label: "From", value: va.in, placeholder: "0", help: "cast.videoAnchors.from", key: `va-in-${va.id}`, onCommit: v => one(va.id, x => { x.in = v ?? 0; }) }),
+          clipTimeField(ctx, { label: "To", value: va.out, placeholder: dur ? fmtTime(dur) : "end", help: "cast.videoAnchors.to", key: `va-out-${va.id}`, onCommit: v => one(va.id, x => { x.out = v; }) }),
+          h("span", { class: "rw-dim small mono", help: "cast.videoAnchors.length" }, secs === null ? "length unknown" : `${Math.min(secs, 15).toFixed(2)} s sent`),
+          toggle({ value: !!va.soundtrack, label: "with sound", help: "cast.videoAnchors.sound", key: `va-snd-${va.id}`, onChange: v => one(va.id, x => { x.soundtrack = v; }) })),
+        note && h("div", { class: "small rw-c-warn", help: "cast.videoAnchors.length" }, note)));
+  });
+  return section({
+    title: "Video anchors", help: "cast.videoAnchors",
+    actions: videos.length > 0 && select({ options: videos, value: "", placeholder: "+ Add a video anchor…", help: "cast.videoAnchors.add", key: `va-add-${c.id}`,
+      onChange: v => edit(x => { (x.video_anchors = x.video_anchors || []).push({ id: newId("va"), asset: v, in: 0, out: null, soundtrack: false }); }, "Add video anchor") }),
+    children: [
+      list.length === 0 && h("div", { class: "rw-empty sm", help: "cast.videoAnchors" }, videos.length
+        ? "No video anchors. A short clip of this " + (c.kind === "character" ? "character moving and talking" : c.kind) + " (2–15 s) shows H3 how it moves and looks from every side."
+        : "Upload a video in the Assets tab to use a clip as an anchor."),
+      list.length > 0 && sortable({ id: `va-${c.id}`, rows, onMove: (from, to) => edit(x => { moveItem(x.video_anchors, from, to); }, "Reorder video anchors") }),
+      list.length > 0 && h("div", { class: "rw-dim small", help: "cast.videoAnchors" }, "Sent with the pictures to every scene this cast member is in, after the scene's own videos, while H3 takes 3 videos and 15 s of video in all; a clip is shortened to fit when 2 s or more are left. The issues list says when one is left out."),
     ],
   });
 }
@@ -460,7 +519,8 @@ export function render(ctx) {
         c.speaker && chip({ label: `<Subject> · ${c.speaker}`, kind: "pic", help: "cast.speaker" }),
         [/OLD] */
         h("span", { class: "rw-flex" })),
-      anchorsCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c))
+      // [OLD 2026-11-12 v0.15.1->v0.16.0] anchorsCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c))
+      anchorsCard(ctx, c), videoAnchorsCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c)) // v0.16.0: video anchors
       : h("div", { class: "rw-col wide" }, section({ title: "Story bible", help: "cast.bible", children: [
         h("div", { class: "rw-empty" }, "Add a character, location or prop. Its anchors are sent to every scene it appears in, which keeps it looking the same."),
         h("div", { class: "rw-row" }, KINDS.map(([k, label]) => button({ label: "New " + label.slice(0, -1).toLowerCase(), icon: "plus", help: "cast.add." + k, onClick: () => addEntry(ctx, k) }))),

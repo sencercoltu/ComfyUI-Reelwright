@@ -7,6 +7,7 @@ from .model import cast_description, project_index
 from .planner import continuation_depth
 from . import prompt as _prompt  # added 2026-11-03 v0.6.0: prompt.prepare (shared context)
 from . import soundtrack  # added 2026-11-03 v0.5.0
+import inspect  # added 2026-11-12 v0.16.0: scene_media_counts(anchors=) when the model has it
 
 
 def _issue(level, message, scene_id=None):
@@ -58,11 +59,15 @@ def _media_counts(p, scene, pass_, b, ctx):
         # rule, but a pass whose text uses fixed reference numbers, or whose guide pictures named in the text take the
         # room, leaves it out (prompt.build_pass); then the pass counts as in v0.6.1.
         mode = ctx["start_mode"].get(scene["id"])
-        c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode))
+        # [OLD 2026-11-12 v0.15.1->v0.16.0] c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode))
+        # added 2026-11-12 v0.16.0: the video anchors as the build sends them (added below), not as the model picks them
+        kw = {"video_anchors": False} if "video_anchors" in inspect.signature(counts).parameters else {}
+        c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, **kw))
         sent = next((x for x in b["images"] + b["videos"] if x.get("continuation")), None)
         kind = "" if not sent else "picture" if sent in b["images"] else "video_audio" if sent["soundtrack"] else "video"
         if c.get("continuation", "") != kind:
-            c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, continuation=False))
+            # [OLD 2026-11-12 v0.15.1->v0.16.0] c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, continuation=False))
+            c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, continuation=False, **kw))
             c["continuation"] = kind
             c["pictures" if kind == "picture" else "videos"] += 1 if kind else 0
             c["files"] += 1 if kind else 0
@@ -81,6 +86,13 @@ def _media_counts(p, scene, pass_, b, ctx):
                 c["videos"] += 1
                 c["video_seconds"] += float(assets[v["asset"]].get("duration") or 0)
                 c["files"] += 1
+            if v.get("anchor") and kw:  # added 2026-11-12 v0.16.0: a video anchor (model.pick_video_anchors)
+                c["videos"] += 1
+                c["files"] += 1
+                c["video_seconds"] += float(v.get("seconds") or 0)
+                if v["soundtrack"]:
+                    c["audio"] += 1
+                    c["audio_seconds"] += float(v.get("seconds") or 0)
         return c
     c = {"pictures": len(b["images"]), "videos": len(b["videos"]), "audio": len(b["audios"]),
          "video_seconds": sum(float(assets[v["asset"]].get("duration") or 0) for v in b["videos"]),
@@ -273,6 +285,29 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                                  "{} ({}) file is missing{}".format(a["code"], a["name"] or a["file"],
                                                                     "" if a["id"] in tracks else " (no scene uses it)")))
 
+    # added 2026-11-12 v0.16.0: a video anchor that cannot be sent (deleted or not a video, or no clip left by From / To)
+    for c in p["cast"]:
+        for va in c.get("video_anchors") or []:
+            a = assets.get(va.get("asset"))
+            if not a or a["kind"] != "video":
+                issues.append(_issue("warn", "{}: a video anchor {} so it is not sent".format(
+                    c["name"], "is not a video," if a else "points to a deleted asset,")))
+                continue
+            clip = _model.ref_clip(va, a)
+            if clip["seconds"] is not None and clip["seconds"] <= 0:
+                issues.append(_issue("warn", "{}: video anchor {} starts at {} but ends there or before (its length is "
+                                             "{}), so it is not sent".format(c["name"], a["code"],
+                                                                          spec.fmt_time(clip["start"]),
+                                                                          spec.fmt_time(float(a.get("duration") or 0)))))
+            elif clip["seconds"] is not None and clip["seconds"] < spec.REF_MEDIA_MIN_SECONDS - 1e-6:
+                issues.append(_issue("info", "{}: video anchor {} is a {:.2f} s clip (H3 video references are 2-15 s)"
+                                     .format(c["name"], a["code"], clip["seconds"])))
+            elif clip["seconds"] is not None and clip["seconds"] > spec.REF_MEDIA_MAX_SECONDS + 1e-6:
+                issues.append(_issue("info", "{}: video anchor {} is a {:.1f} s clip, so only its first {:g} s are sent; "
+                                             "set its From / To to the part that shows {} best".format(
+                                                 c["name"], a["code"], clip["seconds"], spec.REF_MEDIA_MAX_SECONDS,
+                                                 c["name"])))
+
     # [OLD 2026-11-03 v0.4.3->v0.5.0] score = p["global"]["merge"]["score"].get("asset")
     # [OLD 2026-11-03 v0.4.3->v0.5.0] if score and score not in assets:
     # [OLD 2026-11-03 v0.4.3->v0.5.0]     issues.append(_issue("warn", "Merge score track asset no longer exists"))
@@ -436,6 +471,27 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                 issues.append(_issue("error", "{}: a cast member was deleted".format(name), sid))
             elif c["kind"] == "character" and not c["anchors"]:
                 issues.append(_issue("warn", "{}: {} has no anchor pictures, so identity is not locked".format(name, c["name"]), sid))
+
+        # added 2026-11-12 v0.16.0: a packed anchor sheet whose pictures reach H3 too small for a reliable identity
+        # (model.tile_pixels at the size the scene renders, with Global -> Output -> Reference images)
+        if hasattr(_model, "tile_pixels"):
+            st = _model.resolve_settings(p, s, i)
+            small = {}
+            for b in builds[sid]:
+                for img in b["images"]:
+                    if img.get("cast") in cast and len(img["assets"]) > 1:
+                        px = _model.tile_pixels([assets[a] for a in img["assets"] if a in assets], st["width"],
+                                                st["height"], st["ref_image_size"])
+                        if px < _model.SMALL_TILE_PX:
+                            small[img["cast"]] = (len(img["assets"]), px)
+            for cid, (n, px) in small.items():
+                cols, rows = _model.sheet_grid(n)
+                issues.append(_issue("warn", "{}: {}'s {} pictures go to H3 as one {}x{} sheet, so each reaches it at "
+                                             "about {} px, too small for a reliable identity; send fewer anchors, pick "
+                                             "Separate or Auto under Cast -> Anchors{}".format(
+                                                 name, cast[cid]["name"], n, cols, rows, px,
+                                                 "" if st["ref_image_size"] == "max" else
+                                                 ", or set Global -> Output -> Reference images to max"), sid))
 
         # added 2026-11-03 v0.6.0: files this scene sends that are missing (an error here stops the scene before rendering)
         sent = set()

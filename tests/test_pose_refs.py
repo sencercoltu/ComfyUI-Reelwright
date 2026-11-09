@@ -45,7 +45,9 @@ def test_a_pose_is_cited_in_its_characters_line(harbor, roots):
     p["cast"][0]["pack_sheet"] = True
     (b,), _ = _builds(p, 0)
     prompt = b["prompt"]
-    assert ("<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>, whose pose in [Shot 1] comes from "
+    # [OLD 2026-11-12 v0.15.1->v0.16.0] assert ("<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>, whose pose in [Shot 1] comes from "
+    assert ("<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>, a sheet of 2 views of the same "
+            "person, whose pose in [Shot 1] comes from "  # added 2026-11-12 v0.16.0: the sheet is named
             "<Picture 2>.") in prompt
     assert ("<Picture 2> (pose of <Subject 1> in [Shot 1]): attribute_transfer - the body pose is transferred to "
             "<Subject 1>; the person, clothing and setting in <Picture 2> do not appear.") in prompt

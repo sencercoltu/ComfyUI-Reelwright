@@ -1524,6 +1524,7 @@ def main():
         v0144_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.4: written shots replace the shots whatever their count; scenes of several passes too
         v0150_checks(page, check, saved, shots)  # added 2026-11-12 v0.15.0: drag to reorder, Reset scene, the LLM output popup, the Write prompts brief
         v0151_checks(page, check, saved, shots)  # added 2026-11-12 v0.15.1: dialogs open next to what opened them
+        v0160_checks(page, check, saved, shots)  # added 2026-11-12 v0.16.0: video anchors; sheets too small; the sheet in the subject line
         browser.close()
     httpd.shutdown()
 
@@ -5713,6 +5714,117 @@ def v0151_checks(page, check, saved, shots):
     check(page.locator(".rw-modal").count() == 0, "Escape closes it")
 
     page.evaluate("() => { const n = document.getElementById('node'); n.removeAttribute('style'); window.scrollTo(0, 0); }")
+    page.wait_for_timeout(400)
+
+
+
+def v0160_checks(page, check, saved, shots):
+    """v0.16.0 (Sencer): cast members get video anchors (Cast → Video anchors: From / To, with sound, drag to reorder;
+    "· 1 video anchor" in the scene's cast row; the budget counts them), and a sheet whose pictures reach H3 too small
+    says so in the Cast tab and the scene's cast row."""
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    mara = lambda: next(c for c in cur()["cast"] if c["id"] == "c_mara")
+    labels = lambda: [x["label"] for x in page.evaluate("window.__editor.store.history()") if x["done"]]
+
+    def pick(k, text):  # type to filter a combobox, Enter picks the first match
+        loc = page.locator(f"input[data-key='{k}']")
+        loc.click()
+        loc.fill(text)
+        page.wait_for_timeout(150)
+        loc.press("Enter")
+        page.wait_for_timeout(350)
+
+    def clip(k, v):
+        loc = page.locator(f"input[data-key='{k}']")
+        loc.fill(v)
+        loc.press("Enter")
+        page.wait_for_timeout(300)
+
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="cast")
+    q["ui"].pop("collapsed", None)
+    load(q)
+    page.evaluate("window.__editor.store.setEph({ selectedCast: 'c_mara' })")
+    page.wait_for_timeout(300)
+    check(page.locator(".rw-card-title:has-text('Video anchors')").count() == 1, "the Cast tab has a Video anchors card")
+
+    # 1. add two video anchors (V2 then V1), set a From / To and the sound, reorder them, remove one
+    pick("va-add-c_mara", "waves_ref")
+    pick("va-add-c_mara", "dolly_in")
+    va = mara()["video_anchors"]
+    check([x["asset"] for x in va] == ["a_v2", "a_v1"] and labels()[-1] == "Add video anchor" and not va[0]["soundtrack"],
+          f"two video anchors, added in order, silent: {va}")
+    first = va[0]["id"]
+    clip(f"va-in-{first}", "1.5")
+    clip(f"va-out-{first}", "96f")
+    page.click(f"[data-key='va-snd-{first}']")
+    page.wait_for_timeout(300)
+    va = mara()["video_anchors"]
+    check((va[0]["in"], va[0]["out"], va[0]["soundtrack"]) == (1.5, 4.0, True), f"From / To and with sound: {va[0]}")
+    check("2.50 s sent" in page.locator(".rw-vanchor").first.inner_text(), "the clip length shows")
+    page.locator(f"[data-key='va-grip-{first}']").focus()
+    page.keyboard.press("ArrowDown")
+    page.wait_for_timeout(350)
+    check([x["asset"] for x in mara()["video_anchors"]] == ["a_v1", "a_v2"] and labels()[-1] == "Reorder video anchors",
+          f"↓ on the grip reorders them: {[x['asset'] for x in mara()['video_anchors']]}")
+    page.screenshot(path=str(shots / "v0160_video_anchors.png"))
+    audit("Video anchors")
+    second = mara()["video_anchors"][0]["id"]
+    page.click(f"[data-key='va-del-{second}']")
+    page.wait_for_timeout(300)
+    check([x["asset"] for x in mara()["video_anchors"]] == ["a_v2"], "the trash button removes one")
+
+    # 2. the scene: its cast row says so, and the budget counts the clip
+    page.evaluate("window.__editor.actions.select('s_02', 'scene')")
+    page.wait_for_timeout(400)
+    row = page.locator(".rw-card:has(.rw-card-title:has-text('Cast in this scene')) .rw-list-row").first.inner_text()
+    check("1 video anchor" in row, f"the cast row counts the video anchor: {row!r}")
+    b = page.evaluate("""async () => { const m = await import('/web/rw/model.js'); const p = window.__editor.project;
+      const s = p.scenes.find(x => x.id === 's_02'); const off = m.sceneBudget(p, s, null, true, false), on = m.sceneBudget(p, s);
+      return [off.videos, on.videos, Math.round((on.videoSeconds - off.videoSeconds) * 100) / 100, on.audio - off.audio, off.audio, off.audioSeconds]; }""")
+    room = b[4] < 3 and b[5] + 2.5 <= 15  # its sound goes only when an audio slot (and 15 s of audio) is free
+    check(b[1] == b[0] + 1 and b[2] == 2.5 and b[3] == (1 if room else 0), f"the budget counts the clip (and its sound when there is room): {b}")
+    audit("Scene with a video anchor")
+
+    # 3. deleting the asset removes the video anchor
+    page.evaluate("() => { window.__editor.actions.deleteAsset('a_v2'); }")  # it waits for the dialog: don't await it
+    page.wait_for_timeout(300)
+    page.locator(".rw-modal button:has-text('Delete asset')").click()
+    page.wait_for_timeout(400)
+    check(mara()["video_anchors"] == [], f"deleting the asset removes its video anchors: {mara()['video_anchors']}")
+
+    # 4. a sheet whose pictures are too small: the Cast tab and the scene's cast row say so
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="cast")
+    q["ui"].pop("collapsed", None)
+    for k in range(13):
+        q["assets"].append(dict(next(a for a in q["assets"] if a["id"] == "a_p1"), id=f"a_x{k}", code="", width=1024, height=1024))
+    m = next(c for c in q["cast"] if c["id"] == "c_mara")
+    m["anchors"] = m["anchors"] + [f"a_x{k}" for k in range(13)]
+    m["pack_sheet"] = True
+    load(q)
+    page.evaluate("window.__editor.store.setEph({ selectedCast: 'c_mara' })")
+    page.wait_for_timeout(400)
+    warn = page.locator("[data-help='cast.anchors.small']")
+    check(warn.count() == 1 and "too small for a reliable identity" in warn.inner_text(), "the Cast tab warns about a sheet too small")
+    page.screenshot(path=str(shots / "v0160_small_sheet.png"))
+    audit("Small sheet (Cast)")
+    page.evaluate("window.__editor.actions.select('s_02', 'scene')")
+    page.wait_for_timeout(400)
+    small = page.locator("[data-help='scene.cast.smallSheet']")
+    check(small.count() == 1 and "too small for identity" in small.inner_text(), "the scene's cast row warns too")
+    audit("Small sheet (Scene)")
+    page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 
 

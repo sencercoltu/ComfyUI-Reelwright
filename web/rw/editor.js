@@ -462,7 +462,9 @@ export function mountEditor(container, host) {
       store.update(q => {
         q.assets = q.assets.filter(x => x.id !== id);
         for (const s of q.scenes) s.refs = s.refs.filter(r => r.asset !== id);
-        for (const c of q.cast) { c.anchors = c.anchors.filter(x => x !== id); if (c.voice === id) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => x !== id); }
+        // [OLD 2026-11-12 v0.15.1->v0.16.0] for (const c of q.cast) { c.anchors = c.anchors.filter(x => x !== id); if (c.voice === id) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => x !== id); }
+        for (const c of q.cast) { c.anchors = c.anchors.filter(x => x !== id); if (c.voice === id) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => x !== id);
+          c.video_anchors = (c.video_anchors || []).filter(x => x.asset !== id); } // added 2026-11-12 v0.16.0: video anchors
         if (q.global.merge.score.asset === id) q.global.merge.score.asset = "";
         q.soundtrack = q.soundtrack.filter(t => t.asset !== id); // added 2026-11-03 v0.5.0
       // [OLD 2026-11-03 v0.5.1->v0.6.0] });

@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.16.0 — 2026-11-12
+
+Sencer asked how H3 knows a packed sheet of anchor pictures is one subject, then: "do both please. also, why didn't we add video anchors? if possible, lets add them as well."
+
+- **The sheet says what it is.** H3 gets a packed sheet as one picture, and only the prompt ties it to the subject. The subject line now says so: "<Subject 1> is Mara, …, shown in <Picture 1>, a sheet of 4 views of the same person" ("place" for a location, "object" for a prop). Scenes that send a sheet get a new prompt, so they render again.
+- **A warning when a sheet's pictures are too small.** H3 scales the whole sheet to the output's pixel area (or to a 2048 px short edge with Reference images: max), so a big sheet makes every face tiny: at 1344×768 a 3×3 sheet gives about 340 px per picture, a 9×9 about 113 px. When a picture of a sheet reaches H3 at under 300 px at the size the scene renders, the issues list says so ("Mara's 16 pictures go to H3 as one 4x4 sheet, so each reaches it at about 254 px, too small for a reliable identity …"), and so do the Cast tab's Anchors card and the scene's "Cast in this scene" row.
+- **Video anchors.** A new Video anchors card on the Cast tab takes clips of a cast member (a character moving and talking, a prop from every side). They go to H3 with its pictures, as part of its subject: "shown in <Picture 1> and in <Video 2>".
+  - Each has a **From / To** (seconds, frames such as 108f, or a time), like a scene's video reference; it starts with the first 15 s of the video. The same video can be added several times with different parts.
+  - **With sound** (off by default) sends the clip's sound too, as the cast member's voice ("the voice timbre and delivery of <Subject 1> follow the sound of <Video 2>"); it takes one of H3's 3 audio slots, and when none is free the clip goes without it.
+  - They go to every pass of every scene the cast member is in, after the scene's own videos and the clip a scene continues from, while H3's budget has room: 3 videos, 15 s of video in all, 12 files. A clip is shortened to the seconds left when 2 s or more are; otherwise it is left out. The issues list says when one is shortened, left out or sent without its sound; the Reference budget card counts them.
+  - Drag the grips to order them (the first go first when room is short). Deleting the video asset removes its video anchors; the asset's Usage lists them. A part of a character (Part of) sends its pictures with the character, not its video anchors.
+- **For developers:** `cast.video_anchors` [{id, asset, in, out, soundtrack}] (model.py `_norm_cast` / model.js `normCast`); `model.video_anchors_of`, `model.pick_video_anchors` (model.js `videoAnchorsOf`, `pickVideoAnchors`), `scene_media_counts(video_anchors=)` / `sceneBudget(…, videoAnchors)`; build video entries with `cast`, `anchor`, `in`, `out`, `seconds` (render.clip_window sends them as they are); `prompt.anchor_issues`, `prompt.sheet_words`; `model.tile_pixels`, `model.sheet_grid`, `SMALL_TILE_PX` (model.js `tilePixels`, `sceneTilePixels`, `sceneOutputSize`); lint: small sheets, video anchors that cannot be sent. `scene.js clipTimeField` is exported. New `tests/test_video_anchors.py`; snapshot tests skip the sheet words; `interact.py` runs `v0160_checks()`.
+
 ## v0.15.1 — 2026-11-12
 
 - **Dialogs open next to what opened them.** Sencer: "All confirmation dialogs should pop up near the cursor or triggering button, not center of the node. It's easy to miss if the node grows high."

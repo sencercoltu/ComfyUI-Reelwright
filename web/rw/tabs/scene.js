@@ -40,6 +40,7 @@ import {
 } from "../model.js";
 import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
 import { partOwner } from "../model.js"; // added 2026-11-08 v0.11.0: a prop that is part of a character
+import { sceneTilePixels, SMALL_TILE_PX } from "../model.js"; // added 2026-11-12 v0.16.0: sheet pictures too small for identity
 import { scenePeople } from "../model.js"; // added 2026-11-12 v0.12.0: the characters a pose reference can be for
 import { refClip, refTrimmed, refTokens, snapFrame } from "../model.js"; // added 2026-11-12 v0.14.0: clips of video / audio references
 import { copyWithToast } from "../ui.js"; // added 2026-11-12 v0.14.0: copy a clip's @ tag
@@ -1703,7 +1704,8 @@ export function parseClipTime(text) {
   return NaN;
 }
 
-function clipTimeField(ctx, { label, value, placeholder, help, key, onCommit }) {
+// [OLD 2026-11-12 v0.15.1->v0.16.0] function clipTimeField(ctx, { label, value, placeholder, help, key, onCommit }) {
+export function clipTimeField(ctx, { label, value, placeholder, help, key, onCommit }) { // exported 2026-11-12 v0.16.0: Cast → Video anchors
   const show = v => (v === null || v === undefined ? "" : fmtTime(v));
   return h("label", { class: "rw-clip-field", help },
     h("span", { class: "rw-dim small" }, label, value !== null && value !== undefined && h("span", { class: "mono" }, ` · ${framesOf(value)} f`)),
@@ -1880,6 +1882,9 @@ function castCard(ctx, s) {
           [/OLD] */
           (() => {
             const d = castDescription(p, c);
+            // added 2026-11-12 v0.16.0: how big each picture of its sheet reaches H3 here (0: no sheet)
+            const tilePx = sceneTilePixels(p, s, c);
+            const tileN = tilePx ? scenePeople(p, s).people.find(x => x.c.id === c.id)?.ids.length || 0 : 0;
             // added 2026-11-08 v0.11.0: a part says whose; without its character in the scene it is left out
             const owner = findCast(p, partOwner(c, new Map(p.cast.map(x => [x.id, x]))));
             const ownerHere = owner && (inScene.has(owner.id) || s.dialogue.some(x => x.speaker === owner.id));
@@ -1887,8 +1892,13 @@ function castCard(ctx, s) {
               // [OLD 2026-11-08 v0.10.3->v0.11.0] h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`),
               owner ? h("div", { class: ["small", ownerHere ? "rw-dim" : "rw-c-warn"], help: "scene.cast.part" },
                 ownerHere ? `part of ${owner.name}: in ${owner.name}'s subject · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}` : `part of ${owner.name}, who is not in this scene: left out`)
-                : h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`),
-              h("div", { class: "rw-dim small rw-ellipsis", help: "scene.cast.description", title: d.text }, d.text ? (d.asset ? `from ${d.asset.code}: ${d.text}` : d.text) : "No description"));
+                // [OLD 2026-11-12 v0.15.1->v0.16.0] : h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`),
+                : h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${(c.video_anchors || []).length ? ` · ${c.video_anchors.length} video anchor${c.video_anchors.length === 1 ? "" : "s"}` : ""}${c.lora?.name ? " · LoRA" : ""}`), // v0.16.0: video anchors
+              // [OLD 2026-11-12 v0.15.1->v0.16.0] h("div", { class: "rw-dim small rw-ellipsis", help: "scene.cast.description", title: d.text }, d.text ? (d.asset ? `from ${d.asset.code}: ${d.text}` : d.text) : "No description"));
+              h("div", { class: "rw-dim small rw-ellipsis", help: "scene.cast.description", title: d.text }, d.text ? (d.asset ? `from ${d.asset.code}: ${d.text}` : d.text) : "No description"),
+              // added 2026-11-12 v0.16.0: its sheet makes each picture too small for a reliable identity
+              tilePx > 0 && tilePx < SMALL_TILE_PX && h("div", { class: "small rw-c-warn", help: "scene.cast.smallSheet" },
+                `${tileN} pictures in one sheet: about ${tilePx} px each in H3, too small for identity`));
           })(),
           // [OLD 2026-11-03 v0.5.1->v0.6.0] c.outfits.length > 0 && select({ options: c.outfits.map(o => ({ value: o.id, label: o.name })), value: sc.outfit || c.default_outfit, help: "scene.cast.outfit",
           c.outfits.length > 0 && select({ options: c.outfits.map(o => ({ value: o.id, label: o.name })), value: sc.outfit || c.default_outfit, help: "scene.cast.outfit", key: `cast-outfit-${c.id}`,

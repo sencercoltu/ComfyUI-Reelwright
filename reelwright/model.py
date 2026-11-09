@@ -657,6 +657,18 @@ def _norm_cast(c, lang):
     lora = c["lora"] = c["lora"] if isinstance(c.get("lora"), dict) else {}
     _text_field(lora, "name", "")
     lora["strength"] = spec.num(lora.get("strength"), 0.8)
+    # added 2026-11-12 v0.16.0: video anchors (Sencer: "why didn't we add video anchors? if possible, lets add them as
+    # well"): [{"id", "asset" (a video asset), "in", "out" (the clip sent, as a scene reference's From / To: whole
+    # frames, out None = the asset's end), "soundtrack" (send its sound too, default off)}]; see pick_video_anchors
+    c["video_anchors"] = _objects(c.get("video_anchors"))
+    used = set()
+    for va in c["video_anchors"]:
+        va["id"] = _unique_id(va.get("id"), "va", used)
+        _text_field(va, "asset", "")
+        va["in"] = snap_frame(max(0.0, spec.num(va.get("in"), 0.0)))
+        o = spec.num(va.get("out"), None)
+        va["out"] = None if o is None or o <= 0 else snap_frame(o)
+        va["soundtrack"] = spec.flag(va.get("soundtrack"), False)
 
 
 def _blank(s):
@@ -945,6 +957,82 @@ def cast_pictures(c, entry, assets):
     if outfit:
         ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in ids]
     return outfit, ids
+
+
+# ---- added 2026-11-12 v0.16.0: video anchors of a cast member (cast.video_anchors). H3 can define a subject by a video
+# as well as by pictures (ref-en.txt 2.1: "<Subject 1> is the man in <Video 1>"), so a character's clips show how it
+# moves, talks and looks from every side. They go to every pass of a scene the character is in, after everything else
+# the pass sends, while H3's budget has room: 3 videos, 15 s of video in all, 12 files; a clip is shortened to the
+# seconds left when at least 2 s are. Its sound goes too only when asked and an audio slot (and 15 s of audio) is free.
+# prompt.collect_refs sends them; scene_media_counts counts them; model.js pickVideoAnchors is the same.
+def video_anchors_of(c, assets):
+    """[(anchor, asset)]: c's video anchors whose asset is a video of the project, in order."""
+    return [(va, assets[va["asset"]]) for va in c.get("video_anchors") or []
+            if va.get("asset") in assets and assets[va["asset"]]["kind"] == "video"]
+
+
+def pick_video_anchors(recs, assets, n):
+    """The video anchors one pass sends after everything else. recs: scene_people records (cast members that are no
+    part), in order; n: the pass's counts so far ({"videos", "video_seconds", "audio", "audio_seconds", "files"}),
+    updated with what is picked. Returns (picked, left):
+    picked: [{"cast", "anchor", "asset", "in", "seconds", "sound", "cut", "mute"}] (cut: shortened to the seconds
+    left; mute: its sound was asked for but no audio slot was free); left: [{"cast", "anchor", "asset", "why"}], why
+    "videos" | "files" | "seconds" (under 2 s left) | "clip" (the clip has no length)."""
+    picked, left = [], []
+    for x in recs:
+        c = x["cast"]
+        for va, a in video_anchors_of(c, assets):
+            clip = ref_clip(va, a)
+            full = min(spec.REF_MEDIA_MAX_SECONDS, clip["seconds"] if clip["seconds"] is not None else
+                       spec.REF_MEDIA_MAX_SECONDS)
+            room = spec.REF_MEDIA_TOTAL_SECONDS - n["video_seconds"]
+            secs = full if full <= room + 1e-6 else math.floor(room * spec.FPS + 1e-6) / spec.FPS
+            cut = secs < full - 1e-6
+            why = ("clip" if full <= 0 else "videos" if n["videos"] >= spec.MAX_REF_VIDEOS else
+                   "files" if n["files"] >= spec.MAX_REF_FILES else
+                   "seconds" if secs <= 0 or (cut and secs < spec.REF_MEDIA_MIN_SECONDS - 1e-6) else "")
+            if why:
+                left.append({"cast": c["id"], "anchor": va["id"], "asset": a["id"], "why": why})
+                continue
+            sound = bool(va.get("soundtrack")) and n["audio"] < spec.MAX_REF_AUDIOS and \
+                n["audio_seconds"] + secs <= spec.REF_MEDIA_TOTAL_SECONDS + 1e-4
+            n["videos"] += 1
+            n["files"] += 1
+            n["video_seconds"] += secs
+            if sound:
+                n["audio"] += 1
+                n["audio_seconds"] += secs
+            picked.append({"cast": c["id"], "anchor": va["id"], "asset": a["id"], "in": clip["start"], "seconds": secs,
+                           "sound": sound, "cut": cut, "mute": bool(va.get("soundtrack")) and not sound})
+    return picked, left
+
+
+# ---- added 2026-11-12 v0.16.0: how big one picture of a packed anchor sheet reaches H3 (model.js tilePixels gives the
+# same number). The sheet is ceil(sqrt(n)) columns of 768-pixel cells shaped like the median picture (media.sheet_image);
+# the H3 node scales the whole sheet down to the output's pixel area ("match") or to a 2048 px short edge ("max").
+SHEET_CELL = 768
+SMALL_TILE_PX = 300  # under this a face in the sheet is too small for a reliable identity
+
+
+def sheet_grid(n):
+    """Columns and rows of a sheet of n pictures (as media.sheet_grid)."""
+    cols = max(1, math.ceil(math.sqrt(n)))
+    return cols, max(1, math.ceil(n / cols))
+
+
+def tile_pixels(pics, width, height, ref_size="match"):
+    """About how many pixels the short side of one picture of a sheet of `pics` (assets with width / height) has when
+    H3 gets it, at an output of width x height; 0 without pictures."""
+    if not pics:
+        return 0
+    ratios = sorted(max(0.5, min(2.0, (spec.num(a.get("width"), 0) or 1) / (spec.num(a.get("height"), 0) or 1)))
+                    for a in pics)
+    r = ratios[len(ratios) // 2]
+    cols, rows = sheet_grid(len(pics))
+    cw, ch = SHEET_CELL * math.sqrt(r), SHEET_CELL / math.sqrt(r)
+    w, h = cols * cw, rows * ch
+    scale = min(1.0, 2048.0 / min(w, h)) if ref_size == "max" else min(1.0, math.sqrt(width * height / (w * h)))
+    return int(math.floor(min(cw, ch) * scale + 0.5))
 
 
 def scene_people(p, scene, idx=None):
@@ -1345,7 +1433,8 @@ def continuation_frames(p, i, pass_, mode=None):
 
 
 # [OLD 2026-11-05 v0.6.1->v0.7.0] def scene_media_counts(p, scene, pass_=None, starts=None):
-def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True):  # mode, continuation: v0.7.0
+# [OLD 2026-11-12 v0.15.1->v0.16.0] def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True):  # mode, continuation: v0.7.0
+def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True, video_anchors=True):  # video_anchors: v0.16.0
     """What one pass of `scene` sends H3, counted the way prompt.collect_refs presents references:
 
     pictures       cast anchors (+ outfit pictures; a packed sheet is 1) and reference pictures, each asset once
@@ -1369,7 +1458,9 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
         from .planner import plan_scene  # planner imports model
         i = next((k for k, s in enumerate(p["scenes"]) if s["id"] == scene["id"]), 0)
         # [OLD 2026-11-05 v0.6.1->v0.7.0] outs = [scene_media_counts(p, scene, x, starts) for x in plan_scene(p, scene, i)["passes"]]
-        outs = [scene_media_counts(p, scene, x, starts, mode, continuation) for x in plan_scene(p, scene, i)["passes"]]
+        # [OLD 2026-11-12 v0.15.1->v0.16.0] outs = [scene_media_counts(p, scene, x, starts, mode, continuation) for x in plan_scene(p, scene, i)["passes"]]
+        outs = [scene_media_counts(p, scene, x, starts, mode, continuation, video_anchors)
+                for x in plan_scene(p, scene, i)["passes"]]
         out = {k: max(o[k] for o in outs) for k in COUNT_KEYS}
         out["song"] = any(o["song"] for o in outs)
         out["continuation"] = next((o["continuation"] for o in outs if o["continuation"]), "")  # added 2026-11-05 v0.7.0
@@ -1481,7 +1572,8 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
     out["continuation"] = ""
     if cont == "picture":
         if out["pictures"] + 1 > spec.MAX_REF_IMAGES or out["files"] + 1 > spec.MAX_REF_FILES:
-            return scene_media_counts(p, scene, pass_, starts, mode, continuation=False)
+            # [OLD 2026-11-12 v0.15.1->v0.16.0] return scene_media_counts(p, scene, pass_, starts, mode, continuation=False)
+            return scene_media_counts(p, scene, pass_, starts, mode, continuation=False, video_anchors=video_anchors)
         out["pictures"] += 1
         out["files"] += 1
         out["continuation"] = "picture"
@@ -1495,6 +1587,8 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
             out["audio"] += 1
             out["audio_seconds"] += secs
             out["continuation"] = "video_audio"
+    if video_anchors:  # added 2026-11-12 v0.16.0: the cast's video anchors, after everything else (pick_video_anchors)
+        pick_video_anchors(recs, assets, out)
     return out
 
 

@@ -122,6 +122,7 @@ export function dropAssets(q, gone) {
   for (const s of q.scenes) s.refs = s.refs.filter(x => !gone.has(x.asset));
   for (const c of q.cast) {
     c.anchors = c.anchors.filter(x => !gone.has(x));
+    c.video_anchors = (c.video_anchors || []).filter(x => !gone.has(x.asset)); // added 2026-11-12 v0.16.0: video anchors
     if (gone.has(c.voice)) c.voice = "";
     for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => !gone.has(x));
   }
@@ -169,7 +170,9 @@ async function remove(ctx, ids) {
       ctx.actions.edit(q => {
         q.assets = q.assets.filter(x => !gone.has(x.id));
         for (const s of q.scenes) s.refs = s.refs.filter(x => !gone.has(x.asset));
-        for (const c of q.cast) { c.anchors = c.anchors.filter(x => !gone.has(x)); if (gone.has(c.voice)) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => !gone.has(x)); }
+        // [OLD 2026-11-12 v0.15.1->v0.16.0] for (const c of q.cast) { c.anchors = c.anchors.filter(x => !gone.has(x)); if (gone.has(c.voice)) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => !gone.has(x)); }
+        for (const c of q.cast) { c.anchors = c.anchors.filter(x => !gone.has(x)); if (gone.has(c.voice)) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => !gone.has(x));
+          c.video_anchors = (c.video_anchors || []).filter(x => !gone.has(x.asset)); } // added 2026-11-12 v0.16.0: video anchors
         if (gone.has(q.global.merge.score.asset)) q.global.merge.score.asset = "";
       });
     }

@@ -731,6 +731,17 @@ function normCast(c, lang) {
   const lora = c.lora = isObj(c.lora) ? c.lora : {};
   textField(lora, "name", "");
   lora.strength = num(lora.strength, 0.8);
+  // added 2026-11-12 v0.16.0: video anchors [{id, asset, in, out, soundtrack}] (model.py _norm_cast, pickVideoAnchors)
+  c.video_anchors = objects(c.video_anchors);
+  const used = new Set();
+  for (const va of c.video_anchors) {
+    va.id = uniqueId(va.id, "va", used);
+    textField(va, "asset", "");
+    va.in = snapFrame(Math.max(0, num(va.in, 0)));
+    const o = num(va.out, null);
+    va.out = o === null || o <= 0 ? null : snapFrame(o);
+    va.soundtrack = flag(va.soundtrack, false);
+  }
 }
 
 // One scene in place. d: Global -> New-scene defaults; usedIds: scene ids taken so far.
@@ -1532,6 +1543,71 @@ export function anchorPixels(project, c, packed, width, height) {
   const s = max ? Math.min(1, 2048 / Math.min(W, H)) : Math.min(1, Math.sqrt(area / (W * H)));
   return Math.round(Math.min(cw, ch) * s);
 }
+// ---- added 2026-11-12 v0.16.0: video anchors (model.py video_anchors_of / pick_video_anchors, the same rules): sent to
+// every pass of a scene the character is in, after everything else, while H3 takes 3 videos, 15 s of video in all and
+// 12 files; a clip is shortened to the seconds left when at least 2 s are; its sound only when asked and a slot is free.
+const REF_MEDIA_TOTAL_SECONDS = 15;
+export function videoAnchorsOf(c, assets) {
+  const get = id => (assets instanceof Map ? assets.get(id) : assets[id]);
+  return (c.video_anchors || []).map(va => [va, get(va.asset)]).filter(([, a]) => a && a.kind === "video");
+}
+// people: scenePeople's records ({c}); n: {videos, videoSeconds, audio, audioSeconds, files}, updated
+export function pickVideoAnchors(people, assets, n) {
+  const picked = [], left = [];
+  for (const { c } of people) {
+    for (const [va, a] of videoAnchorsOf(c, assets)) {
+      const clip = refClip(va, a);
+      const full = Math.min(REF_MEDIA_MAX_SECONDS, clip.seconds !== null ? clip.seconds : REF_MEDIA_MAX_SECONDS);
+      const room = REF_MEDIA_TOTAL_SECONDS - n.videoSeconds;
+      const secs = full <= room + 1e-6 ? full : Math.floor(room * FPS + 1e-6) / FPS;
+      const cut = secs < full - 1e-6;
+      const why = full <= 0 ? "clip" : n.videos >= MAX_REF_VIDEOS ? "videos" : n.files >= MAX_REF_FILES ? "files"
+        : secs <= 0 || (cut && secs < REF_MEDIA_MIN_SECONDS - 1e-6) ? "seconds" : "";
+      if (why) { left.push({ cast: c.id, anchor: va.id, asset: a.id, why }); continue; }
+      const sound = !!va.soundtrack && n.audio < MAX_REF_AUDIOS && n.audioSeconds + secs <= REF_MEDIA_TOTAL_SECONDS + 1e-4;
+      n.videos++; n.files++; n.videoSeconds += secs;
+      if (sound) { n.audio++; n.audioSeconds += secs; }
+      picked.push({ cast: c.id, anchor: va.id, asset: a.id, in: clip.start, seconds: secs, sound, cut, mute: !!va.soundtrack && !sound });
+    }
+  }
+  return { picked, left };
+}
+
+// added 2026-11-12 v0.16.0 (model.py tile_pixels): about how many pixels the short side of one picture of a packed sheet
+// of `pics` (assets) has when H3 gets it, at width x height and Global → Output → Reference images ("match" | "max")
+export const SMALL_TILE_PX = 300;
+export function tilePixels(pics, width, height, refSize = "match") {
+  if (!pics.length) return 0;
+  const ratios = pics.map(a => Math.max(0.5, Math.min(2, (num(a.width, 0) || 1) / (num(a.height, 0) || 1)))).sort((x, y) => x - y);
+  const r = ratios[Math.floor(ratios.length / 2)];
+  const [cols, rows] = sheetGrid(pics.length);
+  const cw = 768 * Math.sqrt(r), ch = 768 / Math.sqrt(r);
+  const W = cols * cw, H = rows * ch;
+  const s = refSize === "max" ? Math.min(1, 2048 / Math.min(W, H)) : Math.min(1, Math.sqrt(width * height / (W * H)));
+  return Math.floor(Math.min(cw, ch) * s + 0.5);
+}
+
+// added 2026-11-12 v0.16.0: the output size a scene renders at (model.py resolve_settings: its own size, else Global;
+// a draft scene at Global → Draft's scale)
+export function sceneOutputSize(project, scene) {
+  const g = project.global, o = scene?.overrides || {};
+  let w = Math.trunc(num(o.width, 0)) || g.output.width, h = Math.trunc(num(o.height, 0)) || g.output.height;
+  const q = o.quality === "draft" || o.quality === "final" ? o.quality : g.quality;
+  if (q === "draft") { const ds = num(g.draft?.scale, 0.5); w = Math.round(w * ds); h = Math.round(h * ds); }
+  return [w, h];
+}
+
+// added 2026-11-12 v0.16.0: the size of one picture of c's sheet in this scene (its anchors, outfit and parts' pictures,
+// as scenePeople gives them), or 0 when c sends no sheet there
+export function sceneTilePixels(project, scene, c) {
+  if (!castPacks(project, scene, c)) return 0;
+  const { people, assets } = scenePeople(project, scene);
+  const x = people.find(y => y.c.id === c.id);
+  if (!x || x.ids.length < 2) return 0;
+  const [w, h] = sceneOutputSize(project, scene);
+  return tilePixels(x.ids.map(a => assets.get(a)).filter(Boolean), w, h, project.global.output.ref_image_size);
+}
+
 export function sheetURL(project, c, cell = 192) {
   const files = c.anchors.map(id => findAsset(project, id)).filter(a => a?.kind === "image" && a.file).map(a => a.file);
   return files.length ? "/reelwright/sheet?cell=" + cell + "&files=" + encodeURIComponent(JSON.stringify(files)) : "";
@@ -1572,12 +1648,14 @@ export function continuationFrames(project, i, pass, mode = null) {
 }
 
 // [OLD 2026-11-05 v0.6.1->v0.7.0] export function sceneBudget(project, scene, pass = null) {
-export function sceneBudget(project, scene, pass = null, continuation = true) {
+// [OLD 2026-11-12 v0.15.1->v0.16.0] export function sceneBudget(project, scene, pass = null, continuation = true) {
+export function sceneBudget(project, scene, pass = null, continuation = true, videoAnchors = true) { // videoAnchors: added 2026-11-12 v0.16.0
   if (!pass) {
     /* [OLD 2026-11-05 v0.6.1->v0.7.0] no continuation
     const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x));
     [/OLD] */
-    const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x, continuation));
+    // [OLD 2026-11-12 v0.15.1->v0.16.0] const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x, continuation));
+    const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x, continuation, videoAnchors));
     const b = {};
     for (const k of ["pictures", "videos", "videoSeconds", "audio", "audioSeconds", "files"]) b[k] = Math.max(...outs.map(o => o[k]));
     b.song = outs.some(o => o.song);
@@ -1644,7 +1722,8 @@ export function sceneBudget(project, scene, pass = null, continuation = true) {
   // added 2026-11-05 v0.7.0: the continuation reference, when it fits (else the pass counts as in v0.6.1)
   b.continuation = "";
   if (cont === "picture") {
-    if (b.pictures + 1 > MAX_REF_IMAGES || b.files + 1 > MAX_REF_FILES) return sceneBudget(project, scene, pass, false);
+    // [OLD 2026-11-12 v0.15.1->v0.16.0] if (b.pictures + 1 > MAX_REF_IMAGES || b.files + 1 > MAX_REF_FILES) return sceneBudget(project, scene, pass, false);
+    if (b.pictures + 1 > MAX_REF_IMAGES || b.files + 1 > MAX_REF_FILES) return sceneBudget(project, scene, pass, false, videoAnchors);
     b.pictures++;
     b.files++;
     b.continuation = "picture";
@@ -1656,6 +1735,7 @@ export function sceneBudget(project, scene, pass = null, continuation = true) {
     b.continuation = "video";
     if (b.audio < MAX_REF_AUDIOS) { b.audio++; b.audioSeconds += secs; b.continuation = "video_audio"; } // its sound
   }
+  if (videoAnchors) pickVideoAnchors(people, assets, b); // added 2026-11-12 v0.16.0: the cast's video anchors, after everything else
   return b;
 }
 
@@ -1853,6 +1933,7 @@ export function assetCastUse(project, assetId) {
   for (const c of project.cast) {
     const scenes = project.scenes.filter(s => s.cast.some(x => x.id === c.id)).length;
     if (c.anchors.includes(assetId)) out.push({ cast: c, as: "anchor", scenes });
+    if ((c.video_anchors || []).some(x => x.asset === assetId)) out.push({ cast: c, as: "video anchor", scenes }); // added 2026-11-12 v0.16.0
     if (c.voice === assetId) out.push({ cast: c, as: "voice", scenes });
   }
   return out;
