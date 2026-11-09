@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.14.3 — 2026-11-12
+
+- **Write prompts puts the camera into the shots.** Sencer: "camera movements are not reflected to shots when using Write prompts. (tried in single shot mode)"
+  - Each shot it writes now fills the shot's **framing** (from its start: "A medium shot: …", "A close-up of …", "Low angle, …") and its **camera move**, **amplitude** and **speed** (from its camera sentence: "The camera slowly pushes in." → Push In · Slow; "The camera pans left with small amplitude at slow speed." → Pan Left · Small · Slow; "The camera holds still." → Static Shot). The text keeps the rest. A camera sentence that says more than the move ("The camera tracks her as she walks past the boats.") becomes the shot's camera text as written, so nothing is lost.
+  - The LLM is now asked to start each shot with its framing and to write its camera move as a sentence of its own in the words of H3's guide.
+  - **Write prompts again** on a scene made in one pass that already has its shots (the single shot written last time, or shots you made) now updates them too, when the answer has one [Shot N] per shot: each takes its written text, framing and camera move; times and spoken lines stay; the description keeps the style. Before, the written shots went into the description and the Shots list kept the old text. A shot whose line names no framing or move keeps its own.
+  - Shots put on the timeline with v0.14.2 have the move in their text: press Write prompts again to move it into the fields.
+  - Scenes of several passes, raw prompts and scenes with "auto shots + dialogue" off are written as before.
+- **For developers:** `shotfill.cameraOf(p, text)` and `writeShots(p, sc)` (used by `passes.applyWritten`; `report.fill.updated`); `readWritten` shots carry `camera`, `camera_amp`, `camera_speed`, `framing`. `llm.FILL_CAMERA_RULE`, `llm.writes_shots(scene, plan)`. `tests/test_shot_fill.py` (+2); `interact.py` runs `v0143_checks()`.
+
 ## v0.14.2 — 2026-11-12
 
 - **A scene written without shots gets its shots and spoken lines.** Sencer: "when creating a single shot scene, the shot section (and dialogues) are not populated. They should be populated. currently everything shows only in detailed_description section."

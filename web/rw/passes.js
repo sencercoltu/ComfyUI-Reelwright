@@ -8,7 +8,8 @@
 import * as model from "./model.js";
 import { rw } from "./api.js";
 import { newJob } from "./llmjob.js";
-import { fillScene, fillWords } from "./shotfill.js"; // added 2026-11-12 v0.14.2: a scene written without shots gets them
+// [OLD 2026-11-12 v0.14.2->v0.14.3] import { fillScene, fillWords } from "./shotfill.js"; // added 2026-11-12 v0.14.2: a scene written without shots gets them
+import { writeShots, fillWords } from "./shotfill.js"; // v0.14.2: a scene written without shots gets them; v0.14.3: shots on the timeline take their written text, framing and camera move
 
 const { FPS, SECTION_KEYS, planScene, sceneIndex } = model;
 
@@ -209,7 +210,8 @@ export function applyWritten(sc, p, res, report = null) {
     const sec = clean(one.sections);
     for (const k of SECTION_KEYS) if (sec[k].trim()) sc.prompt.sections[k] = sec[k];
     sc.prompt.passes = [];
-    const filled = fillScene(p, sc); // added 2026-11-12 v0.14.2
+    // [OLD 2026-11-12 v0.14.2->v0.14.3] const filled = fillScene(p, sc); // added 2026-11-12 v0.14.2
+    const filled = writeShots(p, sc); // added 2026-11-12 v0.14.3: also a scene that already has its shots
     if (report) report.fill = filled;
     return 1;
   }
@@ -263,7 +265,10 @@ export async function runWrite(ctx, items, { origin = "scene", label = "" } = {}
         // added 2026-11-12 v0.14.2: say when the answer's shots and spoken lines were put on the timeline
         const rep = {};
         ctx.actions.editScene(it.sid, (sc, q) => { applyWritten(sc, q, res, rep); }, { label: origin === "import" ? `${what}: ${scene.title}` : what });
-        if (rep.fill && origin !== "import") ctx.actions.toast(`Put ${fillWords(rep.fill)} on the timeline from what the LLM wrote; the description keeps the style.`, "ok");
+        // [OLD 2026-11-12 v0.14.2->v0.14.3] if (rep.fill && origin !== "import") ctx.actions.toast(`Put ${fillWords(rep.fill)} on the timeline from what the LLM wrote; the description keeps the style.`, "ok");
+        if (rep.fill && origin !== "import") ctx.actions.toast(rep.fill.updated // added 2026-11-12 v0.14.3
+          ? `Updated ${fillWords(rep.fill)} from what the LLM wrote (text, framing, camera move); the description keeps the style.`
+          : `Put ${fillWords(rep.fill)} on the timeline from what the LLM wrote, with framing and camera moves; the description keeps the style.`, "ok");
         wrote++;
       }
       if (Array.isArray(res?.warnings) && res.warnings.length) it.warnings = res.warnings.map(String);

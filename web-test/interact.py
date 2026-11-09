@@ -1520,6 +1520,7 @@ def main():
         v0140_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.0: clips of video and audio references
         v0141_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.1: every card folds; the Timeline inspector's parts too
         v0142_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.2: shots and lines written for a scene without shots go on the timeline
+        v0143_checks(page, check, saved, shots)  # added 2026-11-12 v0.14.3: framing and camera moves of written shots go into the shots
         browser.close()
     httpd.shutdown()
 
@@ -5220,7 +5221,9 @@ def v0142_checks(page, check, saved, shots):
     page.wait_for_function(f"() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     sc = scene_of(sid)
-    check(len(sc["shots"]) == 1 and sc["shots"][0]["t"] == 0 and sc["shots"][0]["text"].startswith("A medium shot of @Mara")
+    # [OLD 2026-11-12 v0.14.2->v0.14.3] the framing stayed in the text
+    # check(len(sc["shots"]) == 1 and sc["shots"][0]["t"] == 0 and sc["shots"][0]["text"].startswith("A medium shot of @Mara")
+    check(len(sc["shots"]) == 1 and sc["shots"][0]["t"] == 0 and sc["shots"][0]["text"].startswith("@Mara at the harbor wall") and sc["shots"][0]["framing"] == "medium"
           and "Almost home" not in sc["shots"][0]["text"], f"Write prompts put the shot on the timeline: {sc['shots']}")
     check([(d["speaker"], d["delivery"], d["text"]) for d in sc["dialogue"]] == [("c_mara", "mutters", "Almost home."), ("c_keeper", "calls", "You're late again.")],
           f"and both spoken lines with their speakers: {[(d['speaker'], d['delivery'], d['text']) for d in sc['dialogue']]}")
@@ -5271,6 +5274,70 @@ def v0142_checks(page, check, saved, shots):
     page.click("button[data-help='scene.rewrite.accept']")
     page.wait_for_timeout(300)
     check(scene_of("s_03")["shots"] == before and "put on the timeline" not in toasts(), "a scene with shots is not changed by it")
+    page.evaluate("window.__mockFlags.writeText = {}")
+    load(json.loads(saved))
+
+
+def v0143_checks(page, check, saved, shots):
+    """v0.14.3 (Sencer): "camera movements are not reflected to shots when using Write prompts. (tried in single shot
+    mode)": the framing and camera move of each written shot go into the shot's fields, also when the scene already
+    has its shots (Write prompts again)."""
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(350)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    scene_of = lambda sid: next(x for x in cur()["scenes"] if x["id"] == sid)
+    toasts = lambda: " | ".join(page.locator(".rw-toast").all_inner_texts())
+    first = ("Rain-soaked night.\n[Shot 1] A medium shot of @Mara at the harbor wall. The camera slowly pushes in. "
+             "@Mara (S1) mutters, <d>[English] Almost home.</d>")
+    again = ("Rain-soaked night.\n[Shot 1] A close-up of @Mara at the harbor wall, rain on her face. The camera pans "
+             "left with small amplitude at slow speed. @Mara (S1) mutters, <d>[English] Almost home.</d>")
+
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="scene", selected="s_03")
+    q["ui"].pop("collapsed", None)
+    load(q)
+    page.evaluate("window.__editor.actions.addScene('s_03')")
+    page.wait_for_timeout(300)
+    sid = cur()["ui"]["selected"]
+    page.evaluate("""sid => window.__editor.store.update(q => { const s = q.scenes.find(x => x.id === sid);
+      s.duration = 10; s.shots = []; s.dialogue = []; s.prompt.sections.summary = 'Mara comes home.'; }, { label: 'test scene' })""", sid)
+    page.evaluate("([sid, t]) => { window.__mockFlags.writeText[sid] = t; window.__mockFlags.passesMs = 0; window.__editor.store.setEph({ toasts: [] }); }", [sid, first])
+    page.evaluate("window.__editor.actions.setTab('scene')")
+    page.wait_for_timeout(300)
+
+    # 1. a scene without shots: the shot gets its framing and camera move
+    page.click(f"[data-key='write-{sid}']")
+    page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
+    page.wait_for_timeout(400)
+    sh = scene_of(sid)["shots"]
+    check(len(sh) == 1 and (sh[0]["framing"], sh[0]["camera"], sh[0]["camera_speed"]) == ("medium", "the camera pushes in", "slow")
+          and sh[0]["text"] == "@Mara at the harbor wall.", f"the shot has the written framing and move: {sh}")
+    check("with framing and camera moves" in toasts(), f"the toast says so: {toasts()!r}")
+    row = page.locator(".rw-card:has(.rw-card-title:has-text('Shots')) .rw-shot-row").first
+    shown = row.evaluate("r => [...r.querySelectorAll('input, select')].map(x => x.value).join(' | ')")
+    check("Push In" in shown or "the camera pushes in" in shown, f"the shot row shows the move: {shown!r}")
+    page.screenshot(path=str(shots / "v0143_camera.png"))
+    audit("Camera from Write prompts")
+
+    # 2. Write prompts again on the scene that now has its shot: the shot takes the new framing and move
+    page.evaluate("([sid, t]) => { window.__mockFlags.writeText[sid] = t; window.__editor.store.setEph({ toasts: [] }); }", [sid, again])
+    page.click(f"[data-key='write-{sid}']")
+    page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
+    page.wait_for_timeout(400)
+    sc = scene_of(sid)
+    s1 = sc["shots"][0]
+    check(len(sc["shots"]) == 1 and s1["id"] == sh[0]["id"] and (s1["framing"], s1["camera"], s1["camera_amp"], s1["camera_speed"]) == ("close-up", "the camera pans left", "small", "slow")
+          and s1["text"] == "@Mara at the harbor wall, rain on her face.", f"the same shot, rewritten: {s1}")
+    check(len(sc["dialogue"]) == 1 and sc["prompt"]["sections"]["detailed_description"] == "Rain-soaked night." and "Updated 1 shot" in toasts(),
+          f"its line stays, the description keeps the style: {len(sc['dialogue'])} {sc['prompt']['sections']['detailed_description']!r} {toasts()!r}")
     page.evaluate("window.__mockFlags.writeText = {}")
     load(json.loads(saved))
 

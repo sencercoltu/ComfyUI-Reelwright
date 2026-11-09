@@ -1004,7 +1004,9 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
                      "sentences, then the scene as one [Shot 1] line (composition, subject appearance and position, "
                      "environment and lighting, action, camera movement and sound){}. {}").format(
             ", with every spoken line of the scene, word for word" if scene.get("dialogue") else
-            "; when the summary or the instruction has someone speak, write those lines in it", FILL_LINES_RULE)
+            "; when the summary or the instruction has someone speak, write those lines in it",
+            # [OLD 2026-11-12 v0.14.2->v0.14.3] FILL_LINES_RULE)  (the camera move was not asked for in the guide's words)
+            FILL_LINES_RULE + " " + FILL_CAMERA_RULE)  # FILL_CAMERA_RULE: added 2026-11-12 v0.14.3
     # [OLD 2026-11-12 v0.14.1->v0.14.2] the description rule was always the style sentences
     # user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}Instruction: {}\n\n"
     #         "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
@@ -1398,6 +1400,28 @@ def fills_timeline(scene, plan):
     return (scene.get("prompt") or {}).get("mode") != "raw" and len(plan["passes"]) == 1 and not scene.get("shots")
 
 
+# added 2026-11-12 v0.14.3 (Sencer: "camera movements are not reflected to shots when using Write prompts"): the
+# editor also takes each written shot's framing and camera move into the shot's fields (web/rw/shotfill.js cameraOf),
+# for a scene made in one pass with automatic shot lines, so the request asks for them in the words of H3's guide
+FILL_CAMERA_RULE = ("Start each [Shot N] line with its framing, for example \"[Shot 1] A medium shot: ...\" (extreme "
+                    "wide, wide, medium wide, medium, medium close-up, close-up, extreme close-up, over-the-shoulder, "
+                    "two-shot, insert, low angle, high angle, overhead or Dutch angle), and write its camera movement "
+                    "as a sentence of its own in the guide's words, with amplitude and speed when they matter, for "
+                    "example \"The camera pushes in with small amplitude at slow speed.\" (the camera zooms in or out, "
+                    "pushes in, pulls out, pans left or right, trucks left or right, tilts up or down, pedestals up or "
+                    "down, arcs around the subject, tracks the moving subject, holds a static shot, shakes slightly or "
+                    "strongly, takes the subject's point of view, rolls clockwise or counterclockwise). The editor puts "
+                    "the framing and the camera move in the shot's fields.")
+
+
+def writes_shots(scene, plan):
+    """Does the editor take the written shots into the scene's shots (fills_timeline, or a scene made in one pass
+    whose shot lines are automatic)?"""
+    pr = scene.get("prompt") or {}
+    return fills_timeline(scene, plan) or (pr.get("mode") != "raw" and len(plan["passes"]) == 1 and
+                                          bool((pr.get("auto") or {}).get("shots")))
+
+
 def pass_request(p, scene, plan, builds, k, written=None, stored=None, instruction=""):
     """The user message that asks for pass k (1-based) of a scene: the scene and cast (scene_context), the whole-scene
     note, this pass's range, shots and spoken lines in pass and scene time, the references it sends, the pass before
@@ -1519,8 +1543,10 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
         m, "s" if m > 1 else "", int(round(sum(PASS_WORDS) / 2.0 / m)), *PASS_WORDS)]
     if auto.get("shots"):
         rules.append("Your [Shot N] lines replace the editor's automatic shot lines, so describe every shot in full.")
-    if fill:  # added 2026-11-12 v0.14.2
-        rules.append(FILL_LINES_RULE)
+    # [OLD 2026-11-12 v0.14.2->v0.14.3] if fill:  # added 2026-11-12 v0.14.2
+    # [OLD 2026-11-12 v0.14.2->v0.14.3]     rules.append(FILL_LINES_RULE)
+    if fill or writes_shots(scene, plan):  # v0.14.2: spoken lines; v0.14.3: framing and camera move too
+        rules += [FILL_LINES_RULE, FILL_CAMERA_RULE]
     rules.append("Leave subject_definitions empty: the editor writes a definition line for every reference this pass "
                  "sends." if auto.get("subjects") else
                  "subject_definitions: one line per reference this pass sends, for example \"@Mara is the woman in ...\".")
