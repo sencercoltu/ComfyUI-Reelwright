@@ -910,6 +910,30 @@ _LABEL_ORDER = {"Subject": 0, "Picture": 1, "Video": 2, "Audio": 3}
 _LABEL = re.compile(r"<(Subject|Picture|Video|Audio) (\d+)>")
 _SHOT_LOOSE = re.compile(r"\[\s*shot\s*(\d+)\s*\]", re.I)
 _CUT_TIME = re.compile(r"^At\s+(\d{1,2}):(\d{2}(?:\.\d{1,3})?)(\s*,\s*)", re.I)
+# "At 00:04.200," / "takes it up at 00:12.600," in a written pass: a time on its timeline
+_AT_TIME = re.compile(r"\b([Aa]t\s+)(\d{1,2}):(\d{2}(?:\.\d{1,3})?)\b")
+
+
+def scene_times_to_pass(text, start, end):
+    """(text, moved): a later pass written with scene times ("At 00:15.083," in a pass that covers scene 13.458 to
+    26.000, so 12.542 s long) gets its own times, as the request asks. Only when one of its times is past the pass's
+    length and every one lies inside the pass's scene range; times inside spoken lines (<d>…</d>) stay as written."""
+    start, end = float(start), float(end)
+    if start <= 0.5 or not text:
+        return text, []
+    parts = _prompt.DIALOGUE_SPAN_SPLIT.split(text)  # odd items are spoken lines
+    times = [int(m.group(2)) * 60 + float(m.group(3)) for k, x in enumerate(parts) if not k % 2
+             for m in _AT_TIME.finditer(x)]
+    if not times or max(times) <= end - start + 0.5 or any(t < start - 0.5 or t > end + 0.5 for t in times):
+        return text, []
+    moved = []
+
+    def shift(m):
+        t = int(m.group(2)) * 60 + float(m.group(3))
+        new = spec.fmt_time(max(0.0, t - start))
+        moved.append("{} -> {}".format(spec.fmt_time(t), new))
+        return m.group(1) + new
+    return "".join(x if k % 2 else _AT_TIME.sub(shift, x) for k, x in enumerate(parts)), moved
 _EMPTY = ("n/a", "na", "none", "-")
 
 
@@ -1175,6 +1199,14 @@ def writes_shots(scene, plan):
     return fills_timeline(scene, plan) or (pr.get("mode") != "raw" and bool((pr.get("auto") or {}).get("shots")))
 
 
+def free_lines(scene, plan):
+    """May the LLM write spoken lines of its own? When the scene has none yet and the editor takes the written lines
+    onto the timeline (writes_shots: shotfill.js writeShots for one pass, takePassShots for several), as the note or
+    the brief asks for them (Sencer: "No dialogues are created for this LLM return, but there are clearly dialogues
+    in the result"); otherwise a line the scene does not have is taken out (H3 would say it, the timeline would not)."""
+    return writes_shots(scene, plan) and not scene.get("dialogue")
+
+
 # scene.prompt.brief, the author's own words for Write prompts (the Prompt card's Brief).
 # Nothing the LLM writes goes there, so it stays the same from one Write prompts to the next, unlike the summary.
 BRIEF_HEAD = ("Author's brief for this scene (the author's own words; follow it, and where it and the whole-scene note "
@@ -1225,14 +1257,15 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
         head += " It continues seamlessly from the end of the scene before (@tail)."
     shot_lines, spoken = _pass_lines(p, scene, x, k - 1 if k > 1 else 0)
     fill = fills_timeline(scene, plan)
-    free = fill and not scene.get("dialogue")
+    free = free_lines(scene, plan)
     parts.append(head + "\nIts shots:\n" + ("\n".join(shot_lines) or (
         "(none on the timeline yet: write it as one shot; the editor puts it on the timeline)" if fill else
         "(no shots on the timeline: write it as one shot)")) +
         "\nIts spoken lines:\n" + ("\n".join(spoken) or (
-            "(none on the timeline yet: when the whole-scene note{} or the instruction has someone speak, write those "
-            "lines, word for word as the note gives them, and only those; the editor puts them on the timeline)".format(
-                ", the author's brief" if brief_text(scene) else "")
+            "(none on the timeline yet: when the whole-scene note{} or the instruction has someone speak, write {}, "
+            "word for word as the note gives them, and only those; the editor puts them on the timeline)".format(
+                ", the author's brief" if brief_text(scene) else "",
+                "those lines" if n == 1 else "the lines spoken in this pass's part of the scene")
             if free else "(none)")))
     voices = pass_voices(p, x)
     if voices:
@@ -1276,6 +1309,14 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
             d = px["dialogue"][-1]
             block.append('Its last spoken line (already spoken in pass {}; never write it again): {}: "{}"'.format(
                 k - 1, _speaker(p, d), _clean_line(d.get("text"))))
+        elif free:
+            said = []
+            for j in range(1, k):
+                sj = written.get(j) or (stored[j - 1] if j - 1 < len(stored) and isinstance(stored[j - 1], dict) else {})
+                said += ["pass {}: {}".format(j, t) for t in _line_sentences(str(sj.get("detailed_description") or ""))]
+            if said:
+                block.append("The spoken lines written so far, in order (already spoken; go on from the last one and "
+                             "never write them again):\n" + "\n".join(said))
         parts.append("\n".join(block))
     if k < n:
         nx = plan["passes"][k]
@@ -1408,6 +1449,22 @@ def _spoken(text):
     return out
 
 
+def _line_sentences(text):
+    """Each spoken line of a written description with the words before it in its sentence (who speaks and how),
+    without a leading "At MM:SS.mmm," time: '@Mara (S1) mutters, <d>[English] Almost home.</d>'."""
+    text = text or ""
+    spans = list(DIALOGUE_RE.finditer(text))
+    out, floor = [], 0
+    for m in spans:
+        start = floor
+        for s in _SENTENCE_STOP.finditer(text[:m.start()], floor):
+            start = s.end()
+        sentence = " ".join(text[start:m.end()].split())
+        out.append(re.sub(r"^At\s+\d{1,2}:\d{2}(?:\.\d{1,3})?\s*,\s*", "", sentence))
+        floor = m.end()
+    return out
+
+
 def _core(line):
     return " ".join(str(line or "").split()).rstrip(" .!?…\"'").lower()
 
@@ -1416,27 +1473,32 @@ def _core(line):
 _SENTENCE_STOP = re.compile(r"[.!?…](?=\s)|\n|\]\s")
 
 
+def _line_speaker(lead):
+    """Who says a spoken line, from the words before it in its sentence: the last @name, else the last (S1); None when
+    neither is there ("She yells, <d>…</d>")."""
+    tags = list(_prompt.tag_re().finditer(lead or ""))
+    if tags:
+        return _prompt.name_key(tags[-1].group(1) or tags[-1].group(2))
+    ids = re.findall(r"\(\s*S(\d+)\s*\)", lead or "")
+    return "S" + ids[-1] if ids else None
+
+
 def drop_foreign_lines(text, belongs):
     """(text, removed, twice): text without the spoken lines (<d>…</d>) whose words (_core) `belongs` rejects, and
-    without a second copy of a line. Each is removed with its sentence: from the end of the sentence before (or the
+    without a second copy of a line by the same speaker (_line_speaker: a crowd repeating someone's line stays, Sencer's
+    oath: "At 00:04.200, the @{Crowd of students} answer as one, repeating the line …, <d>…</d>"). Each is removed
+    with its sentence: from the end of the sentence before (or the
     [Shot N] label, or a line break) to the end of the line, plus a short tail that only finishes the sentence (", her
     voice breaking." / " while their lips remain completely closed.")."""
     text = text or ""
     spans = list(DIALOGUE_RE.finditer(text))
     if not spans:
         return text, [], []
-    removed, twice, seen, cuts = [], [], set(), []
+    removed, twice, seen, cuts = [], [], {}, []
     for m in spans:
         body = " ".join(re.sub(r"^\s*\[[^\]]*\]\s*", "", m.group(0)[3:-4]).split())
         c = _core(body)
         if not c:
-            continue
-        if not belongs(c):
-            removed.append(body)
-        elif c in seen:
-            twice.append(body)
-        else:
-            seen.add(c)
             continue
         # the sentence starts after the last stop before the line (never inside an earlier line)
         before = text[:m.start()]
@@ -1444,6 +1506,14 @@ def drop_foreign_lines(text, belongs):
         start = floor
         for s in _SENTENCE_STOP.finditer(before, floor):
             start = s.end()
+        who = _line_speaker(text[start:m.start()])
+        if not belongs(c):
+            removed.append(body)
+        elif who in seen.get(c, ()):
+            twice.append(body)
+        else:
+            seen.setdefault(c, set()).add(who)
+            continue
         end = m.end()
         # only a tail that goes on with the same sentence: a stop right after the line, or a clause that starts with a
         # comma, a dash or a lower-case word (" while their lips…"); "Rain falls." is the next sentence and stays
@@ -1504,6 +1574,9 @@ def tidy_pass(sections, x, build, auto, k=1, known=None, guides=(), free_lines=F
 
     shots = x.get("shots") or []
     desc = _SHOT_LOOSE.sub(lambda m: "[Shot {}]".format(int(m.group(1))), out["detailed_description"])
+    desc, rebased = scene_times_to_pass(desc, x.get("start") or 0.0, x.get("end") or 0.0)
+    if rebased:
+        warnings.append("times were written in scene time and are now the pass's: " + ", ".join(rebased))
     pre, chunks = _prompt._chunks(desc, _prompt.SHOT_START)
     if chunks:
         if shots and len(chunks) == len(shots):
@@ -1633,7 +1706,7 @@ async def write_passes(cfg, p, scene, wanted=None, instruction="", progress=None
         state["tokens"] += int(info.get("tokens") or 0)
         sections, warns = tidy_pass(secs, x, b, pr.get("auto") or {}, k, _scene_tokens(p, scene),
                                     pass_guides(p, scene, x),
-                                    free_lines=fills_timeline(scene, plan) and not scene.get("dialogue"))
+                                    free_lines=free_lines(scene, plan))
         override = overrides.get(str(k))
         if isinstance(override, str) and override.strip():
             warns.append("its prompt was edited by hand (or by Split), and that prompt is sent instead of these "

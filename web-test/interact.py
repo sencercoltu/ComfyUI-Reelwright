@@ -1509,8 +1509,10 @@ def main():
         v0194_checks(page, check, saved, shots)
         v0195_checks(page, check, saved, shots)
         v0200_checks(page, check, saved, shots)
+        v0201_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
+        v0201_copy_checks(pw, page_url, check)
     httpd.shutdown()
 
     for e in errors:
@@ -6642,6 +6644,163 @@ def v0173_scrollbar_checks(p, url, check):
     page.wait_for_timeout(200)
     v = page.evaluate("() => document.querySelector('.rw-shot-row .rw-code-ta').value")
     check(v.find("X") == at["idx"], f"typed where the caret showed: X at {v.find('X')}, the word at {at['idx']}")
+    b.close()
+
+
+
+OATH_PASSES = [
+    "Live-action, daylight.\n[Shot 1] A medium-wide shot frames @Nesrin before the school. Behind her, the "
+    "@{Crowd of students} stands in loose ranks. The camera arcs around @Nesrin with small amplitude at slow speed. "
+    "She draws a breath and, in a very strong voice, yells the first line of the oath, <d>[Turkish] Türk'üm, doğruyum, "
+    "çalışkanım.</d> At 00:04.200, the @{Crowd of students} answer as one, repeating the line in the same resolute "
+    "tone, <d>[Turkish] Türk'üm, doğruyum, çalışkanım.</d> @Nesrin continues without losing volume, <d>[Turkish] Ülküm "
+    "yükselmek, ileri gitmektir.</d> The crowd takes it up at 00:13.800, <d>[Turkish] Ülküm yükselmek, ileri "
+    "gitmektir.</d>",
+    "The target video continues seamlessly from the final frames of @tail.\n[Shot 1] The shot resumes from the middle "
+    "of the ongoing arc. @Nesrin holds her line open. At 00:00.300, the @{Crowd of students} (S2) takes it up, "
+    "<d>[Turkish] Ülküm yükselmek, ileri gitmektir.</d> At 00:05.742, @Nesrin (S1) continues, her voice climbing in "
+    "volume, <d>[Turkish] Varlığım Türk varlığına armağan olsun.</d> At 00:08.142, the @{Crowd of students} (S2) "
+    "answer together, <d>[Turkish] Varlığım Türk varlığına armağan olsun.</d>",
+]
+
+
+def v0201_checks(page, check, saved, shots):
+    """v0.20.1 (Sencer: "No dialogues are created for this LLM return, but there are clearly dialogues in the result.
+    I have 2 passes, but it doesn't work on single pass either." / "Copy text button doesnt work"): Write prompts on a
+    scene that has a shot and no spoken lines puts the lines the LLM wrote on the timeline, in one pass and in two;
+    the LLM output's copy button copies."""
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.store.project))")
+    scene_of = lambda sid: next(x for x in cur()["scenes"] if x["id"] == sid)
+    toasts = lambda: " | ".join(page.evaluate("window.__editor.eph.toasts.map(t => t.message)"))
+
+    def oath_scene(duration, text):
+        page.evaluate("window.__editor.actions.addScene('s_03')")
+        page.wait_for_timeout(300)
+        sid = cur()["ui"]["selected"]
+        page.evaluate("""([sid, d]) => window.__editor.store.update(q => {
+          for (const [id, name] of [['c_nes', 'Nesrin'], ['c_crowd', 'Crowd of students']])
+            if (!q.cast.some(c => c.id === id)) q.cast.push({ id, name, kind: 'character', language: 'Turkish', description: '', anchors: [], outfits: [], default_outfit: '', voice: '', voice_desc: '', speaker: '', lora: { name: '', strength: 0.8 }, pack_sheet: 'auto' });
+          const s = q.scenes.find(x => x.id === sid);
+          s.duration = d; s.dialogue = []; s.cast = [{ id: 'c_nes', outfit: '' }];
+          s.shots = [{ id: 'h_oath', t: 0, camera: '', camera_amp: '', camera_speed: '', framing: '', text: 'Nesrin recites the oath, the crowd repeats it.' }];
+          s.prompt.sections.summary = 'Nesrin recites the Turkish Student Oath line by line; the crowd repeats each line.'; },
+          { label: 'oath scene' })""", [sid, duration])
+        page.wait_for_timeout(300)
+        page.evaluate("([sid, t]) => { window.__mockFlags.writeText[sid] = t; window.__mockFlags.passesMs = 0; window.__editor.store.setEph({ toasts: [] }); }", [sid, text])
+        page.evaluate("window.__editor.actions.setTab('scene')")
+        page.wait_for_timeout(300)
+        return sid
+
+    # 1. one pass, a shot on the timeline, no lines: the four written lines go on the timeline
+    sid = oath_scene(15.0, OATH_PASSES[0])
+    click_write(page, f"[data-key='write-{sid}']")
+    page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
+    page.wait_for_timeout(400)
+    sc = scene_of(sid)
+    got = [(d["speaker"], d["text"][:12]) for d in sc["dialogue"]]
+    check(got == [("c_nes", "Türk'üm, doğ"), ("c_crowd", "Türk'üm, doğ"), ("c_nes", "Ülküm yüksel"), ("c_crowd", "Ülküm yüksel")],
+          f"one pass: the written lines are on the timeline with their speakers: {got}")
+    check("4 spoken lines" in toasts() and {c["id"] for c in sc["cast"]} == {"c_nes", "c_crowd"}, f"the toast says so, the crowd joins the scene: {toasts()!r}")
+    page.screenshot(path=str(shots / "v0201_one_pass.png"))
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(300)
+    check(scene_of(sid)["dialogue"] == [], "Ctrl+Z takes them back")
+
+    # 2. two passes: each pass's lines at its own times, the line pass 2 repeats in its overlap once
+    sid = oath_scene(26.0, OATH_PASSES)
+    page.evaluate("() => { window.__mockFlags.passesMs = 300; }")
+    click_write(page, f"[data-key='write-{sid}']")
+    page.wait_for_selector("[data-key='write-out']", timeout=4000)
+    page.click("[data-key='write-out']")
+    page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
+    page.wait_for_timeout(400)
+    sc = scene_of(sid)
+    got = [(d["speaker"], round(d["t"], 3), d["text"][:12]) for d in sc["dialogue"]]
+    check(got == [("c_nes", 0.5, "Türk'üm, doğ"), ("c_crowd", 4.208, "Türk'üm, doğ"), ("c_nes", 5.708, "Ülküm yüksel"),
+                  ("c_crowd", 13.792, "Ülküm yüksel"), ("c_nes", 19.208, "Varlığım Tür"), ("c_crowd", 21.583, "Varlığım Tür")],
+          f"two passes: the lines of both passes are on the timeline: {got}")
+    check("6 spoken lines" in toasts(), f"the toast counts them: {toasts()!r}")
+    rows = page.locator(".rw-card:has(.rw-card-title:has-text('Dialogue')) .rw-dlg-row").count()
+    check(rows == 6, f"the Dialogue card lists them: {rows}")
+    page.screenshot(path=str(shots / "v0201_two_passes.png"))
+
+    # 3. the LLM output's copy button
+    page.evaluate("() => { window.__copied = []; if (navigator.clipboard) navigator.clipboard.writeText = t => { window.__copied.push(t); return Promise.resolve(); }; }")
+    out = page.locator(".rw-llm-out")
+    check(out.count() == 1, "the output is open")
+    out.locator("button[data-help='llm.output.copy']").click()
+    page.wait_for_timeout(300)
+    copied = page.evaluate("window.__copied.slice()")
+    check(copied and copied[-1].startswith("## ") and "### Answer" in copied[-1] and "Copied the LLM output." in toasts(),
+          f"its copy button copies the output: {copied[-1][:60] if copied else None!r} {toasts()!r}")
+    out.locator("button[data-help='common.close']").click()
+    page.evaluate("window.__mockFlags.writeText = {}")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+def v0201_copy_checks(pw, url, check):
+    """ComfyUI on a LAN address is plain http, where the browser has no navigator.clipboard: every copy goes through
+    the hidden text field (ui.js copyText). The harness at a host name that is not localhost is such a page. (The
+    editor stops copy events at its root, so ComfyUI does not copy nodes; the listener here captures.)"""
+    port = url.split(":")[2].split("/")[0]
+    lan = url.replace("127.0.0.1", "rwlan.test")
+    b = pw.chromium.launch(args=["--host-resolver-rules=MAP rwlan.test 127.0.0.1"])
+    page = b.new_page(viewport={"width": 1600, "height": 1000})
+    errs = []
+    page.on("pageerror", lambda e: errs.append(str(e)))
+    page.goto(lan)
+    page.wait_for_selector(".rw-scene")
+    page.wait_for_timeout(600)
+    env = page.evaluate("({ secure: window.isSecureContext, clip: !!navigator.clipboard })")
+    check(env == {"secure": False, "clip": False}, f"rwlan.test:{port} is a plain-http page without navigator.clipboard: {env}")
+    page.evaluate("""() => { window.__copiedText = []; document.addEventListener('copy', () => {
+      const a = document.activeElement; window.__copiedText.push(a && a.tagName === 'TEXTAREA' ? a.value : String(document.getSelection())); }, true); }""")
+    copied = lambda: page.evaluate("window.__copiedText.slice()")
+    toasts = lambda: " | ".join(page.evaluate("window.__editor.eph.toasts.map(t => t.message)"))
+    page.evaluate("window.__editor.store.setEph({ toasts: [] }); window.__editor.actions.select('s_03'); window.__editor.actions.setTab('scene')")
+    page.wait_for_timeout(500)
+    # What H3 receives → Copy prompt
+    page.locator("[data-help='scene.preview.copy']").first.click()
+    page.wait_for_timeout(250)
+    pr = page.evaluate("window.__editor.eph.plan?.scenes?.s_03?.prompts?.[0] || ''")
+    check(copied() and copied()[-1] == pr and pr and "Copied the prompt." in toasts(), f"Copy prompt on a plain-http page: {copied()[-1][:50] if copied() else None!r} {toasts()!r}")
+    # right-click → Copy text
+    page.locator(".rw-card:has([data-key='fold-h3']) pre").first.click(button="right")
+    page.wait_for_timeout(200)
+    page.locator(".rw-ctx .rw-ctx-item:has-text('Copy text')").first.click()
+    page.wait_for_timeout(250)
+    check(len(copied()) == 2 and copied()[-1].strip(), f"right-click Copy text on a plain-http page: {copied()[-1][:50] if copied() else None!r}")
+    # the LLM output's copy button
+    sid = "s_03"
+    page.evaluate("() => { window.__mockFlags.passesMs = 300; }")
+    click_write(page, f"[data-key='write-{sid}']")
+    page.wait_for_selector("[data-key='write-out']", timeout=4000)
+    page.click("[data-key='write-out']")
+    page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
+    page.wait_for_timeout(300)
+    page.locator(".rw-llm-out button[data-help='llm.output.copy']").click()
+    page.wait_for_timeout(250)
+    check(len(copied()) == 3 and copied()[-1].startswith("## ") and "Copied the LLM output." in toasts(),
+          f"the LLM output's copy button on a plain-http page: {copied()[-1][:50] if copied() else None!r} {toasts()!r}")
+    # the Chat tab's copy button
+    page.evaluate("window.__editor.actions.setTab('chat')")
+    page.wait_for_timeout(300)
+    box = page.locator(".rw-chat textarea, textarea[data-help='chat.input']").first
+    if box.count():
+        box.fill("hello")
+        box.press("Enter")
+        page.wait_for_timeout(800)
+        btn = page.locator("[data-help='chat.copy']").last
+        if btn.count():
+            btn.click()
+            page.wait_for_timeout(250)
+            check(len(copied()) == 4 and "Answer" in copied()[-1], f"the chat's copy button on a plain-http page: {copied()[-1][:50] if copied() else None!r}")
+        else:
+            check(False, "the chat answer has a copy button")
+    else:
+        check(False, "the Chat tab has its input")
+    check(not errs, f"no page errors: {errs[:2]}")
     b.close()
 
 

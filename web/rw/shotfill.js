@@ -29,6 +29,12 @@ const STOP = /[.!?…](?=\s)|\n/g;
 const TAIL = /^\s*[.!?…]|^(?:\s*[,;:—–-]|\s+(?=[a-z]))[^<.!?\n]{0,120}[.!?…]/;
 const VOICE = /,?\s*\b(?:with|in)\s+(?:(?:a|an|the|his|her|their|its)\s+)?[^,<:]*?\bvoice\b(?![\w-])[^,<:]*/gi;
 const LEADS = /^(?:(?:as|while|when)\s+(?:he|she|they|it|we|i|you)\s+|who\s+|and\s+|then\s+)/i;
+// the verb that says how a line is spoken, when the words after it run long ("yells the first line of the oath")
+const SPEECH = /^(?:says|said|say|yells?|shouts?|screams?|calls?|cries|cry|whispers?|murmurs?|mutters?|mumbles?|recites?|repeats?|replies|reply|answers?|asks?|adds?|continues|continue|declares?|announces?|chants?|sings?|sobs?|snaps?|hisses?|growls?|laughs?|exclaims?|insists?|pleads?|begs?|orders?|commands?|roars?|bellows?|responds?|echoes|echo|counters?|finishes|finish|begins?|starts?)$/i;
+// a sentence about someone named before it ("She draws a breath and yells, <d>…</d>")
+const PRONOUN = /^\s*(?:she|he|they)\b/i;
+// a line's time written inside its sentence ("The crowd takes it up at 00:12.600, <d>…</d>")
+const MID_CUE = /\s*,?\s*\bat\s+(\d{1,2}):(\d{2}(?:\.\d{1,3})?)\b\s*,?/gi;
 // The time that opens a spoken line's sentence ("At 00:03.200, @Mara (S1) mutters, <d>…")
 // or an action's, and the "At MM:SS.mmm," cues of a text (prompt.py CUE_TIME)
 // The same as prompt.py CUE_TIME ("At" only; also after a colon)
@@ -140,8 +146,18 @@ function castFinder(p) {
     const m = /^(.+?)['’][sS]$/.exec(String(name || ""));
     return m ? by.get(key(m[1])) || null : null;
   };
-  const plain = all.filter(c => (c.kind || "character") === "character").sort((a, b) => b.name.length - a.name.length)
+  const people = all.filter(c => (c.kind || "character") === "character");
+  const plain = people.sort((a, b) => b.name.length - a.name.length)
     .map(c => ({ c, re: new RegExp("(?<![\\p{L}\\p{N}_@{])" + escapeRe(c.name.trim()) + "(?![\\p{L}\\p{N}_])", "giu") }));
+  // "the crowd" is "Crowd of students" (a name of two words or more whose first word no other character starts with)
+  const firsts = new Map();
+  for (const c of people) {
+    const w = c.name.trim().split(/\s+/);
+    if (w.length < 2 || [...w[0]].length < 4) continue;
+    const k = w[0].toLowerCase();
+    firsts.set(k, firsts.has(k) ? null : c);
+  }
+  for (const [w, c] of firsts) if (c) plain.push({ c, re: new RegExp("(?<![\\p{L}\\p{N}_@{])the\\s+" + escapeRe(w) + "(?![\\p{L}\\p{N}_])", "giu") });
   return { find, plain };
 }
 
@@ -174,8 +190,13 @@ function actionAndVerb(a) {
   }
   let action = at >= 0 ? a.slice(0, at) : "", verb = at >= 0 ? a.slice(at + len) : a;
   verb = edges(verb).replace(LEADS, "");
-  if (wordCount(verb) > 6) return [a, ""];
-  return [edges(action), edges(verb)];
+  action = edges(action);
+  const head = t => t.split(/\s+/)[0] || "";
+  // "continues, her voice climbing in volume" / "answer as one, repeating the line": the speaking verb comes first
+  if (action && SPEECH.test(head(action)) && !SPEECH.test(head(verb)) && wordCount(action) + wordCount(verb) <= 14) return ["", `${action}, ${verb}`];
+  // "yells the first line of the oath": the action stays in the shot, the verb is how the line is said
+  if (wordCount(verb) > 6) return [a, SPEECH.test(head(verb)) ? head(verb) : ""];
+  return [action, verb];
 }
 
 // One shot's text without its spoken lines, and the lines: {text, lines: [{speaker, sid, language, delivery, text}]}.
@@ -191,18 +212,32 @@ function takeLines(body, cf, sMap) {
     for (const s of body.slice(floor, at).matchAll(STOP)) start = floor + s.index + s[0].length;
     let lead = body.slice(start, at);
     const lc = LINE_CUE.exec(lead);
-    const cueAt = lc ? Number(lc[1]) * 60 + Number(lc[2]) : null;
-    const cueText = lc ? `At ${lc[1]}:${lc[2]}, ` : "";
+    let cueAt = lc ? Number(lc[1]) * 60 + Number(lc[2]) : null;
+    let cueText = lc ? `At ${lc[1]}:${lc[2]}, ` : "";
     if (lc) lead = lead.slice(lc[0].length);
-    const men = lastMention(lead, cf);
+    else {
+      const mid = [...lead.matchAll(MID_CUE)].pop();
+      if (mid) {
+        cueAt = Number(mid[1]) * 60 + Number(mid[2]);
+        cueText = `At ${mid[1]}:${mid[2]}, `;
+        lead = lead.slice(0, mid.index) + (/,\s*$/.test(mid[0]) ? ", " : " ") + lead.slice(mid.index + mid[0].length);
+      }
+    }
+    let men = lastMention(lead, cf);
+    let said = false;
+    if (!men && PRONOUN.test(lead)) {
+      // "She draws a breath and yells, <d>…</d>": the character named last before this sentence
+      const back = lastMention(body.slice(0, start), cf);
+      if (back?.cast) { men = { start: 0, end: 0, cast: back.cast, off: false, sid: null, idOnly: true }; said = true; }
+    }
     let speaker = "";
     if (men?.cast) speaker = men.cast.id;
     else if (men?.off) speaker = (/narrator/i.test(lead.slice(men.start, men.end)) && cf.find("narrator")?.id) || "";
     else if (men?.sid && sMap.has(men.sid)) speaker = sMap.get(men.sid);
     if (men?.sid && !sMap.has(men.sid) && (men.cast || men.off)) sMap.set(men.sid, speaker);
-    const before = men ? lead.slice(0, men.start) : "";
+    const before = men && !said ? lead.slice(0, men.start) : "";
     const named = men && !men.idOnly ? edges(lead.slice(men.start, men.end).replace(SIDS, "")) : "";
-    const rest = (men ? lead.slice(men.end) : lead).replace(SIDS, " ").replace(VOICE, " ");
+    const rest = (men && !said ? lead.slice(men.end) : lead).replace(SIDS, " ").replace(VOICE, " ");
     const [action, verb] = actionAndVerb(rest);
     // a clause before the speaker that sets the moment ("As the rain starts, ") goes with the delivery; one that
     // frames the shot ("a close-up of ") stays in the text with the speaker
@@ -308,8 +343,17 @@ function lineTimes(lines, start, end, offset, duration, known = []) {
   else {
     at = [];
     let cur = start + Math.min(0.5, Math.max(0, end - start) * 0.1), prev = -Infinity;
+    const inside = g => g !== null && g >= start - 1e-6 && g < end - 1e-6;
     given.forEach((g, k) => {
-      let v = g !== null && g >= start - 1e-6 && g < end - 1e-6 && g > prev + 1e-6 ? g : Math.max(cur, prev + 1 / FPS);
+      let v = inside(g) && g > prev + 1e-6 ? g : Math.max(cur, prev + 1 / FPS);
+      if (v !== g) {
+        // a line without a time before one that has a time ("@Nesrin continues, <d>…</d> The crowd takes it up at
+        // 00:12.600, <d>…</d>"): it is spoken before that time, the lines without one sharing the time up to it
+        let j = k + 1;
+        while (j < given.length && !inside(given[j])) j++;
+        const base = Math.max(start, prev);
+        if (j < given.length && given[j] > base + 1e-6 && v >= given[j] - 1 / FPS) v = base + (given[j] - base) * (prev === -Infinity ? 0 : 1) / (j - k + (prev === -Infinity ? 0 : 1));
+      }
       if (v > end - 1 / FPS) v = Math.max(start, prev) + (end - Math.max(start, prev)) / 2;
       at.push(v);
       prev = v;
@@ -470,6 +514,7 @@ export function takePassShots(p, sc, plan, items) {
   if (!sc || sc.prompt?.mode === "raw" || !sc.prompt.auto?.shots) return null;
   const byId = new Map((sc.shots || []).map(x => [x.id, x]));
   const cf = castFinder(p);
+  const lines = (sc.dialogue || []).length ? 0 : addPassLines(p, sc, plan, items, cf);
   let n = 0;
   for (const it of items || []) {
     const x = plan.passes[it.index - 1];
@@ -492,14 +537,65 @@ export function takePassShots(p, sc, plan, items) {
       const offset = Number(x.start) || 0;
       const next = (sc.shots || []).filter(o => o.t > sh.t + 1e-6).reduce((m, o) => Math.min(m, o.t), Infinity);
       const end = Math.min(Number.isFinite(next) ? next : Infinity, Number(sc.duration) || Infinity);
-      const known = got.lines.map(d => (sc.dialogue || []).find(q => key(q.text) === key(d.text) && q.t >= sh.t - 1e-6 && q.t < end)?.t ?? null);
+      const used = new Set();
+      const known = got.lines.map(d => {
+        const q = (sc.dialogue || []).find(q => !used.has(q) && key(q.text) === key(d.text) && q.t >= sh.t - 1e-6 && q.t < end);
+        if (q) used.add(q);
+        return q ? q.t : null;
+      });
       const times = lineTimes(got.lines, sh.t, Number.isFinite(end) ? end : sh.t + 15, offset, Number(sc.duration) || sh.t + 15, known);
       takeShot(sh, cameraOf(p, sentence(placedText(got, times, Number.isFinite(end) ? end : sh.t + 15, offset, sh.t > 1e-6) || got.lines[0]?.who || "")));
       n++;
     });
     it.sections.detailed_description = [pre, ...keep].filter(Boolean).join("\n");
   }
-  return n ? { shots: n, lines: 0, updated: true, added: 0, kept: 0 } : null;
+  return n || lines ? { shots: n, lines, updated: true, added: 0, kept: 0 } : null;
+}
+
+// The spoken lines the passes wrote, put on the timeline of a scene that has none (Sencer: "No dialogues are created
+// for this LLM return, but there are clearly dialogues in the result. I have 2 passes"): each pass's lines at their
+// written times (pass time + the pass's start; a line without one follows the line before it inside its shot), a
+// line the pass after wrote again in the overlap only once. Speakers join the scene's cast. Returns how many.
+function addPassLines(p, sc, plan, items, cf) {
+  const duration = Number(sc.duration) || 0;
+  const found = [];
+  for (const it of [...(items || [])].sort((a, b) => a.index - b.index)) {
+    const x = plan.passes[it.index - 1];
+    if (!x || !it.sections) continue;
+    const text = String(it.sections.detailed_description || "").replace(/\r\n?/g, "\n");
+    if (!text.includes("<d>")) continue;
+    const start = Number(x.start) || 0, length = Math.max(1 / FPS, (Number(x.end) || 0) - start);
+    const spans = [...text.matchAll(SPAN)].map(m => [m.index, m.index + m[0].length]);
+    const labels = [...text.matchAll(LABEL)].filter(m => !spans.some(([a, b]) => m.index > a && m.index < b));
+    const chunks = labels.length ? labels.map((m, j) => text.slice(m.index + m[0].length, j + 1 < labels.length ? labels[j + 1].index : text.length)) : [text];
+    if (labels.length && text.slice(0, labels[0].index).includes("<d>")) chunks[0] = text.slice(0, labels[0].index) + " " + chunks[0];
+    const shots = labels.length === (x.shots || []).length ? x.shots : null;
+    const sMap = new Map();
+    chunks.forEach((c, j) => {
+      let body = c.trim();
+      const cut = CUT.exec(body);
+      if (cut && leadKind(body) !== "line") body = body.slice((CUT_STRICT.exec(body) || cut)[0].length);
+      const got = takeLines(body, cf, sMap);
+      if (!got.lines.length) return;
+      const w0 = shots ? Number(shots[j].t) || 0 : 0;
+      const w1 = shots && j + 1 < shots.length ? Number(shots[j + 1].t) || length : length;
+      const times = lineTimes(got.lines, start + w0, start + Math.max(w1, w0 + 1 / FPS), start, duration);
+      got.lines.forEach((d, k) => found.push({ pass: it.index, speaker: d.speaker, language: d.language, delivery: d.delivery, text: d.text, t: times[k] }));
+    });
+  }
+  const taken = [];
+  for (const d of found) {
+    const again = taken.some(q => q.pass !== d.pass && key(q.text) === key(d.text) && Math.abs(q.t - d.t) <= 2.5 &&
+      (!q.speaker || !d.speaker || q.speaker === d.speaker));
+    if (!again) taken.push(d);
+  }
+  if (!taken.length) return 0;
+  const lang = id => (p.cast || []).find(c => c.id === id)?.language || p.global?.defaults?.language || "English";
+  sc.dialogue = taken.sort((a, b) => a.t - b.t)
+    .map(d => ({ id: newId("d"), speaker: d.speaker, t: d.t, language: d.language || lang(d.speaker), delivery: d.delivery || "says", text: d.text }));
+  sc.cast = Array.isArray(sc.cast) ? sc.cast : [];
+  for (const d of sc.dialogue) if (d.speaker && !sc.cast.some(c => c.id === d.speaker)) sc.cast.push({ id: d.speaker, outfit: "" });
+  return sc.dialogue.length;
 }
 
 // "1 shot and 2 spoken lines"

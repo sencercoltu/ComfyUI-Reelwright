@@ -962,7 +962,11 @@ export async function copyText(text, root) {
   const ta = h("textarea", { class: "rw-copy-buf", readonly: true, "aria-hidden": "true", tabindex: "-1" });
   ta.value = str;
   (root || document.body).appendChild(ta);
+  // focused first: execCommand copies the focused field's selection (from the LLM output's button the page kept
+  // nothing selected and nothing was copied)
+  ta.focus({ preventScroll: true });
   ta.select();
+  ta.setSelectionRange(0, str.length);
   let ok = false;
   try { ok = document.execCommand("copy"); } catch { ok = false; }
   ta.remove();

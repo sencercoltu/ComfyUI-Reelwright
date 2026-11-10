@@ -298,7 +298,12 @@ def test_write_prompts_asks_for_the_shot_and_lines_of_a_scene_without_shots():
     plan2, builds2 = llm.scene_builds(p, s2)
     assert not llm.fills_timeline(s2, plan2) and llm.writes_shots(s2, plan2)
     body2 = llm.pass_request(p, s2, plan2, builds2, 1)
-    assert llm.FILL_CAMERA_RULE in body2 and "none on the timeline yet" not in body2
+    assert llm.FILL_CAMERA_RULE in body2 and "none on the timeline yet: write it as one shot" not in body2
+    # shots but no spoken lines: the LLM may write the lines the note asks for, the editor takes them (free_lines)
+    assert llm.free_lines(s2, plan2) and "has someone speak, write those lines" in body2
+    s2["dialogue"] = [{"id": "d_1", "speaker": "c_mara", "t": 1.0, "language": "English", "text": "Home."}]
+    assert not llm.free_lines(s2, plan2) and "has someone speak" not in llm.pass_request(p, s2, plan2, builds2, 1)
+    s2["dialogue"] = []
     s2["prompt"]["auto"]["shots"] = False
     assert not llm.writes_shots(s2, plan2) and llm.FILL_CAMERA_RULE not in llm.pass_request(p, s2, plan2, builds2, 1)
     s3 = copy.deepcopy(s)
@@ -306,7 +311,8 @@ def test_write_prompts_asks_for_the_shot_and_lines_of_a_scene_without_shots():
     p["scenes"][0] = s3
     plan3, builds3 = llm.scene_builds(p, s3)
     assert len(plan3["passes"]) > 1 and llm.writes_shots(s3, plan3)
-    assert llm.FILL_CAMERA_RULE in llm.pass_request(p, s3, plan3, builds3, 1)
+    body3 = llm.pass_request(p, s3, plan3, builds3, 1)
+    assert llm.FILL_CAMERA_RULE in body3 and "write the lines spoken in this pass's part of the scene" in body3
 
 
 def test_lines_written_for_a_scene_without_lines_are_kept():
@@ -446,3 +452,112 @@ def test_write_prompts_keeps_the_written_summary_as_the_brief(tmp_path):
     assert b["brief"] == "My own brief." and not b["kept"]  # a brief is never overwritten
     assert c["brief"] == "" and not c["kept"]
     assert d["brief"] == "" and d["summary"] == "She comes home." and not d["kept"]  # the summary did not change
+
+
+# Sencer: "No dialogues are created for this LLM return, but there are clearly dialogues in the result. I have 2
+# passes, but it doesn't work on single pass either." A scene with a shot and no spoken lines, the note asking for an
+# oath recited and repeated: the lines the LLM writes go on the timeline (one pass: writeShots; several:
+# takePassShots), with their speakers and times, and H3 gets each line once.
+OATH_1 = ("Live-action, daylight.\n[Shot 1] A medium-wide shot frames @Nesrin before the school. Behind her, the "
+          "@{Crowd of students} stands in loose ranks. The camera arcs around @Nesrin with small amplitude at slow "
+          "speed. She draws a breath and, in a very strong voice, yells the first line of the oath, <d>[Turkish] "
+          "Türk'üm, doğruyum, çalışkanım.</d> At 00:04.200, the @{Crowd of students} answer as one, repeating the line "
+          "in the same resolute tone, <d>[Turkish] Türk'üm, doğruyum, çalışkanım.</d> @Nesrin continues without losing "
+          "volume, <d>[Turkish] Ülküm yükselmek, ileri gitmektir.</d> The crowd takes it up at 00:13.800, "
+          "<d>[Turkish] Ülküm yükselmek, ileri gitmektir.</d>")
+# pass 2 (scene 13.458 to 26.000) in its own time, as the backend stores it (scene_times_to_pass); it repeats the
+# last line of pass 1 at the start of its overlap
+OATH_2 = ("The target video continues seamlessly from the final frames of @tail.\n[Shot 1] The shot resumes from the "
+          "middle of the ongoing arc. @Nesrin holds her line open. At 00:00.300, the @{Crowd of students} (S2) "
+          "takes it up, "
+          "<d>[Turkish] Ülküm yükselmek, ileri gitmektir.</d> At 00:05.742, @Nesrin (S1) continues, her voice "
+          "climbing in volume, <d>[Turkish] Varlığım Türk varlığına armağan olsun.</d> At 00:08.142, the "
+          "@{Crowd of students} (S2) answer together, <d>[Turkish] Varlığım Türk varlığına armağan olsun.</d>")
+
+
+def oath_project(duration):
+    p = model.default_project("Oath")
+    p["cast"] = [{"id": "c_nes", "name": "Nesrin", "kind": "character", "language": "Turkish"},
+                 {"id": "c_crowd", "name": "Crowd of students", "kind": "character"}]
+    s = p["scenes"][0]
+    s.update({"id": "s_1", "duration": duration, "dialogue": [], "cast": [{"id": "c_nes", "outfit": ""}],
+              "shots": [{"id": "h_1", "t": 0.0, "camera": "", "text": "Nesrin recites the oath, the crowd repeats it."}]})
+    return p
+
+
+@needs_node
+def test_lines_written_for_a_scene_with_shots_go_on_the_timeline():
+    one = oath_project(15.0)
+    one["scenes"][0]["prompt"]["sections"]["detailed_description"] = OATH_1
+    two = oath_project(26.0)
+    pl = plan_scene(model.normalize_project(copy.deepcopy(two)), two["scenes"][0], 0)
+    assert [round(x["start"], 3) for x in pl["passes"]] == [0.0, 13.458]
+    items = [{"index": 1, "sections": {"detailed_description": OATH_1}},
+             {"index": 2, "sections": {"detailed_description": OATH_2}}]
+    a, b = run([{"op": "write", "project": one, "scene": "s_1"},
+                {"op": "passes", "project": two, "scene": "s_1", "items": items}])
+    said = [(d["speaker"], round(d["t"], 3), d["delivery"], d["text"][:12]) for d in a["scene"]["dialogue"]]
+    assert a["n"]["lines"] == 4 and said == [
+        ("c_nes", 0.5, "yells", "Türk'üm, doğ"),  # "She …": the character named before the sentence
+        ("c_crowd", 4.208, "answer as one, repeating the line in the same resolute tone", "Türk'üm, doğ"),
+        ("c_nes", 5.708, "continues without losing volume", "Ülküm yüksel"),  # after the line before
+        ("c_crowd", 13.792, "takes it up", "Ülküm yüksel")]  # "the crowd … at 00:13.800"
+    assert {c["id"] for c in a["scene"]["cast"]} == {"c_nes", "c_crowd"}
+    assert "<d>" not in a["scene"]["shots"][0]["text"] and "yells the first line of the oath" in a["scene"]["shots"][0]["text"]
+    # two passes: pass 2's lines at pass time + 13.458; its repeat of pass 1's last line (same speaker, close) once
+    said = [(d["speaker"], round(d["t"], 3), d["text"][:12]) for d in b["scene"]["dialogue"]]
+    assert b["n"]["lines"] == 6 and said == [
+        ("c_nes", 0.5, "Türk'üm, doğ"), ("c_crowd", 4.208, "Türk'üm, doğ"), ("c_nes", 5.708, "Ülküm yüksel"),
+        ("c_crowd", 13.792, "Ülküm yüksel"), ("c_nes", 19.208, "Varlığım Tür"), ("c_crowd", 21.583, "Varlığım Tür")]
+    assert b["scene"]["dialogue"][4]["delivery"] == "continues, her voice climbing in volume"
+    # what H3 gets: each line once in its pass; pass 2's own text keeps the line it wrote in its overlap (the part
+    # that repeats the end of pass 1), and adds none of the timeline's
+    p = model.normalize_project({**two, "scenes": [b["scene"]]})
+    p["scenes"][0]["prompt"]["passes"] = [{"start": 0.0, "end": 15.083, "sections": {}},
+                                         {"start": 13.458, "end": 26.0, "sections": b["items"][1]["sections"]}]
+    s = p["scenes"][0]
+    plan = plan_scene(p, s, 0)
+    texts = [prompt.build_pass(p, s, 0, plan, x)["prompt"] for x in plan["passes"]]
+    assert [t.count("<d>") for t in texts] == [4, 3]
+    assert texts[1].count("Varlığım Türk varlığına armağan olsun.") == 2  # Nesrin's line and the crowd's repeat
+
+
+def test_later_passes_written_in_scene_time_get_their_own_times():
+    text = ("[Shot 1] She waits. At 00:15.083, @Nesrin (S1) says, <d>[Turkish] Saat 00:20.000.</d> The crowd takes it "
+            "up at 00:17.400, <d>[Turkish] x</d> At 00:23.400, she bows.")
+    out, moved = llm.scene_times_to_pass(text, 13.458, 26.0)
+    assert out == ("[Shot 1] She waits. At 00:01.625, @Nesrin (S1) says, <d>[Turkish] Saat 00:20.000.</d> The crowd "
+                   "takes it up at 00:03.942, <d>[Turkish] x</d> At 00:09.942, she bows.")  # spoken words untouched
+    assert moved == ["00:15.083 -> 00:01.625", "00:17.400 -> 00:03.942", "00:23.400 -> 00:09.942"]
+    assert llm.scene_times_to_pass("At 00:01.625, she says, <d>x</d>", 13.458, 26.0) == ("At 00:01.625, she says, <d>x</d>", [])
+    assert llm.scene_times_to_pass("At 00:30.000, she bows.", 13.458, 26.0)[1] == []  # past the pass: not scene time
+    assert llm.scene_times_to_pass("At 00:12.000, she bows.", 0.0, 15.0)[1] == []  # pass 1: scene time is pass time
+
+
+def test_later_passes_are_told_the_lines_written_before():
+    p = model.normalize_project(oath_project(26.0))
+    s = p["scenes"][0]
+    plan, builds = llm.scene_builds(p, s)
+    assert llm.free_lines(s, plan)
+    body = llm.pass_request(p, s, plan, builds, 2, written={1: {"summary": "The oath begins.",
+                                                                "detailed_description": OATH_1}})
+    assert ("The spoken lines written so far, in order (already spoken; go on from the last one and never write them "
+            "again):\npass 1: She draws a breath and, in a very strong voice, yells the first line of the oath, "
+            "<d>[Turkish] Türk'üm, doğruyum, çalışkanım.</d>\npass 1: the @{Crowd of students} answer as one") in body
+    assert "pass 1: The crowd takes it up at 00:13.800, <d>[Turkish] Ülküm yükselmek, ileri gitmektir.</d>" in body
+    s["dialogue"] = [{"id": "d_1", "speaker": "c_nes", "t": 1.0, "language": "Turkish", "text": "Türk'üm."}]
+    assert "written so far" not in llm.pass_request(p, s, plan, builds, 2, written={1: {"detailed_description": OATH_1}})
+
+
+def test_a_line_repeated_by_someone_else_is_kept():
+    # call and response: the crowd's repeat is a line of its own; Nesrin saying it again is a second copy
+    x = {"shots": [], "dialogue": []}
+    desc = ("[Shot 1] She yells, <d>[Turkish] Türk'üm, doğruyum.</d> At 00:04.200, the @{Crowd of students} answer as "
+            "one, <d>[Turkish] Türk'üm, doğruyum.</d> @Nesrin (S1) nods, <d>[Turkish] Ülküm yükselmek.</d> The "
+            "@{Crowd of students} (S2) repeat it, <d>[Turkish] Ülküm yükselmek.</d> @Nesrin (S1) says again, "
+            "<d>[Turkish] Ülküm yükselmek.</d>")
+    kept, warns = llm.tidy_pass({"detailed_description": desc}, x, {}, {"shots": True}, 1,
+                                known={"nesrin", "crowd of students"}, free_lines=True)
+    d = kept["detailed_description"]
+    assert d.count("Türk'üm, doğruyum.") == 2 and d.count("Ülküm yükselmek.") == 2 and "says again" not in d
+    assert [w for w in warns if "second copy" in w] == ['removed a second copy of: "Ülküm yükselmek."']

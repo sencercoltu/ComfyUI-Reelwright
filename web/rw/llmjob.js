@@ -1,4 +1,4 @@
-import { h, button, icon, rootScale } from "./ui.js";
+import { h, button, icon, rootScale, copyWithToast } from "./ui.js";
 
 // Progress of a running LLM request. The backend sends reelwright.llm events tagged with
 // the job id the editor chose; editor.js keeps the latest one per job in eph.llmJobs.
@@ -178,10 +178,11 @@ export function outputPopup(root, { job, follow, title = "LLM output", onClose, 
       onPointerdown: e => { e.rwOwned = true; }, onWheel: e => e.stopPropagation(), onKeydown: e => { if (e.key === "Escape") { e.stopPropagation(); close(); } } },
       h("div", { class: "rw-llm-out-head" }, icon("eye", 13), h("b", { class: "small rw-llm-out-title" }, title),
         h("span", { class: "rw-llm-out-status rw-dim small mono grow" }),
-        button({ icon: "copy", small: true, variant: "ghost", help: "llm.output.copy", ariaLabel: "Copy the output", onClick: () => {
+        button({ icon: "copy", small: true, variant: "ghost", help: "llm.output.copy", ariaLabel: "Copy the output", onClick: e => {
           const st = streamOf(el.__rwJob);
           const all = (st?.segs || []).map(seg => { const v = splitThink(seg); return `## ${seg.label}\n\n### Thinking\n${v.think}\n\n### Answer\n${v.text}`; }).join("\n\n");
-          navigator.clipboard?.writeText(all).catch(() => {});
+          if (all.trim()) copyWithToast(all, e.currentTarget || e.target, "LLM output");
+          else root.__rwToast?.("Nothing to copy yet: the LLM has sent nothing.", "warn");
         } }),
         button({ icon: "close", small: true, variant: "ghost", help: "common.close", ariaLabel: "Close the output", onClick: close })),
       h("div", { class: "rw-llm-out-body", dataset: { scroll: "llm-out" } }));

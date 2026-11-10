@@ -730,7 +730,7 @@ def test_write_passes_one_request_per_pass(harbor):
     w = out["warnings"]
     assert "Pass 1: cut times set to the timeline's: [Shot 2] 00:05.000 -> 00:06.000" in w
     assert "Pass 2: the shots were numbered [Shot 3], [Shot 4] and are numbered from [Shot 1] in the pass" in w
-    assert "Pass 2: cut times set to the timeline's: [Shot 2] 00:18.000 -> 00:03.625" in w
+    assert "Pass 2: times were written in scene time and are now the pass's: 00:18.000 -> 00:03.625" in w
     assert any(x.startswith("Pass 3: the detailed description has 7 words; H3's guide asks for 350-500") for x in w)
     assert "Pass 3: the keyframe @P3 is not named, so it is only anchored, not sent as a picture" in w
     assert not any(x.startswith(("Pass 1: the detailed", "Pass 2: the detailed", "Pass 2: spoken")) for x in w)
