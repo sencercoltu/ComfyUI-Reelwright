@@ -168,7 +168,9 @@ def resolve(project_llm, stored):
            "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
            "preset": project_llm.get("preset", "h3_ref2va"), "include_guides": bool(project_llm.get("include_guides", True)),
            "guides": stored.get("guides") or {},
-           "thinking": "off" if project_llm.get("thinking") == "off" else "auto"}
+           "thinking": "off" if project_llm.get("thinking") == "off" else "auto",
+           "describe_video": project_llm.get("describe_video") if project_llm.get("describe_video") in DESCRIBE_VIDEO
+           else "auto"}
     cfg.update(limits(project_llm))
     return cfg
 
@@ -339,10 +341,11 @@ def http_error(status, raw, content_type="", headers=None):
 
 
 def estimate_tokens(content):
-    """Rough prompt size: about 3.5 characters per token for English and JSON, about 1000 per picture."""
+    """Rough prompt size: about 3.5 characters per token for English and JSON, about 1000 per picture and 4000 per
+    video."""
     if isinstance(content, list):
-        return sum(estimate_tokens(p.get("text", "")) if p.get("type") == "text" else 1000
-                   for p in content if isinstance(p, dict))
+        return sum(estimate_tokens(p.get("text", "")) if p.get("type") == "text" else
+                   4000 if p.get("type") == "video_url" else 1000 for p in content if isinstance(p, dict))
     return int(len(content or "") / 3.5) + 1
 
 
@@ -1924,8 +1927,16 @@ async def test(cfg):
 DESCRIBE_SYSTEM = """You describe reference media for MiniMax H3 video generation.
 Answer with one or two English sentences that can follow "<Subject 1> is ..." in a subject definition, for
 example: "the young woman with long dark hair, a blue cardigan and a thin silver necklace".
-Describe only what is visible: appearance, clothing, colours, materials, layout and lighting. Do not guess names,
-ages beyond what is obvious, or story. No preamble, no labels, no quotes."""
+Describe only what is visible: appearance, clothing, colours, materials, layout and lighting. Pictures, frames and
+clips may show the same subject from several sides: describe it as it looks across them. Do not guess names, ages
+beyond what is obvious, or story. No preamble, no labels, no quotes."""
+
+# How Describe sends a video (Global -> Prompt rewriter -> Describe videos): auto sends the first clip as a video and
+# falls back to frames when the server refuses it; video always sends it as a video; frames always as pictures.
+# A clip longer than DESCRIBE_VIDEO_SECONDS always goes as frames.
+DESCRIBE_VIDEO = ("auto", "video", "frames")
+DESCRIBE_VIDEO_SECONDS = 20.0
+_VIDEO_REFUSED = {}  # (base_url, model) -> the server's answer to a video, once it refused one
 
 
 def image_part(data, mime="image/jpeg"):
@@ -1933,14 +1944,22 @@ def image_part(data, mime="image/jpeg"):
     return {"type": "image_url", "image_url": {"url": "data:{};base64,{}".format(mime, base64.b64encode(data).decode("ascii"))}}
 
 
-async def describe(cfg, images, prompt):
-    """images: list of (bytes, mime). Needs a vision-capable model."""
-    if not images:
-        raise ValueError("Nothing to describe")
-    parts = [{"type": "text", "text": prompt or "Describe the main subject."}] + [image_part(d, m) for d, m in images]
-    note = ""
+def video_part(data, mime="video/mp4"):
+    """A video as an OpenAI-style content part, as vLLM and SGLang take it for video models (Qwen-VL and others)."""
+    import base64
+    return {"type": "video_url", "video_url": {"url": "data:{};base64,{}".format(mime, base64.b64encode(data).decode("ascii"))}}
+
+
+def video_wanted(cfg):
+    """Should Describe make a video of the first clip? Not with Frames, nor on Auto once this server refused one."""
+    mode = cfg.get("describe_video") or "auto"
+    return mode == "video" or (mode == "auto" and (cfg["base_url"], cfg.get("model") or "") not in _VIDEO_REFUSED)
+
+
+async def _describe_once(cfg, parts):
     try:
         text, ms, model = await chat(cfg, DESCRIBE_SYSTEM, parts, max_tokens=describe_budget(cfg))
+        return text, ms, model, ""
     except NoAnswer as e:
         if e.reason == "empty":
             raise RuntimeError("The model returned no text. Is it a vision model?")
@@ -1951,11 +1970,58 @@ async def describe(cfg, images, prompt):
             text, ms, model = await chat(dict(cfg, thinking="off"), DESCRIBE_SYSTEM, parts, max_tokens=600)
         except Exception:
             raise e
-        note = "The model kept thinking past the token budget, so this answer was made with thinking off."
+        return text, ms, model, "The model kept thinking past the token budget, so this answer was made with thinking off."
+
+
+async def describe(cfg, images, prompt, videos=()):
+    """images: [(bytes, mime)]; videos: [{"name", "seconds", "frames": [(bytes, mime)], "video": (bytes, mime) or
+    None}]. Needs a vision-capable model. The first video goes as a video when it has one and the server takes it
+    (video_wanted), else as its frames; the others always as frames (many servers take one video per request)."""
+    videos = list(videos or [])
+    if not images and not any(v.get("frames") or v.get("video") for v in videos):
+        raise ValueError("Nothing to describe")
+    head = [{"type": "text", "text": prompt or "Describe the main subject."}] + [image_part(d, m) for d, m in images]
+
+    def parts(as_video):
+        out = list(head)
+        for k, v in enumerate(videos):
+            if k == 0 and as_video:
+                out.append(video_part(*v["video"]))
+            else:
+                out += [image_part(d, m) for d, m in v.get("frames") or []]
+        return out
+
+    def frames_note(v):
+        return "{} went as {} frames".format(v["name"], len(v.get("frames") or []))
+
+    key = (cfg["base_url"], cfg.get("model") or "")
+    as_video = bool(videos and videos[0].get("video")) and video_wanted(cfg)
+    notes = []
+    try:
+        text, ms, model, note = await _describe_once(cfg, parts(as_video))
+        if as_video:
+            notes.append("{} went as a video ({:.1f} s)".format(videos[0]["name"], videos[0]["seconds"]))
+    except LLMError as e:
+        # a refused video (or one too long for the context window) is sent again as frames on Auto
+        if not as_video or e.reason not in ("http", "server", "context") or cfg.get("describe_video") == "video":
+            if as_video:
+                raise LLMError("{} The server did not take the video: set Describe videos to Frames (Global → Prompt "
+                               "rewriter).".format(str(e).rstrip(".") + "."), e.reason, retry=False)
+            raise
+        if e.reason != "context":
+            _VIDEO_REFUSED[key] = str(e)[:200]
+        text, ms, model, note = await _describe_once(cfg, parts(False))
+        why = "the video did not fit the context window" if e.reason == "context" else \
+            "the server did not take a video ({})".format(str(e)[:120].rstrip("."))
+        notes.append("{}, so {}".format(why, frames_note(videos[0])))
+        as_video = None
+    notes += [frames_note(v) for k, v in enumerate(videos) if k > 0 or as_video is False]
     text = text.strip().strip('"').strip()
     if not text:
         raise RuntimeError("The model returned no text. Is it a vision model?")
-    return {"text": text, "ms": ms, "model": model, "note": note}
+    if notes:
+        note = (note + " " if note else "") + "; ".join(notes)[:1].upper() + "; ".join(notes)[1:] + "."
+    return {"text": text, "ms": ms, "model": model, "note": note, "video": as_video is True}
 
 
 def describe_budget(cfg):

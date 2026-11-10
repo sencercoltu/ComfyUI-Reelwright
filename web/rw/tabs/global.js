@@ -503,6 +503,10 @@ function llmCard(ctx) {
       field("Thinking", segmented({ small: true, value: l.thinking === "off" ? "off" : "auto", help: "global.llm.thinking", options: [
         { value: "auto", label: "Model default", help: "global.llm.thinking.auto" }, { value: "off", label: "Off", help: "global.llm.thinking.off" }],
       onChange: v => set(x => { x.thinking = v; }) }), { help: "global.llm.thinking" }),
+      field("Describe videos", segmented({ small: true, value: ["video", "frames"].includes(l.describe_video) ? l.describe_video : "auto", help: "global.llm.describeVideo", options: [
+        { value: "auto", label: "Auto", help: "global.llm.describeVideo.auto" }, { value: "video", label: "As video", help: "global.llm.describeVideo.video" },
+        { value: "frames", label: "As frames", help: "global.llm.describeVideo.frames" }],
+      onChange: v => set(x => { x.describe_video = v; }) }), { help: "global.llm.describeVideo" }),
       field("Preset", select({ options: [
         { value: "h3_ref2va", label: "H3 ref2va · six sections" }, { value: "h3_compact", label: "H3 · compact prose" }, { value: "h3_cinematic", label: "H3 · cinematic detail" }],
       value: l.preset, help: "global.llm.preset", onChange: v => set(x => { x.preset = v; }) }), { help: "global.llm.preset" }),

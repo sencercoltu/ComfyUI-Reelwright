@@ -295,9 +295,9 @@ function profileCard(ctx, c) {
               onChange: v => edit(x => { x.description = v; }) }),
             d.asset ? h("div", { class: "rw-dim small", help: "cast.description.fromAnchor" }, `Using ${d.asset.code}'s description (its first described anchor). Type here to override it.`) : null));
       })(),
-      c.anchors.length > 0 && h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.describe" }, "From anchors"),
+      (c.anchors.length > 0 || anchorClips(p, c).length > 0) && h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.describe" }, "From anchors"),
         describeBox(ctx, {
-          key: "cast-" + c.id, ids: c.anchors.slice(0, 4), help: "cast.describe",
+          key: "cast-" + c.id, ids: c.anchors.slice(0, 4), clips: anchorClips(p, c), help: "cast.describe",
           defaultPrompt: c.kind === "character" ? `Describe ${c.name || "this person"}: build, face, hair, clothing and accessories.`
             : c.kind === "location" ? "Describe this place: setting, architecture, materials, lighting and time of day."
               : "Describe the main object: what it is, shape, material, colour and condition.",
@@ -372,6 +372,12 @@ function outfitPictures(ctx, c, o, editO) {
       images.length ? select({ options: images, value: "", placeholder: "+ Add picture…", key: "outfit-pic-add-" + o.id, help: "cast.outfits.pictureAdd",
         onChange: v => { if (v) editO(o.id, y => { if (!y.assets.includes(v)) y.assets.push(v); }); } }) : null,
       h("div", { class: "rw-dim small" }, pics.length ? `Sent with the anchors in scenes that pick “${o.name || "this"}”.` : "No pictures of its own: the anchors show this look.")));
+}
+
+// The video anchors Describe looks at (the first 2, each its From–To part)
+function anchorClips(p, c) {
+  return (c.video_anchors || []).filter(va => findAsset(p, va.asset)?.kind === "video").slice(0, 2)
+    .map(va => ({ asset: va.asset, in: Number(va.in) || 0, out: va.out ?? null }));
 }
 
 // Delete an outfit; scenes that wore it fall back to the default outfit (their entry's outfit

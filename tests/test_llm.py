@@ -96,6 +96,80 @@ def test_describe_empty_answer_still_hints_vision():
     assert "vision model" in run_with_server(handler, go)
 
 
+CLIP = {"name": "V1", "seconds": 4.0, "video": (b"mp4!", "video/mp4"), "frames": [(b"\xff\xd8f1", "image/jpeg")] * 3}
+CLIP2 = {"name": "V2", "seconds": 6.0, "video": None, "frames": [(b"\xff\xd8f2", "image/jpeg")] * 2}
+
+
+def _kinds(body):
+    return [p["type"] for p in body["messages"][-1]["content"]]
+
+
+def test_describe_sends_the_first_video_as_a_video():
+    """v0.19.5 (Sencer: "can we add "describe video" from llm for video anchors? (if model supports)")."""
+    seen = []
+
+    async def handler(request):
+        seen.append(await request.json())
+        return web.json_response(reply("a sunlit gym with mats and a ladder"))
+
+    out = run_with_server(handler, lambda cfg: llm.describe(cfg, IMG, "Describe this place.", [CLIP, CLIP2]))
+    assert out["text"] == "a sunlit gym with mats and a ladder" and out["video"] is True
+    assert _kinds(seen[0]) == ["text", "image_url", "video_url", "image_url", "image_url"]  # V2 as its frames
+    assert seen[0]["messages"][-1]["content"][2]["video_url"]["url"].startswith("data:video/mp4;base64,")
+    assert out["note"] == "V1 went as a video (4.0 s); V2 went as 2 frames."
+
+
+def test_describe_falls_back_to_frames_when_the_server_refuses_video():
+    seen = []
+
+    async def handler(request):
+        body = await request.json()
+        seen.append(body)
+        if "video_url" in _kinds(body):
+            return web.json_response({"error": {"message": "This model does not support video input"}}, status=400)
+        return web.json_response(reply("a punching bag"))
+
+    async def go(cfg):
+        first = await llm.describe(cfg, [], "", [CLIP])
+        again = llm.video_wanted(cfg)
+        cfg["describe_video"] = "frames"
+        frames_only = llm.video_wanted(cfg)
+        cfg["describe_video"] = "video"
+        with pytest.raises(llm.LLMError) as e:
+            await llm.describe(cfg, [], "", [CLIP])
+        return first, again, frames_only, str(e.value)
+    first, again, frames_only, err = run_with_server(handler, go)
+    assert first["text"] == "a punching bag" and first["video"] is False
+    assert [_kinds(b) for b in seen[:2]] == [["text", "video_url"], ["text", "image_url", "image_url", "image_url"]]
+    assert first["note"].startswith("The server did not take a video (This model does not support video input), so V1 "
+                                    "went as 3 frames")
+    assert again is False and frames_only is False  # Auto remembers the refusal; Frames never makes a video
+    assert "does not support video input" in err and "set Describe videos to Frames" in err
+
+
+def test_describe_frames_mode_and_a_video_too_long_for_the_context():
+    seen = []
+
+    async def handler(request):
+        body = await request.json()
+        seen.append(body)
+        if "video_url" in _kinds(body):
+            return web.json_response({"error": {"message": "This model's maximum context length is 8192 tokens"}}, status=400)
+        return web.json_response(reply("a man in a grey t-shirt"))
+
+    async def go(cfg):
+        out = await llm.describe(cfg, IMG, "", [CLIP])
+        return out, llm.video_wanted(cfg)
+    out, still = run_with_server(handler, go)
+    assert out["note"].startswith("The video did not fit the context window, so V1 went as 3 frames")
+    assert still is True  # too long is not a refusal: the next video is tried again
+    assert llm.estimate_tokens([{"type": "text", "text": ""}, {"type": "video_url"}, {"type": "image_url"}]) == 5001
+    assert llm.resolve({"describe_video": "frames"}, {"base_url": "http://x/v1", "model": "", "api_key": ""})[
+        "describe_video"] == "frames"
+    assert llm.resolve({"describe_video": "movie"}, {"base_url": "http://x/v1", "model": "", "api_key": ""})[
+        "describe_video"] == "auto"
+
+
 def test_chat_explains_thinking_cutoff():
     async def handler(request):
         return web.json_response(reply(None, reasoning="thinking...", finish="length"))

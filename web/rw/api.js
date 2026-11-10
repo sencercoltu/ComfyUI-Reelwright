@@ -90,7 +90,7 @@ export const rw = {
   castExport: (project, cast_id) => req("POST", "/reelwright/cast/export", { project, cast_id }),
   continuityCheck: (project, scene_id) => req("POST", "/reelwright/continuity/check", { project, scene_id }),
   llmGuides: () => req("POST", "/reelwright/llm/guides", {}),
-  describe: (project, asset_ids, prompt) => req("POST", "/reelwright/llm/describe", { project, asset_ids, prompt }),
+  describe: (project, asset_ids, prompt, clips = []) => req("POST", "/reelwright/llm/describe", { project, asset_ids, prompt, clips }),
   files: (root, query, kind, limit = 400) => req("GET", `/reelwright/files?root=${q(root)}&q=${q(query)}&kind=${q(kind)}&limit=${limit}`),
   importFile: (slug, root, rel) => req("POST", "/reelwright/import", { slug, root, rel }),
   profiles: () => req("GET", "/reelwright/profiles"),

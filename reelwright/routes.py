@@ -909,23 +909,62 @@ async def llm_script_parts(request):
     return scriptparts.split_script(_str(b, "script", "", required=False, max_len=10 ** 7) or "", size)
 
 
-# Describe pictures (or video frames) with a vision model
+# Describe pictures and videos with a vision model. asset_ids: pictures and whole videos; clips: parts of videos
+# ({"asset", "in", "out"}, a cast member's video anchors). The first video also goes as a video file when the server
+# takes video (llm.video_wanted) and it is short enough; every video gets frames for the fallback. At most 4 pictures,
+# 3 videos and 10 pictures in all (with the frames).
+DESCRIBE_FRAMES = {1: 6, 2: 3, 3: 2}
+
+
 @routes.post("/reelwright/llm/describe")
 @json_route
 async def llm_describe(request):
     b = await body_of(request)
     p, store = project_store(b["project"])
     idx = project_index(p)
-    images = []
-    for aid in _str_list(b.get("asset_ids"), "asset_ids")[:4]:
+    cfg = _cfg(p)
+
+    def asset_path(aid):
         a = idx["assets"].get(aid)
         if not a:
             raise ValueError("unknown asset")
         path = store.input_path(a["file"])
         if not os.path.isfile(path):
             raise FileNotFoundError("{} file is missing".format(a["code"]))
+        return a, path
+
+    pictures, videos = [], []
+    for aid in _str_list(b.get("asset_ids"), "asset_ids")[:4]:
+        a, path = asset_path(aid)
+        if a["kind"] == "video":
+            videos.append((a, path, 0.0, None))
+        else:
+            pictures.append(path)
+    clips = b.get("clips") or []
+    if not isinstance(clips, list) or not all(isinstance(c, dict) for c in clips):
+        raise ValueError("clips must be a list of {asset, in, out}")
+    for c in clips[:3]:
+        a, path = asset_path(_str(c, "asset", ""))
+        if a["kind"] != "video":
+            raise ValueError("{} is not a video".format(a["code"]))
+        out = c.get("out")
+        videos.append((a, path, _num(c.get("in") or 0, "in"), None if out is None else _num(out, "out")))
+    videos = videos[:3]
+    images = []
+    for path in pictures:
         images += await asyncio.to_thread(media.stills_for_vision, path)
-    return await llm.describe(_cfg(p), images[:6], (_str(b, "prompt", "") or "").strip())
+    room = max(0, 10 - len(images))
+    sent = []
+    for k, (a, path, start, end) in enumerate(videos):
+        start, end = await asyncio.to_thread(media.clip_range, path, start, end)
+        n = min(DESCRIBE_FRAMES.get(len(videos), 2), max(1, room // max(1, len(videos) - k)))
+        room -= n
+        v = {"name": a["code"] or a["name"], "seconds": end - start, "video": None,
+             "frames": await asyncio.to_thread(media.vision_frames, path, start, end, n)}
+        if k == 0 and llm.video_wanted(cfg) and end - start <= llm.DESCRIBE_VIDEO_SECONDS:
+            v["video"] = await asyncio.to_thread(media.vision_clip, path, start, end)
+        sent.append(v)
+    return await llm.describe(cfg, images, (_str(b, "prompt", "") or "").strip(), sent)
 
 
 # ---- ComfyUI input/output browser --------------------------------------------------------

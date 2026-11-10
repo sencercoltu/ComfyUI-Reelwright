@@ -745,6 +745,35 @@ def test_reference_media_are_cut_before_decoding(comfy, tmp_path):
     assert a["waveform"].shape[-1] / a["sample_rate"] == pytest.approx(15, abs=0.01)
 
 
+def test_vision_clip_and_frames(comfy, tmp_path):
+    """Describe a video anchor (v0.19.5): its From-To part as a small silent H.264 clip, and frames spread over it."""
+    import io
+
+    from PIL import Image, ImageStat
+
+    from reelwright import media, merge
+    ff = merge.ffmpeg_bin()
+    path = str(tmp_path / "anchor.mp4")
+    subprocess.run([ff, "-loglevel", "error", "-y", "-f", "lavfi", "-i", "nullsrc=s=1280x720:r=24:d=10,geq=lum='T*20':cb=128:cr=128",
+                    "-f", "lavfi", "-i", "sine=d=10", "-shortest", "-pix_fmt", "yuv420p", path], check=True)
+    assert media.clip_range(path, 2.0, 5.5) == (2.0, 5.5)
+    assert media.clip_range(path, 3.0, None)[1] == pytest.approx(10.0, abs=0.05)
+    assert media.clip_range(path, 4.0, 1.0)[1] == pytest.approx(10.0, abs=0.05)  # a To before the From: to the end
+    data, mime = media.vision_clip(path, 2.0, 5.5)
+    assert mime == "video/mp4" and len(data) < 500_000
+    out = str(tmp_path / "sent.mp4")
+    with open(out, "wb") as f:
+        f.write(data)
+    info = merge.probe(out)
+    assert info["duration"] == pytest.approx(3.5, abs=0.15) and not info["has_audio"]
+    assert (info["width"], info["height"]) == (640, 360)
+    frames = media.vision_frames(path, 2.0, 5.5, 4)
+    lum = [ImageStat.Stat(Image.open(io.BytesIO(d)).convert("L")).mean[0] for d, m in frames]
+    assert len(frames) == 4 and all(m == "image/jpeg" for _, m in frames)
+    # luma 20 per second: at 2.4, 3.3, 4.2 and 5.1 s (about 38, 58, 79, 99 in RGB), never the whole video's 1.25 s
+    assert lum == sorted(lum) and 30 < lum[0] < 46 and 90 < lum[-1] < 108
+
+
 def test_reference_clips_start_at_their_from(comfy, tmp_path):
     """media.load_video / load_audio read a reference's clip from its From."""
     from reelwright import media, merge

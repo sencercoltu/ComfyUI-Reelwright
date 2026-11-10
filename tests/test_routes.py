@@ -106,6 +106,9 @@ def test_wrong_types_answer_400(api, store, harbor):
                                                                "take_id": "v1", "which": "../mara"}))
         out.append(await post(c, "/reelwright/llm/script", {"project": harbor, "script": ["a"]}))
         out.append(await post(c, "/reelwright/llm/describe", {"project": harbor, "asset_ids": {"a": 1}}))
+        out.append(await post(c, "/reelwright/llm/describe", {"project": harbor, "clips": "a_dolly"}))
+        out.append(await post(c, "/reelwright/llm/describe", {"project": harbor, "clips": [{"asset": "a_gone"}]}))
+        out.append(await post(c, "/reelwright/llm/describe", {"project": harbor, "clips": [{"asset": "a_dolly", "in": "x"}]}))
         out.append(await post(c, "/reelwright/import", {"slug": "harbor_lights", "root": "input", "rel": 5}))
         out.append(await post(c, "/reelwright/merge", {"project": harbor, "range": "s_one"}))
         return out

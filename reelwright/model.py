@@ -129,6 +129,8 @@ def default_global():
                        "name_continuation": True, "describe_voices": True},
         "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
                 "include_guides": True, "thinking": "auto",  # thinking: auto (model default) | off
+                # Describe sends a video clip as a video (video), as frames (frames) or tries video first (auto)
+                "describe_video": "auto",
                 "timeout_s": 120, "max_wait_s": 900, "retries": 2, "context_tokens": 0,
                 # script import: the script is sent in parts of about this many characters (0 = all at once),
                 # each part may answer with up to import_max_tokens; import_thinking: same | off;

@@ -226,7 +226,7 @@ function defaultGlobal() {
     memory: { policy: "free_cache", encode_first: true, group_by_lora: true },
     continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag", name_continuation: true, describe_voices: true },
     llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va", include_guides: true, thinking: "auto",
-      timeout_s: 120, max_wait_s: 900, retries: 2, context_tokens: 0,
+      describe_video: "auto", timeout_s: 120, max_wait_s: 900, retries: 2, context_tokens: 0,
       import_part_chars: 3000, import_max_tokens: 24576, import_thinking: "same", import_guides: false },
     merge: { use: "starred", missing: "skip", hard_cut: "cut", transition_frames: 12, audio_fade_frames: 6,
       loudness: -16.0, normalize: true, score: { asset: "", volume_db: -12.0, duck: true },

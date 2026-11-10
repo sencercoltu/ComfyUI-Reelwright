@@ -544,7 +544,7 @@ async function route(path, opts = {}) {
   const body = opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : null;
   await new Promise(r => setTimeout(r, 20));
   switch (url.pathname) {
-    case "/reelwright/info": return json({ version: "0.19.4", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.19.5", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
       if (!body.name) return json({ error: "Give the profile a name" }, 400);
@@ -668,7 +668,16 @@ async function route(path, opts = {}) {
       guides: guidesHave, guide_urls: { "ref-en.txt": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/main/skills/h3-prompt-writing/references/ref-en.txt", "base-en.txt": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/main/skills/h3-prompt-writing/references/base-en.txt" } });
     case "/reelwright/llm/models": return json({ models: ["qwen3-32b-instruct", "qwen3-vl-32b-instruct", "qwen3.8-flash-next", "llama-4-70b", "MiniMax-M2.5", "MiniMax-VL-02", "minimax-text-01"] });
     case "/reelwright/llm/guides": guidesHave = { "ref-en.txt": { bytes: 23553, fetched: 1793620000 }, "base-en.txt": { bytes: 15773, fetched: 1793620000 } }; return json({ guides: guidesHave });
-    case "/reelwright/llm/describe": return json({ text: "the young woman with shoulder-length auburn hair, a navy pea coat with brass buttons and a grey knitted scarf", ms: 1840, model: "qwen3-vl-32b-instruct" });
+    case "/reelwright/llm/describe": {
+      if (typeof window !== "undefined") window.__lastDescribe = body;
+      const clips = body.clips || [];
+      if (!clips.length) return json({ text: "the young woman with shoulder-length auburn hair, a navy pea coat with brass buttons and a grey knitted scarf", ms: 1840, model: "qwen3-vl-32b-instruct" });
+      const code = id => body.project.assets.find(a => a.id === id)?.code || id;
+      const secs = c => ((c.out ?? 8) - (c.in || 0)).toFixed(1);
+      const video = body.project.global.llm.describe_video !== "frames";
+      return json({ text: "a small workout room with grey foam mats, a table under the curtains and a ladder in the corner", ms: 4210, model: "qwen3-vl-32b-instruct", video,
+        note: [video ? `${code(clips[0].asset)} went as a video (${secs(clips[0])} s)` : `${code(clips[0].asset)} went as 6 frames`, ...clips.slice(1).map(c => `${code(c.asset)} went as 3 frames`)].join("; ").replace(/^./, s => s.toUpperCase()) + "." });
+    }
     case "/reelwright/files": {
       const all = MEDIA[url.searchParams.get("root") || "input"] || [];
       const kind = url.searchParams.get("kind"), terms = (url.searchParams.get("q") || "").toLowerCase().split(/\s+/).filter(Boolean);

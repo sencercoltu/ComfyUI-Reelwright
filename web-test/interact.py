@@ -1507,6 +1507,7 @@ def main():
         v0192_checks(page, check, saved, shots)
         v0193_checks(page, check, saved, shots)
         v0194_checks(page, check, saved, shots)
+        v0195_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
     httpd.shutdown()
@@ -6439,6 +6440,41 @@ def v0194_checks(page, check, saved, shots):
         want = [["fully_preserved", []], ["partially_preserved", ["face", "hair"]]] if cid == "c_keeper" else \
             [["fully_preserved", []], ["fully_preserved", []]]
         check(got == want, f"new outfits of {cid}: {got}")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+def v0195_checks(page, check, saved, shots):
+    """v0.19.5 (Sencer: "can we add "describe video" from llm for video anchors? (if model supports)"): a cast member
+    with only video anchors gets From anchors → Describe, which sends the clips (From–To) with the pictures; Global →
+    Prompt rewriter → Describe videos picks Auto / As video / As frames."""
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    h = next(c for c in q["cast"] if c["id"] == "c_harbor")
+    h["anchors"] = []
+    h["video_anchors"] = [{"id": "va_1", "asset": "a_v1", "in": 0.5, "out": 3.5, "soundtrack": False}]
+    q["ui"].update(tab="cast")
+    page.evaluate("j => window.__editor.load(j)", json.dumps(q))
+    page.wait_for_timeout(300)
+    page.evaluate("() => window.__editor.store.setEph({ selectedCast: 'c_harbor' })")
+    page.wait_for_timeout(400)
+    btn = page.locator("[data-help='cast.describe']").filter(has_text="Describe")
+    check(btn.count() == 1 and btn.is_enabled(), "a location with only a video anchor can be described from it")
+    btn.click()
+    page.wait_for_timeout(600)
+    sent = page.evaluate("() => window.__lastDescribe && { ids: window.__lastDescribe.asset_ids, clips: window.__lastDescribe.clips }")
+    check(sent == {"ids": [], "clips": [{"asset": "a_v1", "in": 0.5, "out": 3.5}]}, f"Describe sends the clip's From–To: {sent}")
+    note = page.locator(".rw-suggest").inner_text() if page.locator(".rw-suggest").count() else ""
+    check("workout room" in note and "V1 went as a video (3.0 s)." in note, f"the answer says how the video went: {note!r}")
+    page.screenshot(path=str(shots / "v0195_describe_video.png"))
+    q["ui"].update(tab="global")
+    page.evaluate("j => window.__editor.load(j)", json.dumps(q))
+    page.wait_for_timeout(400)
+    seg = page.locator("[data-help='global.llm.describeVideo']").first
+    check(seg.count() == 1, "Global → Prompt rewriter has Describe videos")
+    page.locator("[data-help='global.llm.describeVideo.frames']").first.click()
+    page.wait_for_timeout(300)
+    mode = page.evaluate("() => window.__editor.store.project.global.llm.describe_video")
+    check(mode == "frames", f"As frames is stored: {mode}")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

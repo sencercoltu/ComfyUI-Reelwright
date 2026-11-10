@@ -393,10 +393,11 @@ const DESCRIBE_PROMPTS = {
   edit_source: "Describe what this clip shows.",
 };
 
-export async function describeAssets(ctx, ids, prompt, key) {
+// ids: pictures and whole videos; clips: parts of videos ({ asset, in, out }, a cast member's video anchors)
+export async function describeAssets(ctx, ids, prompt, key, clips = []) {
   ctx.store.setEph({ describe: { key, busy: true } });
   try {
-    const r = await rw.describe(ctx.p, ids, prompt);
+    const r = await rw.describe(ctx.p, ids, prompt, clips);
     ctx.store.setEph({ describe: { key, text: r.text, model: r.model, ms: r.ms, note: r.note || "" } });
   } catch (err) {
     ctx.store.setEph({ describe: { key, error: err.message } });
@@ -404,16 +405,16 @@ export async function describeAssets(ctx, ids, prompt, key) {
 }
 
 // prompt box + button + suggestion; `apply(text, mode)` writes the result ("use" or "append")
-export function describeBox(ctx, { key, ids, defaultPrompt, apply, help = "assets.describe" }) {
+export function describeBox(ctx, { key, ids, clips = [], defaultPrompt, apply, help = "assets.describe" }) {
   const prompts = ctx.eph.describePrompts || (ctx.eph.describePrompts = {});
   const d = ctx.eph.describe?.key === key ? ctx.eph.describe : null;
   const prompt = h("input", { class: "rw-input grow", key: "describe-q-" + key, placeholder: defaultPrompt, value: prompts[key] || "", help: help + ".prompt",
     onInput: e => { prompts[key] = e.target.value; },
-    onKeydown: e => { if (e.key === "Enter") { e.preventDefault(); describeAssets(ctx, ids, prompts[key] || defaultPrompt, key); } } });
+    onKeydown: e => { if (e.key === "Enter") { e.preventDefault(); describeAssets(ctx, ids, prompts[key] || defaultPrompt, key, clips); } } });
   return h("div", { class: "rw-describe" },
     h("div", { class: "rw-row" }, prompt,
-      button({ label: d?.busy ? "Looking…" : "Describe", icon: "wand", small: true, variant: "pink", help, disabled: !!d?.busy || !ids.length,
-        onClick: () => describeAssets(ctx, ids, prompts[key] || defaultPrompt, key) })),
+      button({ label: d?.busy ? "Looking…" : "Describe", icon: "wand", small: true, variant: "pink", help, disabled: !!d?.busy || !(ids.length || clips.length),
+        onClick: () => describeAssets(ctx, ids, prompts[key] || defaultPrompt, key, clips) })),
     d?.error ? h("div", { class: "rw-note err" }, icon("warn", 12), d.error) : null,
     d?.text ? h("div", { class: "rw-suggest", help: help + ".result" },
       h("div", { class: "rw-suggest-text" }, d.text),

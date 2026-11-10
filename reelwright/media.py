@@ -333,28 +333,64 @@ def jpeg_bytes(im, max_side=1024):
 
 def stills_for_vision(path, max_side=1024, frames=3):
     """[(bytes, mime)] for an image, or `frames` evenly spaced frames of a video."""
-    import subprocess
-    import tempfile
     kind = kind_of(path)
     if kind == "image":
         with Image.open(path) as im:
             return [(jpeg_bytes(im, max_side), "image/jpeg")]
     if kind != "video":
         raise ValueError("Only pictures and videos can be described")
+    return vision_frames(path, 0.0, None, frames, max_side)
+
+
+def _ffmpeg_for_vision():
     ff = merge.ffmpeg_bin()
     if not ff:
-        raise ValueError("ffmpeg is needed to grab frames from a video")
+        raise ValueError("ffmpeg is needed to read a video for the LLM")
+    return ff
+
+
+def clip_range(path, start=0.0, end=None):
+    """(start, end) of the part of a video from `start` to `end` (None: its end), inside the video."""
     dur = max(0.1, float(merge.probe(path)["duration"]))
+    start = min(max(0.0, float(start or 0.0)), max(0.0, dur - 0.05))
+    end = dur if end is None or float(end) <= start else min(dur, float(end))
+    return start, end
+
+
+def vision_frames(path, start=0.0, end=None, n=3, max_side=1024):
+    """[(bytes, mime)]: n frames evenly spaced over the part of a video from start to end (None: its end), as JPEG."""
+    import subprocess
+    import tempfile
+    ff = _ffmpeg_for_vision()
+    start, end = clip_range(path, start, end)
     out = []
     with tempfile.TemporaryDirectory() as tmp:
-        for i in range(frames):
-            t = dur * (i + 0.5) / frames
+        for i in range(max(1, int(n))):
+            t = start + (end - start) * (i + 0.5) / max(1, int(n))
             dst = os.path.join(tmp, "f{}.png".format(i))
             subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-y", "-ss", "{:.3f}".format(t), "-i", path,
                             "-frames:v", "1", dst], check=True)
             with Image.open(dst) as im:
                 out.append((jpeg_bytes(im, max_side), "image/jpeg"))
     return out
+
+
+def vision_clip(path, start=0.0, end=None, max_side=640, fps=8):
+    """(bytes, "video/mp4"): the part of a video from start to end (None: its end), small enough to send to a
+    vision LLM: no sound, at most max_side pixels on its long side, fps frames a second, H.264."""
+    import subprocess
+    import tempfile
+    ff = _ffmpeg_for_vision()
+    start, end = clip_range(path, start, end)
+    scale = "scale={m}:{m}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2".format(m=int(max_side))
+    with tempfile.TemporaryDirectory() as tmp:
+        dst = os.path.join(tmp, "clip.mp4")
+        subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-y", "-ss", "{:.3f}".format(start), "-i", path,
+                        "-t", "{:.3f}".format(end - start), "-an", "-vf", "fps={},{}".format(int(fps), scale),
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-pix_fmt", "yuv420p",
+                        "-movflags", "+faststart", dst], check=True)
+        with open(dst, "rb") as f:
+            return f.read(), "video/mp4"
 
 
 def list_media(root, query="", kind="", limit=400, scan_cap=20000):
