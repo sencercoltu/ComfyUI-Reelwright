@@ -19,8 +19,12 @@ SECTION_KEYS = ("subject_definitions", "summary", "retention_analysis",
                 "detailed_description", "overall_soundscape", "non_diegetic_music")
 # [OLD 2026-11-02 v0.2.2->v0.3.0] OVERRIDE_KEYS = ("seed", "steps", "sampler", "scheduler", "width", "height",
 #                  "diffusion", "text_encoder", "video_vae", "audio_vae")
+# [OLD 2026-11-10 v0.18.0->v0.19.0] OVERRIDE_KEYS = ("seed", "steps", "sampler", "scheduler", "width", "height",
+# [OLD 2026-11-10 v0.18.0->v0.19.0]                  "diffusion", "text_encoder", "video_vae", "audio_vae", "quality")
+# added 2026-11-10 v0.19.0: hires ("off": this scene skips the latent upscaler), refine_steps, refine_denoise
 OVERRIDE_KEYS = ("seed", "steps", "sampler", "scheduler", "width", "height",
-                 "diffusion", "text_encoder", "video_vae", "audio_vae", "quality")
+                 "diffusion", "text_encoder", "video_vae", "audio_vae", "quality",
+                 "hires", "refine_steps", "refine_denoise")
 TRANSITIONS = ("cut", "crossfade", "dip")  # added 2026-11-02 v0.3.0: per-scene hard-cut transition
 # added 2026-11-05 v0.7.0: scene.merge, how a scene sits in the cut (model.js has the same values). TRANSITIONS stays
 # for the deprecated scene.transition (read once, by the migration in _norm_merge)
@@ -132,7 +136,16 @@ def default_global():
         "sampling": {"steps": 20, "sampler": "res_multistep", "scheduler": "simple", "seed": 104729,
                      "seed_mode": "increment", "sigma_shift": False, "shift_video": 12.0, "shift_audio": 3.0},
         "quality": "final",
-        "draft": {"scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0},
+        # [OLD 2026-11-10 v0.18.0->v0.19.0] "draft": {"scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0},
+        # added 2026-11-10 v0.19.0: hires: drafts go through the latent upscaler too (Global -> Hires on)
+        "draft": {"scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0, "hires": False},
+        # added 2026-11-10 v0.19.0: Global -> Hires (Sencer: "implement it, but the whole project should be upscaled to
+        # same resolution. maybe only override the other parameters in scenes?"). enabled: every pass is sampled at
+        # Global -> Output and its latent enlarged by the latent upscaler (models.latent_upscaler) to Output x scale
+        # (hires_size), the same for every scene; refine_steps > 0: then sampled again at the big size for that many
+        # steps from refine_denoise (0..1) of the noise. Scenes override refine_steps / refine_denoise or turn it
+        # off (overrides.hires = "off"; the merge enlarges that scene). Off keeps every render and cache key as before.
+        "hires": {"enabled": False, "scale": 2.0, "refine_steps": 0, "refine_denoise": 0.35},
         "defaults": {"duration": 8.0, "start_mode": "last_frame", "overlap_frames": 39, "language": "English"},
         # [OLD 2026-11-05 v0.7.0->v0.8.0] no long-scene continuity switches
         # "long": {"max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
@@ -254,6 +267,7 @@ def default_scene(project=None, **patch):
         # added 2026-11-05 v0.7.0: how the scene sits in the cut (replaces "transition" and Global -> Merge's
         # transition and colour-match settings)
         "merge": default_merge(),
+        "pass_names": {},  # added 2026-11-10 v0.19.0: names of the scene's passes (pass_names)
     }
     scene.update(patch)
     return scene
@@ -575,6 +589,11 @@ def normalize_global(g):
     # added 2026-11-06 v0.10.0 (model.js the same)
     if g["merge"]["subtitle_timing"] not in SUBTITLE_TIMING:
         g["merge"]["subtitle_timing"] = "speech"
+    # added 2026-11-10 v0.19.0: Global -> Hires (model.js the same)
+    hi = g["hires"]
+    hi["scale"] = min(HIRES_MAX_SCALE, max(1.0, float(hi["scale"])))
+    hi["refine_steps"] = min(100, max(0, int(hi["refine_steps"])))
+    hi["refine_denoise"] = min(1.0, max(0.01, float(hi["refine_denoise"])))
     g["loras"] = _objects(g["loras"])
     for l in g["loras"]:
         _norm_lora(l)
@@ -620,6 +639,27 @@ def _norm_asset_groups(p, assets):
 
 
 TAG_MAX = 60  # added 2026-11-06 v0.9.0
+PASS_NAME_MAX = 60  # added 2026-11-10 v0.19.0
+
+
+def pass_names(v):
+    """added 2026-11-10 v0.19.0 (Sencer: "we should be able to rename passes. pass number is always in front."):
+    scene.pass_names, {"<pass number>": name}: numbers 1-999 as text, names with runs of spaces, tabs and line breaks
+    made one space, cut to 60 characters and trimmed; empty names are dropped. A name belongs to the pass number, so
+    it stays when the pass layout changes. Only the editor shows it ("Pass 2 · Harbour"); nothing sent to H3 or the
+    LLM, and no cache key, reads it. model.js passNames is the same."""
+    out = {}
+    if not isinstance(v, dict):
+        return out
+    for k, x in v.items():
+        key = spec.text(k)
+        t = spec.text(x, None)
+        if not re.fullmatch(r"[1-9][0-9]{0,2}", key) or t is None:
+            continue
+        t = re.sub(r"[ \t\n\r]+", " ", t)[:PASS_NAME_MAX].strip(" ")
+        if t:
+            out[key] = t
+    return out
 
 
 def asset_tags(v):
@@ -779,7 +819,8 @@ def _norm_scene(s, d, lang, used_ids):
     pr["passes"] = [_norm_pass_text(x) for x in pr["passes"]] if isinstance(pr.get("passes"), list) else []
 
     o = s["overrides"] = s["overrides"] if isinstance(s.get("overrides"), dict) else {}
-    for k in ("seed", "steps", "width", "height"):
+    # [OLD 2026-11-10 v0.18.0->v0.19.0] for k in ("seed", "steps", "width", "height"):
+    for k in ("seed", "steps", "width", "height", "refine_steps"):  # refine_steps: added 2026-11-10 v0.19.0
         if k in o:
             v = spec.num(o[k], None)
             if v is None:
@@ -789,6 +830,17 @@ def _norm_scene(s, d, lang, used_ids):
     for k in ("sampler", "scheduler", "diffusion", "text_encoder", "video_vae", "audio_vae", "quality"):
         if k in o and not isinstance(o[k], str):
             del o[k]
+    # added 2026-11-10 v0.19.0: the hires overrides (model.js the same)
+    if "refine_steps" in o:
+        o["refine_steps"] = min(100, max(0, o["refine_steps"]))
+    if "refine_denoise" in o:
+        v = spec.num(o["refine_denoise"], None)
+        if v is None:
+            del o["refine_denoise"]
+        else:
+            o["refine_denoise"] = min(1.0, max(0.01, float(v)))
+    if "hires" in o and o["hires"] != "off":
+        del o["hires"]  # only "off" means something; anything else follows Global
     if "loras" in o:
         lo = o["loras"]
         if not isinstance(lo, dict):
@@ -802,6 +854,7 @@ def _norm_scene(s, d, lang, used_ids):
             lo["strengths"] = {k: spec.num(v) for k, v in sts.items() if spec.num(v, None) is not None}
     s["lock"] = spec.flag(s.get("lock"), False)
     _text_field(s, "notes", "")
+    s["pass_names"] = pass_names(s.get("pass_names"))  # added 2026-11-10 v0.19.0
     tn = s["transition"] = s["transition"] if isinstance(s.get("transition"), dict) else {}
     tn["mode"] = tn["mode"] if tn.get("mode") in ("",) + TRANSITIONS else ""
     for k in ("frames", "audio_fade_frames"):
@@ -1246,6 +1299,55 @@ def scene_quality(p, scene):
     return q if q in ("draft", "final") else p["global"]["quality"]
 
 
+# ---- added 2026-11-10 v0.19.0: Global -> Hires (the latent upscaler). model.js hiresSize / sceneHires are the same.
+HIRES_MAX_SCALE = 4.0
+
+
+def _snap32(v):
+    """v on H3's 32-pixel canvas grid, half up (model.js snap32; spec.snap_canvas rounds half to even)."""
+    return max(spec.CANVAS_MULTIPLE, int(math.floor(float(v) / spec.CANVAS_MULTIPLE + 0.5)) * spec.CANVAS_MULTIPLE)
+
+
+def hires_size(g):
+    """The size every take of the project ends at: Global -> Output x Hires scale on the 32-pixel grid while Hires is
+    on (with a scale above 1), else Global -> Output. g: the project's global settings."""
+    w, h = int(g["output"]["width"]), int(g["output"]["height"])
+    hi = g.get("hires") or {}
+    if not hi.get("enabled") or float(hi.get("scale") or 1.0) <= 1.0:
+        return w, h
+    s = float(hi["scale"])
+    return _snap32(w * s), _snap32(h * s)
+
+
+def project_output_size(p):
+    """The merged film's size (assemble.merge_project): hires_size of the project."""
+    return hires_size(p["global"])
+
+
+def scene_hires(p, scene, width, height, quality):
+    """What the latent upscaler does to a scene sampled at width x height with this quality, or None (Hires off, the
+    scene turns it off, a draft while Global -> Draft -> hires is off, or nothing to enlarge): {"model", "width",
+    "height"} (the size it is enlarged to: the scene's size fitted into hires_size, on the grid) plus "refine_steps" /
+    "refine_denoise" when the big latent is sampled again (never for a draft). Only present keys change cache keys."""
+    g = p["global"]
+    hi = g["hires"]
+    o = scene.get("overrides") or {}
+    if not hi.get("enabled") or o.get("hires") == "off" or (quality == "draft" and not g["draft"].get("hires")):
+        return None
+    fw, fh = hires_size(g)
+    s = min(fw / float(width), fh / float(height))
+    if s <= 1.0 + 1e-9:
+        return None
+    tw, th = min(fw, _snap32(width * s)), min(fh, _snap32(height * s))
+    out = {"model": g["models"].get("latent_upscaler") or "", "width": tw, "height": th}
+    steps = int(o["refine_steps"]) if o.get("refine_steps") is not None else int(hi["refine_steps"])
+    if quality != "draft" and steps > 0:
+        d = o.get("refine_denoise")
+        out["refine_steps"] = steps
+        out["refine_denoise"] = round(float(d if d is not None else hi["refine_denoise"]), 4)
+    return out
+
+
 def resolve_settings(p, scene, scene_index):
     """Everything the renderer needs for one scene, with overrides and quality applied."""
     g = p["global"]
@@ -1259,7 +1361,8 @@ def resolve_settings(p, scene, scene_index):
     if quality == "draft":
         width, height = spec.snap_canvas(width * g["draft"]["scale"], height * g["draft"]["scale"])
         steps = int(g["draft"]["steps"])
-    return {
+    # [OLD 2026-11-10 v0.18.0->v0.19.0] return {
+    out = {  # added 2026-11-10 v0.19.0: hires is added below
         "diffusion": o.get("diffusion") or m["diffusion"],
         "weight_dtype": m["weight_dtype"],
         "text_encoder": o.get("text_encoder") or m["text_encoder"],
@@ -1278,6 +1381,12 @@ def resolve_settings(p, scene, scene_index):
         # [OLD 2026-11-02 v0.2.2->v0.3.0] "quality": g["quality"],
         "quality": quality,
     }
+    # [OLD 2026-11-10 v0.18.0->v0.19.0] return {...}  (the dict above was returned as it is)
+    # added 2026-11-10 v0.19.0: the latent upscaler, only while it runs, so every other scene keeps its cache key
+    hires = scene_hires(p, scene, width, height, quality)
+    if hires:
+        out["hires"] = hires
+    return out
 
 
 # [OLD 2026-11-03 v0.4.3->v0.5.0] scenes end to end: a tail continuation repeats the end of the scene before, and a last-frame start repeats

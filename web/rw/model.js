@@ -28,8 +28,13 @@ export const SECTION_KEYS = ["subject_definitions", "summary", "retention_analys
 export const OVERRIDE_KEYS = ["seed", "steps", "sampler", "scheduler", "width", "height",
   "diffusion", "text_encoder", "video_vae", "audio_vae"];
 [/OLD] */
+/* [OLD 2026-11-10 v0.18.0->v0.19.0] no hires overrides
 export const OVERRIDE_KEYS = ["seed", "steps", "sampler", "scheduler", "width", "height",
   "diffusion", "text_encoder", "video_vae", "audio_vae", "quality"];
+[/OLD] */
+// added 2026-11-10 v0.19.0: hires ("off"), refine_steps, refine_denoise (model.py the same)
+export const OVERRIDE_KEYS = ["seed", "steps", "sampler", "scheduler", "width", "height",
+  "diffusion", "text_encoder", "video_vae", "audio_vae", "quality", "hires", "refine_steps", "refine_denoise"];
 export const TRANSITIONS = ["cut", "crossfade", "dip"]; // added 2026-11-02 v0.3.0
 // added 2026-11-05 v0.7.0: scene.merge (same values as reelwright/model.py). TRANSITIONS stays for the deprecated
 // scene.transition (read once, by the migration in normMerge)
@@ -233,7 +238,10 @@ function defaultGlobal() {
     sampling: { steps: 20, sampler: "res_multistep", scheduler: "simple", seed: 104729,
       seed_mode: "increment", sigma_shift: false, shift_video: 12.0, shift_audio: 3.0 },
     quality: "final",
-    draft: { scale: 0.5, steps: 8, lora: "", lora_strength: 1.0 },
+    // [OLD 2026-11-10 v0.18.0->v0.19.0] draft: { scale: 0.5, steps: 8, lora: "", lora_strength: 1.0 },
+    draft: { scale: 0.5, steps: 8, lora: "", lora_strength: 1.0, hires: false }, // hires: added 2026-11-10 v0.19.0
+    // added 2026-11-10 v0.19.0: Global → Hires, the latent upscaler (see reelwright/model.py default_global)
+    hires: { enabled: false, scale: 2.0, refine_steps: 0, refine_denoise: 0.35 },
     defaults: { duration: 8.0, start_mode: "last_frame", overlap_frames: 39, language: "English" },
     // [OLD 2026-11-05 v0.7.0->v0.8.0] long: { max_pass_frames: 362, overlap_frames: 39, crossfade_frames: 12, seam_mode: "auto", cut_snap_seconds: 2.0 },
     // added 2026-11-05 v0.8.0: long-scene continuity switches (see reelwright/model.py default_global); the defaults keep
@@ -351,6 +359,7 @@ export function defaultScene(project, patch = {}) {
     // added 2026-11-05 v0.7.0: how the scene sits in the cut (replaces "transition" and Global -> Merge's transition
     // and colour-match settings)
     merge: defaultMerge(),
+    pass_names: {}, // added 2026-11-10 v0.19.0: names of the scene's passes (passNames)
     ...patch,
   };
 }
@@ -403,6 +412,11 @@ export function normalizeGlobal(g, p = null) {
   if (!LONG_HANDOFF.includes(out.long.handoff)) out.long.handoff = "pixels";
   if (!LONG_PASS_CACHE.includes(out.long.pass_cache)) out.long.pass_cache = "near_lossless";
   if (!SUBTITLE_TIMING.includes(out.merge.subtitle_timing)) out.merge.subtitle_timing = "speech"; // added 2026-11-06 v0.10.0
+  // added 2026-11-10 v0.19.0: Global → Hires (model.py normalize_global the same)
+  const hi = out.hires;
+  hi.scale = Math.min(HIRES_MAX_SCALE, Math.max(1, hi.scale));
+  hi.refine_steps = Math.min(100, Math.max(0, Math.trunc(hi.refine_steps)));
+  hi.refine_denoise = Math.min(1, Math.max(0.01, hi.refine_denoise));
   out.loras = objects(out.loras);
   for (const l of out.loras) normLora(l);
   // a profile saved in another project may name a score asset or colour scene this project lacks
@@ -701,6 +715,33 @@ export function assetGroupName(project, a) {
 // added 2026-11-06 v0.9.0 (model.py asset_tags): the strings (and numbers) of a list with runs of spaces, tabs and line
 // breaks made one space, cut to 60 characters and trimmed; empty and repeated tags (same spelling) are dropped
 export const TAG_MAX = 60;
+// added 2026-11-10 v0.19.0: scene.pass_names {"<pass number>": name} (model.py pass_names, the same rules)
+export const PASS_NAME_MAX = 60;
+export function passNames(v) {
+  const out = {};
+  if (!isObj(v)) return out;
+  for (const [k, x] of Object.entries(v)) {
+    const t = text(x, null);
+    if (!/^[1-9][0-9]{0,2}$/.test(k) || t === null) continue;
+    const name = Array.from(t.replace(/[ \t\n\r]+/g, " ")).slice(0, PASS_NAME_MAX).join("").replace(/^ +| +$/g, "");
+    if (name) out[k] = name;
+  }
+  return out;
+}
+// "Pass 2 · Harbour", or "Pass 2" without a name (the number is always first); k is 1-based
+// [OLD 2026-11-10 v0.19.0 bug search] passLabel had no count, so "Pass 3 of 3" became "Pass 3 (of 3)" where the count shows
+// export function passLabel(scene, k) {
+//   const name = scene?.pass_names?.[String(k)];
+//   return name ? `Pass ${k} · ${name}` : `Pass ${k}`;
+// }
+// [/OLD]
+// of: the number of passes, for "Pass 3 of 3 · Harbour" (added 2026-11-10 v0.19.0 bug search)
+export function passLabel(scene, k, of = 0) {
+  const name = scene?.pass_names?.[String(k)];
+  const head = of ? `Pass ${k} of ${of}` : `Pass ${k}`;
+  return name ? `${head} · ${name}` : head;
+}
+
 export function assetTags(v) {
   const out = [];
   for (const x of texts(v)) {
@@ -834,7 +875,8 @@ function normScene(s, d, lang, usedIds) {
   pr.passes = Array.isArray(pr.passes) ? pr.passes.map(normPassText) : [];
 
   const o = s.overrides = isObj(s.overrides) ? s.overrides : {};
-  for (const k of ["seed", "steps", "width", "height"]) {
+  // [OLD 2026-11-10 v0.18.0->v0.19.0] for (const k of ["seed", "steps", "width", "height"]) {
+  for (const k of ["seed", "steps", "width", "height", "refine_steps"]) { // refine_steps: added 2026-11-10 v0.19.0
     if (!Object.hasOwn(o, k)) continue;
     const v = num(o[k], null);
     if (v === null) delete o[k]; // "" or junk: follow Global
@@ -843,6 +885,14 @@ function normScene(s, d, lang, usedIds) {
   for (const k of ["sampler", "scheduler", "diffusion", "text_encoder", "video_vae", "audio_vae", "quality"]) {
     if (Object.hasOwn(o, k) && typeof o[k] !== "string") delete o[k];
   }
+  // added 2026-11-10 v0.19.0: the hires overrides (model.py the same)
+  if (Object.hasOwn(o, "refine_steps")) o.refine_steps = Math.min(100, Math.max(0, o.refine_steps));
+  if (Object.hasOwn(o, "refine_denoise")) {
+    const v = num(o.refine_denoise, null);
+    if (v === null) delete o.refine_denoise;
+    else o.refine_denoise = Math.min(1, Math.max(0.01, v));
+  }
+  if (Object.hasOwn(o, "hires") && o.hires !== "off") delete o.hires; // only "off" means something
   if (Object.hasOwn(o, "loras")) {
     const lo = o.loras;
     if (!isObj(lo)) delete o.loras;
@@ -856,6 +906,7 @@ function normScene(s, d, lang, usedIds) {
   }
   s.lock = flag(s.lock, false);
   textField(s, "notes", "");
+  s.pass_names = passNames(s.pass_names); // added 2026-11-10 v0.19.0
   const tn = s.transition = isObj(s.transition) ? s.transition : {};
   tn.mode = ["", ...TRANSITIONS].includes(tn.mode) ? tn.mode : "";
   for (const k of ["frames", "audio_fade_frames"]) tn[k] = num(tn[k], null);
@@ -1314,6 +1365,8 @@ const GLOBAL_PATH = {
   diffusion: g => g.models.diffusion, text_encoder: g => g.models.text_encoder,
   video_vae: g => g.models.video_vae, audio_vae: g => g.models.audio_vae,
   quality: g => g.quality, // added 2026-11-02 v0.3.0
+  // added 2026-11-10 v0.19.0: Global → Hires ("" = as Global; a scene can only turn it "off")
+  hires: () => "", refine_steps: g => g.hires.refine_steps, refine_denoise: g => g.hires.refine_denoise,
 };
 
 export function effective(project, scene, key) {
@@ -1606,6 +1659,61 @@ export function tilePixels(pics, width, height, refSize = "match") {
   const W = cols * cw, H = rows * ch;
   const s = refSize === "max" ? Math.min(1, 2048 / Math.min(W, H)) : Math.min(1, Math.sqrt(width * height / (W * H)));
   return Math.floor(Math.min(cw, ch) * s + 0.5);
+}
+
+// ---- added 2026-11-10 v0.19.0: Global → Hires, the latent upscaler (model.py hires_size / scene_hires the same)
+export const HIRES_MAX_SCALE = 4;
+export const HIRES_SCALES = [1.25, 1.5, 1.75, 2];
+// "draft" or "final": the scene's own choice, else Global (model.py scene_quality)
+export function sceneQuality(project, scene) {
+  const q = scene?.overrides?.quality;
+  return q === "draft" || q === "final" ? q : project.global.quality;
+}
+// on H3's 32-pixel grid, half up (model.py _snap32)
+export function snap32(v) {
+  return Math.max(32, Math.floor(v / 32 + 0.5) * 32);
+}
+// the size every take of the project ends at: Global → Output × scale while Hires is on, else Global → Output
+export function hiresSize(g) {
+  const w = Math.trunc(g.output.width), h = Math.trunc(g.output.height);
+  const hi = g.hires || {};
+  if (!hi.enabled || !(Number(hi.scale) > 1)) return [w, h];
+  return [snap32(w * hi.scale), snap32(h * hi.scale)];
+}
+// the merged film's size
+export function projectOutputSize(project) {
+  return hiresSize(project.global);
+}
+// the size a scene is sampled at, as model.py resolve_settings (its own size else Global; a draft at Draft → scale with
+// spec.snap_canvas, which rounds half to even like Python's round)
+export function sceneSampleSize(project, scene) {
+  const g = project.global, o = scene?.overrides || {};
+  let w = Math.trunc(num(o.width, 0)) || g.output.width, h = Math.trunc(num(o.height, 0)) || g.output.height;
+  if (sceneQuality(project, scene) === "draft") {
+    const r = x => { const f = Math.floor(x), d = x - f; return d > 0.5 || (d === 0.5 && f % 2 === 1) ? f + 1 : f; };
+    const ds = g.draft.scale;
+    w = Math.max(32, r(w * ds / 32) * 32);
+    h = Math.max(32, r(h * ds / 32) * 32);
+  }
+  return [w, h];
+}
+// what the latent upscaler does to a scene (model.py scene_hires), or null
+export function sceneHires(project, scene) {
+  const g = project.global, hi = g.hires || {}, o = scene?.overrides || {};
+  const quality = sceneQuality(project, scene);
+  if (!hi.enabled || o.hires === "off" || (quality === "draft" && !g.draft.hires)) return null;
+  const [w, h] = sceneSampleSize(project, scene);
+  const [fw, fh] = hiresSize(g);
+  const s = Math.min(fw / w, fh / h);
+  if (s <= 1 + 1e-9) return null;
+  const out = { model: g.models.latent_upscaler || "", width: Math.min(fw, snap32(w * s)), height: Math.min(fh, snap32(h * s)) };
+  const steps = o.refine_steps !== undefined && o.refine_steps !== null ? Math.trunc(o.refine_steps) : Math.trunc(hi.refine_steps);
+  if (quality !== "draft" && steps > 0) {
+    const d = o.refine_denoise !== undefined && o.refine_denoise !== null ? o.refine_denoise : hi.refine_denoise;
+    out.refine_steps = steps;
+    out.refine_denoise = Math.round(d * 1e4) / 1e4;
+  }
+  return out;
 }
 
 // added 2026-11-09 v0.16.0: the output size a scene renders at (model.py resolve_settings: its own size, else Global;

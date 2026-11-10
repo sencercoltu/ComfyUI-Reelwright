@@ -1181,3 +1181,9 @@ body.rw-sorting, body.rw-sorting * { cursor: grabbing !important; user-select: n
 .rw-vanchor-frame img { width: 54px; height: 54px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line2); flex: none; }
 .rw-anchor-ready { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rw-c-ok { color: var(--ok); } /* added 2026-11-10 v0.18.0 */
+/* added 2026-11-10 v0.19.0: pass names on the Prompt card's tabs; Write prompts' pass list; the Hires note */
+.rw-ptab-name { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.rw-write-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+.rw-write-pass { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 8px; align-items: center; }
+.rw-write-pass > :last-child { grid-column: 2 / -1; margin-top: -2px; }
+.rw-hires-note { padding: 2px 0 6px; }

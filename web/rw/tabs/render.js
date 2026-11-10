@@ -8,6 +8,7 @@ import { rw, viewURL } from "../api.js";
 // [OLD 2026-11-03 v0.4.3->v0.5.0] import { continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, overlapSeconds } from "../model.js";
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, overlapSeconds, soundtrackLocked, playingTracks } from "../model.js";  (effective start / overlap helpers, normalize for the version diff)
 import { continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, soundtrackLocked, playingTracks, effectiveStart, sceneOverlapAt, normalizeProject } from "../model.js";
+import { passLabel } from "../model.js"; // added 2026-11-10 v0.19.0: pass names
 import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
 
 const STATUS = {
@@ -130,7 +131,8 @@ function runBanner(ctx) {
 function isFinal(ctx, phase) {
   return ctx.isFinal ? ctx.isFinal(phase) : ["done", "cached", "error", "skipped"].includes(phase);
 }
-const PHASE_TEXT = { reuse: "from cache" };
+// [OLD 2026-11-10 v0.18.0->v0.19.0] const PHASE_TEXT = { reuse: "from cache" };
+const PHASE_TEXT = { reuse: "from cache", upscale: "upscaling", refine: "refining" }; // v0.19.0: Global → Hires
 // "pass 2/3 · sample · step 9/20" for a progress event; a pass read from the pass cache says "from cache"
 function progressText(prog) {
   const phase = PHASE_TEXT[prog.phase] || prog.phase;
@@ -322,7 +324,8 @@ function passRetakeRow(ctx, s, plan, starred) {
   if (passes.length < 2) return null;
   return h("div", { class: "rw-row wrap rw-pass-retake", help: "render.passRetake" },
     h("span", { class: "rw-dim small" }, starred ? "Retake one pass:" : "Pass retake needs a starred take."),
-    passes.map((ps, k) => button({ label: `Pass ${k + 1}`, small: true, help: "render.passRetake.pass", disabled: !starred,
+    // [OLD 2026-11-10 v0.18.0->v0.19.0] passes.map((ps, k) => button({ label: `Pass ${k + 1}`, small: true, help: "render.passRetake.pass", disabled: !starred,
+    passes.map((ps, k) => button({ label: passLabel(s, k + 1), small: true, help: "render.passRetake.pass", disabled: !starred, // v0.19.0: its name
       ariaLabel: `Retake pass ${k + 1} (${fmtTime(ps.start ?? 0, false)}–${fmtTime(ps.end ?? 0, false)})`,
       onClick: () => ctx.actions.run("pass_retake", [], { scene_id: s.id, pass: k + 1 }) })),
     h("span", { class: "rw-dim small" }, "A new seed for that pass; earlier passes are kept, later ones follow it."));
@@ -514,7 +517,8 @@ export function versionDiff(cur, raw) {
   if (g.output?.width !== og.output?.width || g.output?.height !== og.output?.height) gbits.push(`size ${g.output?.width}×${g.output?.height} → ${og.output?.width}×${og.output?.height}`);
   if (g.sampling?.steps !== og.sampling?.steps) gbits.push(`steps ${g.sampling?.steps} → ${og.sampling?.steps}`);
   if (g.sampling?.seed !== og.sampling?.seed || g.sampling?.seed_mode !== og.sampling?.seed_mode) gbits.push("seed");
-  const groups = { models: "models", loras: "LoRAs", draft: "draft", defaults: "new-scene defaults", long: "long scenes", memory: "memory", continuity: "continuity", llm: "LLM", merge: "merge" };
+  // [OLD 2026-11-10 v0.18.0->v0.19.0] const groups = { models: "models", loras: "LoRAs", draft: "draft", defaults: "new-scene defaults", long: "long scenes", memory: "memory", continuity: "continuity", llm: "LLM", merge: "merge" };
+  const groups = { models: "models", loras: "LoRAs", draft: "draft", hires: "hires", defaults: "new-scene defaults", long: "long scenes", memory: "memory", continuity: "continuity", llm: "LLM", merge: "merge" }; // v0.19.0: hires
   for (const [k, label] of Object.entries(groups)) if (!same(g[k], og[k])) gbits.push(label);
   const sampOther = { ...(g.sampling || {}), steps: 0, seed: 0, seed_mode: "" }, oSampOther = { ...(og.sampling || {}), steps: 0, seed: 0, seed_mode: "" };
   if (!same(sampOther, oSampOther)) gbits.push("sampler");
@@ -589,6 +593,8 @@ function takesTable(ctx) {
         tk.files?.first ? h("img", { class: "rw-take-thumb", src: viewURL(tk.files.first), alt: "" }) : h("span", { class: "rw-take-thumb" }),
         h("b", { class: "mono" }, tk.id),
         h("span", { class: "rw-tag" }, tk.quality || "final"),
+        // added 2026-11-10 v0.19.0: a take made with Global → Hires says the size the latent upscaler made
+        tk.out_width && h("span", { class: "rw-tag", help: "render.take.hires" }, `hires ${tk.out_width}×${tk.out_height}${tk.hires?.refine_steps ? " · refined" : ""}`),
         // added 2026-11-02 v0.2.0: file name of this take
         tk.files?.video && h("span", { class: "mono small rw-dim rw-ellipsis rw-take-file", title: "output/" + tk.files.video, help: "render.take.file" }, baseName(tk.files.video)),
         h("span", { class: "mono rw-dim" }, `${(tk.seconds ?? 0).toFixed(2)} s · ${tk.frames ?? "?"} f`),
@@ -675,6 +681,8 @@ function takesTable(ctx) {
         tk.files?.first ? h("img", { class: "rw-take-thumb", src: viewURL(tk.files.first), alt: "" }) : h("span", { class: "rw-take-thumb" }),
         h("b", { class: "mono" }, tk.id),
         h("span", { class: "rw-tag" }, tk.quality || "final"),
+        // added 2026-11-10 v0.19.0: a take made with Global → Hires says the size the latent upscaler made
+        tk.out_width && h("span", { class: "rw-tag", help: "render.take.hires" }, `hires ${tk.out_width}×${tk.out_height}${tk.hires?.refine_steps ? " · refined" : ""}`),
         tk.files?.video && h("span", { class: "mono small rw-dim rw-ellipsis rw-take-file", title: "output/" + tk.files.video, help: "render.take.file" }, baseName(tk.files.video)),
         h("span", { class: "mono rw-dim" }, `${(tk.seconds ?? 0).toFixed(2)} s · ${tk.frames ?? "?"} f`),
         h("span", { class: "rw-dim small" }, tk.created ? new Date(tk.created * (tk.created < 1e12 ? 1000 : 1)).toLocaleString() : ""),

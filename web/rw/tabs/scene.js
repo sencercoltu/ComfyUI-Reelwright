@@ -43,6 +43,8 @@ import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the gr
 import { partOwner } from "../model.js"; // added 2026-11-08 v0.11.0: a prop that is part of a character
 import { sceneTilePixels, SMALL_TILE_PX } from "../model.js"; // added 2026-11-09 v0.16.0: sheet pictures too small for identity
 import { scenePeople } from "../model.js"; // added 2026-11-08 v0.12.0: the characters a pose reference can be for
+import { hiresSize, sceneHires, sceneSampleSize, sceneQuality } from "../model.js"; // added 2026-11-10 v0.19.0: Global → Hires
+import { passLabel, passNames } from "../model.js"; // added 2026-11-10 v0.19.0: pass names ("Pass 2 · Harbour")
 import { refClip, refTrimmed, refTokens, snapFrame } from "../model.js"; // added 2026-11-08 v0.14.0: clips of video / audio references
 import { copyWithToast } from "../ui.js"; // added 2026-11-08 v0.14.0: copy a clip's @ tag
 
@@ -439,6 +441,8 @@ function overridesCard(ctx, s) {
       row("quality", "Quality", () => segmented({ small: true, value: s.overrides.quality || "", help: "scene.override.quality",
         options: [{ value: "", label: `Global · ${p.global.quality}`, help: "scene.override.quality" }, { value: "draft", label: "Draft", help: "scene.override.quality" }, { value: "final", label: "Final", help: "scene.override.quality" }],
         onChange: v => set("quality", v || null) })),
+      // added 2026-11-10 v0.19.0: Global → Hires for this scene: off, or another refine (the size is the project's)
+      hiresRows(ctx, s, row, set),
       row("seed", "Seed", num("seed", { min: 0, width: "120px" })),
       row("steps", "Steps", num("steps", { min: 1, max: 200 })),
       row("sampler", "Sampler", sel(models.samplers, "sampler")),
@@ -451,6 +455,33 @@ function overridesCard(ctx, s) {
       row("audio_vae", "Audio VAE", sel(models.vae, "audio_vae")),
     ],
   });
+}
+
+// added 2026-11-10 v0.19.0: the Hires rows of the Generation card (only while Global → Hires is on). The size is the
+// project's (Global → Hires → scale); a scene can turn it off (the merge enlarges it) or change the refine.
+function hiresRows(ctx, s, row, set) {
+  const p = ctx.p, hi = p.global.hires;
+  if (!hi.enabled) return null;
+  const [fw, fh] = hiresSize(p.global);
+  const mine = sceneHires(p, s);
+  const [sw, sh] = sceneSampleSize(p, s);
+  const off = s.overrides.hires === "off";
+  const steps = effective(p, s, "refine_steps");
+  const draft = sceneQuality(p, s) === "draft";
+  return [
+    row("hires", "Hires", () => segmented({ small: true, value: off ? "off" : "", help: "scene.override.hires", key: `hires-${s.id}`,
+      options: [{ value: "", label: `Global · ${fw}×${fh}`, help: "scene.override.hires" }, { value: "off", label: "Off", help: "scene.override.hires" }],
+      onChange: v => set("hires", v || null) })),
+    !off && !draft && row("refine_steps", "Refine steps", e => number({ value: e.value, min: 0, max: 100, help: "scene.override.refine_steps", key: `refine-steps-${s.id}`,
+      onChange: v => set("refine_steps", v === null ? null : Math.min(100, Math.max(0, Math.trunc(v)))) })),
+    !off && !draft && steps.value > 0 && row("refine_denoise", "Refine denoise", e => number({ value: e.value, min: 0.01, max: 1, step: 0.05, width: "74px",
+      help: "scene.override.refine_denoise", key: `refine-dn-${s.id}`, onChange: v => set("refine_denoise", v === null ? null : Math.min(1, Math.max(0.01, v))) })),
+    h("div", { class: "rw-dim small rw-hires-note", help: "scene.override.hires" }, mine
+      ? `Sampled at ${sw}×${sh}, enlarged to ${mine.width}×${mine.height}${mine.refine_steps ? `, ${mine.refine_steps} refine step${mine.refine_steps === 1 ? "" : "s"} at ${mine.refine_denoise}` : ""}${mine.width !== fw || mine.height !== fh ? ` (its own shape; the merge fits it into ${fw}×${fh})` : ""}.`
+      : off ? `Made at ${sw}×${sh}; the merge enlarges it to ${fw}×${fh}.`
+        : draft ? `A draft: made at ${sw}×${sh} (Global → Draft quality → Upscale drafts is off); the merge enlarges it.`
+          : `Made at ${sw}×${sh}: nothing to enlarge.`),
+  ];
 }
 
 // [OLD 2026-11-05 v0.7.0->v0.8.0] one set of sections per scene; v0.8.0: pass tabs with their own sections (promptCard below)
@@ -588,7 +619,8 @@ function promptCard(ctx, s) {
           h("b", null, "Whole scene")),
         plan.passes.map((ps, k) => h("button", { type: "button", role: "tab", "aria-selected": tab === k ? "true" : "false", class: ["rw-ptab", tab === k && "on", pt.movedPasses.includes(k + 1) && "moved"],
           key: `ptab-${s.id}-${k + 1}`, help: "scene.prompt.tab.pass", onClick: () => setTab(k) },
-        h("b", null, `Pass ${k + 1}`), h("span", { class: "mono" }, ` · ${fmtTime(ps.start)}–${fmtTime(ps.end)}`),
+        // [OLD 2026-11-10 v0.18.0->v0.19.0] h("b", null, `Pass ${k + 1}`), h("span", { class: "mono" }, ` · ${fmtTime(ps.start)}–${fmtTime(ps.end)}`),
+        h("b", { class: "rw-ptab-name" }, passLabel(s, k + 1)), h("span", { class: "mono" }, ` · ${fmtTime(ps.start)}–${fmtTime(ps.end)}`), // v0.19.0: its name
         ownDot(k) && h("span", { class: "rw-ptab-dot", help: "scene.prompt.tab.pass" })))),
       tab < 0 ? SECTION_KEYS.map(sectionEditor) : passPane(ctx, s, plan, pt, tab, { cands, write, busy }),
     ];
@@ -665,8 +697,18 @@ function promptCard(ctx, s) {
       // added 2026-11-09 v0.15.0: the last Write prompts output of this scene, after it ended (while it runs, the
       // progress row has the button)
       !raw && !mine && ctx.eph.lastWrite?.[s.id] && outputButton(ctx, { job: ctx.eph.lastWrite[s.id], title: "Write prompts · last LLM output", key: `write-out-last-${s.id}`, label: false }),
+      /* [OLD 2026-11-10 v0.18.0->v0.19.0] every pass, without asking
       !raw && button({ label: mine && !run.items[run.at]?.passes ? "Writing…" : "Write prompts", icon: "wand", small: true, variant: "pink", key: `write-${s.id}`,
         help: multi ? "scene.prompt.write" : "scene.prompt.writeOne", disabled: busy, onClick: () => write(null) }),
+      [/OLD] */
+      // added 2026-11-10 v0.19.0: a scene of several passes asks which passes the LLM writes (all ticked); "Writing…"
+      // while it writes this scene, unless it writes one pass (that pass's button says so)
+      !raw && button({ label: mine && (run.items[run.at]?.passes?.length ?? 0) !== 1 ? "Writing…" : "Write prompts", icon: "wand", small: true, variant: "pink", key: `write-${s.id}`,
+        help: multi ? "scene.prompt.write" : "scene.prompt.writeOne", disabled: busy, onClick: async () => {
+          if (!multi) return write(null);
+          const list = await pickPasses(ctx, s, plan, pt);
+          if (list) write(list.length === plan.passes.length ? null : list);
+        } }),
       segmented({ small: true, value: s.prompt.mode, help: "scene.prompt.mode", key: `pmode-${s.id}`, options: [
         { value: "structured", label: "Structured", help: "scene.prompt.structured" }, { value: "raw", label: "Raw", help: "scene.prompt.raw" }],
       onChange: v => ctx.actions.editScene(s.id, sc => { sc.prompt.mode = v; }, { label: v === "raw" ? "Raw prompt mode" : "Structured prompt mode" }) }),
@@ -829,7 +871,8 @@ async function resetDialog(ctx, s, { plan, multi, pt, hasBrief }) {
       multi && h("div", { class: "rw-reset-scope" },
         segmented({ small: true, value: scope, help: "scene.prompt.resetScope", options: [
           { value: 0, label: "Whole scene", help: "scene.prompt.resetScope" },
-          ...plan.passes.map((_, k) => ({ value: k + 1, label: `Pass ${k + 1}`, help: "scene.prompt.resetScope" }))],
+          // [OLD 2026-11-10 v0.18.0->v0.19.0] ...plan.passes.map((_, k) => ({ value: k + 1, label: `Pass ${k + 1}`, help: "scene.prompt.resetScope" }))],
+          ...plan.passes.map((_, k) => ({ value: k + 1, label: passLabel(s, k + 1), help: "scene.prompt.resetScope" }))], // v0.19.0: names
         onChange: v => { scope = v; paint(); msg.querySelector('.rw-reset-scope [aria-checked="true"]')?.focus({ preventScroll: true }); } }),
         h("div", { class: "rw-dim small" }, ps
           ? `${fmtTime(ps.start)}–${fmtTime(ps.end)}: its own sections (the shared ones on Whole scene stay)${x.hand ? ", its hand-edited prompt" : ""}, the shots and the lines that start in it.`
@@ -897,6 +940,53 @@ function handEditedNote(ctx, s) {
     } }));
 }
 
+// added 2026-11-10 v0.19.0: Write prompts on a scene of several passes asks which passes the LLM writes (Sencer: "if
+// there are more than one passes, Write prompts should have the passes listed for which LLM will write, default all
+// checked."). Resolves the ticked 1-based pass numbers, or null when cancelled. The passes left out keep their text.
+async function pickPasses(ctx, s, plan, pt) {
+  const on = plan.passes.map(() => true);
+  const msg = h("div", { class: "rw-reset rw-write-pick", help: "scene.prompt.writePick" });
+  const okBtn = () => msg.closest(".rw-modal-box")?.querySelector(".rw-modal-actions")?.lastElementChild;
+  const sync = () => {
+    const n = on.filter(Boolean).length;
+    const b = okBtn();
+    if (!b) return;
+    b.disabled = !n;
+    const label = b.querySelector("span");
+    if (label) label.textContent = n === on.length ? `Write all ${n} passes` : n ? `Write ${n} pass${n === 1 ? "" : "es"}` : "Write";
+  };
+  const setAll = v => { on.fill(v); msg.querySelectorAll("input[data-pass]").forEach(i => { i.checked = v; }); sync(); };
+  const rows = plan.passes.map((ps, k) => {
+    const own = SECTION_KEYS.some(key => String(pt.texts[k]?.[key] || "").trim());
+    const hand = s.prompt.pass_prompts?.[String(k + 1)] !== undefined;
+    return h("label", { class: "rw-check rw-write-pass", help: "scene.prompt.writePick" },
+      h("input", { type: "checkbox", checked: true, "data-pass": String(k + 1), onChange: e => { on[k] = e.target.checked; sync(); } }),
+      h("b", { class: "rw-ellipsis" }, passLabel(s, k + 1)),
+      h("span", { class: "mono rw-dim small" }, `${fmtTime(ps.start)}–${fmtTime(ps.end)}`),
+      h("span", { class: ["small", hand ? "rw-c-warn" : "rw-dim"] }, hand ? "edited by hand: that prompt stays in use" : own ? "its own text is replaced" : "nothing of its own yet"));
+  });
+  msg.replaceChildren(
+    h("div", { class: "rw-write-list" }, rows),
+    h("div", { class: "rw-reset-quick" },
+      button({ label: "Tick all", small: true, variant: "ghost", help: "scene.prompt.writePick", onClick: () => setAll(true) }),
+      button({ label: "Untick all", small: true, variant: "ghost", help: "scene.prompt.writePick", onClick: () => setAll(false) })),
+    h("div", { class: "rw-dim small" }, "One LLM request per ticked pass. The passes you untick keep their text."));
+  const asked = confirmDialog(ctx.root, { title: "Write prompts: which passes?", okLabel: `Write all ${on.length} passes`, danger: false,
+    help: "scene.prompt.writePick", message: msg });
+  sync();
+  if (!await asked) return null;
+  return on.map((v, k) => (v ? k + 1 : 0)).filter(Boolean);
+}
+
+// added 2026-11-10 v0.19.0: set (or clear, when empty) the name of pass n (1-based) of a scene being edited
+function setPassName(sc, n, v) {
+  const name = passNames({ [String(n)]: v })[String(n)];
+  const names = { ...(sc.pass_names || {}) };
+  if (name) names[String(n)] = name;
+  else delete names[String(n)];
+  sc.pass_names = names;
+}
+
 // added 2026-11-05 v0.8.0: one pass of a multi-pass scene: its own sections, its shots and dialogue (scene times)
 function passPane(ctx, s, plan, pt, k, { cands, write, busy }) {
   const ps = plan.passes[k];
@@ -941,10 +1031,16 @@ function passPane(ctx, s, plan, pt, k, { cands, write, busy }) {
   return h("div", { class: "rw-pass-pane", help: "scene.prompt.tab.pass" },
     h("div", { class: "rw-pass-head" },
       h("b", null, `Pass ${n} of ${plan.passes.length}`),
+      // added 2026-11-10 v0.19.0: the pass's name (Sencer: "we should be able to rename passes. pass number is always in
+      // front."); shown as "Pass 2 · name" on its tab and wherever passes are listed
+      text({ value: s.pass_names?.[String(n)] || "", placeholder: "name this pass", key: `pass-name-${s.id}-${n}`, help: "scene.prompt.passName", width: "190px",
+        onInput: v => ctx.actions.editScene(s.id, sc => { setPassName(sc, n, v); }, { coalesce: `pass-name-${s.id}-${n}`, render: false, label: `Pass ${n} name` }),
+        onChange: () => ctx.store.notify() }),
       h("span", { class: "mono rw-dim small" }, `${fmtTime(ps.start)}–${fmtTime(ps.end)} · ${(ps.end - ps.start).toFixed(2)} s · ${ps.gen_frames} f`),
       h("span", { class: "rw-dim small" }, "· " + seam),
       h("span", { class: "rw-flex" }),
-      button({ label: busy && ctx.eph.passWrite?.items?.[ctx.eph.passWrite.at]?.passes?.[0] === n && ctx.eph.passWrite.items[ctx.eph.passWrite.at].sid === s.id ? "Writing…" : "Write this pass",
+      // [OLD 2026-11-10 v0.18.0->v0.19.0] button({ label: busy && ctx.eph.passWrite?.items?.[ctx.eph.passWrite.at]?.passes?.[0] === n && ctx.eph.passWrite.items[ctx.eph.passWrite.at].sid === s.id ? "Writing…" : "Write this pass",
+      button({ label: busy && ctx.eph.passWrite?.items?.[ctx.eph.passWrite.at]?.passes?.length === 1 && ctx.eph.passWrite.items[ctx.eph.passWrite.at].passes[0] === n && ctx.eph.passWrite.items[ctx.eph.passWrite.at].sid === s.id ? "Writing…" : "Write this pass", // v0.19.0: only when it writes this pass alone
         icon: "wand", small: true, variant: "pink", key: `write-${s.id}-${n}`, help: "scene.prompt.writePass", disabled: busy, onClick: () => write([n]) })),
     handEdited && h("div", { class: "rw-note warn", help: "scene.preview.override" }, icon("warn", 12),
       h("span", { class: "grow" }, "This pass's prompt is edited by hand (What H3 receives), so these sections are not used for it."),
@@ -1452,7 +1548,8 @@ function previewCard(ctx, s) {
         return h("button", {
           type: "button", class: ["rw-pass-tab", i === open && "on"], help: "scene.preview.pass",
           onClick: () => ctx.store.setEph({ openPasses: { ...ctx.eph.openPasses, [s.id]: i } }),
-        }, `Pass ${i + 1}`, ps && h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)} · ${ps.gen_frames} f${ps.seam_before && ps.seam_before !== "none" ? " · " + ps.seam_before : ""}`),
+        // [OLD 2026-11-10 v0.18.0->v0.19.0] }, `Pass ${i + 1}`, ps && h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)} · ${ps.gen_frames} f${ps.seam_before && ps.seam_before !== "none" ? " · " + ps.seam_before : ""}`),
+        }, passLabel(s, i + 1), ps && h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)} · ${ps.gen_frames} f${ps.seam_before && ps.seam_before !== "none" ? " · " + ps.seam_before : ""}`), // v0.19.0: names
         overrides[String(i + 1)] !== undefined && h("span", { class: "rw-c-accent" }, " ●"));
       })),
       long && hasOverride
@@ -1475,7 +1572,9 @@ function previewCard(ctx, s) {
         const own = overrides[String(i + 1)] !== undefined;
         return h("div", { class: "rw-h3-pass", key: `h3pass-${s.id}-${i + 1}` },
           shownPasses.length > 1 || (prompts.length > 1 && tab >= 0) ? h("div", { class: "rw-h3-pass-head", help: "scene.preview.pass" },
-            h("b", null, `Pass ${i + 1} of ${prompts.length}`),
+            // [OLD 2026-11-10 v0.18.0->v0.19.0] h("b", null, `Pass ${i + 1} of ${prompts.length}`),
+            // [OLD 2026-11-10 v0.19.0 bug search] h("b", null, `${passLabel(s, i + 1)} (of ${prompts.length})`), // v0.19.0: its name
+            h("b", null, passLabel(s, i + 1, prompts.length)), // v0.19.0: "Pass 3 of 3 · name"
             ps && h("span", { class: "mono rw-dim small" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)} · ${ps.gen_frames} f${ps.seam_before && ps.seam_before !== "none" ? " · " + ps.seam_before : ""}`),
             own && h("span", { class: "rw-c-accent small", help: "scene.preview.override" }, " ● edited by hand"),
             // added 2026-11-06 v0.10.0: copy this pass's prompt
@@ -1696,7 +1795,8 @@ function rewriteCard(ctx, s) {
   }
   return section({
     // [OLD 2026-11-06 v0.9.0->v0.10.0] title: "Prompt rewriter", help: "scene.rewrite", tint: "dlg",
-    title: passK >= 0 ? `Prompt rewriter · pass ${passK + 1}` : "Prompt rewriter", help: "scene.rewrite", tint: "dlg", // added 2026-11-06 v0.10.0
+    // [OLD 2026-11-10 v0.18.0->v0.19.0] title: passK >= 0 ? `Prompt rewriter · pass ${passK + 1}` : "Prompt rewriter", help: "scene.rewrite", tint: "dlg", // added 2026-11-06 v0.10.0
+    title: passK >= 0 ? `Prompt rewriter · ${passLabel(s, passK + 1)}` : "Prompt rewriter", help: "scene.rewrite", tint: "dlg", // v0.19.0: its name
     actions: h("span", { class: "mono rw-dim small", help: "global.llm" }, llm.model ? `${llm.model}` : "set up in Global → LLM"),
     children: [
       h("div", { class: "rw-row" }, instr,
@@ -1751,7 +1851,8 @@ function passBudgets(ctx, s) {
     passes.map((ps, k) => {
       const x = sceneBudget(p, s, ps);
       return h("div", { class: ["rw-budget-pass mono small", over(x) && "over"], help: "scene.budget.pass" },
-        h("b", null, `Pass ${k + 1}`),
+        // [OLD 2026-11-10 v0.18.0->v0.19.0] h("b", null, `Pass ${k + 1}`),
+        h("b", null, passLabel(s, k + 1)), // v0.19.0: its name
         h("span", null, `${x.pictures} pic · ${x.videos} vid · ${x.audio} aud${x.song ? " (song)" : ""} · ${x.files} files`),
         over(x) && icon("warn", 11));
     }));

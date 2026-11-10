@@ -291,7 +291,11 @@ export async function runWrite(ctx, items, { origin = "scene", label = "" } = {}
       const n = Array.isArray(res?.passes) ? res.passes.length : 0;
       if (n && store.project.scenes.some(x => x.id === it.sid)) {
         const multi = passLayout(store.project, store.project.scenes.find(x => x.id === it.sid)).passes.length > 1;
-        const what = it.passes?.length === 1 && multi ? `Write pass ${it.passes[0]}` : "Write prompts";
+        // [OLD 2026-11-10 v0.18.0->v0.19.0] a few chosen passes were labelled like all of them ("Write prompts")
+        // const what = it.passes?.length === 1 && multi ? `Write pass ${it.passes[0]}` : "Write prompts";
+        // added 2026-11-10 v0.19.0: the Write prompts picker can choose some passes: "Write passes 2, 3"
+        const what = !multi || !it.passes?.length ? "Write prompts"
+          : it.passes.length === 1 ? `Write pass ${it.passes[0]}` : `Write passes ${it.passes.join(", ")}`;
         // [OLD 2026-11-09 v0.14.1->v0.14.2] ctx.actions.editScene(it.sid, (sc, q) => { applyWritten(sc, q, res); }, { label: origin === "import" ? `${what}: ${scene.title}` : what });
         // added 2026-11-09 v0.14.2: say when the answer's shots and spoken lines were put on the timeline
         const rep = {};

@@ -6,6 +6,12 @@ import { rw, setHost } from "./api.js";
 import { createStore, withProjectId } from "./store.js";
 import * as M from "./model.js"; // added 2026-11-03 v0.6.0: model APIs that may not exist yet (nextSeedN, migrateScore)
 import { clearAnchorFrame } from "./model.js"; // added 2026-11-10 v0.18.0: deleting a video asset clears its anchors' frame pictures
+import { hiresSize } from "./model.js"; // added 2026-11-10 v0.19.0: the footer shows the Hires size
+// added 2026-11-10 v0.19.0: " → 2688×1536" while Global → Hires is on
+function hiresLabel(g) {
+  const [w, h] = hiresSize(g);
+  return w !== g.output.width || h !== g.output.height ? ` → ${w}×${h}` : "";
+}
 import { newJob } from "./llmjob.js"; // added 2026-11-03 v0.6.0: merge job ids
 import { ownJobs, jobLine } from "./llmjob.js"; // added 2026-11-06 v0.10.2: LLM progress in place, own jobs only
 import { feedStream } from "./llmjob.js"; // added 2026-11-09 v0.15.0: the reasoning and answer received, for the output popup
@@ -580,6 +586,7 @@ export function mountEditor(container, host) {
         a.duration = cutF / FPS;
         b.duration = (totalF - cutF + 1) / FPS;
         b.start = { mode: "last_frame", overlap_frames: a.start.overlap_frames };
+        b.pass_names = {}; // added 2026-11-10 v0.19.0: the second part's passes are not the first part's (names by number)
         const keepA = x => x.t < cut, keepB = x => x.t >= cut;
         b.shots = a.shots.filter(keepB).map(x => ({ ...x, id: newId("h"), t: r4(x.t - shift) }));
         b.dialogue = a.dialogue.filter(keepB).map(x => ({ ...x, id: newId("d"), t: r4(x.t - shift) }));
@@ -878,7 +885,8 @@ export function mountEditor(container, host) {
         h("span", { class: ["rw-led", issues.some(i => i.level === "error") ? "error" : issues.length ? "warn" : "ok"] }),
         issues.length ? issues[0].message : "All scenes within H3 limits"),
       h("span", { class: "rw-foot-sep" }),
-      h("span", { class: "rw-foot-item mono", help: "footer.output" }, `${g.output.width}×${g.output.height} · 24 fps · 32 kHz stereo · ${g.quality}`),
+      // [OLD 2026-11-10 v0.18.0->v0.19.0] h("span", { class: "rw-foot-item mono", help: "footer.output" }, `${g.output.width}×${g.output.height} · 24 fps · 32 kHz stereo · ${g.quality}`),
+      h("span", { class: "rw-foot-item mono", help: "footer.output" }, `${g.output.width}×${g.output.height}${hiresLabel(g)} · 24 fps · 32 kHz stereo · ${g.quality}`), // v0.19.0: → the Hires size
       h("span", { class: "rw-foot-sep" }),
       h("span", { class: "rw-foot-item", help: "footer.status" }, store.eph.plan
         ? `On disk ${st.cached} · Stale ${st.stale} · Pending ${st.pending}` : "Render status unavailable"),
@@ -1255,7 +1263,8 @@ export function mountEditor(container, host) {
     let part = 0;
     if (cur) {
       const passes = Math.max(1, cur.passes || 1);
-      const within = cur.phase === "sample" && cur.steps ? cur.step / cur.steps : ["decode", "save"].includes(cur.phase) ? 1 : 0;
+      // [OLD 2026-11-10 v0.18.0->v0.19.0] const within = cur.phase === "sample" && cur.steps ? cur.step / cur.steps : ["decode", "save"].includes(cur.phase) ? 1 : 0;
+      const within = cur.phase === "sample" && cur.steps ? cur.step / cur.steps : ["decode", "save", "upscale", "refine"].includes(cur.phase) ? 1 : 0; // v0.19.0: Hires
       part = Math.min(1, ((Math.max(1, cur.pass || 1) - 1) + within) / passes);
     }
     /* [OLD 2026-11-03 v0.6.0 review] a scene counted once: a variants run read 100 % after its first take

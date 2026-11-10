@@ -16,6 +16,7 @@ import time
 
 from . import cache, jobs  # added 2026-11-03 v0.6.0
 from . import merge, spec
+from . import model as _model  # added 2026-11-10 v0.19.0: project_output_size (Global -> Hires)
 # [OLD 2026-11-03 v0.4.3->v0.5.0] from .model import project_index
 from . import soundtrack  # added 2026-11-03 v0.5.0
 from . import model  # added 2026-11-06 v0.10.0: dialogue_seconds (speech_timed)
@@ -729,7 +730,11 @@ def merge_with_job(result, store, job, progress=None, options=None):
                            "duck": t["duck"], "loop": t["loop"]})
             export.append(dict(tracks[-1], id=t["id"], code=t["code"]))
         sa = m.get("scene_audio") or {"mix": False, "volume_db": -12.0}
-        w, h = p["global"]["output"]["width"], p["global"]["output"]["height"]
+        # [OLD 2026-11-10 v0.18.0->v0.19.0] w, h = p["global"]["output"]["width"], p["global"]["output"]["height"]
+        # added 2026-11-10 v0.19.0: the film is the latent upscaler's size while Global -> Hires is on (every scene the
+        # same; a scene made without it is enlarged here); a draft merge stays half of Global -> Output
+        w, h = _model.project_output_size(p) if not draft else (p["global"]["output"]["width"],
+                                                                   p["global"]["output"]["height"])
         if draft:
             w, h = max(2, int(w) // 4 * 2), max(2, int(h) // 4 * 2)
         stem_paths, stem_dir = None, None

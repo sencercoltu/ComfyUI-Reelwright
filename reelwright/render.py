@@ -18,6 +18,7 @@ import time
 import uuid  # added 2026-11-03 v0.6.0: run ids
 
 import comfy.model_management as mm
+import comfy.nested_tensor  # added 2026-11-10 v0.19.0: the refined latent keeps the first sampling's sound
 import comfy.sample
 import comfy.samplers
 import comfy.utils
@@ -41,6 +42,15 @@ try:
 except ImportError as _e:  # noqa: N816
     vae_decode_audio = MiniMaxH3AddGuide = MiniMaxH3ReferenceToVideo = MiniMaxH3SigmaShift = None
     H3_ERROR = "{}: {}".format(type(_e).__name__, _e)
+# added 2026-11-10 v0.19.0: Global -> Hires needs ComfyUI's H3 latent upscale node and the latent upscale model loader;
+# without them only a render that uses Hires is refused
+try:
+    from comfy_extras.nodes_hunyuan import LatentUpscaleModelLoader
+    from comfy_extras.nodes_minimax_h3 import MiniMaxH3LatentUpscaleWithModel
+    UPSCALE_ERROR = None
+except ImportError as _e:  # noqa: N816
+    LatentUpscaleModelLoader = MiniMaxH3LatentUpscaleWithModel = None
+    UPSCALE_ERROR = "{}: {}".format(type(_e).__name__, _e)
 
 # [OLD 2026-11-03 v0.4.3->v0.5.0] from . import assemble, continuity, media, merge, spec
 # [OLD 2026-11-03 v0.5.1->v0.6.0] from . import assemble, cache, continuity, media, merge, spec  # cache: added 2026-11-03 v0.5.0 for the soundtrack WAVs
@@ -251,6 +261,7 @@ class Models:
     def __init__(self, wired):
         self.wired = wired
         self.unets, self.clips, self.vaes, self.patched, self.lora_loaders = {}, {}, {}, {}, {}
+        self.upscalers = {}  # added 2026-11-10 v0.19.0: latent upscale models by file name
 
     def clip(self, settings):
         if self.wired.get("clip") is not None:
@@ -303,6 +314,12 @@ class Models:
 
     def drop_clips(self):
         self.clips.clear()
+
+    # added 2026-11-10 v0.19.0: Global -> Hires: a latent upscale model from models/latent_upscale_models, loaded once
+    def upscaler(self, name):
+        if name not in self.upscalers:
+            self.upscalers[name] = LatentUpscaleModelLoader.execute(name).result[0]
+        return self.upscalers[name]
 
 
 # added 2026-11-02 v0.3.5: one sampling step's latent as a small JPEG data URL for the Render tab
@@ -404,6 +421,54 @@ def _sample(model, positive, latent, seed, settings, on_step):
     out = latent.copy()
     out["samples"] = samples.to(mm.intermediate_device())
     return out
+
+
+# added 2026-11-10 v0.19.0: Global -> Hires -> refine: the enlarged latent sampled again for `steps` steps, starting from
+# `denoise` of the noise (the last steps+1 sigmas of a schedule of steps / denoise steps, as KSampler's denoise does).
+# The sound is not refined: the caller keeps the sound of the first sampling.
+def refine_sigmas(model, scheduler, steps, denoise):
+    total = max(int(steps), int(round(int(steps) / max(0.01, min(1.0, float(denoise))))))
+    sigmas = comfy.samplers.calculate_sigmas(model.get_model_object("model_sampling"), scheduler, total).cpu()
+    return sigmas[-(int(steps) + 1):]
+
+
+def _refine(model, positive, latent, seed, settings, steps, denoise, on_step):
+    guider = Guider_Basic(model)
+    guider.set_conds(positive)
+    latent_image = comfy.sample.fix_empty_latent_channels(guider.model_patcher, latent["samples"])
+    noise = Noise_RandomNoise(seed).generate_noise({"samples": latent_image})
+    sigmas = refine_sigmas(model, settings["scheduler"], steps, denoise)
+    sampler = comfy.samplers.sampler_object(settings["sampler"])
+    previewer = stock_previewer(guider.model_patcher.load_device, guider.model_patcher.model.latent_format)
+    pbar = comfy.utils.ProgressBar(sigmas.shape[-1] - 1)
+    frame = settings.get("preview_frame")
+
+    def callback(step, x0, x, total_steps):
+        pbar.update_absolute(step + 1, total_steps, None)
+        on_step(step + 1, total_steps, (lambda: preview_jpeg(previewer, x0, frame)) if previewer else None)
+
+    samples = guider.sample(noise, latent_image, sampler, sigmas, callback=callback,
+                            disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED, seed=seed)
+    out = latent.copy()
+    out["samples"] = samples.to(mm.intermediate_device())
+    return out
+
+
+def _with_audio_of(latent, source):
+    """latent with the sound latent of `source` (both MiniMax H3 AV latents)."""
+    a, b = latent.get("samples"), source.get("samples")
+    if not (getattr(a, "is_nested", False) and getattr(b, "is_nested", False)):
+        return latent
+    out = latent.copy()
+    out["samples"] = comfy.nested_tensor.NestedTensor((a.tensors[0], b.tensors[1]))
+    return out
+
+
+def output_size(st):
+    """added 2026-11-10 v0.19.0: (width, height) of the frames a scene's passes decode to: the latent upscaler's size
+    while it runs (st["hires"]), else the sampling size."""
+    hi = st.get("hires")
+    return (int(hi["width"]), int(hi["height"])) if hi else (int(st["width"]), int(st["height"]))
 
 
 def _free(policy):
@@ -887,6 +952,11 @@ class Renderer:
             for name, _ in st["loras"]:
                 if name not in folder_paths.get_filename_list("loras"):
                     missing.add("loras/" + name)
+            # added 2026-11-10 v0.19.0: Global -> Hires needs its latent upscaler (Global -> Models)
+            up = (st.get("hires") or {}).get("model")
+            if st.get("hires") and (not up or up not in folder_paths.get_filename_list("latent_upscale_models")):
+                missing.add("latent_upscale_models/{} (Global -> Hires; pick it under Global -> Models)".format(
+                    up or "(none selected)"))
         # added 2026-11-05 v0.8.0: Global -> Long scenes -> guide VAE
         gv = str(self.long.get("guide_vae") or "")
         if targets and gv and gv not in folder_paths.get_filename_list("vae"):
@@ -915,6 +985,10 @@ class Renderer:
         problems = []
         if not h3_available():
             problems.append("This ComfyUI has no MiniMax H3 nodes ({}). Update ComfyUI.".format(H3_ERROR))
+        # added 2026-11-10 v0.19.0: Global -> Hires needs ComfyUI's H3 latent upscale node
+        elif UPSCALE_ERROR and any(self.result["scenes"][sid]["settings"].get("hires") for sid in targets):
+            problems.append("This ComfyUI has no MiniMax H3 latent upscale node ({}). Update ComfyUI, or turn Global -> "
+                            "Hires off.".format(UPSCALE_ERROR))
         try:
             check_slug(self.slug)
             if getattr(self.store, "slug", self.slug) != self.slug:
@@ -1506,6 +1580,8 @@ class Renderer:
             self.progress(sid, n + 1, n_pass, "encode")
             # [OLD 2026-11-05 v0.6.1->v0.7.0] positive, latent = self.encode(scene, sr, n)
             positive, latent = self.encode(scene, sr, n, upstream, prev_pass)  # v0.7.0: for the continuation ref
+        hires = st.get("hires")  # added 2026-11-10 v0.19.0
+        unguided = positive if hires and hires.get("refine_steps") else None  # the refine guides again at its size
         # [OLD 2026-11-05 v0.7.0->v0.8.0] positive = self.guide(scene, sr, n, positive, latent, prev_pass, upstream)
         positive = self.guide(scene, sr, n, positive, latent, prev_pass, upstream, prev_latent)
         model = self.models.model(st)
@@ -1513,11 +1589,13 @@ class Renderer:
         last_preview = [0.0]  # added 2026-11-02 v0.3.5
         preview_failed = [False]  # added 2026-11-02 v0.3.8: warn once per pass when a preview can't be made
 
-        def on_step(step, total, preview=None, _n=n):
+        # [OLD 2026-11-10 v0.18.0->v0.19.0] def on_step(step, total, preview=None, _n=n):
+        def on_step(step, total, preview=None, _n=n, phase="sample"):  # phase: added 2026-11-10 v0.19.0 ("refine")
             now = time.time()
             if now - last_sent[0] > 0.4 or step == total:
                 last_sent[0] = now
-                self.progress(sid, _n + 1, n_pass, "sample", step, total)
+                # [OLD 2026-11-10 v0.18.0->v0.19.0] self.progress(sid, _n + 1, n_pass, "sample", step, total)
+                self.progress(sid, _n + 1, n_pass, phase, step, total)
             if preview is not None and (now - last_preview[0] >= PREVIEW_MIN_INTERVAL or step == total):
                 last_preview[0] = now
                 try:
@@ -1536,8 +1614,21 @@ class Renderer:
         samples = _sample(model, positive, latent, seed, dict(st, preview_frame=preview_frame(sr["plan"]["passes"][n])),
                           on_step)  # added 2026-11-09 v0.15.0: the preview shows the middle of what the pass makes
         del positive, latent
+        # [OLD 2026-11-10 v0.18.0->v0.19.0] the sampled latent was decoded as it was
+        # self.progress(sid, n + 1, n_pass, "decode")
+        # frames = nodes.VAEDecode().decode(self.models.vae(st["video_vae"], "vae"), samples)[0]
+        # [/OLD]
+        # added 2026-11-10 v0.19.0: Global -> Hires: the latent upscaler enlarges the video latent (the sound passes
+        # through), then, with refine steps, the big latent is guided again at its size and sampled again from part of
+        # the noise; it is decoded at the big size. The latent hand-off below keeps the sampled (small) latent.
+        big = samples
+        if hires:
+            big = self._hires(sid, scene, sr, n, n_pass, samples, unguided, prev_pass, upstream, prev_latent, seed, hires,
+                              on_step)
+            unguided = None
         self.progress(sid, n + 1, n_pass, "decode")
-        frames = nodes.VAEDecode().decode(self.models.vae(st["video_vae"], "vae"), samples)[0]
+        frames = nodes.VAEDecode().decode(self.models.vae(st["video_vae"], "vae"), big)[0]
+        del big
         audio = vae_decode_audio(self.models.vae(st["audio_vae"], "audio_vae"), samples)
         # added 2026-11-05 v0.8.0: the sampled video latent (render_scene keeps its end for a latent hand-off)
         lat = samples.get("samples") if isinstance(samples, dict) else None
@@ -1546,6 +1637,31 @@ class Renderer:
         del samples, lat
         # [OLD 2026-11-05 v0.7.0->v0.8.0] return frames, audio
         return frames, audio, video_latent
+
+    # added 2026-11-10 v0.19.0: Global -> Hires for one pass: the sampled latent enlarged by the latent upscaler, and
+    # with refine steps sampled again at the big size (its guides encoded at that size; a latent hand-off can't be used
+    # there, so the pass before's frames are). Returns the big latent with the sampled sound.
+    def _hires(self, sid, scene, sr, n, n_pass, samples, unguided, prev_pass, upstream, prev_latent, seed, hires, on_step):
+        st = sr["settings"]
+        self.progress(sid, n + 1, n_pass, "upscale", message="{}×{}".format(hires["width"], hires["height"]))
+        big = MiniMaxH3LatentUpscaleWithModel.execute(model=self.models.upscaler(hires["model"]), samples=samples,
+                                                      width=int(hires["width"]), height=int(hires["height"])).result[0]
+        steps = int(hires.get("refine_steps") or 0)
+        if steps <= 0 or unguided is None:
+            return big
+        footage, notes = self.footage, self.handoff_notes  # the drift meter measures the first sampling's guides
+        positive = self.guide(scene, sr, n, unguided, big, prev_pass, upstream, prev_latent)
+        self.footage, self.handoff_notes = footage, notes
+        model = self.models.model(st)
+
+        def refine_step(step, total, preview=None):
+            on_step(step, total, preview, phase="refine")
+
+        self.progress(sid, n + 1, n_pass, "refine", 0, steps)
+        refined = _refine(model, positive, big, seed, dict(st, preview_frame=preview_frame(sr["plan"]["passes"][n])),
+                          steps, float(hires.get("refine_denoise") or 0.35), refine_step)
+        del positive, big
+        return _with_audio_of(refined, samples)
 
     # [OLD 2026-11-03 v0.5.1->v0.6.0] finished passes were thrown away on Stop or failure, the tail kept
     # max(60, overlap) frames of the last pass only, a drift retake was starred even when it scored worse,
@@ -1791,7 +1907,9 @@ class Renderer:
             segs = assemble.pass_segments(plan, pass_files, self.p["global"]["long"]["crossfade_frames"],
                                           carry_audio=bool(self.long["carry_audio"]))
             # Stop kills ffmpeg (merge.run_ffmpeg polls cancel, which raises ComfyUI's interrupt)
-            merge.join(segs, video_path, st["width"], st["height"], audio_fade_frames=0,
+            # [OLD 2026-11-10 v0.18.0->v0.19.0] merge.join(segs, video_path, st["width"], st["height"], audio_fade_frames=0,
+            ow, oh = output_size(st)  # added 2026-11-10 v0.19.0: the latent upscaler's size while Hires runs
+            merge.join(segs, video_path, ow, oh, audio_fade_frames=0,
                        cancel=lambda: mm.throw_exception_if_processing_interrupted() or False)
             # [OLD 2026-11-05 v0.7.0->v0.8.0] tail = media.load_video(video_path, last_frames=TAIL_FRAMES)  # across the seams, as the cut shows it
             # added 2026-11-05 v0.8.0: with a lossless pass cache, from the last pass in memory when it holds 124
@@ -1824,6 +1942,11 @@ class Renderer:
             # choices the take was made with
             "drift": drift, "long": {k: self.long.get(k) for k in LONG_TAKE_KEYS},
         }
+        # added 2026-11-10 v0.19.0: width / height stay the sampling size (the time estimates read them); a take made
+        # with the latent upscaler says its video's size and how it was made
+        if st.get("hires"):
+            take["out_width"], take["out_height"] = output_size(st)
+            take["hires"] = dict(st["hires"])
         if self.p["global"]["continuity"]["face_check"] and continuity.available():
             # an optional check must not throw away a finished take
             try:

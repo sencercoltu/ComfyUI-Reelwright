@@ -13,6 +13,19 @@ def project(page):
     return json.loads(page.evaluate("window.__host.getProject()"))
 
 
+# added 2026-11-10 v0.19.0: Write prompts on a scene of several passes first asks which passes (all ticked); this
+# presses it and confirms that list as it is
+def click_write(page, sel):
+    page.click(sel)
+    try:
+        page.wait_for_selector(".rw-modal .rw-write-pick", timeout=150)  # it opens on the click itself
+    except Exception:
+        return False
+    page.locator(".rw-modal .rw-modal-actions button").last.click()
+    page.wait_for_timeout(100)
+    return True
+
+
 def main():
     httpd = serve()
     url = f"http://127.0.0.1:{httpd.server_address[1]}/web-test/harness.html"
@@ -1530,6 +1543,7 @@ def main():
         v0161_checks(page, check, saved, shots)  # added 2026-11-09 v0.16.1: a video anchor has the scene reference's clip editor
         v0173_checks(page, check, saved, shots)  # added 2026-11-09 v0.17.3: prompt editors keep their size through a re-render
         v0180_checks(page, check, saved, shots)  # added 2026-11-10 v0.18.0: Reset scene options, the @ list, scroll kept, anchors per scene, a frame as a picture
+        v0190_checks(page, check, saved, shots)  # added 2026-11-10 v0.19.0: Hires (latent upscaler), Write prompts asks which passes, pass names
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)  # added 2026-11-09 v0.17.3: typing lands where the caret is (real scrollbars)
     httpd.shutdown()
@@ -3389,7 +3403,7 @@ def v080_checks(page, check, saved, shots):
     # 5. Write prompts (every pass) can be stopped (nothing applied), then runs through as one undo step
     page.evaluate("window.__mockFlags.passesMs = 2400")
     n0 = len(labels())
-    page.click("[data-key='write-s_07']")
+    click_write(page, "[data-key='write-s_07']")  # v0.19.0: confirms the pass list
     try:
         page.wait_for_function("document.querySelector('.rw-llm-busy')?.textContent.includes('pass 1 of 3')", timeout=4000)
     except Exception:
@@ -3400,7 +3414,7 @@ def v080_checks(page, check, saved, shots):
     check(page.evaluate("window.__mockFlags.passCalls.at(-1).passes") is None, "Write prompts asks for every pass")
     settle()
     page.evaluate("window.__mockFlags.passesMs = 200")
-    page.click("[data-key='write-s_07']")
+    click_write(page, "[data-key='write-s_07']")  # v0.19.0: confirms the pass list
     wait_write()
     pp = scene_of("s_07")["prompt"]["passes"]
     check([x["sections"]["summary"][:6] for x in pp] == ["Pass 1", "Pass 2", "Pass 3"] and len(labels()) == n0 + 1 and labels()[-1] == "Write prompts",
@@ -4107,7 +4121,9 @@ def v0100_checks(page, check, saved, shots):
     check(rew.count() == 0, "Whole scene of a 3-pass scene: no rewriter")
     page.click("[data-key='ptab-s_07-2']")
     page.wait_for_timeout(300)
-    check(rew.count() == 1 and rew.inner_text().strip() == "Prompt rewriter · pass 2", f"pass 2: the rewriter for pass 2 ({rew.all_inner_texts()})")
+    # [OLD 2026-11-10 v0.18.0->v0.19.0] the title read "pass 2"; v0.19.0 uses the pass's label ("Pass 2 · name")
+    # check(rew.count() == 1 and rew.inner_text().strip() == "Prompt rewriter · pass 2", f"pass 2: the rewriter for pass 2 ({rew.all_inner_texts()})")
+    check(rew.count() == 1 and rew.inner_text().strip() == "Prompt rewriter · Pass 2", f"pass 2: the rewriter for pass 2 ({rew.all_inner_texts()})")
     page.fill("[data-key='rewrite-instr']", "Make the rain heavier.")
     page.evaluate("window.__mockFlags.passesMs = 0")
     page.click("[data-key='rewrite-run-s_07']")
@@ -5232,7 +5248,7 @@ def v0142_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
     check(page.locator(f"[data-key='fill-shots-{sid}']").count() == 0, "a scene with nothing written offers nothing")
     n0 = len(labels())
-    page.click(f"[data-key='write-{sid}']")
+    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
     page.wait_for_function(f"() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     sc = scene_of(sid)
@@ -5329,7 +5345,7 @@ def v0143_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
 
     # 1. a scene without shots: the shot gets its framing and camera move
-    page.click(f"[data-key='write-{sid}']")
+    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
     page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     sh = scene_of(sid)["shots"]
@@ -5344,7 +5360,7 @@ def v0143_checks(page, check, saved, shots):
 
     # 2. Write prompts again on the scene that now has its shot: the shot takes the new framing and move
     page.evaluate("([sid, t]) => { window.__mockFlags.writeText[sid] = t; window.__editor.store.setEph({ toasts: [] }); }", [sid, again])
-    page.click(f"[data-key='write-{sid}']")
+    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
     page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     sc = scene_of(sid)
@@ -5379,7 +5395,7 @@ def v0144_checks(page, check, saved, shots):
         page.evaluate("([sid, t]) => { window.__mockFlags.writeText[sid] = t; window.__mockFlags.passesMs = 0; window.__editor.store.setEph({ toasts: [] }); }", [sid, text])
         page.evaluate(f"window.__editor.actions.select('{sid}', 'scene')")
         page.wait_for_timeout(300)
-        page.click(f"[data-key='write-{sid}']")
+        click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
         page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
         page.wait_for_timeout(400)
 
@@ -5547,7 +5563,7 @@ def v0150_checks(page, check, saved, shots):
     check(page.locator(f"[data-key='brief-btn-{sid}']").count() == 1 and page.locator(f"textarea[data-key='brief-{sid}']").count() == 0,
           "the Brief button is there, the brief is hidden")
     page.evaluate("([sid]) => { window.__mockFlags.writeText[sid] = 'Dusk.\\n[Shot 1] A wide shot of @Mara at the pier.'; window.__mockFlags.passesMs = 0; window.__mockFlags.passCalls = []; window.__editor.store.setEph({ toasts: [] }); }", [sid])
-    page.click(f"[data-key='write-{sid}']")
+    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
     page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     sc = scene_of(sid)
@@ -5564,7 +5580,7 @@ def v0150_checks(page, check, saved, shots):
     page.locator(".rw-root").click(position={"x": 4, "y": 4})
     page.wait_for_timeout(300)
     page.evaluate("() => { window.__mockFlags.passCalls = []; window.__editor.store.setEph({ toasts: [] }); }")
-    page.click(f"[data-key='write-{sid}']")
+    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
     page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     calls = page.evaluate("window.__mockFlags.passCalls")
@@ -5606,7 +5622,7 @@ def v0150_checks(page, check, saved, shots):
 
     # 6. the LLM output popup: opened from the progress row, live, stays after the run, opens again from the card
     page.evaluate("() => { window.__mockFlags.passesMs = 2400; window.__editor.store.setEph({ toasts: [] }); }")
-    page.click(f"[data-key='write-{sid}']")
+    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
     page.wait_for_selector("[data-key='write-out']", timeout=4000)
     check(page.locator(".rw-llm-out").count() == 0, "the output is not shown until asked for")
     page.click("[data-key='write-out']")
@@ -6223,6 +6239,140 @@ def v0180_checks(page, check, saved, shots):
     page.wait_for_timeout(400)
     check(not any(a["id"] == fa["id"] for a in cur()["assets"]) and fa["id"] not in cast_of("c_mara")["anchors"], "removing the video anchor removes its frame picture")
     page.evaluate("() => { const h = window.__host; if (h.__origApiURL) h.apiURL = h.__origApiURL; }")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+# added 2026-11-10 v0.19.0
+def v0190_checks(page, check, saved, shots):
+    """v0.19.0 (Sencer): Global -> Hires (the latent upscaler: a project-wide size, an optional refine, scenes override
+    the refine or turn it off, drafts optional); Write prompts asks which passes (all ticked); passes have names, the
+    number always first."""
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(400)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    def snap(sel, name):
+        if not shots:
+            return
+        page.wait_for_timeout(200)
+        bb = page.evaluate("""s => { const e = document.querySelector(s); if (!e) return null; e.scrollIntoView({ block: 'nearest' });
+          const r = e.getBoundingClientRect(); return { x: Math.max(0, r.left), y: Math.max(0, r.top), width: Math.max(1, r.width), height: Math.max(1, Math.min(r.height, innerHeight - Math.max(0, r.top))) }; }""", sel)
+        if bb:
+            page.screenshot(path=str(shots / name), clip=bb)
+
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    scene_of = lambda sid: next(x for x in cur()["scenes"] if x["id"] == sid)
+    labels = lambda: [x["label"] for x in page.evaluate("window.__editor.store.history()") if x["done"]]
+    card_text = lambda title: page.evaluate("""t => { const c = [...document.querySelectorAll('.rw-card')].find(x => (x.querySelector('.rw-card-head, .rw-card-title')?.textContent || '').trim().startsWith(t)); return c ? c.innerText : ''; }""", title)
+
+    q0 = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q0["ui"].pop("collapsed", None)
+    q0["ui"]["tab"] = "global"
+    load(q0)
+
+    # 1. Global -> Hires: off by default; on shows the project's size; the scale changes it; refine shows its denoise
+    check("Off: scenes are made at 1344×768" in card_text("Hires") and page.locator(".rw-foot-item[data-help='footer.output']").inner_text().startswith("1344×768 ·"),
+          "Hires is off at first")
+    page.locator("[data-key='hires-on']").click()
+    page.wait_for_timeout(300)
+    t = card_text("Hires")
+    check(cur()["global"]["hires"]["enabled"] is True and "2688×1536" in t and "No latent upscaler is chosen" in t and labels()[-1] == "Hires on",
+          f"on: 2× and a note that no upscaler is chosen: {t[:200]!r}")
+    check("1344×768 → 2688×1536" in page.locator(".rw-foot-item[data-help='footer.output']").inner_text(), "the footer says the size it ends at")
+    page.locator("[data-key='hires-scale'] .rw-seg-btn:has-text('1.5×')").click()
+    page.wait_for_timeout(250)
+    check(cur()["global"]["hires"]["scale"] == 1.5 and "2016×1152" in card_text("Hires"), "1.5× = 2016×1152")
+    page.evaluate("window.__editor.store.update(p => { p.global.models.latent_upscaler = 'minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors'; })")
+    page.wait_for_timeout(250)
+    check("No latent upscaler" not in card_text("Hires"), "the note goes once an upscaler is chosen")
+    check(page.locator("[data-key='hires-denoise']").count() == 0, "no denoise while refine is 0")
+    page.locator("input[data-key='hires-steps']").fill("4")
+    page.locator("input[data-key='hires-steps']").press("Enter")
+    page.wait_for_timeout(300)
+    check(cur()["global"]["hires"]["refine_steps"] == 4 and page.locator("[data-key='hires-denoise']").count() == 1 and "4 refine steps" in card_text("Hires"),
+          "refine steps show the denoise")
+    snap("[data-key='hires-on']", "v0190_hires_toggle.png")
+    page.evaluate("() => document.querySelector(\"[data-key='hires-on']\").closest('.rw-card').scrollIntoView({ block: 'center' })")
+    shots and page.screenshot(path=str(shots / "v0190_hires_card.png"))
+    page.locator("[data-key='draft-hires']").click()
+    page.wait_for_timeout(250)
+    check(cur()["global"]["draft"]["hires"] is True, "Upscale drafts")
+    audit("Hires card")
+
+    # 2. Scene -> Generation: Hires rows; turning it off; a refine override
+    page.evaluate("window.__editor.actions.select('s_02', 'scene')")
+    page.wait_for_timeout(500)
+    gen = card_text("Generation")
+    check("Global · 2016×1152" in gen and "Sampled at 1344×768, enlarged to 2016×1152, 4 refine steps" in gen, f"the scene says what Hires does: {gen[:300]!r}")
+    page.locator("input[data-key='refine-steps-s_02']").fill("0")
+    page.locator("input[data-key='refine-steps-s_02']").press("Enter")
+    page.wait_for_timeout(300)
+    check(scene_of("s_02")["overrides"].get("refine_steps") == 0 and "enlarged to 2016×1152." in card_text("Generation"), "a scene can turn the refine off")
+    page.locator("[data-key='hires-s_02'] .rw-seg-btn:has-text('Off')").click()
+    page.wait_for_timeout(300)
+    gen = card_text("Generation")
+    check(scene_of("s_02")["overrides"].get("hires") == "off" and "the merge enlarges it to 2016×1152" in gen and "Refine steps" not in gen,
+          f"Off: made at 1344×768, the merge enlarges it: {gen[:200]!r}")
+    audit("Generation card with Hires")
+    snap(".rw-hires-note", "v0190_scene_hires.png")
+
+    # 3. pass names: the number stays first
+    load(dict(q0, ui=dict(q0["ui"], tab="scene", selected="s_07")))
+    page.evaluate("window.__editor.store.setEph({ promptTabs: { s_07: 1 } })")
+    page.wait_for_timeout(300)
+    name = page.locator("input[data-key='pass-name-s_07-2']")
+    check(name.count() == 1, "pass 2's tab has a name field")
+    name.fill("  Storm   at  sea ")
+    name.press("Tab")
+    page.wait_for_timeout(300)
+    check(scene_of("s_07")["pass_names"] == {"2": "Storm at sea"} and "Pass 2 name" in labels()[-1:], f"the name is stored, spaces tidied: {scene_of('s_07')['pass_names']}")
+    tabs = page.locator(".rw-ptab").all_inner_texts()
+    check(any(t.startswith("Pass 2 · Storm at sea") for t in tabs) and any(t.startswith("Pass 1") and "·" in t for t in tabs), f"the tab: number first: {tabs}")
+    h3tabs = page.locator(".rw-pass-tab").all_inner_texts()
+    check(not h3tabs or any(t.startswith("Pass 2 · Storm at sea") for t in h3tabs), f"What H3 receives too: {h3tabs}")
+    page.locator("input[data-key='pass-name-s_07-2']").fill("")
+    page.locator("input[data-key='pass-name-s_07-2']").press("Tab")
+    page.wait_for_timeout(300)
+    check(scene_of("s_07")["pass_names"] == {}, "an empty name goes")
+    page.locator("input[data-key='pass-name-s_07-2']").fill("Storm")
+    page.locator("input[data-key='pass-name-s_07-2']").press("Tab")
+    page.wait_for_timeout(300)
+    audit("Pass name")
+
+    # 4. Write prompts asks which passes; the unticked ones are not asked for
+    page.evaluate("() => { window.__mockFlags.passCalls = []; window.__mockFlags.passesMs = 50; }")
+    page.click("[data-key='write-s_07']")
+    page.wait_for_timeout(250)
+    box = page.locator(".rw-modal .rw-write-pick")
+    rows = page.locator(".rw-modal .rw-write-pass").all_inner_texts()
+    check(box.count() == 1 and len(rows) == 3 and page.locator(".rw-modal input[data-pass]:checked").count() == 3 and rows[1].startswith("Pass 2 · Storm")
+          and page.locator(".rw-modal .rw-modal-actions button").last.inner_text().strip() == "Write all 3 passes", f"the pass list, all ticked: {rows}")
+    snap(".rw-modal-box", "v0190_write_pick.png")
+    audit("Write prompts passes")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(250)
+    check(page.evaluate("window.__mockFlags.passCalls.length") == 0, "Cancel writes nothing")
+    page.click("[data-key='write-s_07']")
+    page.wait_for_timeout(250)
+    page.locator(".rw-modal input[data-pass='1']").uncheck()
+    page.wait_for_timeout(100)
+    check(page.locator(".rw-modal .rw-modal-actions button").last.inner_text().strip() == "Write 2 passes", "the button counts the ticks")
+    page.locator(".rw-modal .rw-modal-actions button").last.click()
+    page.wait_for_function("window.__editor.eph.passWrite && !window.__editor.eph.passWrite.running", timeout=8000)
+    check(page.evaluate("window.__mockFlags.passCalls.at(-1).passes") == [2, 3], f"only passes 2 and 3 are asked for: {page.evaluate('window.__mockFlags.passCalls.at(-1)')}")
+    page.click("[data-key='write-s_07']")
+    page.wait_for_timeout(250)
+    page.locator(".rw-modal button:has-text('Untick all')").click()
+    page.wait_for_timeout(100)
+    check(page.locator(".rw-modal .rw-modal-actions button").last.is_disabled(), "nothing ticked: Write is off")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(200)
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

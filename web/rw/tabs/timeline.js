@@ -26,6 +26,8 @@ import {
   dialogueSeconds, SECTION_KEYS, // added 2026-11-06 v0.9.0: captions and the inspector's summary
   refClip, refTrimmed, refTokens, // added 2026-11-08 v0.14.0: reference clips on the lanes
 } from "../model.js";
+import { hiresSize } from "../model.js"; // added 2026-11-10 v0.19.0: the monitor badge shows the film's size
+import { passLabel } from "../model.js"; // added 2026-11-10 v0.19.0: pass names in the tooltip
 import { passLayout, passTextsOf } from "../passes.js"; // added 2026-11-06 v0.9.0: the pass at the playhead
 // [OLD 2026-11-06 v0.8.0->v0.9.0] import { uploadFiles } from "./assets.js";  (only the asset bin used it)
 import { addGroup } from "./assets.js"; // added 2026-11-06 v0.9.0: the asset menu's "New group"
@@ -299,7 +301,9 @@ function monitorOf(ctx) {
     badgeTL.className = "rw-mon-badge tl " + (src ? (status === "stale" ? "warn" : "ok") : "");
     badgeTL.dataset.help = src ? "timeline.monitor.take" : "timeline.monitor.storyboard";
     const g = ctx.p.global.output;
-    badgeTR.textContent = `${g.width}×${g.height} · 24 fps`;
+    // [OLD 2026-11-10 v0.18.0->v0.19.0] badgeTR.textContent = `${g.width}×${g.height} · 24 fps`;
+    const [fw, fh] = hiresSize(ctx.p.global); // added 2026-11-10 v0.19.0: the film's size (Global → Hires)
+    badgeTR.textContent = `${fw}×${fh} · 24 fps`;
     /* [OLD 2026-11-06 v0.8.0->v0.9.0] set only when the monitor's scene was shown again (render, seek, a new scene), so
        the line and the frame count stood still while the film played; the line was shown for 3.5 s whatever its length
     const idx = sceneIndex(ctx.p, scene.id) + 1;
@@ -973,7 +977,9 @@ function nowAt(ctx, scene, local) {
   if (k >= 0) {
     const ps = plan.passes[k];
     const own = tl.nowTexts?.[k]?.summary?.trim();
-    rows.push(h("div", null, h("b", null, `Pass ${k + 1} of ${plan.passes.length}`), h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)}`),
+    // [OLD 2026-11-10 v0.18.0->v0.19.0] rows.push(h("div", null, h("b", null, `Pass ${k + 1} of ${plan.passes.length}`), h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)}`),
+    // [OLD 2026-11-10 v0.19.0 bug search] rows.push(h("div", null, h("b", null, `${passLabel(s, k + 1)} (of ${plan.passes.length})`), h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)}`), // v0.19.0: its name
+    rows.push(h("div", null, h("b", null, passLabel(s, k + 1, plan.passes.length)), h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)}`), // v0.19.0: "Pass 2 of 3 · name"
       own ? h("span", null, " · " + clip(own, 160)) : h("span", { class: "rw-dim" }, " · summary made from its shots")));
   }
   if (shot) rows.push(h("div", null, h("b", null, `Shot ${n}`), shot.camera ? h("span", { class: "rw-dim" }, ` · ${clip(shot.camera, 40)}`) : null, shot.text ? " · " + clip(shot.text, 180) : ""));

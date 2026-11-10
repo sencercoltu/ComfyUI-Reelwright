@@ -285,6 +285,12 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                                  "{} ({}) file is missing{}".format(a["code"], a["name"] or a["file"],
                                                                     "" if a["id"] in tracks else " (no scene uses it)")))
 
+    # added 2026-11-10 v0.19.0: Global -> Hires needs a latent upscaler (the render's pre-flight refuses without one)
+    hi = p["global"].get("hires") or {}
+    if hi.get("enabled") and not (p["global"]["models"].get("latent_upscaler") or ""):
+        issues.append(_issue("error", "Global -> Hires is on but no latent upscaler is chosen: pick one under Global -> "
+                                      "Models, or turn Hires off"))
+
     # added 2026-11-09 v0.16.0: a video anchor that cannot be sent (deleted or not a video, or no clip left by From / To)
     for c in p["cast"]:
         for va in c.get("video_anchors") or []:

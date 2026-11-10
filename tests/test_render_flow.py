@@ -1647,3 +1647,120 @@ def test_drift_is_recorded_per_continuing_pass(stubs, harbor, store, roots):
     again = store.starred_take("s_long")["drift"]
     assert [d.get("pass_cache", False) for d in again] == [True, True, False]
     assert {k: v for k, v in again[1].items() if k != "pass_cache"} == long_[1]
+
+
+# ---- added 2026-11-10 v0.19.0: Global -> Hires (the latent upscaler, an optional refine) ---------------------------
+
+def test_hires_enlarges_every_pass_to_the_project_size(stubs, harbor, store, roots, monkeypatch):
+    render, calls, events = stubs
+    from reelwright import assemble, merge
+    from reelwright.analysis import analyze
+    from reelwright.model import normalize_project, resolve_settings
+    harbor["global"]["output"].update(width=64, height=32)
+    harbor["global"]["models"]["latent_upscaler"] = "h3_up.safetensors"
+    harbor["global"]["hires"] = {"enabled": True, "scale": 2.0, "refine_steps": 3, "refine_denoise": 0.5}
+    harbor["scenes"][0]["overrides"] = {"refine_steps": 0}   # s_one: upscaler only
+    harbor["scenes"][2]["overrides"] = {"hires": "off"}      # s_short: made at 64x32, enlarged by the merge
+    _real_assets(harbor, roots)
+    ups, refines = [], []
+    monkeypatch.setattr(render.Models, "upscaler", lambda self, name: "up:" + name)
+
+    def fake_up(model, samples, width, height):
+        ups.append((model, samples["size"], (width, height)))
+        return types.SimpleNamespace(result=(dict(samples, size=(width, height)),))
+
+    def fake_refine(model, positive, latent, seed, settings, steps, denoise, on_step):
+        refines.append((latent["size"], steps, denoise))
+        on_step(steps, steps)  # _hires passes its own callback (phase "refine")
+        return latent
+    monkeypatch.setattr(render.MiniMaxH3LatentUpscaleWithModel, "execute", staticmethod(fake_up))
+    monkeypatch.setattr(render, "_refine", fake_refine)
+
+    p = normalize_project(harbor)
+    st = [resolve_settings(p, s, i) for i, s in enumerate(p["scenes"])]
+    assert st[0]["hires"] == {"model": "h3_up.safetensors", "width": 128, "height": 64}
+    assert st[1]["hires"] == {"model": "h3_up.safetensors", "width": 128, "height": 64, "refine_steps": 3,
+                              "refine_denoise": 0.5}
+    assert "hires" not in st[2]
+
+    assert render.Renderer(harbor, store, {}, {"action": "pending"}).run() == ["s_one", "s_long", "s_short"]
+    n_long = len(analyze(harbor, store)["scenes"]["s_long"]["plan"]["passes"])
+    assert len(ups) == 1 + n_long and all(u == ("up:h3_up.safetensors", (64, 32), (128, 64)) for u in ups)
+    assert refines == [((128, 64), 3, 0.5)] * n_long
+    for sid, size in (("s_one", (128, 64)), ("s_long", (128, 64)), ("s_short", (64, 32))):
+        take = store.starred_take(sid)
+        info = merge.probe(store.output_path(take["files"]["video"]))
+        assert (info["width"], info["height"]) == size, sid
+        assert (take["width"], take["height"]) == (64, 32)  # the sampling size (the time estimates read it)
+        assert (take.get("out_width"), take.get("out_height")) == (size if sid != "s_short" else (None, None))
+    phases = {d["phase"] for e, d in events if e == "reelwright.progress"}
+    assert {"upscale", "refine"} <= phases
+
+    out = assemble.merge_project(analyze(harbor, store), store)  # the film is the hires size
+    info = merge.probe(store.output_path(out["files"]["video"]))
+    assert (info["width"], info["height"]) == (128, 64)
+
+    # turning Hires off brings back the keys of a project without it: s_short (off already) stays cached
+    harbor["global"]["hires"]["enabled"] = False
+    assert render.Renderer(harbor, store, {}, {"action": "pending"}).run() == ["s_one", "s_long"]
+
+
+def test_hires_without_an_upscaler_is_refused(comfy, harbor, store):
+    render, _ = comfy
+    harbor["global"]["output"].update(width=64, height=32)
+    harbor["global"]["hires"] = {"enabled": True, "scale": 2.0}
+    r = render.Renderer(harbor, store, {}, {"action": "pending"})
+    assert any(m.startswith("latent_upscale_models/(none selected)") for m in r.missing_models(["s_one"]))
+    issues = [x["message"] for x in r.result["issues"]] if "issues" in r.result else []
+    assert not issues or any("no latent upscaler is chosen" in m for m in issues)
+
+
+def test_refine_sigmas_start_part_way(comfy):
+    render, _ = comfy
+
+    class MS:
+        def get_model_object(self, name):
+            import comfy.model_sampling as ms
+
+            class S(ms.ModelSamplingDiscreteFlow, ms.CONST):
+                pass
+            return S()
+    full = render.comfy.samplers.calculate_sigmas(MS().get_model_object("model_sampling"), "simple", 8)
+    part = render.refine_sigmas(MS(), "simple", 4, 0.5)
+    assert len(part) == 5 and float(part[-1]) == 0.0
+    assert [round(float(x), 5) for x in part] == [round(float(x), 5) for x in full[-5:]]
+    assert len(render.refine_sigmas(MS(), "simple", 4, 1.0)) == 5
+
+
+def test_hires_with_the_real_upscale_node(comfy, roots):
+    """The real LatentUpscaleModelLoader and MiniMaxH3LatentUpscaleWithModel with a tiny random H3 upscaler: the video
+    latent is enlarged to the asked size, the sound latent passes through (render.Models.upscaler, render._hires)."""
+    render, _ = comfy
+    if render.MiniMaxH3LatentUpscaleWithModel is None:
+        pytest.skip("this ComfyUI has no H3 latent upscale node")
+    import torch
+    import comfy.nested_tensor
+    import comfy.ops
+    import folder_paths
+    from comfy.ldm.minimax.latent_upscaler import MiniMaxH3LatentUpscaler
+    from safetensors.torch import save_file
+    d = os.path.join(roots.output, "ups")
+    os.makedirs(d, exist_ok=True)
+    torch.manual_seed(0)
+    m = MiniMaxH3LatentUpscaler(in_channels=24, channels=32, in_blocks=2, out_blocks=2, temporal_kernel=5,
+                                dtype=torch.float32, operations=comfy.ops.manual_cast)
+    save_file({k: torch.randn_like(v) * 0.02 for k, v in m.state_dict().items()}, os.path.join(d, "tiny_up.safetensors"))
+    folder_paths.add_model_folder_path("latent_upscale_models", d)
+    models = render.Models({})
+    up = models.upscaler("tiny_up.safetensors")
+    assert models.upscaler("tiny_up.safetensors") is up  # loaded once
+    video, audio = torch.randn(1, 24, 7, 2, 4), torch.randn(1, 32, 2, 50)
+    with torch.inference_mode():
+        out = render.MiniMaxH3LatentUpscaleWithModel.execute(
+            model=up, samples={"samples": comfy.nested_tensor.NestedTensor((video, audio))}, width=128, height=64).result[0]
+    v, a = out["samples"].tensors
+    assert tuple(v.shape) == (1, 24, 7, 4, 8) and torch.equal(a, audio)
+    kept = render._with_audio_of({"samples": comfy.nested_tensor.NestedTensor((v, torch.zeros_like(a)))}, out)
+    assert torch.equal(kept["samples"].tensors[1], audio)
+    assert render.output_size({"width": 64, "height": 32, "hires": {"width": 128, "height": 64}}) == (128, 64)
+    assert render.output_size({"width": 64, "height": 32}) == (64, 32)

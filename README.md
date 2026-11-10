@@ -8,7 +8,8 @@ into one video. Only what you changed gets rendered again.
   Longer scenes are split into passes, with seams placed on your shot cuts or
   covered by guided overlaps. Shorter scenes render the shortest pass and keep
   the window you choose.
-- **Long scenes, pass by pass.** Each pass has its own prompt, on its own tab.
+- **Long scenes, pass by pass.** Each pass has its own prompt, on its own tab,
+  and can have a name ("Pass 2 · Harbour").
   Pass-seam settings cut the decode and re-encode round trips that can make
   later passes drift: a full-precision guide VAE, picture-only seams, no clip
   reference at seams, an experimental latent hand-off and a lossless pass
@@ -25,6 +26,10 @@ into one video. Only what you changed gets rendered again.
   cut from a rendered take, so a narrator keeps one voice from pass to pass.
 - **Global settings with per-scene overrides** (models, VAEs, LoRA stack, seed,
   steps, size). Hollow dot = follows Global; coral dot = overridden.
+- **Hires.** H3's latent upscaler enlarges every pass to Output × 1.25–2, so
+  the whole film ends at one bigger size (2688×1536 at 2× of 1344×768). An
+  optional refine samples the big latent again for a few steps. Scenes can
+  turn it off or change the refine; drafts use it only when you ask.
 - **Incremental rendering.** Each scene has a cache key built from everything
   that affects its pixels, including the take it continues from. Edit scene 2
   and only scene 2, plus the scenes that continue from it, render again.
@@ -105,7 +110,7 @@ Models (standard ComfyUI folders):
 | Text encoder | `qwen3vl_32b_minimax_h3_int8_convrot.safetensors` | `models/text_encoders` |
 | Video VAE | `minimax_h3_video_vae_int8_convrot.safetensors` | `models/vae` |
 | Audio VAE | `minimax_h3_audio_vae_fp32.safetensors` | `models/vae` |
-| Latent upscaler (optional) | `minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors` | `models/latent_upscale_models` |
+| Latent upscaler (for Global → Hires) | `minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors` | `models/latent_upscale_models` |
 
 You can also wire your own `model`, `clip`, `vae` and `audio_vae` into the
 node. A wired input replaces the matching Global-tab loader.

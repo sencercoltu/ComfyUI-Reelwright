@@ -173,9 +173,25 @@ def _rate_samples(all_takes):
         if frames <= 0:
             continue
         # [OLD 2026-11-04 v0.6.0->v0.6.1] int(t.get("created") or 0) raised on a "created" that is not a number
+        # [OLD 2026-11-10 v0.18.0->v0.19.0] a Hires take (sampled at the same size, then upscaled and maybe refined)
+        # [OLD 2026-11-10 v0.18.0->v0.19.0] gave the same sample as a plain one, so the two mixed in the estimates
+        # out.append((secs / frames, t.get("quality"), t.get("width"), t.get("height"), t.get("steps"),
+        #             cache.created_of(t)))  # added 2026-11-04 v0.6.1
+        # [/OLD]
         out.append((secs / frames, t.get("quality"), t.get("width"), t.get("height"), t.get("steps"),
-                    cache.created_of(t)))  # added 2026-11-04 v0.6.1
+                    _hires_tag(t.get("hires")), cache.created_of(t)))  # added 2026-11-10 v0.19.0
     return out
+
+
+def _hires_tag(hires):
+    """added 2026-11-10 v0.19.0: what a Hires pass adds to the render time (None without one): the size it upscales
+    to and the refine steps. The same for a take's "hires" and the settings' "hires"."""
+    if not isinstance(hires, dict) or not hires:
+        return None
+    try:
+        return (int(hires.get("width") or 0), int(hires.get("height") or 0), int(hires.get("refine_steps") or 0))
+    except (TypeError, ValueError):
+        return None
 
 
 def _median_recent(rows, n=20):
@@ -183,9 +199,26 @@ def _median_recent(rows, n=20):
     return statistics.median(r[0] for r in rows) if rows else None
 
 
-def seconds_per_frame(samples, settings):
-    """Seconds one generated frame takes with these settings, from earlier takes; None without history."""
-    w, h, steps, q = settings.get("width"), settings.get("height"), settings.get("steps"), settings.get("quality")
+# [OLD 2026-11-10 v0.18.0->v0.19.0] samples did not tell a Hires render apart; replaced below
+# def seconds_per_frame(samples, settings):
+#     """Seconds one generated frame takes with these settings, from earlier takes; None without history."""
+#     w, h, steps, q = settings.get("width"), settings.get("height"), settings.get("steps"), settings.get("quality")
+#     exact = [r for r in samples if (r[1], r[2], r[3], r[4]) == (q, w, h, steps)]
+#     if exact:
+#         return _median_recent(exact)
+#     sized = [(r[0] / (r[2] * r[3] * r[4]),) + r[1:] for r in samples if r[2] and r[3] and r[4]]
+#     if sized and w and h and steps:
+#         return _median_recent(sized) * w * h * steps
+#     same_quality = [r for r in samples if r[1] == q]
+#     if same_quality:
+#         return _median_recent(same_quality)
+#     return None
+# [/OLD]
+
+
+def _rate_from(samples, q, w, h, steps):
+    """The v0.6.0 estimate over these samples: the same settings, else scaled by size x steps, else the same
+    quality; None without any."""
     exact = [r for r in samples if (r[1], r[2], r[3], r[4]) == (q, w, h, steps)]
     if exact:
         return _median_recent(exact)
@@ -196,6 +229,17 @@ def seconds_per_frame(samples, settings):
     if same_quality:
         return _median_recent(same_quality)
     return None
+
+
+def seconds_per_frame(samples, settings):
+    """Seconds one generated frame takes with these settings, from earlier takes; None without history.
+    added 2026-11-10 v0.19.0: takes with the same Hires (or none) first; only without any of those, every take (a
+    first Hires render is then estimated from plain ones, so it shows too short until one has run)."""
+    w, h, steps, q = settings.get("width"), settings.get("height"), settings.get("steps"), settings.get("quality")
+    tag = _hires_tag(settings.get("hires"))
+    same = [r for r in samples if len(r) > 6 and r[5] == tag]
+    rate = _rate_from(same, q, w, h, steps)
+    return rate if rate is not None else _rate_from(samples, q, w, h, steps)
 
 
 def _cached_pass_flags(store, sid, plan, builds, keys, continuing, upstream_pending):

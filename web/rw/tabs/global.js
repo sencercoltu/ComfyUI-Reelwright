@@ -14,6 +14,8 @@ import {
   overruns, lengthenToFit, // added 2026-11-03 v0.4.3
   nextSeedN, // added 2026-11-03 v0.6.0: a seed number per imported scene
 } from "../model.js";
+import { hiresSize, HIRES_SCALES } from "../model.js"; // added 2026-11-10 v0.19.0: Global → Hires
+import { slider } from "../ui.js"; // added 2026-11-10 v0.19.0: refine denoise
 import { VERSION } from "../version.js";
 import { runWrite, stopWrite } from "../passes.js"; // added 2026-11-05 v0.8.0: Write prompts after an import
 // added 2026-11-06 v0.10.0: project export and import (Project card)
@@ -30,7 +32,8 @@ function modelRow(ctx, label, key, list, input, help) {
   return h("div", { class: ["rw-model", wired && "wired"] },
     h("div", { class: "rw-row" }, h("span", { class: "rw-model-label", help }, label), h("span", { class: "rw-flex" }),
       wired ? h("span", { class: "rw-badge pic", help: "global.models.wired" }, "wired input wins") : null),
-    select({ options: list || [], value: g[key], placeholder: key === "latent_upscaler" ? "none (no hires pass)" : undefined, mono: true, help,
+    // [OLD 2026-11-10 v0.18.0->v0.19.0] select({ options: list || [], value: g[key], placeholder: key === "latent_upscaler" ? "none (no hires pass)" : undefined, mono: true, help,
+    select({ options: list || [], value: g[key], placeholder: key === "latent_upscaler" ? "none (Global → Hires needs one)" : undefined, mono: true, help, // v0.19.0: Hires uses it now
       onChange: v => ctx.actions.edit(q => { q.global.models[key] = v; }) }));
 }
 
@@ -286,7 +289,8 @@ function modelsCard(ctx) {
       field("Text encoder device", segmented({ small: true, value: g.clip_device, help: "global.models.clipDevice", options: ["default", "cpu"], onChange: v => ctx.actions.edit(q => { q.global.models.clip_device = v; }) }), { help: "global.models.clipDevice" }),
       modelRow(ctx, "Video VAE", "video_vae", m.vae, "vae", "global.models.videoVae"),
       modelRow(ctx, "Audio VAE", "audio_vae", m.vae, "audio_vae", "global.models.audioVae"),
-      modelRow(ctx, "Latent upscaler · optional", "latent_upscaler", m.latent_upscale_models, null, "global.models.upscaler"),
+      // [OLD 2026-11-10 v0.18.0->v0.19.0] modelRow(ctx, "Latent upscaler · optional", "latent_upscaler", m.latent_upscale_models, null, "global.models.upscaler"),
+      modelRow(ctx, "Latent upscaler · for Hires", "latent_upscaler", m.latent_upscale_models, null, "global.models.upscaler"),
     ],
   });
 }
@@ -370,6 +374,50 @@ function outputCard(ctx) {
   });
 }
 
+// added 2026-11-10 v0.19.0: Global → Hires (Sencer: "implement it, but the whole project should be upscaled to same
+// resolution. maybe only override the other parameters in scenes?"): every pass is sampled at Output, enlarged by the
+// H3 latent upscaler to Output × scale (the same size for every scene and the film), and optionally sampled again at
+// that size (refine). Scenes can turn it off or change the refine (Scene → Generation).
+function hiresCard(ctx) {
+  const p = ctx.p, g = p.global, hi = g.hires, o = g.output;
+  const set = (fn, label = "Hires setting") => ctx.actions.edit(q => fn(q.global.hires), { label });
+  const [fw, fh] = hiresSize(g);
+  const up = g.models.latent_upscaler || "";
+  const list = ctx.eph.models?.latent_upscale_models;
+  const scales = HIRES_SCALES.includes(hi.scale) ? HIRES_SCALES : [...HIRES_SCALES, hi.scale].sort((a, b) => a - b);
+  const off = p.scenes.filter(s => s.overrides?.hires === "off").length;
+  const area = (fw * fh) / (o.width * o.height);
+  return section({
+    title: "Hires", help: "global.hires",
+    actions: [hi.enabled && hi.scale > 1 && h("span", { class: "mono small", help: "global.hires.scale" }, `${fw}×${fh}`),
+      toggle({ value: hi.enabled, help: "global.hires.enabled", key: "hires-on", label: hi.enabled ? "on" : "off",
+        onChange: v => set(x => { x.enabled = v; }, v ? "Hires on" : "Hires off") })],
+    children: [
+      h("div", { class: "rw-dim small", help: "global.hires" }, hi.enabled
+        ? `Each pass is sampled at ${o.width}×${o.height}; the latent upscaler enlarges it to ${fw}×${fh}${hi.refine_steps > 0 ? `, then ${hi.refine_steps} refine step${hi.refine_steps === 1 ? "" : "s"} at that size` : ""}. Every scene and the merged film end at ${fw}×${fh}.`
+        : `Off: scenes are made at ${o.width}×${o.height}. On: H3's latent upscaler enlarges every pass to Output × scale, so the whole film is bigger.`),
+      field("Scale", segmented({ small: true, value: hi.scale, help: "global.hires.scale", key: "hires-scale",
+        options: scales.map(v => ({ value: v, label: `${v}×`, help: "global.hires.scale" })), onChange: v => set(x => { x.scale = v; }) }),
+      { help: "global.hires.scale" }),
+      field("Refine steps", number({ value: hi.refine_steps, min: 0, max: 100, help: "global.hires.refineSteps", key: "hires-steps",
+        onChange: v => set(x => { x.refine_steps = Math.min(100, Math.max(0, Math.trunc(v ?? 0))); }) }), { help: "global.hires.refineSteps" }),
+      hi.refine_steps > 0 && field("Refine denoise", slider({ value: hi.refine_denoise, min: 0.05, max: 1, step: 0.05, key: "hires-denoise",
+        help: "global.hires.refineDenoise", format: v => Number(v).toFixed(2), onChange: v => set(x => { x.refine_denoise = Math.round(v * 100) / 100; }) }),
+      { help: "global.hires.refineDenoise" }),
+      hi.enabled && !up && h("div", { class: "rw-note err", help: "global.models.upscaler" }, icon("warn", 12),
+        h("span", null, "No latent upscaler is chosen: pick one under Global → Models (models/latent_upscale_models). Rendering is refused until then.")),
+      hi.enabled && up && list && !list.includes(up) && h("div", { class: "rw-note warn", help: "global.models.upscaler" }, icon("warn", 12),
+        h("span", null, `${up} is not in this ComfyUI's models/latent_upscale_models.`)),
+      hi.enabled && hi.refine_steps > 0 && h("div", { class: "rw-note warn small", help: "global.hires.refineSteps" }, icon("info", 12),
+        h("span", null, `The refine samples H3 again at ${fw}×${fh}, ${area.toFixed(1)}× the pixels of ${o.width}×${o.height} (the size H3 is made for), so each refine step costs several normal steps and the result is not guaranteed. 0 steps = upscaler only.`)),
+      hi.enabled && off > 0 && h("div", { class: "rw-dim small", help: "scene.override.hires" },
+        `${off} scene${off === 1 ? " turns" : "s turn"} it off (Scene → Generation); the merge enlarges ${off === 1 ? "it" : "them"} to ${fw}×${fh}.`),
+      hi.enabled && h("div", { class: "rw-dim small", help: "global.draft.hires" }, g.draft.hires
+        ? "Drafts go through the upscaler too (no refine)." : "Drafts skip it (Draft quality → Upscale drafts); the merge enlarges them."),
+    ],
+  });
+}
+
 function samplingCard(ctx) {
   const sm = ctx.p.global.sampling;
   const m = ctx.eph.models || {};
@@ -406,6 +454,10 @@ function draftCard(ctx) {
     children: [
       field("Resolution scale", number({ value: d.scale, min: 0.25, max: 1, step: 0.05, help: "global.draft.scale", onChange: v => set(x => { x.scale = v ?? 0.5; }) }), { help: "global.draft.scale" }),
       field("Steps", number({ value: d.steps, min: 1, max: 100, help: "global.draft.steps", onChange: v => set(x => { x.steps = v ?? 8; }) }), { help: "global.draft.steps" }),
+      // added 2026-11-10 v0.19.0: drafts through the latent upscaler too (Global → Hires)
+      field("Upscale drafts", toggle({ value: !!d.hires, help: "global.draft.hires", key: "draft-hires",
+        label: ctx.p.global.hires.enabled ? (d.hires ? "with Hires (upscaler only)" : "no, the merge enlarges them") : "only with Hires on",
+        onChange: v => set(x => { x.hires = v; }) }), { help: "global.draft.hires" }),
       field("Turbo LoRA", h("span", { class: "rw-row" },
         select({ options: ctx.eph.models?.loras || [], value: d.lora, placeholder: "none", mono: true, help: "global.draft.lora", onChange: v => set(x => { x.lora = v; }) }),
         number({ value: d.lora_strength, min: -4, max: 4, step: 0.05, width: "74px", help: "global.draft.loraStrength", onChange: v => set(x => { x.lora_strength = v ?? 1; }) })), { help: "global.draft.lora" }),
@@ -1010,7 +1062,9 @@ function matrixCard(ctx) {
   const p = ctx.p;
   const keys = [...OVERRIDE_KEYS, "loras"];
   // [OLD 2026-11-02 v0.2.2->v0.3.0] const label = { seed: "Seed", steps: "Steps", sampler: "Sampler", scheduler: "Scheduler", width: "Width", height: "Height", diffusion: "Model", text_encoder: "Text enc.", video_vae: "Video VAE", audio_vae: "Audio VAE", loras: "LoRAs" };
-  const label = { seed: "Seed", steps: "Steps", sampler: "Sampler", scheduler: "Scheduler", width: "Width", height: "Height", diffusion: "Model", text_encoder: "Text enc.", video_vae: "Video VAE", audio_vae: "Audio VAE", quality: "Quality", loras: "LoRAs" };
+  // [OLD 2026-11-10 v0.18.0->v0.19.0] const label = { seed: "Seed", steps: "Steps", sampler: "Sampler", scheduler: "Scheduler", width: "Width", height: "Height", diffusion: "Model", text_encoder: "Text enc.", video_vae: "Video VAE", audio_vae: "Audio VAE", quality: "Quality", loras: "LoRAs" };
+  const label = { seed: "Seed", steps: "Steps", sampler: "Sampler", scheduler: "Scheduler", width: "Width", height: "Height", diffusion: "Model", text_encoder: "Text enc.", video_vae: "Video VAE", audio_vae: "Audio VAE", quality: "Quality",
+    hires: "Hires", refine_steps: "Refine steps", refine_denoise: "Refine dn.", loras: "LoRAs" }; // v0.19.0: Hires
   return section({
     title: "Where scenes override Global", help: "global.matrix",
     children: h("div", { class: "rw-matrix", style: { "grid-template-columns": `90px repeat(${p.scenes.length}, minmax(22px, 1fr))` } },
@@ -1051,6 +1105,7 @@ export function render(ctx) {
   return h("div", { class: "rw-cols", dataset: { scroll: "global-cols" } },
     // [OLD 2026-11-02 v0.2.2->v0.3.0] h("div", { class: "rw-col flex" }, projectCard(ctx), modelsCard(ctx), lorasCard(ctx)),
     h("div", { class: "rw-col flex" }, profilesCard(ctx), projectCard(ctx), modelsCard(ctx), lorasCard(ctx)),
-    h("div", { class: "rw-col flex" }, outputCard(ctx), samplingCard(ctx), draftCard(ctx), defaultsCard(ctx)),
+    // [OLD 2026-11-10 v0.18.0->v0.19.0] h("div", { class: "rw-col flex" }, outputCard(ctx), samplingCard(ctx), draftCard(ctx), defaultsCard(ctx)),
+    h("div", { class: "rw-col flex" }, outputCard(ctx), hiresCard(ctx), samplingCard(ctx), draftCard(ctx), defaultsCard(ctx)), // v0.19.0: Hires
     h("div", { class: "rw-col flex" }, llmCard(ctx), scriptCard(ctx), matrixCard(ctx), infoCard(ctx)));
 }
