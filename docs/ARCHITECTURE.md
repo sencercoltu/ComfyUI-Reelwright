@@ -456,6 +456,7 @@ tail, passes}`:
 - `prompts` (per pass), `render_seconds`, `generated_frames`, `sampled_frames` (cache hits not counted), `cached_passes`, `width`, `height`, `steps`;
 - `face_score` (the lowest face similarity, or null);
 - v0.8.0: `drift` (`[]` for fresh scenes; see "Long-scene continuity") and `long` (the take's `guide_vae`, `carry_audio`, `seam_video_ref`, `handoff`, `pass_cache`, `render.LONG_TAKE_KEYS`). `TAKE_FIELDS_NOT_IN_PLAN` is unchanged, so `/plan` has both.
+- v0.19.2, render times (`render.PassClock`, fed by `Renderer.progress` and `Renderer.phase`): `render_seconds` is now measured to the end of the face check; `pass_times` `[{pass, seconds, cached, phases?}]` per pass, where `phases` (sampled passes only, phases under 0.05 s left out) splits the pass into `encode`, `guides` (references and hand-off before sampling, again before a refine), `sample`, `upscale`, `refine`, `decode` (also the drift measure) and `save` (the pass cache, a one-pass take's video); `encode_seconds` (only when > 0: the encode-first time of the passes this take sampled, `Renderer.encode_times`, counted once, in the pass's `seconds` and its `encode` phase, not in `render_seconds`); `finish_seconds` (joining the passes, first/last frames, tail clip, face check). The Render tab shows `render_seconds + encode_seconds`.
 
 `meta.json` also has `passes[n].key` (the plan pass key), `settings` and `loras`.
 `index.json` gains `auto_star` (the take a render starred) and `project_id` (the

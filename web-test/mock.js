@@ -268,9 +268,19 @@ if (typeof window !== "undefined") window.__mockTakes = takes;
 // Titles for the per-take file names (render.py: slug_NN_title_take.mp4)
 const SCENE_TITLES = { s_01: "Harbor at dusk", s_02: "Mara on the pier", s_03: "The letter", s_04: "Flashback: the lighthouse, 1962", s_05: "Storm rolls in", s_06: "Lights come on", s_07: "The long walk home", s_08: "Insert: hand on the door" };
 const status = { s_01: "cached", s_02: "cached", s_03: "stale", s_04: "cached", s_05: "cached", s_06: "cached", s_07: "pending", s_08: "pending" };
+// Render times of a one-pass take (render.py PassClock): the prompt encoded at the start of the run, sampling grows
+// with the frames
+function renderTimes(frames) {
+  const r = v => Math.round(v * 10) / 10;
+  const phases = { encode: 4.6, guides: 1.2, sample: r(frames * 0.38), decode: 7.4, save: 2.1 };
+  const seconds = r(Object.values(phases).reduce((a, v) => a + v, 0));
+  return { render_seconds: r(seconds - phases.encode + 1.6), encode_seconds: phases.encode, finish_seconds: 1.6,
+    pass_times: [{ pass: 1, seconds, cached: false, phases }] };
+}
 function take(scene, id, extra = {}) {
   const base = `reelwright/${SLUG}/scenes/${scene}/takes/${id}`;
   return { id, key: "k" + scene + id + "9f3ac2", created: 1793560000 + Math.floor(Math.random() * 9000), quality: "final", seconds: 8, frames: 192, face: {},
+    ...renderTimes(extra.frames ?? 192),
     files: { video: `${base}/${SLUG}_${scene.slice(2)}_${(SCENE_TITLES[scene] || "scene").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40)}_${id}.mp4`, first: base + "/first.png", last: base + "/last.png", tail: base + "/tail.mp4" }, ...extra };
 }
 function initTakes() {
@@ -534,7 +544,7 @@ async function route(path, opts = {}) {
   const body = opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : null;
   await new Promise(r => setTimeout(r, 20));
   switch (url.pathname) {
-    case "/reelwright/info": return json({ version: "0.19.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.19.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
       if (!body.name) return json({ error: "Give the profile a name" }, 400);

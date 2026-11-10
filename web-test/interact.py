@@ -1504,6 +1504,7 @@ def main():
         v0180_checks(page, check, saved, shots)
         v0190_checks(page, check, saved, shots)
         v0191_checks(page, check, saved, shots)
+        v0192_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
     httpd.shutdown()
@@ -6317,6 +6318,58 @@ def v0191_checks(page, check, saved, shots):
       const r = [Math.round(host.getBoundingClientRect().height), getComputedStyle(host).contain];
       home.appendChild(root); node.remove(); return r; }""")
     check(grow[1] == "size" and grow[0] == 640, f"Nodes 2.0: the host does not take its content's height: {grow}")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+def v0192_checks(page, check, saved, shots):
+    """v0.19.2 (Sencer: "please add render times to individual scenes/passes in the render tab. i want to see how long
+    each render took."): the Render time column (the merge take), each take's time with its passes (P1, P2 cache …),
+    the phases on hover, takes made before per-pass times (total only) and takes without any time ("—")."""
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="render", selected="s_07")
+    page.evaluate("j => window.__editor.load(j)", json.dumps(q))
+    page.wait_for_timeout(400)
+    page.evaluate("""() => { const T = window.__mockTakes;
+      const tk = (id, extra) => ({ id, key: 'k7' + id, created: 1793560100, quality: 'final', seconds: 32, frames: 768, face: {}, files: {}, ...extra });
+      T.s_07 = { starred: 'v2', takes: [tk('v1', { render_seconds: 312.4 }), tk('v2', { render_seconds: 193.2, encode_seconds: 3.2, finish_seconds: 9.6,
+        pass_times: [{ pass: 1, seconds: 121.4, cached: false, phases: { encode: 3.2, guides: 0.9, sample: 98.4, decode: 14.1, save: 4.8 } },
+          { pass: 2, seconds: 0.8, cached: true },
+          { pass: 3, seconds: 64.6, cached: false, phases: { encode: 2.1, guides: 1.0, sample: 30.2, upscale: 6.3, refine: 18.7, decode: 5.1, save: 1.2 } }] })] };
+      T.s_08 = { starred: 'v1', takes: [tk('v1', {})] };
+      window.__editor.actions.refreshTakes(); }""")
+    page.wait_for_timeout(400)
+    page.evaluate("window.__editor.store.setEph({ openTakes: { s_07: true } })")
+    page.wait_for_timeout(300)
+    head = page.locator(".rw-trow.head").inner_text()
+    check("Render time" in head, f"the table has a Render time column: {head!r}")
+    cells = page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('.rw-trow:not(.head)')].map(r =>
+      [r.querySelector('.mono').textContent, [r.querySelector('.rw-ttime')?.textContent, (r.querySelector('.rw-ttime')?.scrollWidth || 0) <= (r.querySelector('.rw-ttime')?.clientWidth || 0)]]))""")
+    check(cells.get("01") == ["1 min 30 s", True] and cells.get("07") == ["3 min 16 s", True] and cells.get("08") == ["—", True],
+          f"the Render time column shows the merge take's time (render + its encoding), fitting the cell: {cells}")
+    takes = page.locator(".rw-takes .rw-take")
+    old, new = takes.nth(0), takes.nth(1)
+    check(old.locator(".rw-took").inner_text().strip() == "5 min 12 s" and old.locator(".rw-took-pass").count() == 0,
+          f"an older take shows its total only: {old.locator('.rw-took').inner_text()!r}")
+    old_tip = old.locator(".rw-took").get_attribute("data-detail") or ""
+    check("before render times were kept per pass" in old_tip, f"older take tooltip: {old_tip!r}")
+    passes = [new.locator(".rw-took-pass").nth(k).inner_text().replace("\n", " ").strip() for k in range(new.locator(".rw-took-pass").count())]
+    check(passes == ["P1 2 min 01 s", "P2 cache", "P3 1 min 05 s"], f"each pass's time, cached passes say so: {passes}")
+    tip = new.locator(".rw-took").get_attribute("data-detail") or ""
+    want = ["Rendered in 3 min 16 s", "Pass 1: 2 min 01 s (encode 3.2 s · guides 0.9 s · sample 1 min 38 s · decode 14 s · save 4.8 s)",
+            "Pass 2: 0.8 s, read from the pass cache", "upscale 6.3 s · refine 19 s", "Finishing (joining the passes, first and last frames, tail clip): 9.6 s",
+            "Includes 3.2 s of prompt encoding done at the start of the run."]
+    check(all(w in tip for w in want), f"the tooltip lists each pass and its phases: {tip!r}")
+    row_tip = page.locator(".rw-trow:not(.head)").nth(6).locator(".rw-ttime").get_attribute("data-detail") or ""
+    check(row_tip == tip, "the scene row's time has the same breakdown")
+    check(page.locator(".rw-takes").count() == 1 and page.locator(".rw-trow:not(.head)").nth(7).locator(".rw-ttime").get_attribute("data-detail") is None,
+          "a take without a time has no tooltip")
+    new.locator(".rw-took").hover()
+    page.wait_for_timeout(900)
+    page.screenshot(path=str(shots / "v0192_render_times.png"))
+    page.mouse.move(5, 5)
+    page.evaluate("() => { for (const id of ['s_07', 's_08']) window.__mockTakes[id] = { starred: null, takes: [] }; window.__editor.actions.refreshTakes(); }")
+    page.wait_for_timeout(300)
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

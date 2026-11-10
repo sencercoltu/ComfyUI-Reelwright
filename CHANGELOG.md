@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.19.2 — 2026-11-10
+
+- **Render times on the Render tab.** Sencer: "please add render times to individual scenes/passes in the render tab. i want to see how long each render took." The Scenes and takes table has a **Render time** column: how long the take the merge uses took. Open Takes and every take shows its time, and with several passes each pass's time follows ("P1 2 min 01 s · P2 cache · P3 1 min 05 s"; "cache" is a pass read back from the pass cache). Hover a time for each pass split into its phases (encode, guides, sample, upscale, refine, decode, save) and the finishing (joining the passes, first and last frames, tail clip, face check). The time counts the take from its first pass to its face check, plus the prompt encoding done for it at the start of the run. Takes made before this version show their total only.
+- **For developers:** `render.PassClock`; `Renderer.phase` (also fed by `progress`), `Renderer.encode_times` (encode-first per pass); takes and `meta.json` add `pass_times`, `encode_seconds`, `finish_seconds`; `render_seconds` now runs to the end of the face check. `render.js fmtTook`, `takeSeconds`, `takeTimeDetail`, `takeTimeView`; the table has 9 columns. Tests: `test_render_flow` +1 (and the Hires test checks the upscale and refine phases); `interact.py v0192_checks`.
+
 ## v0.19.1 — 2026-11-10
 
 - **The Chat tab keeps the node's height.** Sencer: "The chat tab card grows in height while chatting. add scroll bar when it reaches the node height. or better, make it fixed to node height, and show scroll when necessary". In ComfyUI's Nodes 2.0 the node grew with whatever the editor showed. The editor now takes the node's height there, as it does in the classic canvas: the conversation scrolls inside the Chat tab, and every other tab scrolls inside its own columns. Resize the node to make the editor taller.

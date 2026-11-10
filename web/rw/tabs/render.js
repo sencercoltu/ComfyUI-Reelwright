@@ -140,6 +140,15 @@ function fmtDuration(sec) {
   if (m < 60) return `${m} min`;
   return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
 }
+// "8.4 s", "52 s", "4 min 12 s", "1 h 03 min": how long a render took
+function fmtTook(sec) {
+  if (!(sec >= 0)) return "";
+  if (sec < 9.95) return `${sec.toFixed(1)} s`;
+  if (sec < 59.5) return `${Math.round(sec)} s`;
+  if (sec < 3599.5) { const s = Math.round(sec); return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`; }
+  const m = Math.round(sec / 60);
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
+}
 function estimateLabel(est, pend) {
   if (!est || !pend) return null;
   const n = est.scenes ?? pend, unknown = est.unknown || 0;
@@ -284,6 +293,41 @@ function abVideo(ctx, side, url) {
   const el = h("video", { class: "rw-ab-video", src: url, controls: true, muted: side === "b", preload: "metadata", playsinline: true });
   m[side] = { url, el };
   return el;
+}
+
+// Render time of a take (render.py PassClock): render_seconds (the take, from its first pass to the face check) plus
+// encode_seconds (the prompt encoding done for it at the start of the run); pass_times [{pass, seconds, cached,
+// phases?: {encode, guides, sample, upscale, refine, decode, save}}] and finish_seconds (joining, frames, tail clip, face
+// check). Older takes have render_seconds only; null without it.
+function takeSeconds(tk) {
+  return typeof tk?.render_seconds === "number" ? tk.render_seconds + (tk.encode_seconds || 0) : null;
+}
+function passTimeText(x) {
+  if (x.cached) return `${fmtTook(x.seconds)}, read from the pass cache`;
+  const parts = Object.entries(x.phases || {}).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${fmtTook(v)}`);
+  return fmtTook(x.seconds) + (parts.length ? ` (${parts.join(" · ")})` : "");
+}
+function takeTimeDetail(s, tk) {
+  const total = takeSeconds(tk);
+  if (total === null) return null;
+  const times = tk.pass_times || [];
+  if (!times.length) return `Rendered in ${fmtTook(total)} (made before render times were kept per pass).`;
+  const lines = [`Rendered in ${fmtTook(total)}`, ...times.map(x => `${passLabel(s, x.pass)}: ${passTimeText(x)}`)];
+  if (tk.finish_seconds >= 0.05) {
+    const what = [times.length > 1 && "joining the passes", "first and last frames", "tail clip", tk.face && Object.keys(tk.face).length && "face check"].filter(Boolean);
+    lines.push(`Finishing (${what.join(", ")}): ${fmtTook(tk.finish_seconds)}`);
+  }
+  if (tk.encode_seconds) lines.push(`Includes ${fmtTook(tk.encode_seconds)} of prompt encoding done at the start of the run.`);
+  return lines.join("\n");
+}
+// "⏱ 4 min 12 s  P1 2 min 01 s  P2 cache" in a take's row; hover for the phases
+function takeTimeView(s, tk) {
+  const total = takeSeconds(tk);
+  if (total === null) return null;
+  const times = tk.pass_times || [];
+  return h("span", { class: "rw-took", help: "render.take.time", detail: takeTimeDetail(s, tk) },
+    icon("history", 11), h("b", { class: "mono" }, fmtTook(total)),
+    times.length > 1 ? times.map(x => h("span", { class: ["rw-took-pass", x.cached && "cached"] }, h("b", null, `P${x.pass}`), x.cached ? "cache" : fmtTook(x.seconds))) : null);
 }
 
 // Drift of a take (contract P2, render.py): take.drift = [{pass, source, frames, anchor_diff,
@@ -504,7 +548,8 @@ function takesTable(ctx) {
   // Busy uses isFinal (skipped is finished); the last run's failure or skip per scene; time
   // estimate and passes kept in the pass cache; "continues from a different take" with a re-render of it and its
   // dependents; the prompt diff against the starred take ("why?"); a hand-picked star; a pass retake per pass; the A/B
-  // compare of the two newest takes (after variants); deleting a take asks in a dialog
+  // compare of the two newest takes (after variants); deleting a take asks in a dialog; render times of the merge take
+  // (Render time column) and of each take and its passes
   const openDiff = ctx.eph.openDiff || {};
   p.scenes.forEach((s, i) => {
     const st = ctx.statusOf(s.id);
@@ -541,6 +586,11 @@ function takesTable(ctx) {
       h("span", { class: "rw-dim small", help: kept ? "render.table.cachedPasses" : "render.table.passes" }, nPass ? `${nPass} pass${nPass > 1 ? "es" : ""}` : "",
         kept ? h("span", { class: "rw-c-aud" }, ` · ${kept} kept`) : null,
         (lv => lv ? h("span", { class: ["rw-led", lv, "rw-led-hit"], help: "render.table.drift", detail: driftSummary(ctx.starredTake(s.id)), style: { "margin-left": "6px", "vertical-align": "1px" } }) : null)(driftWorst(ctx.starredTake(s.id)))),
+      (() => {
+        const tk = mergeTake(ctx, s.id);
+        const sec = takeSeconds(tk);
+        return h("span", { class: "rw-dim rw-ttime", help: "render.table.time", detail: takeTimeDetail(s, tk) }, sec === null ? "—" : fmtTook(sec));
+      })(),
       h("span", { class: "mono", style: { "text-align": "right" } }, s.duration.toFixed(2) + " s")));
     if (plan?.upstream_changed && !busy) rows.push(upstreamNote(ctx, s, plan));
     if (canDiff && openDiff[s.id]) rows.push(promptDiffView(plan));
@@ -567,6 +617,7 @@ function takesTable(ctx) {
         tk.out_width && h("span", { class: "rw-tag", help: "render.take.hires" }, `hires ${tk.out_width}×${tk.out_height}${tk.hires?.refine_steps ? " · refined" : ""}`),
         tk.files?.video && h("span", { class: "mono small rw-dim rw-ellipsis rw-take-file", title: "output/" + tk.files.video, help: "render.take.file" }, baseName(tk.files.video)),
         h("span", { class: "mono rw-dim" }, `${(tk.seconds ?? 0).toFixed(2)} s · ${tk.frames ?? "?"} f`),
+        takeTimeView(s, tk),
         h("span", { class: "rw-dim small" }, tk.created ? new Date(tk.created * (tk.created < 1e12 ? 1000 : 1)).toLocaleString() : ""),
         tk.face && Object.keys(tk.face).length ? h("span", { class: "mono small rw-c-aud", help: "cast.appearances.score" }, "face " + Object.values(tk.face).map(v => Number(v).toFixed(2)).join(" / ")) : null,
         driftView(tk), longView(tk),
@@ -592,7 +643,7 @@ function takesTable(ctx) {
       merging && button({ label: "Stop", icon: "stop", small: true, variant: "danger-ghost", help: "render.merge.stop", onClick: () => ctx.actions.cancelMerge() }),
     ],
     children: [
-      h("div", { class: "rw-trow head" }, ["#", "Scene", "Status", "Takes", "File", "Cache key", "Passes", "Length"].map(x => h("span", null, x))),
+      h("div", { class: "rw-trow head" }, ["#", "Scene", "Status", "Takes", "File", "Cache key", "Passes", "Render time", "Length"].map(x => h("span", null, x))),
       rows,
     ],
   });

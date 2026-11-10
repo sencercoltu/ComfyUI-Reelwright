@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import types
 
 import pytest
@@ -830,6 +831,47 @@ def test_take_meta_records_upstream_prompts_and_keys(stubs, harbor, store, roots
     assert store.starred_take("s_one")["upstream"] is None
     idx = store.read_index("s_one")
     assert idx["auto_star"] == "v1"
+
+
+def test_takes_record_their_render_times(stubs, harbor, store, roots, monkeypatch):
+    """Render tab: each take keeps its time per pass (split by phase), the encode-first time it used and the time
+    after its passes; a pass read from the pass cache is marked."""
+    render, calls, events = stubs
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    ref2v = render.MiniMaxH3ReferenceToVideo.execute
+
+    def slow_ref2v(**kw):
+        time.sleep(0.1)
+        return ref2v(**kw)
+
+    def slow_sample(model, positive, latent, seed, settings, on_step):
+        calls["sample"].append(seed)
+        time.sleep(0.15)
+        on_step(settings["steps"], settings["steps"])
+        return latent
+
+    monkeypatch.setattr(render.MiniMaxH3ReferenceToVideo, "execute", staticmethod(slow_ref2v))
+    monkeypatch.setattr(render, "_sample", slow_sample)
+    render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    take = store.starred_take("s_long")
+    with open(os.path.join(store.take_dir("s_long", take["id"]), "meta.json")) as f:
+        meta = json.load(f)
+    for t in (take, meta):
+        times = t["pass_times"]
+        assert [x["pass"] for x in times] == [1, 2, 3] and not any(x["cached"] for x in times)
+        for x in times:
+            assert x["phases"]["encode"] >= 0.1 and x["phases"]["sample"] >= 0.15
+            assert set(x["phases"]) <= {"encode", "guides", "sample", "upscale", "refine", "decode", "save"}
+            assert x["seconds"] >= sum(x["phases"].values()) - 0.2
+        whole = t["render_seconds"] + t.get("encode_seconds", 0)
+        assert whole == pytest.approx(sum(x["seconds"] for x in times) + t["finish_seconds"], abs=0.3)
+    assert take["render_seconds"] >= 0.45
+    # a pass retake reads pass 1 from the pass cache: no phases, marked as cached
+    render.Renderer(harbor, store, {}, {"action": "pass_retake", "scene_id": "s_long", "pass": 2}).run()
+    times = store.starred_take("s_long")["pass_times"]
+    assert times[0]["cached"] and "phases" not in times[0]
+    assert not times[1]["cached"] and times[1]["phases"]["sample"] >= 0.15
 
 
 def test_node_output_is_a_full_cut_never_a_draft(stubs, harbor, roots, monkeypatch):
@@ -1652,10 +1694,12 @@ def test_hires_enlarges_every_pass_to_the_project_size(stubs, harbor, store, roo
 
     def fake_up(model, samples, width, height):
         ups.append((model, samples["size"], (width, height)))
+        time.sleep(0.06)  # long enough to show in the take's pass times
         return types.SimpleNamespace(result=(dict(samples, size=(width, height)),))
 
     def fake_refine(model, positive, latent, seed, settings, steps, denoise, on_step):
         refines.append((latent["size"], steps, denoise))
+        time.sleep(0.06)
         on_step(steps, steps)  # _hires passes its own callback (phase "refine")
         return latent
     monkeypatch.setattr(render.MiniMaxH3LatentUpscaleWithModel, "execute", staticmethod(fake_up))
@@ -1680,6 +1724,8 @@ def test_hires_enlarges_every_pass_to_the_project_size(stubs, harbor, store, roo
         assert (take.get("out_width"), take.get("out_height")) == (size if sid != "s_short" else (None, None))
     phases = {d["phase"] for e, d in events if e == "reelwright.progress"}
     assert {"upscale", "refine"} <= phases
+    assert all({"upscale", "refine"} <= set(x["phases"]) for x in store.starred_take("s_long")["pass_times"])
+    assert "refine" not in store.starred_take("s_one")["pass_times"][0]["phases"]
 
     out = assemble.merge_project(analyze(harbor, store), store)  # the film is the hires size
     info = merge.probe(store.output_path(out["files"]["video"]))

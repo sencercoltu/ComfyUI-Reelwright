@@ -448,6 +448,38 @@ def _free(policy):
         mm.soft_empty_cache()
 
 
+class PassClock:
+    """Wall time of one pass of a take, split by the phases it went through (the progress phases, plus "guides"
+    for building the references and hand-off before sampling)."""
+
+    def __init__(self, phase="guides"):
+        self.t0 = self.at = time.time()
+        self.phase = phase
+        self.phases = {}
+
+    def mark(self, phase):
+        now = time.time()
+        if phase != self.phase:
+            if self.phase:
+                self.phases[self.phase] = self.phases.get(self.phase, 0.0) + now - self.at
+            self.phase, self.at = phase, now
+
+    def stop(self, n, cached=False, encoded=0.0):
+        """{pass, seconds, cached, phases}; `encoded` is the time encode-first spent on this pass before the take
+        started (counted in the pass and as its "encode" phase)."""
+        self.mark(None)
+        phases = dict(self.phases)
+        if encoded:
+            phases["encode"] = phases.get("encode", 0.0) + encoded
+        out = {"pass": n + 1, "seconds": round(time.time() - self.t0 + encoded, 1), "cached": bool(cached)}
+        if not cached:
+            out["phases"] = {k: round(v, 1) for k, v in phases.items() if v >= 0.05}
+        return out
+
+
+PASS_PHASES = ("encode", "sample", "upscale", "refine", "decode", "save", "reuse")
+
+
 class Renderer:
     def __init__(self, project, store, wired, run_request):
         self.store = store
@@ -466,6 +498,8 @@ class Renderer:
         self.long = long_settings(self.p)
         self.footage = []
         self.handoff_notes = []
+        self.clock = None  # the PassClock of the pass being rendered
+        self.encode_times = {}  # (scene id, pass index) -> seconds encode-first spent on it
 
     # ---- helpers --------------------------------------------------------------
     def label(self, sid):
@@ -938,11 +972,18 @@ class Renderer:
 
     # ---- run ---------------------------------------------------------------
     def progress(self, sid, n, passes, phase, step=0, steps=0, message="", warning=False):
+        if phase in PASS_PHASES:
+            self.phase(phase)
         data = {"slug": self.slug, "run_id": self.run_id, "scene_id": sid, "pass": n,
                 "passes": passes, "step": step, "steps": steps, "phase": phase, "message": message}
         if warning:
             data["warning"] = True
         send("reelwright.progress", data)
+
+    def phase(self, phase):
+        """The pass being rendered enters `phase` (its time is counted there until the next phase)."""
+        if self.clock is not None:
+            self.clock.mark(phase)
 
     def run(self):
         """Render the requested scenes; returns the ids of the scenes that got a take.
@@ -1046,7 +1087,9 @@ class Renderer:
                         continue
                     mm.throw_exception_if_processing_interrupted()
                     self.progress(sid, n + 1, count, "encode")
+                    t0 = time.time()
                     encoded[(sid, n)] = self.encode(scene, sr, n)
+                    self.encode_times[(sid, n)] = time.time() - t0
             except Exception as e:  # noqa: BLE001
                 log.exception("Reelwright: encoding %s failed", self.label(sid))
                 self._fail(sid, e, state, encoded)
@@ -1355,6 +1398,7 @@ class Renderer:
         else:
             self.progress(sid, n + 1, n_pass, "encode")
             positive, latent = self.encode(scene, sr, n, upstream, prev_pass)
+        self.phase("guides")
         hires = st.get("hires")
         unguided = positive if hires and hires.get("refine_steps") else None  # the refine guides again at its size
         positive = self.guide(scene, sr, n, positive, latent, prev_pass, upstream, prev_latent)
@@ -1382,6 +1426,7 @@ class Renderer:
                 send("reelwright.preview", {"slug": self.slug, "scene_id": sid, "pass": _n + 1, "passes": n_pass,
                                             "step": step, "steps": total, "image": image})
 
+        self.phase("sample")
         samples = _sample(model, positive, latent, seed, dict(st, preview_frame=preview_frame(sr["plan"]["passes"][n])),
                           on_step)
         del positive, latent
@@ -1411,6 +1456,7 @@ class Renderer:
         if steps <= 0 or unguided is None:
             return big
         footage, notes = self.footage, self.handoff_notes  # the drift meter measures the first sampling's guides
+        self.phase("guides")
         positive = self.guide(scene, sr, n, unguided, big, prev_pass, upstream, prev_latent)
         self.footage, self.handoff_notes = footage, notes
         model = self.models.model(st)
@@ -1453,8 +1499,12 @@ class Renderer:
         pass_files, sampled, from_cache = [], 0, 0
         lossless = self.long["pass_cache"] == "lossless"
         prev_latent, drift, tail_mem = None, [], None
+        pass_times, encode_seconds = [], 0.0
+        self.clock = None
         for n, x in enumerate(plan["passes"]):
             mm.throw_exception_if_processing_interrupted()
+            self.clock = PassClock()
+            pre = self.encode_times.pop((sid, n), 0.0)
             cpath = os.path.join(pdir, tp["file_keys"][n] + ".mp4")
             nxt = plan["passes"][n + 1] if n + 1 < n_pass else None
             need = self._handoff_need(nxt)
@@ -1477,6 +1527,8 @@ class Renderer:
                 drift += self._cached_drift(cpath, sr, n, frames, prev_pass)
                 keep_lat = load_handoff(cpath[:-4] + ".latent.safetensors") if need else None
             else:
+                if (sid, n) not in encoded:
+                    pre = 0.0  # encoded again inside the take (its own "encode" phase)
                 frames, audio, lat_full = self._generate(sid, scene, sr, n, encoded, keep_encoded, prev_pass, upstream,
                                                          tp["seeds"][n], prev_latent)
                 sampled += int(x["gen_frames"])
@@ -1513,6 +1565,11 @@ class Renderer:
             prev_pass = (frames[-keep:].clone(), audio) if nxt and nxt["seam_before"] == "overlap" else None
             del frames, audio, kept, kept_audio
             _free(self.memory["policy"])
+            cached = hit is not None
+            pass_times.append(self.clock.stop(n, cached=cached, encoded=0.0 if cached else pre))
+            encode_seconds += 0.0 if cached else pre
+            self.clock = None
+        t_passes = time.time()
 
         if n_pass > 1:
             self.progress(sid, n_pass, n_pass, "save", message="joining {} passes".format(n_pass))
@@ -1535,7 +1592,7 @@ class Renderer:
             "id": take_id, "key": tp["key"], "variant": max(tp["offsets"]), "created": int(time.time()),
             "quality": st["quality"], "seconds": plan["frames"] / spec.FPS, "frames": plan["frames"],
             "overlap_frames": plan["passes"][0]["overlap_frames"], "seeds": tp["seeds"],
-            "render_seconds": round(time.time() - t0, 1),
+            "pass_times": pass_times,
             "files": {"video": rel(video_name), "first": rel("first.png"), "last": rel("last.png"),
                       "tail": rel("tail.mp4"), "passes": [self.store.rel_output(f) for f in pass_files]},
             "face": {},
@@ -1549,6 +1606,8 @@ class Renderer:
         if st.get("hires"):
             take["out_width"], take["out_height"] = output_size(st)
             take["hires"] = dict(st["hires"])
+        if encode_seconds >= 0.05:
+            take["encode_seconds"] = round(encode_seconds, 1)
         if self.p["global"]["continuity"]["face_check"] and continuity.available():
             # an optional check must not throw away a finished take
             try:
@@ -1557,6 +1616,9 @@ class Renderer:
             except Exception as e:
                 log.warning("Reelwright: face check skipped for %s: %s", sid, e)
                 self.progress(sid, n_pass, n_pass, "save", message="face check skipped: {}".format(str(e)[:160]))
+        # the whole take: its passes, then joining them, the first/last frames, the tail clip and the face check
+        take["render_seconds"] = round(time.time() - t0, 1)
+        take["finish_seconds"] = round(time.time() - t_passes, 1)
         meta = dict(take, passes=[dict(x, key=k) for x, k in zip(sr["passes"], tp["pass_keys"])],
                     settings={k: v for k, v in st.items() if k != "loras"}, loras=st["loras"])
         write_json(os.path.join(tdir, "meta.json"), meta)  # through a temp file: Files -> Repair trusts meta.json
