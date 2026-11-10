@@ -394,7 +394,10 @@ function outfitsCard(ctx, c) {
   return section({
     title: c.kind === "character" ? "Outfits" : "Variants", help: "cast.outfits",
     actions: button({ label: "Add", icon: "plus", small: true, help: "cast.outfits.add", onClick: () => edit(x => {
-      const o = { id: newId("o"), name: x.outfits.length ? "Outfit " + (x.outfits.length + 1) : "Default", retention: "fully_preserved", keep: [], assets: [] };
+      // a character's later outfits change its look: keep the face and hair, not the anchors' clothes
+      const changes = x.outfits.length > 0 && x.kind === "character";
+      const o = { id: newId("o"), name: x.outfits.length ? "Outfit " + (x.outfits.length + 1) : "Default",
+        retention: changes ? "partially_preserved" : "fully_preserved", keep: changes ? ["face", "hair"] : [], assets: [] };
       x.outfits.push(o);
       if (!x.default_outfit) x.default_outfit = o.id;
     }) }),

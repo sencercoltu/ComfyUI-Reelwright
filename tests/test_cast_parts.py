@@ -120,9 +120,11 @@ def test_outfit_pictures_and_wording(harbor, roots):
                                 "keep": ["face", "hair"], "assets": ["a_belly"]}]
     p = normalize_project(p)
     prompt = _build(p, 0)["prompt"]
-    assert ("<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>, <Picture 2>, and <Picture 3>, "
-            "with a big beer belly.") in prompt
-    assert "<Subject 1> (appears in [Shot 1]): partially_preserved - face and hair are partly retained." in prompt
+    # the outfit's picture is named as the outfit's, not as one more picture of Mara
+    assert ("<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1> and <Picture 2>, "
+            "with a big beer belly as shown in <Picture 3>.") in prompt
+    assert ("<Subject 1> (appears in [Shot 1]): partially_preserved - face and hair are partly retained, "
+            "with a big beer belly as shown in <Picture 3>.") in prompt
     assert outfit_words("grey suit") == "wearing grey suit"
     assert outfit_words("in a wheelchair") == "in a wheelchair"
     assert outfit_words("Wearing a  red scarf") == "Wearing a red scarf"
@@ -135,3 +137,46 @@ def test_llm_context_says_a_part_is_no_separate_subject(harbor, roots):
     ctx = scene_context(p, p["scenes"][0])
     assert "@{Beer belly} - a big round beer belly (part of @Mara's body or look, not a separate person or object)" in ctx
     assert project_index(p)["cast"]["c_belly"]["part_of"] == "c_mara"
+
+
+def test_an_outfit_picture_is_named_in_the_prompt(harbor, roots):
+    """v0.19.3 (Sencer: "when selecting the Dress outfit, seems the outfit's picture is not referenced anywhere, but
+    only the name "Dress""): the outfit's picture was one more "shown in" picture of the character."""
+    p = _with_belly(harbor, roots, part_of="")
+    p["cast"].pop()
+    p["assets"][-1].update(id="a_dress", name="dress")
+    p["scenes"][0]["cast"] = [{"id": "c_mara", "outfit": "o_dress"}]
+    p["scenes"][0]["shots"][0]["text"] = "@Mara laughs"
+    p["cast"][0]["outfits"] = [{"id": "o_plain", "name": "Default", "assets": []},
+                               {"id": "o_dress", "name": "Dress", "assets": ["a_dress"]}]
+    p["cast"][0]["default_outfit"] = "o_plain"
+    p = normalize_project(p)
+    prompt = _build(p, 0)["prompt"]
+    assert ("<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1> and <Picture 2>, "
+            "wearing Dress as shown in <Picture 3>.") in prompt
+    assert ("<Subject 1> (appears in [Shot 1]): fully_preserved - identity and appearance are retained, wearing Dress "
+            "as shown in <Picture 3>.") in prompt
+    # the default outfit, unnamed, with a picture
+    p["scenes"][0]["cast"] = [{"id": "c_mara", "outfit": ""}]
+    p["cast"][0]["outfits"][0]["assets"] = ["a_dress"]
+    assert "shown in <Picture 1> and <Picture 2>, wearing the outfit shown in <Picture 3>." in _build(p, 0)["prompt"]
+    # an outfit picture that is also an anchor is an anchor; an anchor left out in this scene is the outfit's then
+    p["cast"][0]["outfits"][0]["assets"] = [p["cast"][0]["anchors"][1]]
+    assert "shown in <Picture 1> and <Picture 2>." in _build(p, 0)["prompt"]
+    p["scenes"][0]["cast"][0]["skip"] = [p["cast"][0]["anchors"][1]]
+    p = normalize_project(p)
+    assert "shown in <Picture 1>, wearing the outfit shown in <Picture 2>." in _build(p, 0)["prompt"]
+    # one sheet: the outfit is its last view
+    p["scenes"][0]["cast"] = [{"id": "c_mara", "outfit": "o_dress"}]
+    p["cast"][0]["pack_sheet"] = True
+    p = normalize_project(p)
+    prompt = _build(p, 0)["prompt"]
+    assert ("shown in <Picture 1>, a sheet of 3 views of the same person, wearing Dress as shown in the last view of "
+            "the sheet.") in prompt
+    # a scene without outfit pictures builds exactly as before
+    p["cast"][0]["outfits"][1]["assets"] = []
+    p["cast"][0]["pack_sheet"] = False
+    p = normalize_project(p)
+    prompt = _build(p, 0)["prompt"]
+    assert "shown in <Picture 1> and <Picture 2>, wearing Dress." in prompt
+    assert "fully_preserved - identity and appearance are retained." in prompt

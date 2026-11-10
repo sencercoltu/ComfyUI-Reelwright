@@ -497,6 +497,12 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
                               "pictures": pics, "videos": []})
         if parts:  # only then, so a scene without parts keeps its build (and cache key) exactly
             refs.subjects[-1]["parts"] = parts
+        worn = outfit_pictures(c, entry, outfit, anchor_ids)
+        if worn:  # likewise: only a scene whose outfit has pictures changes
+            if len(pics) == 1 and len(anchor_ids) > 1:  # one sheet: the outfit's views are cells of it
+                refs.subjects[-1]["outfit_views"] = [anchor_ids.index(a) + 1 for a in worn]
+            else:
+                refs.subjects[-1]["outfit_pictures"] = [first_pic + anchor_ids.index(a) for a in worn]
         if c.get("voice") in assets and assets[c["voice"]]["kind"] == "audio" and not song and c["id"] in speaking:
             refs.audios.append({"asset": c["voice"], "ref": None, "cast": c["id"]})  # a whole file (clip_key: start 0, no end)
     if song:
@@ -1055,7 +1061,8 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):
             text = "{} is {}".format(head, ", ".join(bits))
             parts = s.get("parts") or []
             only_parts = {k for x in parts for k in x["pictures"]}
-            own_pics = [k for k in s["pictures"] if k not in only_parts]
+            worn = s.get("outfit_pictures") or []
+            own_pics = [k for k in s["pictures"] if k not in only_parts and k not in worn]
             own_src = _labels("Picture", own_pics)
             sheet = len(own_pics) == 1 and len(refs.images[own_pics[0] - 1]["assets"]) > 1
             if sheet:
@@ -1065,9 +1072,13 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):
                 text += ", shown in " + own_src + (", and in " if sheet else " and in ") + vids
             elif own_src or vids:
                 text += ", shown in " + (own_src or vids)
-            o = s["outfit"]
-            if o and o.get("name") and o["name"].strip().lower() != "default":
-                text += ", " + outfit_words(o["name"])
+            worn_text = outfit_shown(s, refs)
+            if worn_text:
+                text += ", " + worn_text
+            else:
+                o = s["outfit"]
+                if o and o.get("name") and o["name"].strip().lower() != "default":
+                    text += ", " + outfit_words(o["name"])
             for x in parts:
                 text += ", " + part_words(cast[x["cast"]], assets, x["pictures"])
             if s.get("poses"):
@@ -1161,6 +1172,43 @@ def outfit_words(name):
     return name if OUTFIT_AS_IS.match(name) else "wearing " + name
 
 
+def outfit_pictures(c, entry, outfit, ids):
+    """The pictures of the outfit a cast member wears in a scene that it sends besides its anchors (ids: the pictures
+    it sends, model.scene_people), in order; [] without such pictures."""
+    if not outfit:
+        return []
+    skip = _model.entry_skip(entry)
+    anchors = {a for a in c.get("anchors") or [] if a not in skip}
+    mine = set(outfit.get("assets") or [])
+    return [a for a in ids if a in mine and a not in anchors]
+
+
+def _views(cells, n):
+    """"the last view" / "the last 2 views" / "view 3" / "views 2 and 3" of a sheet of n views."""
+    cells = sorted(cells)
+    if cells == list(range(n - len(cells) + 1, n + 1)):
+        return "the last view" if len(cells) == 1 else "the last {} views".format(len(cells))
+    return ("view " if len(cells) == 1 else "views ") + _join_and(str(k) for k in cells)
+
+
+def outfit_shown(s, refs):
+    """", wearing Dress as shown in <Picture 2>" for a subject whose outfit has pictures of its own (they show the
+    outfit, not who wears it): "with a big beer belly as shown in …" for a name that says how; "wearing the outfit
+    shown in …" for an unnamed or default outfit; in one sheet: "… as shown in the last view of the sheet". "" when
+    the outfit has no pictures here."""
+    if s.get("outfit_pictures"):
+        where = _labels("Picture", s["outfit_pictures"])
+    elif s.get("outfit_views"):
+        n = len(refs.images[s["pictures"][0] - 1]["assets"])
+        where = _views(s["outfit_views"], n) + " of the sheet"
+    else:
+        return ""
+    name = " ".join(str((s.get("outfit") or {}).get("name") or "").split())
+    if not name or name.lower() == "default":
+        return "wearing the outfit shown in " + where
+    return outfit_words(name) + " as shown in " + where
+
+
 def part_words(part, assets, pictures):
     """"with <name> (<description>) shown in <Picture k>" for a prop that is part of a character; the description is
     the prop's own or its first described anchor's (cast_description). No pictures: the character's pictures (one
@@ -1187,6 +1235,9 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):
             ret = _retention(r, a)
             keep = _keep(r, a) or DEFAULT_KEEP.get(a.get("category"), ["overall look"])
         extra = ""
+        worn_text = outfit_shown(s, refs) if s["cast"] else ""
+        if worn_text:
+            extra += ", " + worn_text
         for x in s.get("parts") or []:
             po = x.get("outfit") or {}
             pret = po.get("retention") or "fully_preserved"

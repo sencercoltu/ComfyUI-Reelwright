@@ -1506,6 +1506,7 @@ def main():
         v0191_checks(page, check, saved, shots)
         v0192_checks(page, check, saved, shots)
         v0193_checks(page, check, saved, shots)
+        v0194_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
     httpd.shutdown()
@@ -6415,6 +6416,29 @@ def v0193_checks(page, check, saved, shots):
     page.wait_for_timeout(400)
     back = page.evaluate("() => { const p = window.__editor.store.project; return [p.cast.length, p.cast.some(c => c.name === 'New location')]; }")
     check(back == [len(q["cast"]), False], f"one undo removes it again: {back}")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+def v0194_checks(page, check, saved, shots):
+    """v0.19.4: a character's second and later outfits start as partially_preserved keeping face and hair (a
+    location's variants stay fully_preserved). The prompt wording of outfit pictures is in tests/test_cast_parts.py."""
+    def outfits(cid):
+        return page.evaluate("id => window.__editor.store.project.cast.find(c => c.id === id).outfits.map(o => [o.retention, o.keep])", cid)
+    for cid in ("c_keeper", "c_harbor"):
+        q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+        q["ui"].update(tab="cast")
+        page.evaluate("j => window.__editor.load(j)", json.dumps(q))
+        page.wait_for_timeout(300)
+        page.evaluate("id => window.__editor.store.setEph({ selectedCast: id })", cid)
+        page.wait_for_timeout(300)
+        for _ in range(2):
+            page.locator("[data-help='cast.outfits.add']").first.click()
+            page.wait_for_timeout(250)
+        got = outfits(cid)
+        want = [["fully_preserved", []], ["partially_preserved", ["face", "hair"]]] if cid == "c_keeper" else \
+            [["fully_preserved", []], ["fully_preserved", []]]
+        check(got == want, f"new outfits of {cid}: {got}")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

@@ -544,7 +544,7 @@ async function route(path, opts = {}) {
   const body = opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : null;
   await new Promise(r => setTimeout(r, 20));
   switch (url.pathname) {
-    case "/reelwright/info": return json({ version: "0.19.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.19.4", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
       if (!body.name) return json({ error: "Give the profile a name" }, 400);

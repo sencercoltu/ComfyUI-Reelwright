@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.19.4 — 2026-11-10
+
+- **An outfit's picture is named in the prompt.** Sencer: "when selecting the Dress outfit, seems the outfit's picture is not referenced anywhere, but only the name "Dress"". The outfit's picture was sent, but the subject line listed it as one more picture of the character ("shown in <Picture 1> and <Picture 2>, wearing Dress"), so H3 could not tell it showed the dress. Now: "<Subject 1> is Emre, …, shown in <Picture 1>, wearing Dress as shown in <Picture 2>", and the retention line says it too ("fully_preserved - identity and appearance are retained, wearing Dress as shown in <Picture 2>"). An unnamed or Default outfit reads "wearing the outfit shown in …"; in an anchor sheet, "… as shown in the last view of the sheet". Scenes whose outfit has pictures get a new prompt, so they render again; other scenes keep theirs.
+- **New outfits keep the face, not the clothes.** A character's second and later outfits now start as partially_preserved keeping face and hair, so the clothes in the anchors don't win over the outfit. Existing outfits keep their settings: set your Dress outfit that way on the Cast tab too.
+- **For developers:** `prompt.outfit_pictures`, `outfit_shown`, `_views`; subjects carry `outfit_pictures` (or `outfit_views` in a sheet) only when the outfit has pictures, so other builds and cache keys are unchanged. Tests: `test_cast_parts` (+1, and the beer-belly wording).
+
 ## v0.19.3 — 2026-11-10
 
 - **Outfits show in the Scene tab again.** Sencer: "i have 2 outfits for a character, but they don't show up." The outfit picker sat at the right of the cast member's row, beside the description, and a long description squeezed it to an empty box. It now has its own line, "Outfit", under the description, keeps its width, lists every outfit, marks the one set on the Cast tab "(default)" and says how many there are.
