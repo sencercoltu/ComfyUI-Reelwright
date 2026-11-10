@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.19.3 — 2026-11-10
+
+- **Outfits show in the Scene tab again.** Sencer: "i have 2 outfits for a character, but they don't show up." The outfit picker sat at the right of the cast member's row, beside the description, and a long description squeezed it to an empty box. It now has its own line, "Outfit", under the description, keeps its width, lists every outfit, marks the one set on the Cast tab "(default)" and says how many there are.
+- **Adding cast from the Scene tab always works.** Sencer: "also add new cast also doesnt show in scenes tab." The add picker disappeared once every story-bible entry was in the scene, so there was no way to add someone new there. It now always shows, and besides the entries not in the scene it offers **New character**, **New location** and **New prop**: that makes one, puts it in the scene and opens it on the Cast tab to name it and add its anchors. One Ctrl+Z takes it back out of both.
+- **A picker's help no longer covers its list.** Clicking into a picker showed its tooltip after a moment, on top of the list it had just opened.
+- **For developers:** `model.js newCastMember` (the Cast tab's New buttons use it too); `scene.js outfitRow`, `addCastPicker`; `.rw-cast-outfit`; `tooltip.js show` skips a picker whose list is open. `interact.py v0193_checks`.
+
 ## v0.19.2 — 2026-11-10
 
 - **Render times on the Render tab.** Sencer: "please add render times to individual scenes/passes in the render tab. i want to see how long each render took." The Scenes and takes table has a **Render time** column: how long the take the merge uses took. Open Takes and every take shows its time, and with several passes each pass's time follows ("P1 2 min 01 s · P2 cache · P3 1 min 05 s"; "cache" is a pass read back from the pass cache). Hover a time for each pass split into its phases (encode, guides, sample, upscale, refine, decode, save) and the finishing (joining the passes, first and last frames, tail clip, face check). The time counts the take from its first pass to its face check, plus the prompt encoding done for it at the start of the run. Takes made before this version show their total only.

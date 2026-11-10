@@ -337,8 +337,8 @@ more("scene.refs.order", "Reorder", "Drag the grip up or down to put this refere
 tip("scene.refs.add", "Add an asset as a reference with its default role and retention. A video or audio asset can be added more than once, to send different parts of it.");
 tip("scene.refs.overridden", "This reference differs from the asset's defaults.");
 more("scene.cast", "Cast in this scene", "Characters, locations and props from the story bible. Their anchors, description, voice and identity LoRA are added automatically. Pick an outfit to change clothes while keeping the face.", "Story-bible entries in this scene.");
-tip("scene.cast.add", "Add a character, location or prop from the Cast tab.");
-tip("scene.cast.outfit", "Which outfit or variant they wear in this scene.");
+tip("scene.cast.add", "Add a character, location or prop from the Cast tab. New character, New location or New prop makes one, puts it in this scene and opens it on the Cast tab to name it and add its anchors.");
+tip("scene.cast.outfit", "Which outfit or variant they wear in this scene. (default) marks the one set on the Cast tab, which a scene uses until you pick another.");
 tip("scene.cast.remove", "Remove from this scene.");
 more("scene.cast.smallSheet", "Sheet too small", "This cast member's pictures go to H3 as one sheet, and at this scene's size each picture reaches H3 at under 300 px: a face that small does not hold the identity well.\n\nKeep a sheet to about 4 pictures (a clear face and a full body), pick Separate or Auto under Cast → Anchors, or set Global → Output → Reference images to max (slower sampling).", "Each picture of the sheet is too small for identity.");
 more("scene.cast.order", "Reorder", "Drag the grip up or down to put this cast member elsewhere in the list; ↑ / ↓ on the grip move them one place. Each move is one undo step.\n\nThe order is the order of the subjects in the prompt (<Subject 1>, <Subject 2> …) and of their pictures.", "Drag to reorder.");

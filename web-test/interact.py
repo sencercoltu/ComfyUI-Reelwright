@@ -1505,6 +1505,7 @@ def main():
         v0190_checks(page, check, saved, shots)
         v0191_checks(page, check, saved, shots)
         v0192_checks(page, check, saved, shots)
+        v0193_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
     httpd.shutdown()
@@ -6370,6 +6371,50 @@ def v0192_checks(page, check, saved, shots):
     page.mouse.move(5, 5)
     page.evaluate("() => { for (const id of ['s_07', 's_08']) window.__mockTakes[id] = { starred: null, takes: [] }; window.__editor.actions.refreshTakes(); }")
     page.wait_for_timeout(300)
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+def v0193_checks(page, check, saved, shots):
+    """v0.19.3 (Sencer: "i have 2 outfits for a character, but they don't show up. also add new cast also doesnt show in
+    scenes tab"): the outfit picker has its own labelled line (a long description squeezed it to an empty box), lists
+    every outfit and marks the default; the add picker stays when everyone is in the scene and can make a new member."""
+    card = "() => [...document.querySelectorAll('section.rw-card')].find(x => x.textContent.includes('Cast in this scene'))"
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    m = next(c for c in q["cast"] if c["id"] == "c_mara")
+    m["description"] = "Woman in her early thirties, broad smile, short auburn hair, freckles, navy pea coat over a grey knit sweater. " * 4
+    q["ui"].update(tab="scene", selected="s_02")
+    page.evaluate("j => window.__editor.load(j)", json.dumps(q))
+    page.wait_for_timeout(500)
+    row = page.evaluate(f"""() => {{ const r = ({card})().querySelector('.rw-cast-outfit'); const c = r?.querySelector('.rw-combo');
+      return r && [r.querySelector('span').textContent, c.querySelector('input').value, Math.round(c.getBoundingClientRect().width)]; }}""")
+    check(row == ["Outfit", "Navy pea coat (default)", 190], f"the outfit picker has its own line and keeps its width: {row}")
+    page.locator("[data-key='cast-outfit-c_mara']").click()
+    page.wait_for_timeout(250)
+    opts = page.evaluate("() => [...document.querySelectorAll('.rw-combo-list .rw-combo-opt')].map(o => o.textContent)")
+    check(opts == ["Navy pea coat (default)", "Yellow oilskin"], f"every outfit is listed: {opts}")
+    page.locator(".rw-combo-list .rw-combo-opt", has_text="Yellow oilskin").dispatch_event("pointerdown")
+    page.wait_for_timeout(400)
+    worn = page.evaluate("() => window.__editor.store.project.scenes.find(x => x.id === 's_02').cast.find(x => x.id === 'c_mara').outfit")
+    check(worn == "o_oil", f"picking an outfit sets the scene's: {worn}")
+    page.screenshot(path=str(shots / "v0193_cast_outfit.png"))
+    page.evaluate("() => window.__editor.store.update(p => { p.scenes.find(x => x.id === 's_02').cast = p.cast.map(c => ({ id: c.id, outfit: '' })); })")
+    page.wait_for_timeout(400)
+    add = page.locator("[data-key='cast-add-s_02']")
+    check(add.count() == 1 and add.get_attribute("placeholder") == "+ Add a new cast member…", "with everyone in the scene the add picker stays")
+    add.click()
+    page.wait_for_timeout(250)
+    opts = page.evaluate("() => [...document.querySelectorAll('.rw-combo-list .rw-combo-opt')].map(o => o.textContent)")
+    check(opts == ["New character", "New location", "New prop"], f"it offers a new member: {opts}")
+    page.locator(".rw-combo-list .rw-combo-opt", has_text="New location").dispatch_event("pointerdown")
+    page.wait_for_timeout(500)
+    st = page.evaluate("""() => { const e = window.__editor, p = e.store.project, c = p.cast[p.cast.length - 1];
+      return [p.ui.tab, e.store.eph.selectedCast === c.id, c.kind, c.name, c.speaker, p.scenes.find(x => x.id === 's_02').cast.some(x => x.id === c.id)]; }""")
+    check(st == ["cast", True, "location", "New location", "", True], f"New location is made, put in the scene and opened on the Cast tab: {st}")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(400)
+    back = page.evaluate("() => { const p = window.__editor.store.project; return [p.cast.length, p.cast.some(c => c.name === 'New location')]; }")
+    check(back == [len(q["cast"]), False], f"one undo removes it again: {back}")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

@@ -65,8 +65,9 @@ export function installTooltips(root) {
   }
 
   // An element's data-detail (a spoken line or camera phrase in full, why a button is off)
-  // is shown first, the help text under it
+  // is shown first, the help text under it; nothing while the picker it belongs to has its list open (it covered it)
   function show(target) {
+    if (target.closest?.(".rw-combo")?.querySelector("input[aria-expanded='true']")) return;
     const id = target.dataset.help;
     const entry = HELP[id];
     const detail = target.dataset.detail;

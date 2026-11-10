@@ -81,6 +81,18 @@ export function newId(prefix) {
   return prefix + "_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
 }
 
+// A new story-bible entry ("New character", the next free speaker S1, S2 …); the caller adds it to p.cast
+export function newCastMember(p, kind) {
+  const used = new Set(p.cast.map(c => c.speaker));
+  let n = 1;
+  while (used.has("S" + n)) n++;
+  return {
+    id: newId("c"), kind, name: kind === "character" ? "New character" : kind === "location" ? "New location" : "New prop",
+    speaker: kind === "character" ? "S" + n : "", description: "", anchors: [], pack_sheet: "auto",
+    outfits: [], default_outfit: "", voice: "", voice_desc: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 },
+  };
+}
+
 // Folder name for a project name (same as model.py slugify): lower-case ASCII letters, digits and _, at most 64
 // characters. Accents are transliterated ("Ömer" -> "omer"); a name without any ASCII letter gives "untitled".
 export function slugify(name) {

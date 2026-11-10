@@ -8,7 +8,7 @@ import {
 import {
   dialogueSeconds, sceneIndex, STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes,
   castDescription, sheetGrid, anchorPixels, sheetURL, castPacks, assetGroupName, partOwner, SMALL_TILE_PX, refClip,
-  fmtTime, unskipAnchor, clearAnchorFrame,
+  fmtTime, unskipAnchor, clearAnchorFrame, newCastMember,
 } from "../model.js";
 import { rw, viewURL } from "../api.js";
 import { clipEditor } from "./scene.js";
@@ -16,23 +16,10 @@ import { describeBox } from "./assets.js";
 
 const KINDS = [["character", "Characters"], ["location", "Locations"], ["prop", "Props"]];
 
-function nextSpeaker(p) {
-  const used = new Set(p.cast.map(c => c.speaker));
-  let n = 1;
-  while (used.has("S" + n)) n++;
-  return "S" + n;
-}
-
 function addEntry(ctx, kind) {
-  const id = newId("c");
-  ctx.actions.edit(p => {
-    p.cast.push({
-      id, kind, name: kind === "character" ? "New character" : kind === "location" ? "New location" : "New prop",
-      speaker: kind === "character" ? nextSpeaker(p) : "", description: "", anchors: [], pack_sheet: "auto",
-      outfits: [], default_outfit: "", voice: "", voice_desc: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 },
-    });
-  });
-  ctx.store.setEph({ selectedCast: id });
+  const m = newCastMember(ctx.p, kind);
+  ctx.actions.edit(p => { p.cast.push(m); });
+  ctx.store.setEph({ selectedCast: m.id });
 }
 
 // Voice from a take. The scenes whose starred take has lines of this character are offered;

@@ -24,7 +24,7 @@ import {
   shotLengths, overruns, fitLength, lengthenToFit, squeezeToFit, visibleStart, effectiveStart, tailOverlapFrames,
   planScene, passSoundtrack, soundtrackLocked, assetGroupName, partOwner, sceneTilePixels, SMALL_TILE_PX,
   scenePeople, hiresSize, sceneHires, sceneSampleSize, sceneQuality, passLabel, passNames, refClip, refTrimmed,
-  refTokens, snapFrame,
+  refTokens, snapFrame, newCastMember,
 } from "../model.js";
 
 // A render step changes nothing on this tab (status changes come with a full render), so
@@ -1635,10 +1635,42 @@ function poseNote(p, s, r, a) {
   return h("div", { class: "small rw-dim", help: "scene.refs.pose" }, `${c.name} takes this pose in shot ${shot}; only the pose is used, the person in the picture does not appear. Say it in the shot, e.g. “${tag(c.name)} strikes the pose from @${a.code}”.`);
 }
 
+// Which outfit a cast member wears in this scene: on its own line with a label, so a long description can't squeeze
+// the picker to nothing
+function outfitRow(ctx, s, c, sc) {
+  if (!c.outfits.length) return null;
+  const options = c.outfits.map(o => ({ value: o.id, label: (o.name || "Unnamed outfit") + (o.id === c.default_outfit ? " (default)" : "") }));
+  return h("div", { class: "rw-row rw-cast-outfit", help: "scene.cast.outfit" },
+    h("span", { class: "rw-dim small" }, "Outfit"),
+    select({ options, value: sc.outfit || c.default_outfit, placeholder: "+ Pick an outfit", help: "scene.cast.outfit", key: `cast-outfit-${c.id}`, width: "190px",
+      onChange: v => ctx.actions.editScene(s.id, x => { x.cast.find(q => q.id === c.id).outfit = v; }, { label: "Change outfit" }) }),
+    h("span", { class: "rw-dim small" }, `${c.outfits.length} outfit${c.outfits.length === 1 ? "" : "s"}`));
+}
+
+// Adds a story-bible entry to the scene; "New character / location / prop" makes one, puts it in the scene and opens it
+// on the Cast tab to name it and give it anchors (one undo step)
+function addCastPicker(ctx, s, inScene) {
+  const p = ctx.p;
+  const avail = p.cast.filter(c => !inScene.has(c.id)).map(c => ({ value: c.id, label: `${c.name} · ${c.kind}` }));
+  const make = ["character", "location", "prop"].map(k => ({ value: "new:" + k, label: "New " + k }));
+  return select({ options: [...avail, ...make], value: "", placeholder: avail.length ? "+ Add from the story bible…" : "+ Add a new cast member…",
+    help: "scene.cast.add", key: `cast-add-${s.id}`, width: "240px", onChange: v => {
+      if (v.startsWith("new:")) {
+        const m = newCastMember(p, v.slice(4));
+        ctx.actions.edit(q => { q.cast.push(m); q.scenes.find(x => x.id === s.id)?.cast.push({ id: m.id, outfit: "" }); }, { label: "New " + m.kind });
+        ctx.store.setEph({ selectedCast: m.id });
+        ctx.actions.select(s.id, "cast");
+        ctx.actions.toast(`${m.name} is in “${s.title}”: name it and add its anchors here.`, "ok");
+        return;
+      }
+      const c = findCast(p, v);
+      if (c) ctx.actions.editScene(s.id, x => { x.cast.push({ id: c.id, outfit: c.default_outfit || "" }); });
+    } });
+}
+
 function castCard(ctx, s) {
   const p = ctx.p;
   const inScene = new Set(s.cast.map(c => c.id));
-  const avail = p.cast.filter(c => !inScene.has(c.id)).map(c => ({ value: c.id, label: `${c.name} · ${c.kind}` }));
   return section({
     title: "Cast in this scene", help: "scene.cast",
     children: [
@@ -1667,17 +1699,13 @@ function castCard(ctx, s) {
               h("div", { class: "rw-dim small rw-ellipsis", help: "scene.cast.description", title: d.text }, d.text ? (d.asset ? `from ${d.asset.code}: ${d.text}` : d.text) : "No description"),
               tilePx > 0 && tilePx < SMALL_TILE_PX && h("div", { class: "small rw-c-warn", help: "scene.cast.smallSheet" },
                 `${tileN} pictures in one sheet: about ${tilePx} px each in H3, too small for identity`),
+              outfitRow(ctx, s, c, sc),
               sceneAnchorsToggle(ctx, s, c, sc, open));
           })(),
-          c.outfits.length > 0 && select({ options: c.outfits.map(o => ({ value: o.id, label: o.name })), value: sc.outfit || c.default_outfit, help: "scene.cast.outfit", key: `cast-outfit-${c.id}`,
-            onChange: v => ctx.actions.editScene(s.id, x => { x.cast.find(q => q.id === c.id).outfit = v; }) }),
           button({ icon: "close", small: true, variant: "ghost", help: "scene.cast.remove", onClick: () => ctx.actions.editScene(s.id, x => { x.cast = x.cast.filter(q => q.id !== c.id); }) })),
           open && sceneAnchors(ctx, s, c, sc));
       }) }),
-      avail.length > 0 && select({ options: avail, value: "", placeholder: "+ Add from the story bible…", help: "scene.cast.add", onChange: v => {
-        const c = findCast(p, v);
-        if (c) ctx.actions.editScene(s.id, x => { x.cast.push({ id: c.id, outfit: c.default_outfit || "" }); });
-      } }),
+      addCastPicker(ctx, s, inScene),
     ],
   });
 }
