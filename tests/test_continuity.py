@@ -1,4 +1,4 @@
-"""Face checks with a broken albumentations install (added 2026-11-03 v0.4.1)."""
+"""Face checks with a broken albumentations install."""
 
 import sys
 import textwrap
@@ -59,8 +59,6 @@ def test_other_import_errors_still_raise(tmp_path, monkeypatch):
         continuity._face_analysis_class()
     sys.modules.pop("insightface", None)
 
-
-# ---- v0.6.0 (added 2026-11-03) ------------------------------------------------------------------------------------
 
 def test_a_character_missing_from_a_frame_is_not_drift():
     import numpy as np

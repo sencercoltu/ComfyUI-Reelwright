@@ -1,4 +1,4 @@
-"""added 2026-11-10 v0.19.0: Global -> Hires, the H3 latent upscaler and an optional refine at the big size.
+"""Global -> Hires, the H3 latent upscaler and an optional refine at the big size.
 
 Sencer: "implement it, but the whole project should be upscaled to same resolution. maybe only override the other
 parameters in scenes?" Chosen: the upscaler with an optional refine (steps, denoise; 0 steps = off), a scale factor of
@@ -14,8 +14,14 @@ import subprocess
 import pytest
 
 from reelwright import cache
-from reelwright.model import (hires_size, normalize_global, normalize_project, project_output_size, resolve_settings,
-                              scene_hires)
+from reelwright.model import (
+    hires_size,
+    normalize_global,
+    normalize_project,
+    project_output_size,
+    resolve_settings,
+    scene_hires,
+)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web", "rw")
@@ -159,7 +165,7 @@ def test_the_editor_agrees(harbor):
 
 
 def test_estimates_tell_hires_renders_apart():
-    """added 2026-11-10 v0.19.0 (bug search): a Hires take samples at the same size as a plain one but takes longer."""
+    """A Hires take samples at the same size as a plain one but takes longer."""
     from reelwright.analysis import _rate_samples, seconds_per_frame
     up = {"model": "h3_up.safetensors", "width": 2688, "height": 1536}
     base = {"sampled_frames": 100, "width": 1344, "height": 768, "steps": 20, "quality": "final"}

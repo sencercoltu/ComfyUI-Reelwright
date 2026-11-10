@@ -6,35 +6,29 @@ samples it (H3 is CFG-distilled), and the video/audio VAEs decode it. Every
 scene is written to disk before the next one starts.
 """
 
-import base64  # added 2026-11-02 v0.3.5: latent previews go to the Render tab
+import base64
 import gc
-import io  # added 2026-11-02 v0.3.5
+import io
 import json
 import logging
 import os
-import re  # added 2026-11-04 v0.6.1: asset codes as whole words in pre-flight
-import shutil  # added 2026-11-03 v0.6.0: stale take folders
+import re
+import shutil
 import time
-import uuid  # added 2026-11-03 v0.6.0: run ids
+import uuid
 
 import comfy.model_management as mm
-import comfy.nested_tensor  # added 2026-11-10 v0.19.0: the refined latent keeps the first sampling's sound
+import comfy.nested_tensor
 import comfy.sample
 import comfy.samplers
 import comfy.utils
 import folder_paths
 import latent_preview
-import node_helpers  # added 2026-11-05 v0.8.0: the latent hand-off adds its guide to the conditioning itself
+import node_helpers
 import nodes
-# [OLD 2026-11-03 v0.5.1->v0.6.0] imported at load time: without the H3 nodes the whole extension failed to load
-# from comfy_extras.nodes_audio import vae_decode_audio
 from comfy_extras.nodes_custom_sampler import Guider_Basic, Noise_RandomNoise
-# from comfy_extras.nodes_minimax_h3 import MiniMaxH3AddGuide, MiniMaxH3ReferenceToVideo, MiniMaxH3SigmaShift
-# [/OLD]
 from server import PromptServer
 
-# added 2026-11-03 v0.6.0: an older ComfyUI without the MiniMax H3 nodes still loads the extension (the editor, Files,
-# merges work, Global -> About says what is missing); a render is refused before it starts
 try:
     from comfy_extras.nodes_audio import vae_decode_audio
     from comfy_extras.nodes_minimax_h3 import MiniMaxH3AddGuide, MiniMaxH3ReferenceToVideo, MiniMaxH3SigmaShift
@@ -42,8 +36,6 @@ try:
 except ImportError as _e:  # noqa: N816
     vae_decode_audio = MiniMaxH3AddGuide = MiniMaxH3ReferenceToVideo = MiniMaxH3SigmaShift = None
     H3_ERROR = "{}: {}".format(type(_e).__name__, _e)
-# added 2026-11-10 v0.19.0: Global -> Hires needs ComfyUI's H3 latent upscale node and the latent upscale model loader;
-# without them only a render that uses Hires is refused
 try:
     from comfy_extras.nodes_hunyuan import LatentUpscaleModelLoader
     from comfy_extras.nodes_minimax_h3 import MiniMaxH3LatentUpscaleWithModel
@@ -52,54 +44,48 @@ except ImportError as _e:  # noqa: N816
     LatentUpscaleModelLoader = MiniMaxH3LatentUpscaleWithModel = None
     UPSCALE_ERROR = "{}: {}".format(type(_e).__name__, _e)
 
-# [OLD 2026-11-03 v0.4.3->v0.5.0] from . import assemble, continuity, media, merge, spec
-# [OLD 2026-11-03 v0.5.1->v0.6.0] from . import assemble, cache, continuity, media, merge, spec  # cache: added 2026-11-03 v0.5.0 for the soundtrack WAVs
-from . import assemble, cache, continuity, jobs, media, merge, spec  # jobs: added 2026-11-03 v0.6.0
-# [OLD 2026-11-03 v0.5.1->v0.6.0] from .analysis import analyze
-# [OLD 2026-11-03 v0.6.0 review] from .analysis import _take_meta, analyze, continues, rekey
-from .analysis import _take_meta, analyze, continues, rekey, short_upstream_tail  # added 2026-11-03 v0.6.0 review
-from .analysis import drift_metrics, long_settings  # added 2026-11-05 v0.8.0: drift meter, Global -> Long scenes
-from .model import project_index, slugify  # slugify: added 2026-11-02 v0.2.0 for take file names
-from .storage import check_slug, write_json  # added 2026-11-03 v0.6.0
+from . import assemble, cache, continuity, jobs, media, merge, spec
+from .analysis import _take_meta, analyze, continues, drift_metrics, long_settings, rekey, short_upstream_tail
+from .model import project_index, slugify
+from .storage import check_slug, write_json
 
 log = logging.getLogger("reelwright")
 
-# added 2026-11-03 v0.6.0
 TAIL_FRAMES = spec.MIN_PASS_FRAMES  # tail.mp4: the last 124 frames of the scene (covers any tail overlap)
-SEED_STEP = 1000003                 # seed offset between takes (unchanged from v0.5.1)
+SEED_STEP = 1000003                 # seed offset between takes
 REF_MAX_FRAMES = int(spec.REF_MEDIA_MAX_SECONDS * spec.FPS)  # at most 15 s of a reference video is decoded
 
 
 def clip_window(entry):
-    """added 2026-11-08 v0.14.0: (start, seconds) of a build's video or audio reference: a trimmed one carries in and
+    """(start, seconds) of a build's video or audio reference: a trimmed one carries in and
     seconds (prompt.collect_refs), others start at 0; never more than 15 s, and at least one frame."""
     start = max(0.0, float(entry.get("in") or 0.0))
     secs = entry.get("seconds")
     secs = spec.REF_MEDIA_MAX_SECONDS if secs is None else min(float(secs), spec.REF_MEDIA_MAX_SECONDS)
     return start, max(1.0 / spec.FPS, secs)
 MAX_VARIANTS = 8
-# added 2026-11-05 v0.8.0: the Global -> Long scenes choices a take records (take["long"])
+# The Global -> Long scenes choices a take records (take["long"])
 LONG_TAKE_KEYS = ("guide_vae", "carry_audio", "seam_video_ref", "handoff", "pass_cache")
 
 
 def h3_available():
-    """added 2026-11-03 v0.6.0: True when this ComfyUI has the MiniMax H3 nodes."""
+    """True when this ComfyUI has the MiniMax H3 nodes."""
     return MiniMaxH3ReferenceToVideo is not None
 
 
 def h3_error():
-    """added 2026-11-03 v0.6.0: why the H3 nodes could not be imported, or None."""
+    """Why the H3 nodes could not be imported, or None."""
     return H3_ERROR
 
 
 def is_interrupt(e):
-    """added 2026-11-03 v0.6.0: ComfyUI's Stop (InterruptProcessingException derives from BaseException)."""
+    """ComfyUI's Stop (InterruptProcessingException derives from BaseException)."""
     cls = getattr(mm, "InterruptProcessingException", None)
     return (cls is not None and isinstance(e, cls)) or isinstance(e, KeyboardInterrupt)
 
 
 def fit_clip(frame_idx, clip_frames, gen_frames, role="keyframe"):
-    """added 2026-11-03 v0.6.0: where a video guide goes in a pass, as (frame_idx, first source frame, frame count).
+    """Where a video guide goes in a pass, as (frame_idx, first source frame, frame count).
     H3's AddGuide takes 1 frame or 17k+5 frames and the clip has to end inside the pass; it used to stop the run with
     "does not fit" for a video used as last frame, or as a keyframe near the end of a pass. A last-frame video ends on
     the guided frame (its last frames); any other video starts there and is shortened to the room that is left
@@ -120,7 +106,7 @@ def fit_clip(frame_idx, clip_frames, gen_frames, role="keyframe"):
     return idx, 0, n
 
 
-# ---- long-scene continuity (added 2026-11-05 v0.8.0) ----------------------------------------------------------------
+# ---- long-scene continuity ------------------------------------------------------------------------------------------
 FOOTAGE_SOURCES = ("prev_scene_last", "prev_scene_tail", "prev_pass_tail")  # guides made from footage (drift meter)
 
 
@@ -217,12 +203,12 @@ def load_handoff(path):
 
 
 def _names_code(message, code):
-    """added 2026-11-04 v0.6.1: does the message name this asset code as a whole word ("A1" is not in "A10")?"""
+    """Does the message name this asset code as a whole word ("A1" is not in "A10")?"""
     return bool(code) and re.search(r"(?<![\w@]){}(?!\w)".format(re.escape(str(code))), message) is not None
 
 
 def _take_file_exists(store, files, which):
-    """added 2026-11-04 v0.6.1: a take's file is on disk; a path outside the output folder counts as missing."""
+    """A take's file is on disk; a path outside the output folder counts as missing."""
     rel = files.get(which) if isinstance(files, dict) else None
     if not isinstance(rel, str) or not rel:
         return False
@@ -237,12 +223,12 @@ def send(event, data):
 
 
 def _err(e):
-    """added 2026-11-03 v0.6.0 review: an exception as a short message (as Renderer._fail shows it)."""
+    """An exception as a short message (as Renderer._fail shows it)."""
     return (str(e) or type(e).__name__).strip()[-600:]
 
 
 def check_guide_vae(vae, name):
-    """added 2026-11-05 v0.8.0: a guide VAE must load as the MiniMax H3 video VAE and have an encoder; anything else
+    """A guide VAE must load as the MiniMax H3 video VAE and have an encoder; anything else
     would put its latents in another space. Objects without first_stage_model (test stubs) are not checked."""
     fsm = getattr(vae, "first_stage_model", None)
     if fsm is None:
@@ -261,7 +247,7 @@ class Models:
     def __init__(self, wired):
         self.wired = wired
         self.unets, self.clips, self.vaes, self.patched, self.lora_loaders = {}, {}, {}, {}, {}
-        self.upscalers = {}  # added 2026-11-10 v0.19.0: latent upscale models by file name
+        self.upscalers = {}
 
     def clip(self, settings):
         if self.wired.get("clip") is not None:
@@ -279,7 +265,7 @@ class Models:
         return self.vaes[name]
 
     def encoder_vae(self, settings, guide_vae=""):
-        """added 2026-11-05 v0.8.0: the VAE that encodes a pass's references, guides and continuation clips: Global ->
+        """The VAE that encodes a pass's references, guides and continuation clips: Global ->
         Long scenes -> guide VAE when it is set and is not the scene's video VAE, else the video VAE (wired or file).
         Loaded once per run through the same cache. It must be a MiniMax H3 video VAE with an encoder (the full file,
         the int8 one, a LightVAE/encoder-only variant): the same latent space the video VAE decodes."""
@@ -315,21 +301,21 @@ class Models:
     def drop_clips(self):
         self.clips.clear()
 
-    # added 2026-11-10 v0.19.0: Global -> Hires: a latent upscale model from models/latent_upscale_models, loaded once
+    # Global -> Hires: a latent upscale model from models/latent_upscale_models, loaded once
     def upscaler(self, name):
         if name not in self.upscalers:
             self.upscalers[name] = LatentUpscaleModelLoader.execute(name).result[0]
         return self.upscalers[name]
 
 
-# added 2026-11-02 v0.3.5: one sampling step's latent as a small JPEG data URL for the Render tab
+# One sampling step's latent as a small JPEG data URL for the Render tab
 PREVIEW_MAX_SIDE = 480
-# added 2026-11-02 v0.3.8: the shortest gap between two previews. It used to be one second; H3 steps usually take
+# The shortest gap between two previews. It used to be one second; H3 steps usually take
 # longer than this, so in practice every sampler step now shows up in the Render tab.
 PREVIEW_MIN_INTERVAL = 0.25
 
 
-# added 2026-11-02 v0.3.9: ComfyUI's own previewer, not an extension's wrapper of it.
+# ComfyUI's own previewer, not an extension's wrapper of it.
 # VideoHelperSuite's "Display animated previews when sampling" replaces latent_preview.get_previewer with a wrapper
 # whose previewer sends its own animated frames to the frontend (as the executing node, so under Reelwright) and
 # returns no image. That put a preview back under the node after v0.3.5, gave the Render tab VHS's frames with a
@@ -345,19 +331,15 @@ def stock_previewer(device, latent_format):
     return fn(device, latent_format)
 
 
-# [OLD 2026-11-09 v0.14.4->v0.15.0] def preview_jpeg(previewer, x0):  (always the first frame)
 def preview_jpeg(previewer, x0, frame=None):
-    """frame (added 2026-11-09 v0.15.0; Sencer: "Latent preview should update properly, it updates only once or
-    twice"): the latent frame of a video latent to show. ComfyUI's previewers show the first one, and in a pass that
+    """frame: the latent frame of a video latent to show. ComfyUI's previewers show the first one, and in a pass that
     starts from a frame or clip (a continuation, a first-frame guide) the first frame is fixed from the first step, so
     the preview barely changed; the render shows the middle of the part the pass makes new."""
     if getattr(x0, "is_nested", False):  # H3 latents carry video and audio; the first is the video
         x0 = x0.tensors[0]
-    if frame is not None and getattr(x0, "ndim", 0) == 5 and x0.shape[2] > 1:  # added 2026-11-09 v0.15.0
+    if frame is not None and getattr(x0, "ndim", 0) == 5 and x0.shape[2] > 1:
         k = max(0, min(int(frame), int(x0.shape[2]) - 1))
         x0 = x0[:, :, k:k + 1]
-    # [OLD 2026-11-02 v0.3.8->v0.3.9] a previewer that returned None failed here with "cannot unpack non-iterable NoneType"
-    # _, img, _ = previewer.decode_latent_to_preview_image("JPEG", x0)
     out = previewer.decode_latent_to_preview_image("JPEG", x0)
     if not out:
         raise RuntimeError("the previewer ({}) returned no image".format(type(previewer).__name__))
@@ -370,7 +352,7 @@ def preview_jpeg(previewer, x0, frame=None):
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-# added 2026-11-09 v0.15.0: the latent frame in the middle of the part of pass x that H3 makes new: after an overlap
+# The latent frame in the middle of the part of pass x that H3 makes new: after an overlap
 # with the pass before, or after the cut's start (an H3 latent holds 1 frame, then 4 frames per latent frame)
 def preview_frame(x):
     try:
@@ -392,28 +374,15 @@ def _sample(model, positive, latent, seed, settings, on_step):
     sigmas = comfy.samplers.calculate_sigmas(model.get_model_object("model_sampling"),
                                              settings["scheduler"], settings["steps"]).cpu()
     sampler = comfy.samplers.sampler_object(settings["sampler"])
-    # [OLD 2026-11-02 v0.3.4->v0.3.5] ComfyUI's preview callback sent each step's image with the progress bar, and the
-    # frontend painted it over the whole node; the preview now goes to the editor's Render tab instead
-    # preview = latent_preview.prepare_callback(guider.model_patcher, sigmas.shape[-1] - 1)
-    #
-    # def callback(step, x0, x, total_steps):
-    #     preview(step, x0, x, total_steps)
-    #     on_step(step + 1, total_steps)
-    # [/OLD]
     steps = sigmas.shape[-1] - 1
     # the user's preview method (--preview-method / the frontend setting) still decides how, or whether, to preview
-    # [OLD 2026-11-02 v0.3.8->v0.3.9] an extension's wrapper (VideoHelperSuite) could take over the preview
-    # previewer = latent_preview.get_previewer(guider.model_patcher.load_device, guider.model_patcher.model.latent_format)
     previewer = stock_previewer(guider.model_patcher.load_device, guider.model_patcher.model.latent_format)
     pbar = comfy.utils.ProgressBar(steps)  # ComfyUI's queue progress, without an image
 
-    frame = settings.get("preview_frame")  # added 2026-11-09 v0.15.0: the latent frame to preview (see preview_jpeg)
+    frame = settings.get("preview_frame")
 
     def callback(step, x0, x, total_steps):
         pbar.update_absolute(step + 1, total_steps, None)
-        # [OLD 2026-11-02 v0.3.7->v0.3.8] # the image is only decoded when on_step asks for it (it throttles to about one per second)
-        # the image is only decoded when on_step asks for it (at most one per PREVIEW_MIN_INTERVAL)
-        # [OLD 2026-11-09 v0.14.4->v0.15.0] on_step(step + 1, total_steps, (lambda: preview_jpeg(previewer, x0)) if previewer else None)
         on_step(step + 1, total_steps, (lambda: preview_jpeg(previewer, x0, frame)) if previewer else None)
 
     samples = guider.sample(noise, latent_image, sampler, sigmas, callback=callback,
@@ -423,7 +392,7 @@ def _sample(model, positive, latent, seed, settings, on_step):
     return out
 
 
-# added 2026-11-10 v0.19.0: Global -> Hires -> refine: the enlarged latent sampled again for `steps` steps, starting from
+# Global -> Hires -> refine: the enlarged latent sampled again for `steps` steps, starting from
 # `denoise` of the noise (the last steps+1 sigmas of a schedule of steps / denoise steps, as KSampler's denoise does).
 # The sound is not refined: the caller keeps the sound of the first sampling.
 def refine_sigmas(model, scheduler, steps, denoise):
@@ -465,7 +434,7 @@ def _with_audio_of(latent, source):
 
 
 def output_size(st):
-    """added 2026-11-10 v0.19.0: (width, height) of the frames a scene's passes decode to: the latent upscaler's size
+    """(width, height) of the frames a scene's passes decode to: the latent upscaler's size
     while it runs (st["hires"]), else the sampling size."""
     hi = st.get("hires")
     return (int(hi["width"]), int(hi["height"])) if hi else (int(st["width"]), int(st["height"]))
@@ -492,14 +461,13 @@ class Renderer:
         self.models = Models(wired)
         self.slug = self.p["slug"]
         self.memory = self.p["global"]["memory"]
-        self.run_id = None  # added 2026-11-03 v0.6.0
-        self.target_set = set()  # added 2026-11-03 v0.6.0: scenes this run renders
-        # added 2026-11-05 v0.8.0: Global -> Long scenes (guide VAE, carry_audio, seam_video_ref, handoff, pass_cache)
+        self.run_id = None
+        self.target_set = set()
         self.long = long_settings(self.p)
-        self.footage = []  # added 2026-11-05 v0.8.0: [(source, frame_idx, frames)] the last guide() anchored footage with
-        self.handoff_notes = []  # added 2026-11-05 v0.8.0: [(source, mode, reason)] of the last guide()
+        self.footage = []
+        self.handoff_notes = []
 
-    # ---- helpers (added 2026-11-03 v0.6.0) ------------------------------------
+    # ---- helpers --------------------------------------------------------------
     def label(self, sid):
         i = self.result["scenes"][sid]["index"]
         return "{:02d} {}".format(i + 1, self.p["scenes"][i]["title"])
@@ -515,7 +483,6 @@ class Renderer:
         action = req.get("action", "pending")
         chosen = set(req.get("scenes") or [])
         order = [s["id"] for s in self.p["scenes"]]
-        # added 2026-11-03 v0.6.0: a new seed for one pass of a scene; n takes of some scenes
         if action == "pass_retake":
             sid = req.get("scene_id")
             if sid not in self.result["scenes"]:
@@ -561,8 +528,6 @@ class Renderer:
             return targets
         chains, cur = [], []
         for sid in targets:
-            scene = self.p["scenes"][self.result["scenes"][sid]["index"]]
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] if cur and scene["start"]["mode"] in ("last_frame", "tail") and \
             if cur and continues(self.p, self.result["scenes"][sid]["index"]) and \
                     self.result["scenes"][cur[-1]]["index"] == self.result["scenes"][sid]["index"] - 1:
                 cur.append(sid)
@@ -579,9 +544,7 @@ class Renderer:
         while pending:
             for c in pending:
                 first = self.result["scenes"][c[0]]["index"]
-                scene = self.p["scenes"][first]
                 prev = self.p["scenes"][first - 1]["id"] if first > 0 else None
-                # [OLD 2026-11-03 v0.5.1->v0.6.0] needs = scene["start"]["mode"] in ("last_frame", "tail") and prev in targets and prev not in done
                 needs = continues(self.p, first) and prev in targets and prev not in done
                 if not needs:
                     flat += c
@@ -602,7 +565,7 @@ class Renderer:
         return path
 
     def _song_path(self, song):
-        """added 2026-11-03 v0.5.0: the part of the soundtrack a pass covers, as a WAV made once and kept under
+        """The part of the soundtrack a pass covers, as a WAV made once and kept under
         output/reelwright/<project>/soundtrack/."""
         pieces = []
         for x in song["pieces"]:
@@ -611,64 +574,37 @@ class Renderer:
         return merge.render_segment(pieces, song["length"], os.path.join(self.store.dir, "soundtrack"),
                                     cache.file_digest)
 
-    # [OLD 2026-11-05 v0.6.1->v0.7.0] def encode(self, scene, sr, n):
     def encode(self, scene, sr, n, upstream=None, prev_pass=None):
-        """upstream, prev_pass (added 2026-11-05 v0.7.0): the take the scene continues from and (frames, audio) of the
+        """upstream, prev_pass: the take the scene continues from and (frames, audio) of the
         pass before, for the continuation reference (see _continuation_ref); found when not given."""
         b = sr["builds"][n]
         x = sr["plan"]["passes"][n]
         st = sr["settings"]
         images = {}
         for k, img in enumerate(b["images"]):
-            if img.get("continuation"):  # added 2026-11-05 v0.7.0: <Picture 1>, the last frame of the scene before
+            if img.get("continuation"):
                 images["ref_image_{}".format(k)] = self._continuation_ref(sr, n, img, upstream, prev_pass)[0]
                 continue
             paths = [self._asset_path(a) for a in img["assets"]]
             images["ref_image_{}".format(k)] = media.make_sheet(paths) if len(paths) > 1 else media.load_image(paths[0])
         videos, video_audios = {}, {}
         for k, v in enumerate(b["videos"]):
-            if v.get("continuation"):  # added 2026-11-05 v0.7.0: <Video 1>, the clip this pass continues from
+            if v.get("continuation"):
                 frames, audio = self._continuation_ref(sr, n, v, upstream, prev_pass)
                 videos["ref_video_{}".format(k)] = frames
                 if v["soundtrack"] and audio is not None:
                     video_audios["ref_video_audio_{}".format(k)] = audio
                 continue
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS)
-            # [OLD 2026-11-08 v0.13.1->v0.14.0] frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS,
-            # [OLD 2026-11-08 v0.13.1->v0.14.0]                                  max_frames=REF_MAX_FRAMES)  # only the first 15 s is decoded
-            # added 2026-11-08 v0.14.0: a trimmed reference sends its clip (in / seconds in the build), at most 15 s
             start, secs = clip_window(v)
             frames, audio = media.load_video(self._asset_path(v["asset"]), max_seconds=secs, max_frames=REF_MAX_FRAMES,
                                              start=start)
             videos["ref_video_{}".format(k)] = frames
             if v["soundtrack"] and audio is not None:
                 video_audios["ref_video_audio_{}".format(k)] = audio
-        # [OLD 2026-11-03 v0.4.3->v0.5.0] audios = {"ref_audio_{}".format(k): media.load_audio(self._asset_path(a["asset"])) for k, a in enumerate(b["audios"])}
-        # added 2026-11-03 v0.5.0: the soundtrack segment is cut to a WAV of its own first
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] audio references were sent whole
-        # audios = {"ref_audio_{}".format(k): media.load_audio(self._song_path(a["song"]) if a.get("song")
-        #                                                      else self._asset_path(a["asset"]))
-        #           for k, a in enumerate(b["audios"])}
-        # [/OLD]
-        # [OLD 2026-11-08 v0.13.1->v0.14.0] every audio reference from its start
-        # audios = {"ref_audio_{}".format(k): media.load_audio(self._song_path(a["song"]) if a.get("song")
-        #                                                      else self._asset_path(a["asset"]),
-        #                                                      max_seconds=spec.REF_MEDIA_MAX_SECONDS)
-        #           for k, a in enumerate(b["audios"])}
-        # [/OLD]
         audios = {"ref_audio_{}".format(k): media.load_audio(self._song_path(a["song"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS)
                   if a.get("song") else media.load_audio(self._asset_path(a["asset"]), max_seconds=clip_window(a)[1],
-                                                         start=clip_window(a)[0])  # added 2026-11-08 v0.14.0: its clip
+                                                         start=clip_window(a)[0])
                   for k, a in enumerate(b["audios"])}
-        # [OLD 2026-11-05 v0.7.0->v0.8.0] the video VAE always encoded the references
-        # out = MiniMaxH3ReferenceToVideo.execute(
-        #     clip=self.models.clip(st), prompt=b["prompt"], width=st["width"], height=st["height"],
-        #     length=x["gen_frames"], ref_image_size=st["ref_image_size"],
-        #     vae=self.models.vae(st["video_vae"], "vae"), audio_vae=self.models.vae(st["audio_vae"], "audio_vae"),
-        #     ref_images=images or None, ref_videos=videos or None,
-        #     ref_video_audios=video_audios or None, ref_audios=audios or None)
-        # [/OLD]
-        # added 2026-11-05 v0.8.0: the guide VAE (Global -> Long scenes) encodes them when it is set
         out = MiniMaxH3ReferenceToVideo.execute(
             clip=self.models.clip(st), prompt=b["prompt"], width=st["width"], height=st["height"],
             length=x["gen_frames"], ref_image_size=st["ref_image_size"],
@@ -688,7 +624,7 @@ class Renderer:
         return take
 
     def _planned_upstream(self, sid, prev):
-        """added 2026-11-03 v0.6.0 review: the take of `prev` that `sid` will continue from when `prev` is not
+        """The take of `prev` that `sid` will continue from when `prev` is not
         rendered earlier in this run: the take analysis keyed `sid` against (cache.resolve's `provided`; reuse() stars
         it before any render), else the starred take of `prev`. Pre-flight runs before reuse(), so the starred take
         alone could be a take reuse() is about to replace."""
@@ -700,7 +636,7 @@ class Renderer:
         return self.store.starred_take(prev)
 
     def _upstream_tail(self, take, frames):
-        """added 2026-11-03 v0.6.0: the last `frames` frames (and sound) of the take a scene continues from. tail.mp4
+        """The last `frames` frames (and sound) of the take a scene continues from. tail.mp4
         holds 124 frames since v0.6.0; an older one held 60, so a longer overlap is cut from the take's video."""
         image, audio = None, None
         for which in ("tail", "video"):
@@ -710,21 +646,18 @@ class Renderer:
             path = self.store.output_path(rel)
             if not os.path.isfile(path):
                 continue
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] image, audio = media.load_video(path, last_frames=frames)
-            image, audio = media.load_video(path, last_frames=frames, exact=True)  # v0.8.0: a lossless tail exactly
+            image, audio = media.load_video(path, last_frames=frames, exact=True)
             if image.shape[0] >= frames:
                 break
         if image is None:
             raise RuntimeError("take {} has no tail clip or video to continue from".format(take.get("id")))
-        # added 2026-11-03 v0.6.0 review: a take shorter than the planned overlap used to give the guide fewer frames
-        # (AddGuide keeps the first 17k+5 of them) while the cut still trims the planned overlap: the seam was off
         if image.shape[0] < frames:
             raise RuntimeError("take {} has only {} frames, but the scene that continues from it needs a {}-frame tail "
                                "clip. Render that take's scene again, or use a shorter tail overlap or a last-frame "
                                "start.".format(take.get("id"), image.shape[0], frames))
         return image[-frames:], audio
 
-    # ---- the continuation as a named reference (added 2026-11-05 v0.7.0) -----------------------------------------
+    # ---- the continuation as a named reference -------------------------------------------------------------------
     def _upstream_tail_clip(self, take):
         """The tail clip a tail start sends as <Video 1>, with its sound: the take's tail.mp4 (the last 124 frames of
         the scene, fewer when the scene is shorter). A take from before v0.6.0 kept 60 frames there, so the last 124
@@ -738,8 +671,7 @@ class Renderer:
                 path = None
             if not path or not os.path.isfile(path):
                 continue
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] image, audio = media.load_video(path, last_frames=TAIL_FRAMES)
-            image, audio = media.load_video(path, last_frames=TAIL_FRAMES, exact=True)  # v0.8.0: lossless tails exactly
+            image, audio = media.load_video(path, last_frames=TAIL_FRAMES, exact=True)
             if best is None or image.shape[0] > best[0].shape[0]:
                 best = (image, audio)
             if image.shape[0] >= TAIL_FRAMES:
@@ -784,7 +716,7 @@ class Renderer:
             self.prev_id(sid) in self.target_set
 
     def _guide_role(self, sr, n, g):
-        """added 2026-11-03 v0.6.0: first_frame | last_frame | keyframe for an asset guide (the prompt module may say
+        """first_frame | last_frame | keyframe for an asset guide (the prompt module may say
         so in g["role"]; otherwise the planner's lists of the pass tell)."""
         if g.get("role"):
             return g["role"]
@@ -798,14 +730,7 @@ class Renderer:
         return "keyframe"
 
     def _clip_frames(self, path):
-        """added 2026-11-03 v0.6.0: frames a video guide can have (24 fps, at most 15 s), from its length on disk."""
-        # [OLD 2026-11-04 v0.6.0->v0.6.1] the file's length (its longest stream: an audio track longer than the picture
-        # counted) and never 0, so a file without a picture passed pre-flight and failed mid-run
-        # dur = float(merge.probe(path)["duration"] or 0)
-        # return min(REF_MAX_FRAMES, max(1, int(round(dur * spec.FPS))))
-        # [/OLD]
-        # added 2026-11-04 v0.6.1: the video stream's own frames (as media.load_video counts them), else its length,
-        # else the file's; no video stream is 0 frames (fit_clip: "the video has no frames")
+        """Frames a video guide can have (24 fps, at most 15 s), from its length on disk."""
         info = merge.probe(path)
         if info.get("has_video") is False:
             return 0
@@ -815,75 +740,7 @@ class Renderer:
             frames = max(1, int(round(dur * spec.FPS)))
         return min(REF_MAX_FRAMES, int(frames))
 
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] a video guide could fall off the end of the pass (AddGuide raised mid-run), and
-    # a 73/90-frame tail overlap got only the 60 frames an older tail.mp4 held
-    # def guide(self, scene, sr, n, positive, latent, prev_pass):
-    #     st = sr["settings"]
-    #     vae = self.models.vae(st["video_vae"], "vae")
-    #     avae = self.models.vae(st["audio_vae"], "audio_vae")
-    #     for g in sr["builds"][n]["guides"]:
-    #         image, audio = None, None
-    #         if g["source"] == "prev_scene_last":
-    #             take = self._upstream_take(sr["index"])
-    #             image = media.load_image(self.store.output_path(take["files"]["last"]))
-    #         elif g["source"] == "prev_scene_tail":
-    #             take = self._upstream_take(sr["index"])
-    #             image, audio = media.load_video(self.store.output_path(take["files"]["tail"]),
-    #                                             last_seconds=g["frames"] / spec.FPS)
-    #             image = image[-g["frames"]:]
-    #         elif g["source"] == "prev_pass_tail":
-    #             frames, aud = prev_pass
-    #             image = frames[-g["frames"]:]
-    #             if aud is not None:
-    #                 dur = aud["waveform"].shape[-1] / aud["sample_rate"]
-    #                 audio = media.slice_audio(aud, dur - g["frames"] / spec.FPS, dur)
-    #         elif g["type"] == "image":
-    #             image = media.load_image(self._asset_path(g["asset"]))
-    #         else:
-    #             image, _ = media.load_video(self._asset_path(g["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS)
-    #         positive = MiniMaxH3AddGuide.execute(
-    #             positive=positive, latent=latent, frame_idx=g["frame_idx"], vae=vae,
-    #             audio_vae=avae if (g.get("audio") and audio is not None) else None,
-    #             image=image, audio=audio if g.get("audio") else None).result[0]
-    #     return positive
-    # [/OLD]
-    # [OLD 2026-11-05 v0.7.0->v0.8.0] the video VAE encoded every guide, the overlap guide was always decoded
-    # pixels re-encoded, and the drift meter had nothing to measure
-    # def guide(self, scene, sr, n, positive, latent, prev_pass, upstream=None):
-    #     st = sr["settings"]
-    #     vae = self.models.vae(st["video_vae"], "vae")
-    #     avae = self.models.vae(st["audio_vae"], "audio_vae")
-    #     x = sr["plan"]["passes"][n]
-    #     for g in sr["builds"][n]["guides"]:
-    #         image, audio = None, None
-    #         frame_idx = g["frame_idx"]
-    #         if g["source"] == "prev_scene_last":
-    #             take = upstream or self._upstream_take(sr["index"])
-    #             image = media.load_image(self.store.output_path(take["files"]["last"]))
-    #         elif g["source"] == "prev_scene_tail":
-    #             take = upstream or self._upstream_take(sr["index"])
-    #             image, audio = self._upstream_tail(take, int(g["frames"]))
-    #         elif g["source"] == "prev_pass_tail":
-    #             frames, aud = prev_pass
-    #             image = frames[-g["frames"]:]
-    #             if aud is not None:
-    #                 dur = aud["waveform"].shape[-1] / aud["sample_rate"]
-    #                 audio = media.slice_audio(aud, dur - g["frames"] / spec.FPS, dur)
-    #         elif g["type"] == "image":
-    #             image = media.load_image(self._asset_path(g["asset"]))
-    #         else:
-    #             clip, _ = media.load_video(self._asset_path(g["asset"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS,
-    #                                        max_frames=REF_MAX_FRAMES)
-    #             frame_idx, first, count = fit_clip(g["frame_idx"], clip.shape[0], x["gen_frames"],
-    #                                                self._guide_role(sr, n, g))
-    #             image = clip[first:first + count]
-    #         positive = MiniMaxH3AddGuide.execute(
-    #             positive=positive, latent=latent, frame_idx=frame_idx, vae=vae,
-    #             audio_vae=avae if (g.get("audio") and audio is not None) else None,
-    #             image=image, audio=audio if g.get("audio") else None).result[0]
-    #     return positive
-    # [/OLD]
-    # added 2026-11-05 v0.8.0: guide VAE, latent hand-off, carry_audio (through the build's guide "audio"), drift record
+    # Guide VAE, latent hand-off, carry_audio (through the build's guide "audio"), drift record
     def guide(self, scene, sr, n, positive, latent, prev_pass, upstream=None, prev_latent=None):
         """Anchor the pass's guides with MiniMaxH3AddGuide (the guide VAE encodes them, Global -> Long scenes).
         With handoff "latent", the guide a pass after an overlap seam gets from the pass before is prev_latent's last
@@ -952,18 +809,16 @@ class Renderer:
             for name, _ in st["loras"]:
                 if name not in folder_paths.get_filename_list("loras"):
                     missing.add("loras/" + name)
-            # added 2026-11-10 v0.19.0: Global -> Hires needs its latent upscaler (Global -> Models)
             up = (st.get("hires") or {}).get("model")
             if st.get("hires") and (not up or up not in folder_paths.get_filename_list("latent_upscale_models")):
                 missing.add("latent_upscale_models/{} (Global -> Hires; pick it under Global -> Models)".format(
                     up or "(none selected)"))
-        # added 2026-11-05 v0.8.0: Global -> Long scenes -> guide VAE
         gv = str(self.long.get("guide_vae") or "")
         if targets and gv and gv not in folder_paths.get_filename_list("vae"):
             missing.add("vae/{} (the guide VAE)".format(gv))
         return sorted(missing)
 
-    # ---- pre-flight (added 2026-11-03 v0.6.0) -------------------------------
+    # ---- pre-flight ---------------------------------------------------------
     def _build_assets(self, b):
         """Every asset id a pass build reads from the input folder."""
         out = []
@@ -985,7 +840,6 @@ class Renderer:
         problems = []
         if not h3_available():
             problems.append("This ComfyUI has no MiniMax H3 nodes ({}). Update ComfyUI.".format(H3_ERROR))
-        # added 2026-11-10 v0.19.0: Global -> Hires needs ComfyUI's H3 latent upscale node
         elif UPSCALE_ERROR and any(self.result["scenes"][sid]["settings"].get("hires") for sid in targets):
             problems.append("This ComfyUI has no MiniMax H3 latent upscale node ({}). Update ComfyUI, or turn Global -> "
                             "Hires off.".format(UPSCALE_ERROR))
@@ -995,7 +849,7 @@ class Renderer:
                 problems.append("The project folder {!r} does not match the project ({!r}).".format(self.store.slug, self.slug))
         except ValueError as e:
             problems.append("The project's folder name is not valid: {}".format(e))
-        # the v0.5.1 "fix these first" check
+        # scenes with errors: "fix these first"
         for sid in targets:
             if self.result["scenes"][sid]["status"] == "error":
                 problems += [x["message"] for x in self.result["scenes"][sid]["issues"] if x["level"] == "error"]
@@ -1014,9 +868,6 @@ class Renderer:
                         checked[aid] = bool(a) and bool(a.get("file")) and os.path.isfile(self.store.input_path(a["file"]))
                     except ValueError:
                         checked[aid] = False
-                    # [OLD 2026-11-04 v0.6.0->v0.6.1] substring match: "A1" was found in lint's line about A10
-                    # if not checked[aid] and not (a and any(a["code"] in m and "missing" in m for m in problems)):
-                    # added 2026-11-04 v0.6.1: the code as a whole word (lint's own line for this asset)
                     if not checked[aid] and not (a and any(_names_code(m, a["code"]) and "missing" in m for m in problems)):
                         problems.append("{}: {} is missing: {}".format(
                             self.label(sid), "{} ({})".format(a["code"], a["name"]) if a else "a deleted asset",
@@ -1036,20 +887,15 @@ class Renderer:
                             self.label(sid), n + 1, a["code"], a["name"], role.replace("_", " "), e))
             prev = self.prev_id(sid)
             if prev and prev not in earlier:
-                # [OLD 2026-11-03 v0.6.0 review] the starred take before reuse(), which can re-star another one
-                # take = self.store.starred_take(prev)
-                take = self._planned_upstream(sid, prev)  # added 2026-11-03 v0.6.0 review: the take the render uses
+                take = self._planned_upstream(sid, prev)
                 files = (take or {}).get("files") or {}
-                # [OLD 2026-11-04 v0.6.0->v0.6.1] a path outside the output folder raised ValueError out of pre-flight
-                # have = lambda k: bool(files.get(k)) and os.path.isfile(self.store.output_path(files[k]))  # noqa: E731
-                have = lambda k: _take_file_exists(self.store, files, k)  # noqa: E731  added 2026-11-04 v0.6.1
+                have = lambda k: _take_file_exists(self.store, files, k)  # noqa: E731
                 if not take:
                     problems.append("{} continues from {}, which has no take yet. Render {} first, or both together."
                                     .format(self.label(sid), self.label(prev), self.label(prev)))
                 elif not have("last") or not (have("tail") or have("video")):
                     problems.append("{} continues from {}, whose starred take {} is missing its files. Render {} again."
                                     .format(self.label(sid), self.label(prev), take.get("id"), self.label(prev)))
-                # added 2026-11-03 v0.6.0 review: a tail clip longer than the take it is cut from (analysis warns)
                 short_tail = short_upstream_tail(self.p, i, sr["builds"], take) if take else None
                 if short_tail:
                     problems.append(short_tail)
@@ -1066,7 +912,7 @@ class Renderer:
         if parts:
             raise RuntimeError("\n\n".join(parts))
 
-    # ---- stars (added 2026-11-03 v0.6.0) ------------------------------------
+    # ---- stars --------------------------------------------------------------
     def _mark_auto(self, sid, take_id):
         """Remember that the render (not the user) starred this take, so a later run may replace the star."""
         with jobs.lock(self.slug):
@@ -1091,68 +937,20 @@ class Renderer:
         return reused
 
     # ---- run ---------------------------------------------------------------
-    # [OLD 2026-11-03 v0.6.0 review] def progress(self, sid, n, passes, phase, step=0, steps=0, message=""):
     def progress(self, sid, n, passes, phase, step=0, steps=0, message="", warning=False):
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] send("reelwright.progress", {"slug": self.slug, "scene_id": sid, "pass": n, "passes": passes,
-        #                                      "step": step, "steps": steps, "phase": phase, "message": message})
-        # [OLD 2026-11-03 v0.6.0 review] send("reelwright.progress", {"slug": self.slug, "run_id": self.run_id, "scene_id": sid, "pass": n,
-        #                                      "passes": passes, "step": step, "steps": steps, "phase": phase, "message": message})
         data = {"slug": self.slug, "run_id": self.run_id, "scene_id": sid, "pass": n,
                 "passes": passes, "step": step, "steps": steps, "phase": phase, "message": message}
-        if warning:  # added 2026-11-03 v0.6.0 review: an extra take failed; the message says which (see _warn)
+        if warning:
             data["warning"] = True
         send("reelwright.progress", data)
 
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] Stop (a BaseException) and the checks before the start event left the editor
-    # "rendering"; one failing scene ended the whole run; a run re-starred a take the user had picked
-    # def run(self):
-    #     targets, action = self.targets()
-    #     blocked = [sid for sid in targets if self.result["scenes"][sid]["status"] == "error"]
-    #     if blocked:
-    #         msgs = [x["message"] for sid in blocked for x in self.result["scenes"][sid]["issues"] if x["level"] == "error"]
-    #         raise RuntimeError("Reelwright: fix these first:\n" + "\n".join(msgs))
-    #     missing = self.missing_models(targets)
-    #     if missing:
-    #         raise RuntimeError("Reelwright: these model files are missing:\n" + "\n".join(missing))
-    #     reused = []
-    #     for s in self.p["scenes"]:
-    #         sr = self.result["scenes"][s["id"]]
-    #         if sr["status"] == "cached" and sr["match"] and sr["match"] != sr["starred"]:
-    #             self.store.star(s["id"], sr["match"])
-    #             reused.append(s["id"])
-    #     targets = self.order(targets)
-    #     send("reelwright.run", {"slug": self.slug, "phase": "start", "targets": targets, "reused": reused})
-    #     rendered = []
-    #     try:
-    #         encoded = {}
-    #         if self.memory.get("encode_first"):
-    #             for sid in targets:
-    #                 sr = self.result["scenes"][sid]
-    #                 scene = self.p["scenes"][sr["index"]]
-    #                 for n in range(len(sr["plan"]["passes"])):
-    #                     mm.throw_exception_if_processing_interrupted()
-    #                     self.progress(sid, n + 1, len(sr["plan"]["passes"]), "encode")
-    #                     encoded[(sid, n)] = self.encode(scene, sr, n)
-    #             self.models.drop_clips()
-    #             mm.unload_all_models()
-    #             mm.soft_empty_cache()
-    #         for sid in targets:
-    #             self.render_scene(sid, encoded, variant_bump=action != "pending")
-    #             rendered.append(sid)
-    #     except Exception as e:
-    #         send("reelwright.run", {"slug": self.slug, "phase": "end", "targets": targets, "reused": reused,
-    #                                 "error": str(e)})
-    #         raise
-    #     send("reelwright.run", {"slug": self.slug, "phase": "end", "targets": targets, "reused": reused})
-    #     return rendered
-    # [/OLD]
     def run(self):
-        """added 2026-11-03 v0.6.0: render the requested scenes; returns the ids of the scenes that got a take.
+        """Render the requested scenes; returns the ids of the scenes that got a take.
 
         Events: `rejected` when a check before any GPU work fails (then raises); otherwise `start`, and `end` always
         (also after Stop or an error, sent from a finally). A failing scene does not stop the others: the scenes
         that continue from it are skipped, and the run raises at the end.
-        added 2026-11-03 v0.6.0 review: `end` also lists `warnings` [{scene_id, message}]: extra takes (a drift
+        `end` also lists `warnings` [{scene_id, message}]: extra takes (a drift
         retake, variants 2..n) that failed after the scene's first take was made; the scene still counts as rendered."""
         with jobs.running(self.slug, "render"):
             return self._run()
@@ -1172,12 +970,6 @@ class Renderer:
         reused = self.reuse()
         send("reelwright.run", {"slug": self.slug, "run_id": self.run_id, "phase": "start", "targets": targets,
                                 "reused": reused})
-        # [OLD 2026-11-03 v0.6.0 review] no warnings field
-        # state = {"slug": self.slug, "run_id": self.run_id, "phase": "end", "targets": targets, "reused": reused,
-        #          "rendered": [], "failed": [], "skipped": [], "interrupted": False}
-        # [/OLD]
-        # added 2026-11-03 v0.6.0 review: warnings: [{scene_id, message}], extra takes (drift retake, variant 2..n)
-        # that failed after the scene's first take was made
         state = {"slug": self.slug, "run_id": self.run_id, "phase": "end", "targets": targets, "reused": reused,
                  "rendered": [], "failed": [], "skipped": [], "warnings": [], "interrupted": False}
         try:
@@ -1224,8 +1016,7 @@ class Renderer:
                     self.label(prev), "failed" if prev in failed else "was skipped"), state, encoded)
                 continue
             try:
-                # [OLD 2026-11-03 v0.6.0 review] self.render_job(sid, action, encoded)
-                self.render_job(sid, action, encoded, state)  # added 2026-11-03 v0.6.0 review: for warnings
+                self.render_job(sid, action, encoded, state)
                 state["rendered"].append(sid)
             except Exception as e:  # noqa: BLE001 - one scene's failure must not stop the others
                 log.exception("Reelwright: %s failed", self.label(sid))
@@ -1251,8 +1042,6 @@ class Renderer:
                 for n in range(count):
                     if hits[n]:
                         continue
-                    # added 2026-11-05 v0.7.0: a pass whose continuation reference is made in this run is encoded
-                    # when it is rendered
                     if self._late_encode(sid, n):
                         continue
                     mm.throw_exception_if_processing_interrupted()
@@ -1266,12 +1055,10 @@ class Renderer:
         mm.soft_empty_cache()
         return encoded
 
-    # [OLD 2026-11-03 v0.6.0 review] a failed drift retake or variant after the first take failed the whole scene
-    # def render_job(self, sid, action, encoded):
     def render_job(self, sid, action, encoded, state=None):
         """One scene of the run: a take, a pass retake, or n variants.
 
-        added 2026-11-03 v0.6.0 review: once the first take is added (and starred), a failing extra take (a drift
+        Once the first take is added (and starred), a failing extra take (a drift
         retake, variant 2..n) is a warning (`state["warnings"]`, a progress "done" with warning=True), not a failed
         scene: the scenes that continue from it still render. Stop (a BaseException) still ends the run."""
         if action == "variants":
@@ -1283,8 +1070,6 @@ class Renderer:
             takes = []
             for k in range(n):
                 mm.throw_exception_if_processing_interrupted()
-                # [OLD 2026-11-03 v0.6.0 review] takes.append(self.render_scene(sid, encoded, bump=True, star=k == 0, keep_encoded=k < n - 1))
-                # added 2026-11-03 v0.6.0 review: only the first variant can fail the scene
                 if k == 0:
                     takes.append(self.render_scene(sid, encoded, bump=True, star=True, keep_encoded=k < n - 1))
                     continue
@@ -1305,8 +1090,6 @@ class Renderer:
         if action == "pass_retake":
             return [self.render_scene(sid, encoded, retake_pass=int(self.request.get("pass")))]
         take = self.render_scene(sid, encoded, bump=action != "pending")
-        # [OLD 2026-11-03 v0.6.0 review] return [take] + self._drift_retake(sid, take)
-        # added 2026-11-03 v0.6.0 review: a failed drift retake keeps the take just made (and starred)
         try:
             return [take] + self._drift_retake(sid, take)
         except Exception as e:  # noqa: BLE001
@@ -1314,7 +1097,7 @@ class Renderer:
             return [take]
 
     def _warn(self, sid, message, state):
-        """added 2026-11-03 v0.6.0 review: an extra take of a scene failed after its first take was made. Logged with
+        """An extra take of a scene failed after its first take was made. Logged with
         the traceback, listed in the run's end event (`warnings`) and sent as a final "done" progress event."""
         log.warning("Reelwright: %s: %s", self.label(sid), message, exc_info=True)
         if state is not None:
@@ -1338,7 +1121,7 @@ class Renderer:
             self.progress(sid, count, count, "done", message="{} starred (better face match)".format(again["id"]))
         return [again]
 
-    # ---- pass cache (added 2026-11-03 v0.6.0) ------------------------------
+    # ---- pass cache --------------------------------------------------------
     def pass_dir(self, sid):
         return os.path.join(self.store.scene_dir(sid), "passes")
 
@@ -1406,8 +1189,7 @@ class Renderer:
 
     def _load_pass_file(self, path, x):
         try:
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] frames, audio = media.load_video(path)
-            frames, audio = media.load_video(path, exact=True)  # added 2026-11-05 v0.8.0: a lossless pass exactly
+            frames, audio = media.load_video(path, exact=True)
         except Exception as e:  # noqa: BLE001 - a damaged cache file is rendered again
             log.warning("Reelwright: pass cache file %s is unreadable (%s); rendering the pass again", path, e)
             return None
@@ -1429,7 +1211,7 @@ class Renderer:
         while first > 0 and any(g.get("source") == "prev_pass_tail" for g in builds[first]["guides"]):
             first -= 1
         for t in reversed(self.store.read_index(sid)["takes"]):
-            if "pass_keys" in t:  # v0.6.0 takes use the pass cache
+            if "pass_keys" in t:
                 continue
             files = (t.get("files") or {}).get("passes") or []
             seeds = [int(x) for x in t.get("seeds") or []]
@@ -1446,13 +1228,8 @@ class Renderer:
                 return path
         return None
 
-    # [OLD 2026-11-05 v0.7.0->v0.8.0] always CRF 4, no latents kept
-    # def _save_pass(self, path, frames, audio, meta):
-    #     media.save_video_atomic(frames, audio, path, crf=media.PASS_CRF)
-    #     write_json(path[:-4] + ".json", meta)  # written last: a pass counts once both files exist
-    # [/OLD]
     def _save_pass(self, path, frames, audio, meta, handoff=None):
-        """added 2026-11-05 v0.8.0: Global -> Long scenes -> pass cache "lossless" writes the pass losslessly
+        """Global -> Long scenes -> pass cache "lossless" writes the pass losslessly
         (media.save_video_lossless); `handoff` (the pass's last latents for the next pass's latent hand-off) is kept as
         <file key>.latent.safetensors, so a pass read back from the cache hands off the same latents."""
         lossless = self.long["pass_cache"] == "lossless"
@@ -1497,7 +1274,7 @@ class Renderer:
             except OSError:
                 pass
 
-    # ---- long-scene continuity (added 2026-11-05 v0.8.0) --------------------------------------------------------
+    # ---- long-scene continuity ----------------------------------------------------------------------------------
     def _handoff_need(self, nxt):
         """Latents the latent guide of pass `nxt` takes from the pass before (5j+2 for a 17j+5-frame overlap), 0 when
         the hand-off is off or nxt is not joined by an overlap seam."""
@@ -1567,10 +1344,9 @@ class Renderer:
         return frames[ko - TAIL_FRAMES:ko].clone(), a
 
     # ---- one take ----------------------------------------------------------
-    # [OLD 2026-11-05 v0.7.0->v0.8.0] def _generate(self, sid, scene, sr, n, encoded, keep_encoded, prev_pass, upstream, seed):
     def _generate(self, sid, scene, sr, n, encoded, keep_encoded, prev_pass, upstream, seed, prev_latent=None):
         """Encode (unless done already), guide, sample and decode one pass: (frames, audio, video latent).
-        added 2026-11-05 v0.8.0: prev_latent (the pass before's last latents, for the latent hand-off) and the sampled
+        prev_latent (the pass before's last latents, for the latent hand-off) and the sampled
         video latent [1, 24, T, h, w] as a third value (None when the latent is not an H3 AV latent)."""
         st = sr["settings"]
         n_pass = len(sr["plan"]["passes"])
@@ -1578,23 +1354,19 @@ class Renderer:
             positive, latent = encoded[(sid, n)] if keep_encoded else encoded.pop((sid, n))
         else:
             self.progress(sid, n + 1, n_pass, "encode")
-            # [OLD 2026-11-05 v0.6.1->v0.7.0] positive, latent = self.encode(scene, sr, n)
-            positive, latent = self.encode(scene, sr, n, upstream, prev_pass)  # v0.7.0: for the continuation ref
-        hires = st.get("hires")  # added 2026-11-10 v0.19.0
+            positive, latent = self.encode(scene, sr, n, upstream, prev_pass)
+        hires = st.get("hires")
         unguided = positive if hires and hires.get("refine_steps") else None  # the refine guides again at its size
-        # [OLD 2026-11-05 v0.7.0->v0.8.0] positive = self.guide(scene, sr, n, positive, latent, prev_pass, upstream)
         positive = self.guide(scene, sr, n, positive, latent, prev_pass, upstream, prev_latent)
         model = self.models.model(st)
         last_sent = [0.0]
-        last_preview = [0.0]  # added 2026-11-02 v0.3.5
-        preview_failed = [False]  # added 2026-11-02 v0.3.8: warn once per pass when a preview can't be made
+        last_preview = [0.0]
+        preview_failed = [False]
 
-        # [OLD 2026-11-10 v0.18.0->v0.19.0] def on_step(step, total, preview=None, _n=n):
-        def on_step(step, total, preview=None, _n=n, phase="sample"):  # phase: added 2026-11-10 v0.19.0 ("refine")
+        def on_step(step, total, preview=None, _n=n, phase="sample"):
             now = time.time()
             if now - last_sent[0] > 0.4 or step == total:
                 last_sent[0] = now
-                # [OLD 2026-11-10 v0.18.0->v0.19.0] self.progress(sid, _n + 1, n_pass, "sample", step, total)
                 self.progress(sid, _n + 1, n_pass, phase, step, total)
             if preview is not None and (now - last_preview[0] >= PREVIEW_MIN_INTERVAL or step == total):
                 last_preview[0] = now
@@ -1610,17 +1382,9 @@ class Renderer:
                 send("reelwright.preview", {"slug": self.slug, "scene_id": sid, "pass": _n + 1, "passes": n_pass,
                                             "step": step, "steps": total, "image": image})
 
-        # [OLD 2026-11-09 v0.14.4->v0.15.0] samples = _sample(model, positive, latent, seed, st, on_step)
         samples = _sample(model, positive, latent, seed, dict(st, preview_frame=preview_frame(sr["plan"]["passes"][n])),
-                          on_step)  # added 2026-11-09 v0.15.0: the preview shows the middle of what the pass makes
+                          on_step)
         del positive, latent
-        # [OLD 2026-11-10 v0.18.0->v0.19.0] the sampled latent was decoded as it was
-        # self.progress(sid, n + 1, n_pass, "decode")
-        # frames = nodes.VAEDecode().decode(self.models.vae(st["video_vae"], "vae"), samples)[0]
-        # [/OLD]
-        # added 2026-11-10 v0.19.0: Global -> Hires: the latent upscaler enlarges the video latent (the sound passes
-        # through), then, with refine steps, the big latent is guided again at its size and sampled again from part of
-        # the noise; it is decoded at the big size. The latent hand-off below keeps the sampled (small) latent.
         big = samples
         if hires:
             big = self._hires(sid, scene, sr, n, n_pass, samples, unguided, prev_pass, upstream, prev_latent, seed, hires,
@@ -1630,15 +1394,12 @@ class Renderer:
         frames = nodes.VAEDecode().decode(self.models.vae(st["video_vae"], "vae"), big)[0]
         del big
         audio = vae_decode_audio(self.models.vae(st["audio_vae"], "audio_vae"), samples)
-        # added 2026-11-05 v0.8.0: the sampled video latent (render_scene keeps its end for a latent hand-off)
         lat = samples.get("samples") if isinstance(samples, dict) else None
         video_latent = lat.tensors[0] if getattr(lat, "is_nested", False) and len(lat.tensors) == 2 else None
-        # [OLD 2026-11-05 v0.7.0->v0.8.0] del samples
         del samples, lat
-        # [OLD 2026-11-05 v0.7.0->v0.8.0] return frames, audio
         return frames, audio, video_latent
 
-    # added 2026-11-10 v0.19.0: Global -> Hires for one pass: the sampled latent enlarged by the latent upscaler, and
+    # Global -> Hires for one pass: the sampled latent enlarged by the latent upscaler, and
     # with refine steps sampled again at the big size (its guides encoded at that size; a latent hand-off can't be used
     # there, so the pass before's frames are). Returns the big latent with the sampled sound.
     def _hires(self, sid, scene, sr, n, n_pass, samples, unguided, prev_pass, upstream, prev_latent, seed, hires, on_step):
@@ -1663,140 +1424,8 @@ class Renderer:
         del positive, big
         return _with_audio_of(refined, samples)
 
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] finished passes were thrown away on Stop or failure, the tail kept
-    # max(60, overlap) frames of the last pass only, a drift retake was starred even when it scored worse,
-    # and the take did not record what it continued from
-    # def render_scene(self, sid, encoded, variant_bump, retake=False):
-    #     sr = self.result["scenes"][sid]
-    #     scene = self.p["scenes"][sr["index"]]
-    #     plan = sr["plan"]
-    #     st = sr["settings"]
-    #     n_pass = len(plan["passes"])
-    #     index = self.store.read_index(sid)
-    #     same = [t for t in index["takes"] if t.get("key") == sr["key"]]
-    #     variant = (max(t.get("variant", 0) for t in same) + 1) if (same and variant_bump) else 0
-    #     take_id = self.store.new_take_id(sid)
-    #     tdir = self.store.take_dir(sid, take_id)
-    #     os.makedirs(os.path.join(tdir, "passes"), exist_ok=True)
-    #     # added 2026-11-02 v0.2.0: readable file names, e.g. harbor_lights_02_the_long_walk_home_v3.mp4
-    #     video_name = "{}_{:02d}_{}_{}.mp4".format(self.slug, sr["index"] + 1, slugify(scene["title"])[:40], take_id)
-    #     vae = self.models.vae(st["video_vae"], "vae")
-    #     avae = self.models.vae(st["audio_vae"], "audio_vae")
-    #     t0 = time.time()
-    #     prev_pass = None
-    #     pass_files, firsts, last_out = [], None, None
-    #     seeds = []
-    #     for n, x in enumerate(plan["passes"]):
-    #         mm.throw_exception_if_processing_interrupted()
-    #         if (sid, n) in encoded:
-    #             positive, latent = encoded.pop((sid, n))
-    #         else:
-    #             self.progress(sid, n + 1, n_pass, "encode")
-    #             positive, latent = self.encode(scene, sr, n)
-    #         positive = self.guide(scene, sr, n, positive, latent, prev_pass)
-    #         model = self.models.model(st)
-    #         seed = (x["seed"] + variant * 1000003) % (2 ** 63)
-    #         seeds.append(seed)
-    #         last_sent = [0.0]
-    #         last_preview = [0.0]  # added 2026-11-02 v0.3.5
-    #         preview_failed = [False]  # added 2026-11-02 v0.3.8: warn once per pass when a preview can't be made
-    #
-    #         # [OLD 2026-11-02 v0.3.4->v0.3.5] def on_step(step, total, _n=n):
-    #         def on_step(step, total, preview=None, _n=n):
-    #             now = time.time()
-    #             if now - last_sent[0] > 0.4 or step == total:
-    #                 last_sent[0] = now
-    #                 self.progress(sid, _n + 1, n_pass, "sample", step, total)
-    #             # added 2026-11-02 v0.3.5: about one latent preview per second, shown in the Render tab
-    #             # [OLD 2026-11-02 v0.3.7->v0.3.8] once a second was too slow to follow; now every step (see PREVIEW_MIN_INTERVAL)
-    #             # if preview is not None and (now - last_preview[0] > 1.0 or step == total):
-    #             if preview is not None and (now - last_preview[0] >= PREVIEW_MIN_INTERVAL or step == total):
-    #                 last_preview[0] = now
-    #                 try:
-    #                     image = preview()
-    #                 except Exception as e:  # a preview must never stop a render
-    #                     # [OLD 2026-11-02 v0.3.7->v0.3.8] failures were hidden at debug level
-    #                     # log.debug("Reelwright preview failed: %s", e)
-    #                     # added 2026-11-02 v0.3.8: the first failure of a pass shows in the ComfyUI console
-    #                     if not preview_failed[0]:
-    #                         preview_failed[0] = True
-    #                         log.warning("Reelwright: no latent preview for scene %s pass %d: %s", sid, _n + 1, e)
-    #                     else:
-    #                         log.debug("Reelwright preview failed: %s", e)
-    #                     return
-    #                 send("reelwright.preview", {"slug": self.slug, "scene_id": sid, "pass": _n + 1, "passes": n_pass,
-    #                                             "step": step, "steps": total, "image": image})
-    #
-    #         samples = _sample(model, positive, latent, seed, st, on_step)
-    #         del positive, latent
-    #         self.progress(sid, n + 1, n_pass, "decode")
-    #         frames = nodes.VAEDecode().decode(vae, samples)[0]
-    #         audio = vae_decode_audio(avae, samples)
-    #         del samples
-    #         self.progress(sid, n + 1, n_pass, "save")
-    #         if n_pass > 1 or plan["kind"] == "short":
-    #             path = os.path.join(tdir, "passes", "p{}.mp4".format(n + 1))
-    #             media.save_video(frames, audio, path)
-    #             pass_files.append(path)
-    #         kept, kept_audio = media.trim(frames, audio, x["keep_in_frames"], x["keep_out_frames"])
-    #         if n == 0:
-    #             firsts = kept[:1].clone()
-    #         last_out = (kept[-max(60, x["overlap_frames"]):].clone(),
-    #                     media.slice_audio(kept_audio, max(0.0, kept.shape[0] / spec.FPS - 2.5), kept.shape[0] / spec.FPS)
-    #                     if kept_audio is not None else None)
-    #         if n_pass == 1:
-    #             # [OLD 2026-11-02 v0.1.0->v0.2.0] media.save_video(kept, kept_audio, os.path.join(tdir, "video.mp4"))
-    #             media.save_video(kept, kept_audio, os.path.join(tdir, video_name))
-    #         if n + 1 < n_pass and plan["passes"][n + 1]["seam_before"] == "overlap":
-    #             prev_pass = (frames[-plan["passes"][n + 1]["overlap_frames"]:].clone(), audio)
-    #         else:
-    #             prev_pass = None
-    #         del frames, audio, kept, kept_audio
-    #         _free(self.memory["policy"])
-    #
-    #     if n_pass > 1:
-    #         segs = assemble.pass_segments(plan, pass_files, self.p["global"]["long"]["crossfade_frames"])
-    #         # [OLD 2026-11-02 v0.1.0->v0.2.0] merge.join(segs, os.path.join(tdir, "video.mp4"), st["width"], st["height"], audio_fade_frames=0)
-    #         merge.join(segs, os.path.join(tdir, video_name), st["width"], st["height"], audio_fade_frames=0)
-    #     media.frame_to_png(firsts[0], os.path.join(tdir, "first.png"))
-    #     tail_frames, tail_audio = last_out
-    #     media.frame_to_png(tail_frames[-1], os.path.join(tdir, "last.png"))
-    #     media.save_video(tail_frames, tail_audio, os.path.join(tdir, "tail.mp4"))
-    #
-    #     rel = lambda name: self.store.rel_output(os.path.join(tdir, name))
-    #     take = {
-    #         "id": take_id, "key": sr["key"], "variant": variant, "created": int(time.time()),
-    #         "quality": st["quality"], "seconds": plan["frames"] / spec.FPS, "frames": plan["frames"],
-    #         "overlap_frames": plan["passes"][0]["overlap_frames"], "seeds": seeds,
-    #         "render_seconds": round(time.time() - t0, 1),
-    #         # [OLD 2026-11-02 v0.1.0->v0.2.0] "files": {"video": rel("video.mp4"), "first": rel("first.png"), ...
-    #         "files": {"video": rel(video_name), "first": rel("first.png"), "last": rel("last.png"), "tail": rel("tail.mp4"),
-    #                   "passes": [self.store.rel_output(f) for f in pass_files]},
-    #         "face": {},
-    #     }
-    #     if self.p["global"]["continuity"]["face_check"] and continuity.available():
-    #         # [OLD 2026-11-03 v0.4.0->v0.4.1] take["face"] = continuity.check_scene(self.p, scene, self.store, os.path.join(tdir, video_name))  # [OLD 2026-11-02] was "video.mp4"
-    #         # added 2026-11-03 v0.4.1: an optional check must not throw away a finished take (an insightface import
-    #         # error used to stop the run here, before the take was listed)
-    #         try:
-    #             take["face"] = continuity.check_scene(self.p, scene, self.store, os.path.join(tdir, video_name))
-    #         except Exception as e:
-    #             log.warning("Reelwright: face check skipped for %s: %s", sid, e)
-    #             self.progress(sid, n_pass, n_pass, "save", message="face check skipped: {}".format(str(e)[:160]))
-    #     meta = dict(take, prompts=sr["prompts"], passes=sr["passes"],
-    #                 settings={k: v for k, v in st.items() if k != "loras"}, loras=st["loras"])
-    #     with open(os.path.join(tdir, "meta.json"), "w", encoding="utf-8") as f:
-    #         json.dump(meta, f, indent=1)
-    #     self.store.add_take(sid, take, star=True)
-    #     self.progress(sid, n_pass, n_pass, "done", message=take_id)
-    #     drift = self.p["global"]["continuity"]
-    #     if not retake and take["face"] and drift["on_drift"] == "retake" and \
-    #             min(take["face"].values()) < float(drift["face_threshold"]):
-    #         log.info("Reelwright: %s drifted (%s), rendering one more take", sid, take["face"])
-    #         self.render_scene(sid, {}, variant_bump=True, retake=True)
-    # [/OLD]
     def render_scene(self, sid, encoded, bump=False, star=True, retake_pass=None, keep_encoded=False):
-        """added 2026-11-03 v0.6.0: render one take of a scene and add it to the scene's takes; returns the take.
+        """Render one take of a scene and add it to the scene's takes; returns the take.
 
         Passes of long and short scenes go through the pass cache: a pass with the same key and seed is read back
         instead of sampled (after Stop or a failure, after moving a short scene's keep window, for the passes a pass
@@ -1822,15 +1451,14 @@ class Renderer:
         t0 = time.time()
         prev_pass, first, tail = None, None, None
         pass_files, sampled, from_cache = [], 0, 0
-        # added 2026-11-05 v0.8.0: latent hand-off, drift meter, lossless tail from memory
         lossless = self.long["pass_cache"] == "lossless"
         prev_latent, drift, tail_mem = None, [], None
         for n, x in enumerate(plan["passes"]):
             mm.throw_exception_if_processing_interrupted()
             cpath = os.path.join(pdir, tp["file_keys"][n] + ".mp4")
-            nxt = plan["passes"][n + 1] if n + 1 < n_pass else None  # added 2026-11-05 v0.8.0 (was set further down)
-            need = self._handoff_need(nxt)  # added 2026-11-05 v0.8.0: latents the next pass's latent guide takes
-            keep_lat = None  # added 2026-11-05 v0.8.0
+            nxt = plan["passes"][n + 1] if n + 1 < n_pass else None
+            need = self._handoff_need(nxt)
+            keep_lat = None
             hit = self._load_pass(cpath, x, st) if cacheable else None
             if hit is None and cacheable:  # a pass an older take kept in its own folder
                 legacy = self._legacy_pass(sid, n, tp)
@@ -1846,16 +1474,13 @@ class Renderer:
                     encoded.pop((sid, n), None)
                 from_cache += 1
                 self.progress(sid, n + 1, n_pass, "reuse", message="pass {} from the pass cache".format(n + 1))
-                # added 2026-11-05 v0.8.0: the drift it was rendered with, and its kept latents for a latent hand-off
                 drift += self._cached_drift(cpath, sr, n, frames, prev_pass)
                 keep_lat = load_handoff(cpath[:-4] + ".latent.safetensors") if need else None
             else:
-                # [OLD 2026-11-05 v0.7.0->v0.8.0] frames, audio = self._generate(sid, scene, sr, n, encoded, keep_encoded, prev_pass, upstream,
-                # [OLD 2026-11-05 v0.7.0->v0.8.0]                                tp["seeds"][n])
                 frames, audio, lat_full = self._generate(sid, scene, sr, n, encoded, keep_encoded, prev_pass, upstream,
                                                          tp["seeds"][n], prev_latent)
                 sampled += int(x["gen_frames"])
-                pass_drift = self._drift(n, frames)  # added 2026-11-05 v0.8.0
+                pass_drift = self._drift(n, frames)
                 drift += pass_drift
                 if need and lat_full is not None and lat_full.ndim == 5 and lat_full.shape[2] >= need:
                     keep_lat = {"video": lat_full[:, :, lat_full.shape[2] - need:].clone(),
@@ -1863,15 +1488,11 @@ class Renderer:
                 del lat_full
                 if cacheable:
                     self.progress(sid, n + 1, n_pass, "save")
-                    # [OLD 2026-11-05 v0.7.0->v0.8.0] self._save_pass(cpath, frames, audio, {
-                    # [OLD 2026-11-05 v0.7.0->v0.8.0]     "key": tp["file_keys"][n], "pass_key": tp["pass_keys"][n], "scene_id": sid, "pass": n + 1,
-                    # [OLD 2026-11-05 v0.7.0->v0.8.0]     "seed": tp["seeds"][n], "frames": int(x["gen_frames"]), "width": st["width"],
-                    # [OLD 2026-11-05 v0.7.0->v0.8.0]     "height": st["height"], "created": int(time.time())})
                     self._save_pass(cpath, frames, audio, {
                         "key": tp["file_keys"][n], "pass_key": tp["pass_keys"][n], "scene_id": sid, "pass": n + 1,
                         "seed": tp["seeds"][n], "frames": int(x["gen_frames"]), "width": st["width"],
                         "height": st["height"], "created": int(time.time()),
-                        "drift": pass_drift}, handoff=keep_lat)  # added 2026-11-05 v0.8.0
+                        "drift": pass_drift}, handoff=keep_lat)
             if cacheable:
                 pass_files.append(cpath)
             kept, kept_audio = media.trim(frames, audio, x["keep_in_frames"], x["keep_out_frames"])
@@ -1884,16 +1505,9 @@ class Renderer:
                 tail = (kept[-TAIL_FRAMES:].clone(),
                         media.slice_audio(kept_audio, max(0, k - TAIL_FRAMES) / spec.FPS, k / spec.FPS)
                         if kept_audio is not None else None)
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] nxt = plan["passes"][n + 1] if n + 1 < n_pass else None  (set at the top now)
-            # added 2026-11-05 v0.8.0: a lossless tail from the last pass in memory when its unblended end holds it
             if lossless and n_pass > 1 and nxt is None:
                 tail_mem = self._tail_from_pass(x, frames, audio)
-            prev_latent = keep_lat  # added 2026-11-05 v0.8.0: the latent hand-off for the next pass, or None
-            # [OLD 2026-11-05 v0.6.1->v0.7.0] only the overlap was kept
-            # prev_pass = (frames[-nxt["overlap_frames"]:].clone(), audio) \
-            #     if nxt and nxt["seam_before"] == "overlap" else None
-            # [/OLD]
-            # added 2026-11-05 v0.7.0: the last 124 frames when the next pass sends them as <Video 1>
+            prev_latent = keep_lat
             keep = 0 if not nxt else max(nxt["overlap_frames"], TAIL_FRAMES) \
                 if self._names_continuation(sid, n + 1, ("prev_pass_tail",)) else nxt["overlap_frames"]
             prev_pass = (frames[-keep:].clone(), audio) if nxt and nxt["seam_before"] == "overlap" else None
@@ -1902,25 +1516,18 @@ class Renderer:
 
         if n_pass > 1:
             self.progress(sid, n_pass, n_pass, "save", message="joining {} passes".format(n_pass))
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] segs = assemble.pass_segments(plan, pass_files, self.p["global"]["long"]["crossfade_frames"])
-            # added 2026-11-05 v0.8.0: carry_audio off crossfades the sound over the whole overlap
             segs = assemble.pass_segments(plan, pass_files, self.p["global"]["long"]["crossfade_frames"],
                                           carry_audio=bool(self.long["carry_audio"]))
             # Stop kills ffmpeg (merge.run_ffmpeg polls cancel, which raises ComfyUI's interrupt)
-            # [OLD 2026-11-10 v0.18.0->v0.19.0] merge.join(segs, video_path, st["width"], st["height"], audio_fade_frames=0,
-            ow, oh = output_size(st)  # added 2026-11-10 v0.19.0: the latent upscaler's size while Hires runs
+            ow, oh = output_size(st)
             merge.join(segs, video_path, ow, oh, audio_fade_frames=0,
                        cancel=lambda: mm.throw_exception_if_processing_interrupted() or False)
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] tail = media.load_video(video_path, last_frames=TAIL_FRAMES)  # across the seams, as the cut shows it
-            # added 2026-11-05 v0.8.0: with a lossless pass cache, from the last pass in memory when it holds 124
-            # frames past its seam; else across the seams, as the cut shows it
             tail = tail_mem or media.load_video(video_path, last_frames=TAIL_FRAMES)
         media.frame_to_png(first[0], os.path.join(tdir, "first.png"))
         tail_frames, tail_audio = tail
         media.frame_to_png(tail_frames[-1], os.path.join(tdir, "last.png"))
-        # [OLD 2026-11-05 v0.7.0->v0.8.0] media.save_video(tail_frames, tail_audio, os.path.join(tdir, "tail.mp4"), crf=media.PASS_CRF)
         media.save_video(tail_frames, tail_audio, os.path.join(tdir, "tail.mp4"), crf=media.PASS_CRF,
-                         lossless=lossless)  # added 2026-11-05 v0.8.0: Global -> Long scenes -> pass cache
+                         lossless=lossless)
         del tail, tail_frames, tail_audio, tail_mem
 
         rel = lambda name: self.store.rel_output(os.path.join(tdir, name))  # noqa: E731
@@ -1932,18 +1539,13 @@ class Renderer:
             "files": {"video": rel(video_name), "first": rel("first.png"), "last": rel("last.png"),
                       "tail": rel("tail.mp4"), "passes": [self.store.rel_output(f) for f in pass_files]},
             "face": {},
-            # added 2026-11-03 v0.6.0
             "offsets": tp["offsets"], "pass_keys": tp["file_keys"], "start_mode": plan.get("start_mode"),
             "upstream": {"scene_id": prev, "take_id": upstream["id"]} if upstream else None,
             "prompts": sr["prompts"], "generated_frames": sum(int(x["gen_frames"]) for x in plan["passes"]),
             "sampled_frames": sampled, "cached_passes": from_cache,
             "width": st["width"], "height": st["height"], "steps": st["steps"], "face_score": None,
-            # added 2026-11-05 v0.8.0: drift meter per continuing pass (analysis.drift_metrics) and the long-scene
-            # choices the take was made with
             "drift": drift, "long": {k: self.long.get(k) for k in LONG_TAKE_KEYS},
         }
-        # added 2026-11-10 v0.19.0: width / height stay the sampling size (the time estimates read them); a take made
-        # with the latent upscaler says its video's size and how it was made
         if st.get("hires"):
             take["out_width"], take["out_height"] = output_size(st)
             take["hires"] = dict(st["hires"])

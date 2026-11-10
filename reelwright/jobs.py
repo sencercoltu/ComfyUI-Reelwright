@@ -1,4 +1,4 @@
-"""Per-project locks and the jobs running for a project (added 2026-11-03 v0.6.0).
+"""Per-project locks and the jobs running for a project.
 
 ComfyUI runs the node (renders, the merge after a render) on its execution thread while the HTTP routes (autosave,
 star, delete, merge, Files) run on the event loop or in worker threads. Every read-modify-write of a project's files
@@ -48,7 +48,7 @@ class Job:
 
 
 def _new_job(slug, kind, job_id):
-    """added 2026-11-04 v0.6.1 (call with _guard held): a Job whose id is not in use. A made-up id skips ids a caller
+    """A Job whose id is not in use. A made-up id skips ids a caller
     chose ("render-3" sent as a merge id); a chosen id that is in use raises Busy (one entry per id)."""
     if job_id and job_id in _running:
         raise Busy(_running[job_id])
@@ -58,24 +58,10 @@ def _new_job(slug, kind, job_id):
     return job
 
 
-# [OLD 2026-11-04 v0.6.0->v0.6.1] the entry was replaced and popped by id alone: a job with the same id as another
-# took the other's entry, and the first of them to end removed the entry of the one still running
-# @contextlib.contextmanager
-# def running(slug, kind, job_id=None):
-#     """Register a job for the duration of the block: `with jobs.running(slug, "merge") as job: ...`."""
-#     job = Job(slug, kind, job_id)
-#     with _guard:
-#         _running[job.id] = job
-#     try:
-#         yield job
-#     finally:
-#         with _guard:
-#             _running.pop(job.id, None)
-# [/OLD]
 @contextlib.contextmanager
 def running(slug, kind, job_id=None):
     """Register a job for the duration of the block: `with jobs.running(slug, "merge") as job: ...`.
-    added 2026-11-04 v0.6.1: raises Busy when `job_id` is the id of a job that is running."""
+    Raises Busy when `job_id` is the id of a job that is running."""
     with _guard:
         job = _new_job(slug, kind, job_id)
         _running[job.id] = job
@@ -83,12 +69,12 @@ def running(slug, kind, job_id=None):
         yield job
     finally:
         with _guard:
-            if _running.get(job.id) is job:  # added 2026-11-04 v0.6.1: only its own entry
+            if _running.get(job.id) is job:
                 _running.pop(job.id, None)
 
 
 class Busy(RuntimeError):
-    """added 2026-11-03 v0.6.0: exclusive() found a job of the same kind already running for the project."""
+    """exclusive() found a job of the same kind already running for the project."""
 
     def __init__(self, job):
         super().__init__("a {} of this project is already running".format(job.kind))
@@ -97,7 +83,7 @@ class Busy(RuntimeError):
 
 @contextlib.contextmanager
 def exclusive(slug, kind, job_id=None):
-    """added 2026-11-03 v0.6.0: like running(), but only one job of this kind per project: raises Busy when one is
+    """Like running(), but only one job of this kind per project: raises Busy when one is
     running already. The check and the registration happen in one step."""
     with _guard:
         other = next((j for j in _running.values() if j.slug == slug and j.kind == kind), None)
@@ -105,8 +91,7 @@ def exclusive(slug, kind, job_id=None):
             other = _running[job_id]
         if other is not None:
             raise Busy(other)
-        # [OLD 2026-11-04 v0.6.0->v0.6.1] job = Job(slug, kind, job_id)  (a made-up id could be one a caller chose)
-        job = _new_job(slug, kind, job_id)  # added 2026-11-04 v0.6.1
+        job = _new_job(slug, kind, job_id)
         _running[job.id] = job
     try:
         yield job

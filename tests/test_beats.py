@@ -1,4 +1,4 @@
-"""Beat markers (added 2026-11-03 v0.6.0): tempo, beats and downbeats of synthetic click tracks."""
+"""Beat markers: tempo, beats and downbeats of synthetic click tracks."""
 
 import os
 import wave
@@ -76,8 +76,6 @@ def test_cached_by_content(tmp_path, monkeypatch):
     monkeypatch.setattr(beats, "analyze", lambda *a, **k: pytest.fail("analysed again"))
     assert beats.cached(path, merge.ffmpeg_bin(), cache_dir, "abc123") == first
 
-
-# ---- added 2026-11-03 v0.6.0 review --------------------------------------------------------------------------------
 
 def _clicks(bpm, secs, lead=0.0, pad=0.0):
     r = beats.RATE

@@ -2,33 +2,25 @@
 
 import asyncio
 import functools
-import importlib.util
 import json
 import logging
-import math  # added 2026-11-03 v0.6.0
+import math
 import os
 import re
 import shutil
 import subprocess
-import threading  # added 2026-11-05 v0.7.0: filmstrip slots
-import uuid  # added 2026-11-03 v0.6.0
+import threading
+import uuid
 
 import comfy.samplers
 import folder_paths
 from aiohttp import web
 from server import PromptServer
 
-# [OLD 2026-11-02 v0.2.2->v0.3.0] from . import VERSION, assemble, continuity, llm, media, merge
-# [OLD 2026-11-03 v0.3.9->v0.4.0] from . import VERSION, assemble, continuity, llm, media, merge, profiles
-from . import VERSION, assemble, continuity, llm, media, merge, profiles
-from . import files as diskuse  # added 2026-11-03 v0.4.0 ("files" is already the name of a route below)
-from . import scriptparts  # added 2026-11-03 v0.4.2
+from . import VERSION, assemble, beats, cache, continuity, jobs, llm, media, merge, profiles, scriptparts, spec
+from . import files as diskuse
 from .analysis import analyze, plan_response
-# [OLD 2026-11-02 v0.3.3->v0.3.4] from .model import normalize_project, project_index
 from .model import cast_description, normalize_project, project_index
-# [OLD 2026-11-03 v0.5.1->v0.6.0] from .storage import ProjectStore, Roots, check_id, check_slug, read_json, safe_join
-from . import beats, cache, jobs  # added 2026-11-03 v0.6.0
-from . import spec  # added 2026-11-06 v0.10.0: /reelwright/speech
 from .storage import ID_RE, ProjectStore, Roots, SlugConflict, check_id, check_slug, read_json, safe_join
 
 log = logging.getLogger("reelwright")
@@ -44,20 +36,6 @@ def wired_flags(store):
     return read_json(os.path.join(store.dir, "wired.json"), {}) or {}
 
 
-# [OLD 2026-11-03 v0.4.1->v0.4.2] an exception without a message (asyncio.TimeoutError) answered {"error": ""}, which the editor showed as
-# nothing at all; LLM failures were logged with a full traceback
-# def json_route(fn):
-#     @functools.wraps(fn)
-#     async def wrapper(request):
-#         try:
-#             return web.json_response(await fn(request))
-#         except (ValueError, KeyError, FileNotFoundError, merge.MergeError, json.JSONDecodeError) as e:
-#             return web.json_response({"error": str(e)}, status=400)
-#         except Exception as e:
-#             log.exception("Reelwright route %s failed", request.path)
-#             return web.json_response({"error": str(e)}, status=500)
-#     return wrapper
-# [/OLD]
 def _message(e):
     return str(e) or e.__class__.__name__
 
@@ -66,17 +44,13 @@ def json_route(fn):
     @functools.wraps(fn)
     async def wrapper(request):
         try:
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] return web.json_response(await fn(request))
             out = await fn(request)
             return out if isinstance(out, web.StreamResponse) else web.json_response(out)
         except SlugConflict as e:
-            # added 2026-11-03 v0.6.0: the project folder holds another project (see storage.slug_conflict)
             return web.json_response({"error": _message(e), "reason": "slug_conflict", "other": e.other}, status=409)
         except merge.MergeBusy as e:
-            # added 2026-11-03 v0.6.0: one merge per project at a time
             return web.json_response({"error": "busy", "message": _message(e)}, status=409)
         except (llm.LLMError, llm.NoAnswer) as e:
-            # added 2026-11-03 v0.4.2: the LLM failed; say why, and give the editor the reason (e.g. "cut")
             log.warning("Reelwright %s: %s", request.path, _message(e))
             return web.json_response({"error": _message(e), "reason": e.reason}, status=502)
         except (ValueError, KeyError, FileNotFoundError, merge.MergeError, json.JSONDecodeError) as e:
@@ -88,14 +62,13 @@ def json_route(fn):
 
 
 async def body_of(request):
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] return await request.json()
     b = await request.json()
-    if not isinstance(b, dict):  # added 2026-11-03 v0.6.0: a list or number answered 500
+    if not isinstance(b, dict):
         raise ValueError("the request body must be a JSON object")
     return b
 
 
-# ---- input checks (added 2026-11-03 v0.6.0): wrong types answer 400 with a reason, not 500 --------------------
+# ---- input checks: wrong types answer 400 with a reason, not 500 ----------------------------------------------
 
 def _str(b, key, default=None, required=True, max_len=4096):
     v = b.get(key, default)
@@ -157,7 +130,7 @@ def project_store(project):
 
 
 def _view(rel):
-    """added 2026-11-03 v0.6.0: ComfyUI's /view URL of an output-relative file (the editor adds its API base)."""
+    """ComfyUI's /view URL of an output-relative file (the editor adds its API base)."""
     from urllib.parse import quote
     folder, _, name = rel.rpartition("/")
     return "/view?filename={}&subfolder={}&type=output".format(quote(name), quote(folder))
@@ -172,14 +145,12 @@ def slug_store(slug):
 async def info(request):
     return {"version": VERSION, "ffmpeg": merge.ffmpeg_bin() or False,
             "insightface": continuity.available(),
-            "insightface_error": continuity.error() or "",  # added 2026-11-03 v0.4.1
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] "h3_nodes": importlib.util.find_spec("comfy_extras.nodes_minimax_h3") is not None}  (true when the module exists but fails to import)
-            # added 2026-11-03 v0.6.0: render imports H3 lazily and knows whether it worked
+            "insightface_error": continuity.error() or "",
             "h3_nodes": _h3()[0], "h3_error": _h3()[1]}
 
 
 def _h3():
-    """added 2026-11-03 v0.6.0: (H3 nodes importable, why not)."""
+    """(H3 nodes importable, why not)."""
     try:
         from . import render
         return bool(render.h3_available()), render.h3_error() or ""
@@ -215,11 +186,11 @@ def _safe_filename(name):
     return base[:80], ext.lower()
 
 
-UPLOAD_CHUNK = 1 << 20  # added 2026-11-03 v0.6.0
+UPLOAD_CHUNK = 1 << 20
 
 
 def _check_media(path):
-    """added 2026-11-03 v0.6.0: media.describe, and the file must really be readable media of its kind (a picture
+    """media.describe, and the file must really be readable media of its kind (a picture
     that decodes, a video with a picture, audio with sound); ValueError otherwise."""
     kind = media.kind_of(path)
     try:
@@ -238,7 +209,7 @@ def _check_media(path):
 
 
 def _place_upload(store, tmp, base, ext):
-    """added 2026-11-03 v0.6.0: move an uploaded temp file to a free name in the project's input folder."""
+    """Move an uploaded temp file to a free name in the project's input folder."""
     with jobs.lock(store.slug):
         os.makedirs(store.input_dir, exist_ok=True)
         n, name = 1, base + ext
@@ -250,49 +221,12 @@ def _place_upload(store, tmp, base, ext):
         return saved
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] kept files that could not be read, joined several file parts into one corrupt file and
-# held the whole upload in memory on the event loop
-# @routes.post("/reelwright/upload")
-# @json_route
-# async def upload(request):
-#     reader = await request.multipart()
-#     slug, saved, original = None, None, None
-#     tmp_parts = []
-#     while True:
-#         part = await reader.next()
-#         if part is None:
-#             break
-#         if part.name == "slug":
-#             slug = check_slug((await part.text()).strip())
-#         elif part.name == "file":
-#             original = part.filename
-#             tmp_parts.append(await part.read(decode=False))
-#     if not slug or not tmp_parts:
-#         raise ValueError("upload needs a file and a slug")
-#     base, ext = _safe_filename(original)
-#     if media.kind_of(base + ext) is None:
-#         raise ValueError("unsupported file type: " + ext)
-#     store = slug_store(slug)
-#     os.makedirs(store.input_dir, exist_ok=True)
-#     n, name = 1, base + ext
-#     while os.path.exists(os.path.join(store.input_dir, name)):
-#         n += 1
-#         name = "{}_{}{}".format(base, n, ext)
-#     saved = safe_join(store.input_dir, name)
-#     with open(saved, "wb") as f:
-#         f.write(b"".join(tmp_parts))
-#     info = await asyncio.to_thread(media.describe, saved)
-#     category = {"image": "subject", "video": "motion", "audio": "voice"}[info["kind"]]
-#     return {"asset": dict(info, file=os.path.relpath(saved, store.roots.input).replace(os.sep, "/"),
-#                           name=os.path.splitext(original or name)[0], category=category)}
-# [/OLD]
 @routes.post("/reelwright/upload")
 @json_route
 async def upload(request):
     """One file part ("file") and the project slug ("slug"), in either order. The file is streamed to a temp file
     in 1 MB chunks (writes off the event loop), checked to be readable media, then moved into
-    input/reelwright/<slug>/ (added 2026-11-03 v0.6.0)."""
-    # added 2026-11-04 v0.6.1: another body (JSON, none) hit an assert in aiohttp's multipart reader: 500, not 400
+    input/reelwright/<slug>/."""
     if not request.content_type.startswith("multipart/"):
         raise ValueError("send the file as multipart/form-data (fields \"file\" and \"slug\")")
     reader = await request.multipart()
@@ -348,12 +282,9 @@ async def upload(request):
 async def takes(request):
     store = slug_store(request.query.get("slug", ""))
     sdir = os.path.join(store.dir, "scenes")
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] one folder with an unexpected name made the whole list fail (400)
-    # ids = [d for d in os.listdir(sdir) if os.path.isdir(os.path.join(sdir, d))] if os.path.isdir(sdir) else []
     ids = [d for d in os.listdir(sdir) if ID_RE.match(d) and os.path.isdir(os.path.join(sdir, d))] \
         if os.path.isdir(sdir) else []
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] return {"scenes": {sid: store.read_index(sid) for sid in ids}}  (takes now hold per-pass prompts)
-    from .analysis import TAKE_FIELDS_NOT_IN_PLAN  # added 2026-11-03 v0.6.0
+    from .analysis import TAKE_FIELDS_NOT_IN_PLAN
 
     def lean(idx):
         idx["takes"] = [{k: v for k, v in t.items() if k not in TAKE_FIELDS_NOT_IN_PLAN} for t in idx.get("takes", [])]
@@ -365,9 +296,6 @@ async def takes(request):
 @json_route
 async def star(request):
     b = await body_of(request)
-    # [OLD 2026-11-03 v0.6.0 review] slug_store(b["slug"]).star(check_id(b["scene_id"]), check_id(b["take_id"]))
-    # added 2026-11-03 v0.6.0 review: the project lock is waited for in a worker thread, not on the event loop (an
-    # import hashing a big file held it and every request of the whole server waited)
     await asyncio.to_thread(slug_store(b["slug"]).star, check_id(b["scene_id"]), check_id(b["take_id"]))
     return {"ok": True}
 
@@ -376,41 +304,14 @@ async def star(request):
 @json_route
 async def delete_take(request):
     b = await body_of(request)
-    # [OLD 2026-11-03 v0.6.0 review] slug_store(b["slug"]).delete_take(check_id(b["scene_id"]), check_id(b["take_id"]))
-    # added 2026-11-03 v0.6.0 review: the lock and the folder removal in a worker thread, not on the event loop
     await asyncio.to_thread(slug_store(b["slug"]).delete_take, check_id(b["scene_id"]), check_id(b["take_id"]))
     return {"ok": True}
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] one merge could run over another (same cut files), no cancel, no draft / range / stems
-# @routes.post("/reelwright/merge")
-# @json_route
-# async def merge_route(request):
-#     b = await body_of(request)
-#     p, store = project_store(b["project"])
-#     server = PromptServer.instance
-#
-#     def progress(x):
-#         server.send_sync("reelwright.merge", {"slug": p["slug"], "phase": "progress", "percent": round(x * 100, 1)})
-#
-#     def work():
-#         store.autosave(p)
-#         result = analyze(p, store, wired_flags(store))
-#         return assemble.merge_project(result, store, progress)
-#
-#     server.send_sync("reelwright.merge", {"slug": p["slug"], "phase": "start"})
-#     try:
-#         out = await asyncio.to_thread(work)
-#     except Exception as e:
-#         server.send_sync("reelwright.merge", {"slug": p["slug"], "phase": "end", "error": str(e)})
-#         raise
-#     server.send_sync("reelwright.merge", {"slug": p["slug"], "phase": "end", "files": out["files"]})
-#     return dict(out, ok=True)
-# [/OLD]
 @routes.post("/reelwright/merge")
 @json_route
 async def merge_route(request):
-    """added 2026-11-03 v0.6.0: {project, draft?, range?: [from_sid, to_sid], stems?, job?}. One merge per project:
+    """{project, draft?, range?: [from_sid, to_sid], stems?, job?}. One merge per project:
     409 {error: "busy"} while one runs. POST /reelwright/merge/cancel {job} stops it; it then answers
     {ok: false, cancelled: true, job}. reelwright.merge events carry `job`."""
     b = await body_of(request)
@@ -465,7 +366,7 @@ async def merge_route(request):
 @routes.post("/reelwright/merge/cancel")
 @json_route
 async def merge_cancel(request):
-    """added 2026-11-03 v0.6.0: {job} stops that merge; {slug} without a job stops any merge of the project (the
+    """{job} stops that merge; {slug} without a job stops any merge of the project (the
     merge after a render has a job id the editor may not know). Answers {ok, cancelled: bool}."""
     b = await body_of(request)
     job_id = _job_id(b)
@@ -486,10 +387,6 @@ async def merge_cancel(request):
 @json_route
 async def autosave(request):
     b = await body_of(request)
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] p, store = project_store(b["project"])
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] version = await asyncio.to_thread(store.autosave, b["project"], bool(b.get("version")))
-    # added 2026-11-03 v0.6.0: the project must be an object; a folder that holds a different project answers 409
-    # {reason: "slug_conflict", other: {id, name}} unless the body says force: true (take the folder over)
     project = b.get("project")
     if not isinstance(project, dict):
         raise ValueError("project must be an object")
@@ -504,13 +401,12 @@ async def versions(request):
     return {"versions": slug_store(request.query.get("slug", "")).list_versions()}
 
 
-# added 2026-11-02 v0.3.6: delete autosaved versions; {"names": [...]} or {"all": true}
+# Delete autosaved versions; {"names": [...]} or {"all": true}
 @routes.post("/reelwright/versions/delete")
 @json_route
 async def versions_delete(request):
     b = await body_of(request)
     store = slug_store(b.get("slug", ""))
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] names = [v["name"] for v in store.list_versions()] if b.get("all") else b.get("names") or []
     names = [v["name"] for v in store.list_versions()] if b.get("all") else _str_list(b.get("names"), "names")
     removed = await asyncio.to_thread(store.delete_versions, names)
     return {"removed": removed, "versions": store.list_versions()}
@@ -523,14 +419,13 @@ async def version(request):
     return {"project": store.read_version(request.query.get("name", ""))}
 
 
-# ---- anchor sheet preview (added 2026-11-03 v0.4.1) ------------------------------
+# ---- anchor sheet preview --------------------------------------------------------
 # The exact sheet the renderer sends for a character's anchors (media.sheet_image), as a JPEG.
 
 @routes.get("/reelwright/sheet")
 async def anchor_sheet(request):
     try:
         rels = json.loads(request.query.get("files", "[]"))
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] if not isinstance(rels, list) or not rels or len(rels) > 64:
         if not isinstance(rels, list) or not rels or len(rels) > 64 or not all(isinstance(r, str) for r in rels):
             raise ValueError("files must be a list of 1-64 input paths")
         cell = max(64, min(768, int(request.query.get("cell", 256))))
@@ -548,13 +443,11 @@ async def anchor_sheet(request):
                             headers={"Cache-Control": "no-store"})
     except (ValueError, FileNotFoundError, json.JSONDecodeError) as e:
         return web.json_response({"error": str(e)}, status=400)
-    # added 2026-11-04 v0.6.1: a file that is not a readable picture (PIL's UnidentifiedImageError is an OSError, a
-    # truncated one OSError or SyntaxError) answered 500
     except (OSError, SyntaxError) as e:
         return web.json_response({"error": "a picture can't be read: {}".format(_message(e)[:300])}, status=400)
 
 
-# ---- soundtrack waveforms (added 2026-11-03 v0.5.0) ------------------------------
+# ---- soundtrack waveforms --------------------------------------------------------
 # Peak levels of an input audio file for the timeline's soundtrack lanes: u8 values, X-Per-Second of them per second.
 
 _PEAKS = {}
@@ -581,7 +474,7 @@ async def waveform(request):
         return web.json_response({"error": str(e)}, status=400)
 
 
-# ---- timeline filmstrips (added 2026-11-05 v0.7.0) ------------------------------
+# ---- timeline filmstrips --------------------------------------------------------
 # A row of small frames of a rendered video, so a scene block shows the frame that is at each time (merge.filmstrip).
 
 _STRIP_SLOTS = threading.BoundedSemaphore(2)  # ffmpeg runs at once for filmstrips (the timeline asks for many)
@@ -616,7 +509,7 @@ async def filmstrip(request):
             "duration": out["duration"]}
 
 
-# ---- speech timing (added 2026-11-06 v0.10.0) -------------------------------
+# ---- speech timing ----------------------------------------------------------
 # The Timeline monitor's captions follow the speech H3 made, the same way the merge's subtitles do (speech.py).
 
 def _output_video(rel):
@@ -667,7 +560,7 @@ async def speech_timing(request):
     return {"lines": timed, "segments": [list(x) for x in segs]}
 
 
-# ---- disk use (added 2026-11-03 v0.4.0) --------------------------------------
+# ---- disk use ----------------------------------------------------------------
 # Every Reelwright project's files as a tree, and deleting parts of it (see files.py for what can be deleted).
 
 @routes.get("/reelwright/storage")
@@ -682,8 +575,6 @@ async def storage_tree(request):
 async def storage_delete(request):
     b = await body_of(request)
     current = check_slug(b["current"]) if b.get("current") else None
-    # [OLD 2026-11-03 v0.6.0 review] result = await asyncio.to_thread(diskuse.delete, roots(), b.get("ids") or [], current)
-    # added 2026-11-03 v0.6.0 review: {"ids": 5} answered 500 ("'int' object is not iterable")
     ids = b.get("ids") or []
     if not isinstance(ids, list):
         raise ValueError("ids must be a list of ids")
@@ -693,7 +584,7 @@ async def storage_delete(request):
     return result
 
 
-# added 2026-11-03 v0.6.0: Files tab "Repair": re-list takes from their meta.json, rebuild missing/damaged index.json
+# Files tab "Repair": re-list takes from their meta.json, rebuild missing/damaged index.json
 @routes.post("/reelwright/storage/repair")
 @json_route
 async def storage_repair(request):
@@ -705,7 +596,7 @@ async def storage_repair(request):
     return dict(out, ok=True)
 
 
-# ---- beat markers and the soundtrack a pass hears (added 2026-11-03 v0.6.0) --------------------------------------
+# ---- beat markers and the soundtrack a pass hears ----------------------------------------------------------------
 
 @routes.get("/reelwright/beats")
 @json_route
@@ -772,12 +663,11 @@ def _user_root():
 @json_route
 async def llm_settings_get(request):
     s = llm.load_settings(_user_root())
-    # [OLD 2026-11-02 v0.1.0->v0.2.0] return {"base_url": s["base_url"], "model": s["model"], "has_key": bool(s["api_key"])}
     return {"base_url": s["base_url"], "model": s["model"], "has_key": bool(s["api_key"]),
             "guides": llm.guide_status(_user_root()), "guide_urls": llm.GUIDES}
 
 
-# added 2026-11-02 v0.2.0: download MiniMax's official prompt guides into user/reelwright/guides
+# Download MiniMax's official prompt guides into user/reelwright/guides
 @routes.post("/reelwright/llm/guides")
 @json_route
 async def llm_guides_fetch(request):
@@ -785,7 +675,7 @@ async def llm_guides_fetch(request):
 
 
 def _cfg(p):
-    """LLM config for a project, with the downloaded guides attached (added 2026-11-02 v0.2.0)."""
+    """LLM config for a project, with the downloaded guides attached."""
     stored = llm.load_settings(_user_root())
     stored["guides"] = llm.load_guides(_user_root())
     return llm.resolve(p["global"]["llm"], stored)
@@ -803,14 +693,13 @@ async def llm_settings_set(request):
 async def llm_models(request):
     b = await body_of(request)
     s = llm.load_settings(_user_root())
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] base = (b.get("base_url") or s["base_url"]).rstrip("/")
     base = (_str(b, "base_url", required=False) or s["base_url"] or "").rstrip("/")
     if not base:
         raise ValueError("Set the LLM base URL first")
     return {"models": await llm.list_models(base, s["api_key"])}
 
 
-# ---- Global profiles (added 2026-11-02 v0.3.0) ----------------------------------------------
+# ---- Global profiles ------------------------------------------------------------------------
 
 @routes.get("/reelwright/profiles")
 @json_route
@@ -841,7 +730,6 @@ async def profiles_default(request):
 @json_route
 async def llm_test(request):
     b = await body_of(request)
-    # [OLD 2026-11-02 v0.1.0->v0.2.0] cfg = llm.resolve((b.get("project") or {}).get("global", {}).get("llm", {}), llm.load_settings(_user_root()))
     cfg = _cfg(normalize_project(b.get("project") or {}))
     return await llm.test(cfg)
 
@@ -857,36 +745,17 @@ def _scene(p, scene_id):
 @json_route
 async def llm_rewrite(request):
     b = await body_of(request)
-    # [OLD 2026-11-02 v0.1.0->v0.2.0] the rewrite did not see the built prompt or the guides
-    # p = normalize_project(b["project"])
-    # cfg = llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
-    # return await llm.rewrite(cfg, p, _scene(p, b["scene_id"]), b.get("instruction", ""))
-    # [/OLD]
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] the job was registered after analyze: Stop during the analysis was lost
-    # p, store = project_store(b["project"])
-    # cfg = _cfg(p)
-    # scene = _scene(p, b["scene_id"])
-    # result = await asyncio.to_thread(analyze, p, store, wired_flags(store))
-    # prompts = result["scenes"][scene["id"]]["prompts"]
-    # # [OLD 2026-11-03 v0.4.0->v0.4.1] return await llm.rewrite(cfg, p, scene, b.get("instruction", ""), prompts[0] if prompts else "")
-    # builds = result["scenes"][scene["id"]]["builds"]  # added 2026-11-03 v0.4.1: labels back to @ tokens
-    # # [OLD 2026-11-03 v0.4.1->v0.4.2] return await llm.rewrite(cfg, p, scene, b.get("instruction", ""), prompts[0] if prompts else "",
-    # #                              builds[0]["tag_map"] if builds else None)
-    # job = _job_id(b)
-    # return await _llm_job(job, llm.rewrite(cfg, p, scene, b.get("instruction", ""), prompts[0] if prompts else "",
-    #                                        builds[0]["tag_map"] if builds else None, progress=_llm_progress(job)))
-    # [/OLD]
     p, store = project_store(_project(b))
     cfg = _cfg(p)
     scene = _scene(p, b.get("scene_id"))
-    instruction = _str(b, "instruction", "")  # added 2026-11-03 v0.6.0
+    instruction = _str(b, "instruction", "")
     job = _job_id(b)
 
-    # added 2026-11-03 v0.6.0: the job is registered before the analysis, so Stop during it is not lost
+    # The job is registered before the analysis, so Stop during it is not lost
     async def work():
         result = await asyncio.to_thread(analyze, p, store, wired_flags(store))
         prompts = result["scenes"][scene["id"]]["prompts"]
-        builds = result["scenes"][scene["id"]]["builds"]  # added 2026-11-03 v0.4.1: labels back to @ tokens
+        builds = result["scenes"][scene["id"]]["builds"]
         return await llm.rewrite(cfg, p, scene, instruction, prompts[0] if prompts else "",
                                  builds[0]["tag_map"] if builds else None, progress=_llm_progress(job))
     return await _llm_job(job, work())
@@ -896,24 +765,12 @@ async def llm_rewrite(request):
 @json_route
 async def llm_split(request):
     b = await body_of(request)
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] the job was registered after analyze: Stop during the analysis was lost
-    # p, store = project_store(b["project"])
-    # cfg = _cfg(p)  # [OLD 2026-11-02 v0.1.0->v0.2.0] llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
-    # result = await asyncio.to_thread(analyze, p, store, wired_flags(store))
-    # sr = result["scenes"][_scene(p, b["scene_id"])["id"]]
-    # # [OLD 2026-11-03 v0.4.1->v0.4.2] pass_prompts = await llm.split(cfg, p, _scene(p, b["scene_id"]), sr["passes"], sr["prompts"])
-    # # return {"pass_prompts": pass_prompts}
-    # job = _job_id(b)
-    # out = await _llm_job(job, llm.split(cfg, p, _scene(p, b["scene_id"]), sr["passes"], sr["prompts"],
-    #                                     progress=_llm_progress(job)))
-    # return out if out.get("cancelled") else {"pass_prompts": out}
-    # [/OLD]
     p, store = project_store(_project(b))
-    cfg = _cfg(p)  # [OLD 2026-11-02 v0.1.0->v0.2.0] llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
+    cfg = _cfg(p)
     scene = _scene(p, b.get("scene_id"))
     job = _job_id(b)
 
-    # added 2026-11-03 v0.6.0: the job is registered before the analysis, so Stop during it is not lost
+    # The job is registered before the analysis, so Stop during it is not lost
     async def work():
         result = await asyncio.to_thread(analyze, p, store, wired_flags(store))
         sr = result["scenes"][scene["id"]]
@@ -922,7 +779,7 @@ async def llm_split(request):
     return out if isinstance(out, dict) and out.get("cancelled") else {"pass_prompts": out}
 
 
-# added 2026-11-05 v0.8.0: Write prompts. The six sections of each requested pass of a scene, one LLM request per pass
+# Write prompts. The six sections of each requested pass of a scene, one LLM request per pass
 # in order (llm.write_passes), with reelwright.llm progress events that say which pass, and Stop (/llm/cancel).
 # Stopped, it answers {cancelled: true} with the passes written so far; a request that fails after a pass was written
 # answers 200 with those passes plus error / reason / failed; one that fails before answers 502 like the other routes.
@@ -957,20 +814,15 @@ async def llm_passes(request):
 async def llm_script(request):
     b = await body_of(request)
     p = normalize_project(_project(b))
-    cfg = _cfg(p)  # [OLD 2026-11-02 v0.1.0->v0.2.0] llm.resolve(p["global"]["llm"], llm.load_settings(_user_root()))
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] if not (b.get("script") or "").strip():
+    cfg = _cfg(p)
     if not (_str(b, "script", "", max_len=10 ** 7) or "").strip():
         raise ValueError("Paste a script first")
-    # [OLD 2026-11-03 v0.4.1->v0.4.2] return await llm.script_to_scenes(cfg, p, b["script"])
-    # added 2026-11-03 v0.4.2: one part of a script (see /reelwright/llm/script/parts), with progress events and Cancel
     job = _job_id(b)
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] part, parts = max(1, int(b.get("part") or 1)), max(1, int(b.get("parts") or 1))
     part, parts = max(1, _int(b.get("part") or 1, "part")), max(1, _int(b.get("parts") or 1, "parts"))
-    if part > parts:  # added 2026-11-09 v0.17.1 (third review): part 5 of 3 was accepted
+    if part > parts:
         raise ValueError("part must be between 1 and parts")
-    if not isinstance(b.get("known_cast") or [], list):  # added 2026-11-03 v0.6.0
+    if not isinstance(b.get("known_cast") or [], list):
         raise ValueError("known_cast must be a list")
-    # added 2026-11-03 v0.6.0 review: [{"name": 5}] answered 500 ("'int' object has no attribute 'lower'")
     if not all(isinstance(c, dict) and isinstance(c.get("name", ""), str) for c in b.get("known_cast") or []):
         raise ValueError("known_cast must be a list of {name: text, kind}")
     return await _llm_job(job, llm.script_part(
@@ -979,10 +831,10 @@ async def llm_script(request):
         retry_cut=not b.get("can_split")))
 
 
-# ---- long LLM requests: parts, progress, cancel (added 2026-11-03 v0.4.2) -----------------------
+# ---- long LLM requests: parts, progress, cancel -------------------------------------------------
 
 LLM_JOBS = {}  # job id -> the asyncio task doing the request
-LLM_CANCELLED = set()  # added 2026-11-04 v0.6.1: holds the cancelled tasks (it held job ids)
+LLM_CANCELLED = set()
 
 
 def _job_id(b):
@@ -1001,23 +853,6 @@ async def _llm_job(job, coro):
     """Run an LLM request as a task that POST /reelwright/llm/cancel can stop; a cancelled one answers
     {"cancelled": true}."""
     task = asyncio.ensure_future(coro)
-    # [OLD 2026-11-04 v0.6.0->v0.6.1] two requests with one job id shared an entry: the first to end removed the
-    # other's (Cancel then missed it) and cleared its cancel mark
-    # if job:
-    #     LLM_JOBS[job] = task
-    # try:
-    #     return await task
-    # except asyncio.CancelledError:
-    #     if job in LLM_CANCELLED:
-    #         return {"cancelled": True}
-    #     raise
-    # finally:
-    #     if job:
-    #         LLM_JOBS.pop(job, None)
-    #         LLM_CANCELLED.discard(job)
-    # [/OLD]
-    # added 2026-11-04 v0.6.1: the newest request owns the job id; each one removes only its own entry and mark
-    # (LLM_CANCELLED holds the cancelled tasks)
     if job:
         LLM_JOBS[job] = task
     try:
@@ -1032,7 +867,7 @@ async def _llm_job(job, coro):
         LLM_CANCELLED.discard(task)
 
 
-# added 2026-11-08 v0.13.0: Chat tab: a general question to the configured LLM, with the conversation so far. Progress
+# Chat tab: a general question to the configured LLM, with the conversation so far. Progress
 # events carry the answer as it comes ("text"); Stop is /reelwright/llm/cancel with the same job id.
 @routes.post("/reelwright/llm/chat")
 @json_route
@@ -1061,8 +896,7 @@ async def llm_cancel(request):
     task = LLM_JOBS.get(job)
     if not task or task.done():
         return {"ok": True, "cancelled": False}
-    # [OLD 2026-11-04 v0.6.0->v0.6.1] LLM_CANCELLED.add(job)  (by id: a second request with that id inherited the mark)
-    LLM_CANCELLED.add(task)  # added 2026-11-04 v0.6.1: the task that is cancelled
+    LLM_CANCELLED.add(task)
     task.cancel()
     return {"ok": True, "cancelled": True}
 
@@ -1072,12 +906,10 @@ async def llm_cancel(request):
 async def llm_script_parts(request):
     b = await body_of(request)
     size = llm.limits({"import_part_chars": b.get("part_chars", 3000)})["import_part_chars"]
-    # [OLD 2026-11-03 v0.6.0 review] return scriptparts.split_script(str(b.get("script") or ""), size)  (a list became "['a']")
-    # added 2026-11-03 v0.6.0 review: the script must be text, as for /llm/script
     return scriptparts.split_script(_str(b, "script", "", required=False, max_len=10 ** 7) or "", size)
 
 
-# added 2026-11-02 v0.2.0: describe pictures (or video frames) with a vision model
+# Describe pictures (or video frames) with a vision model
 @routes.post("/reelwright/llm/describe")
 @json_route
 async def llm_describe(request):
@@ -1085,7 +917,6 @@ async def llm_describe(request):
     p, store = project_store(b["project"])
     idx = project_index(p)
     images = []
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] for aid in (b.get("asset_ids") or [])[:4]:
     for aid in _str_list(b.get("asset_ids"), "asset_ids")[:4]:
         a = idx["assets"].get(aid)
         if not a:
@@ -1094,11 +925,10 @@ async def llm_describe(request):
         if not os.path.isfile(path):
             raise FileNotFoundError("{} file is missing".format(a["code"]))
         images += await asyncio.to_thread(media.stills_for_vision, path)
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] return await llm.describe(_cfg(p), images[:6], (b.get("prompt") or "").strip())
     return await llm.describe(_cfg(p), images[:6], (_str(b, "prompt", "") or "").strip())
 
 
-# ---- ComfyUI input/output browser (added 2026-11-02 v0.2.0) ------------------------------
+# ---- ComfyUI input/output browser --------------------------------------------------------
 
 def _media_root(name):
     r = roots()
@@ -1113,7 +943,6 @@ def _media_root(name):
 @json_route
 async def files(request):
     q = request.query
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] q.get("kind", ""), min(1000, int(q.get("limit", 400))))
     return await asyncio.to_thread(media.list_media, _media_root(q.get("root", "input")), q.get("q", ""),
                                    q.get("kind", ""), max(1, min(1000, _int(q.get("limit", 400), "limit"))))
 
@@ -1123,33 +952,10 @@ async def files(request):
 async def import_file(request):
     """Use a file that is already in ComfyUI's input or output folder as an asset.
     Input files are used where they are; output files are linked (or copied) into the project's input folder."""
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] same name and size counted as the same file
-    # b = await body_of(request)
-    # store = slug_store(b["slug"])
-    # root = b.get("root", "input")
-    # src = safe_join(_media_root(root), b["rel"])
-    # if not os.path.isfile(src) or media.kind_of(src) is None:
-    #     raise ValueError("not a picture, video or audio file: " + b["rel"])
-    # if root == "input":
-    #     dst = src
-    # else:
-    #     base, ext = _safe_filename(b["rel"])
-    #     folder = os.path.join(store.input_dir, "from_output")
-    #     os.makedirs(folder, exist_ok=True)
-    #     dst, n = os.path.join(folder, base + ext), 1
-    #     while os.path.exists(dst) and not os.path.samefile(dst, src) and os.path.getsize(dst) != os.path.getsize(src):
-    #         n += 1
-    #         dst = os.path.join(folder, "{}_{}{}".format(base, n, ext))
-    #     if not os.path.exists(dst):
-    #         try:
-    #             os.link(src, dst)
-    #         except OSError:
-    #             await asyncio.to_thread(shutil.copyfile, src, dst)
-    # [/OLD]
     b = await body_of(request)
     store = slug_store(b.get("slug"))
     root = b.get("root", "input")
-    rel = _str(b, "rel")  # added 2026-11-03 v0.6.0
+    rel = _str(b, "rel")
     src = safe_join(_media_root(root), rel)
     if not os.path.isfile(src) or media.kind_of(src) is None:
         raise ValueError("not a picture, video or audio file: " + rel)
@@ -1158,8 +964,6 @@ async def import_file(request):
     else:
         base, ext = _safe_filename(rel)
         folder = os.path.join(store.input_dir, "from_output")
-        # added 2026-11-03 v0.6.0: an existing file is reused only when it has the same bytes (a different file
-        # with the same name and size was attached before)
         dst = await asyncio.to_thread(_import_target, store, folder, src, base, ext)
     info = await asyncio.to_thread(media.describe, dst)
     category = {"image": "subject", "video": "motion", "audio": "voice"}[info["kind"]]
@@ -1170,7 +974,6 @@ async def import_file(request):
 # ---- takes, cast, continuity -----------------------------------------------
 
 def _same_content(a, b):
-    """added 2026-11-03 v0.6.0"""
     try:
         if os.path.samefile(a, b):
             return True
@@ -1179,28 +982,10 @@ def _same_content(a, b):
         return False
 
 
-# [OLD 2026-11-03 v0.6.0 review] hashed and copied a big file while holding the project lock, so a star, a take
-# delete or an autosave of the project waited for the whole copy
-# def _import_target(store, folder, src, base, ext):
-#     """added 2026-11-03 v0.6.0: the file in from_output/ that holds src's bytes: an existing one with the same
-#     content, else a new hard link (or copy) under a free name."""
-#     with jobs.lock(store.slug):
-#         os.makedirs(folder, exist_ok=True)
-#         dst, n = os.path.join(folder, base + ext), 1
-#         while os.path.exists(dst) and not _same_content(dst, src):
-#             n += 1
-#             dst = os.path.join(folder, "{}_{}{}".format(base, n, ext))
-#         if not os.path.exists(dst):
-#             try:
-#                 os.link(src, dst)
-#             except OSError:
-#                 shutil.copyfile(src, dst)
-#         return dst
-# [/OLD]
 def _import_target(store, folder, src, base, ext):
-    """added 2026-11-03 v0.6.0: the file in from_output/ that holds src's bytes: an existing one with the same
+    """The file in from_output/ that holds src's bytes: an existing one with the same
     content, else a new hard link (or copy) under a free name.
-    added 2026-11-03 v0.6.0 review: the hashing and the copy happen outside the project lock; the lock is held only
+    The hashing and the copy happen outside the project lock; the lock is held only
     to give the finished copy its free name."""
     os.makedirs(folder, exist_ok=True)
 
@@ -1242,20 +1027,10 @@ def _take(store, scene_id, take_id):
 @routes.post("/reelwright/promote_frame")
 @json_route
 async def promote_frame(request):
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] which was not checked
-    # b = await body_of(request)
-    # store = slug_store(b["slug"])
-    # take = _take(store, b["scene_id"], b["take_id"])
-    # which = b.get("which", "last")
-    # os.makedirs(store.input_dir, exist_ok=True)
-    # name = "promoted_{}_{}_{}.png".format(check_id(b["scene_id"]), check_id(take["id"]),
-    #                                      which if which != "time" else "t{:.2f}".format(float(b.get("t") or 0)))
-    # [/OLD]
     b = await body_of(request)
     store = slug_store(b.get("slug"))
     take = _take(store, b.get("scene_id"), b.get("take_id"))
     which = b.get("which", "last")
-    # added 2026-11-03 v0.6.0: `which` went into the file name unchecked ("../x" wrote outside the promoted_ name)
     if which not in ("first", "last", "time"):
         raise ValueError("which must be first, last or time")
     t = max(0.0, _num(b.get("t") or 0, "t"))
@@ -1269,21 +1044,13 @@ async def promote_frame(request):
         ff = merge.ffmpeg_bin()
         if not ff:
             raise ValueError("ffmpeg is needed to grab a frame at a time")
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] str(float(b.get("t") or 0)), "-i", store.output_path(take["files"]["video"]),
-        # [OLD 2026-11-04 v0.6.0->v0.6.1] check=True: an ffmpeg failure (unreadable take video) left as a 500
-        # await asyncio.to_thread(subprocess.run, [ff, "-hide_banner", "-loglevel", "error", "-y", "-ss",
-        #                                          str(t), "-i", store.output_path(take["files"]["video"]),
-        #                                          "-frames:v", "1", dst], check=True)
-        # [/OLD]
-        # added 2026-11-04 v0.6.1: ffmpeg's own message, as a 400 like the other unreadable-media answers
         r = await asyncio.to_thread(subprocess.run, [ff, "-hide_banner", "-loglevel", "error", "-y", "-ss",
                                                      str(t), "-i", store.output_path(take["files"]["video"]),
                                                      "-frames:v", "1", dst], capture_output=True, text=True)
         if r.returncode != 0:
             raise merge.MergeError("ffmpeg could not grab a frame at {:.2f} s: {}".format(
                 t, (r.stderr or "").strip()[-400:] or "exit code {}".format(r.returncode)))
-    # [OLD 2026-11-04 v0.6.0->v0.6.1] info = await asyncio.to_thread(media.describe, dst)  (an unreadable picture: PIL's OSError, 500)
-    try:  # added 2026-11-04 v0.6.1: 400 like the other unreadable-media answers
+    try:
         info = await asyncio.to_thread(media.describe, dst)
     except FileNotFoundError:
         raise
@@ -1293,8 +1060,7 @@ async def promote_frame(request):
                           name="{} frame".format(which), category="subject")}
 
 
-# added 2026-11-10 v0.18.0: a frame of a cast member's video anchor as a picture (Sencer: "let me select a specific frame
-# of a video for character identity (optional), that will be revealed as picture anchor"). The editor stores the
+# A frame of a cast member's video anchor as a picture, for the character's identity. The editor stores the
 # picture as an image asset (cast.video_anchors[].frame_asset), offered under Cast -> Anchors -> + Add anchor.
 @routes.post("/reelwright/anchor_frame")
 @json_route
@@ -1332,7 +1098,6 @@ async def anchor_frame(request):
                           category="subject"), "t": t}
 
 
-# added 2026-11-06 v0.10.0: a character's rendered lines as their voice reference (Cast tab -> Voice from a take)
 VOICE_MIN, VOICE_MAX = 2.0, 15.0  # H3's audio references: 2-15 s
 
 
@@ -1415,13 +1180,11 @@ async def cast_export(request):
     b = await body_of(request)
     p, store = project_store(b["project"])
     idx = project_index(p)
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] c = idx["cast"].get(b["cast_id"])
     c = idx["cast"].get(_str(b, "cast_id"))
     if not c:
         raise ValueError("unknown cast member")
     folder = os.path.join(store.cast_dir(c["id"]), "training")
     os.makedirs(folder, exist_ok=True)
-    # [OLD 2026-11-02 v0.3.3->v0.3.4] caption = "{}, {}".format(re.sub(r"\W+", "_", c["name"]).lower(), c["description"]).strip(", ")
     caption = "{}, {}".format(re.sub(r"\W+", "_", c["name"]).lower(), cast_description(c, idx["assets"])[0]).strip(", ")
     files = []
 
@@ -1459,15 +1222,8 @@ async def continuity_check(request):
     if not take:
         raise ValueError("this scene has no take yet")
     scores = await asyncio.to_thread(continuity.check_scene, p, scene, store, store.output_path(take["files"]["video"]))
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] read-modify-write of index.json without the project lock
-    # idx = store.read_index(scene["id"])
-    # for t in idx["takes"]:
-    #     if t["id"] == take["id"]:
-    #         t["face"] = scores
-    # store.write_index(scene["id"], idx)
-    # [/OLD]
 
-    def save():  # added 2026-11-03 v0.6.0
+    def save():
         with jobs.lock(store.slug):
             idx = store.read_index(scene["id"])
             for t in idx["takes"]:

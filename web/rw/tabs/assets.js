@@ -1,21 +1,21 @@
 // Assets tab: upload, browse, per-asset defaults, usage, reference budget and
 // camera presets.
 
-// [OLD 2026-11-03 v0.5.1->v0.6.0] import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips, confirmInline } from "../ui.js";  (confirmInline is no longer used; deletes go through editor.deleteAsset and its dialog)
-import { h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips } from "../ui.js";
-import { kept } from "../ui.js"; // added 2026-11-06 v0.10.0: pictures that survive re-renders
-import { foldAll, foldMenu, setFolded, pauseMediaIn } from "../ui.js"; // added 2026-11-09 v0.14.1: groups fold like cards
+import {
+  h, icon, button, toggle, segmented, select, text, textarea, dot, section, field, keepChips, kept, foldAll,
+  foldMenu, setFolded, pauseMediaIn,
+} from "../ui.js";
 import { rw, viewURL } from "../api.js";
-import { assetMenu } from "./timeline.js"; // added 2026-11-02 v0.3.0
+import { assetMenu } from "./timeline.js";
 import {
   ASSET_CATEGORIES, ROLES, newId, assignCodes, retentionOptions, assetUsage, assetCastUse, sceneBudget, budgetIssues, findAsset,
-  descriptionUses, sceneIndex, // added 2026-11-02 v0.3.4
-  assetGroupName, assetTags, // added 2026-11-06 v0.9.0: groups and tags
+  descriptionUses, sceneIndex,
+  assetGroupName, assetTags,
 } from "../model.js";
 
 const KIND_CLASS = { image: "pic", video: "vid", audio: "aud" };
 
-// added 2026-11-02 v0.2.0: one place that turns a backend file record into a project asset
+// One place that turns a backend file record into a project asset
 // (used by uploads and by the ComfyUI input/output browser)
 function addAsset(ctx, a, fallbackName, fallbackKind) {
   let id = "";
@@ -27,7 +27,7 @@ function addAsset(ctx, a, fallbackName, fallbackKind) {
       duration: a.duration || 0, width: a.width || 0, height: a.height || 0, category: a.category || ASSET_CATEGORIES[kind][0],
       defaults: { role: "reference", retention: kind === "audio" ? "reference" : "fully_preserved", keep: [], soundtrack: false }, notes: "",
       description: "",
-      group: "", tags: [], // added 2026-11-06 v0.9.0: no group, no tags yet (edits are not normalised)
+      group: "", tags: [],
     });
     assignCodes(p.assets);
   });
@@ -41,17 +41,6 @@ export async function uploadFiles(ctx, files) {
     try {
       const res = await rw.upload(file, ctx.p.slug);
       const a = res.asset || res;
-      /* [OLD 2026-11-02 v0.1.0->v0.2.0] moved into addAsset() so the ComfyUI browser shares it
-      ctx.actions.edit(p => {
-        const kind = a.kind || (file.type.split("/")[0]);
-        p.assets.push({
-          id: a.id || newId("a"), code: "", kind, name: a.name || file.name.replace(/\.[^.]+$/, ""), file: a.file,
-          duration: a.duration || 0, width: a.width || 0, height: a.height || 0, category: a.category || ASSET_CATEGORIES[kind][0],
-          defaults: { role: "reference", retention: kind === "audio" ? "reference" : "fully_preserved", keep: [], soundtrack: false }, notes: "",
-        });
-        assignCodes(p.assets);
-      });
-      [/OLD] */
       addAsset(ctx, a, file.name.replace(/\.[^.]+$/, ""), file.type.split("/")[0]);
       ctx.actions.toast(`Uploaded ${file.name}.`, "ok");
     } catch (err) {
@@ -66,66 +55,7 @@ function thumb(a, cls = "rw-asset-thumb") {
   return h("div", { class: cls + " rw-wave" }, Array.from({ length: 28 }, (_, i) => h("span", { style: { height: 20 + Math.abs(Math.sin(i * 1.7 + a.code.length)) * 70 + "%" } })));
 }
 
-// [OLD 2026-11-06 v0.8.0->v0.9.0] sections by kind only; no groups, tags or tag filter
-// function grid(ctx) {
-//   const p = ctx.p;
-//   const f = ctx.eph.assetFilter;
-//   const q = (ctx.eph.assetQuery || "").toLowerCase();
-//   const kinds = f === "all" ? ["image", "video", "audio"] : [f];
-//   const fileInput = h("input", { type: "file", multiple: true, accept: "image/*,video/*,audio/*", style: { display: "none" }, onChange: e => uploadFiles(ctx, [...e.target.files]) });
-//   const counts = { image: 0, video: 0, audio: 0 };
-//   for (const a of p.assets) counts[a.kind]++;
-//   const label = { image: "Pictures", video: "Videos", audio: "Audio" };
-//   return h("div", { class: "rw-col wide" },
-//     h("div", { class: "rw-row" },
-//       segmented({ value: f, help: "assets.filter", options: [
-//         { value: "all", label: `All ${p.assets.length}` },
-//         { value: "image", label: `Pictures ${counts.image}`, icon: "image" },
-//         { value: "video", label: `Videos ${counts.video}`, icon: "video" },
-//         { value: "audio", label: `Audio ${counts.audio}`, icon: "audio" }],
-//       onChange: v => ctx.store.setEph({ assetFilter: v }) }),
-//       h("input", { class: "rw-input", style: { width: "220px" }, key: "asset-q", placeholder: "Search name, code, category…", help: "assets.search", value: ctx.eph.assetQuery || "",
-//         onInput: e => { ctx.eph.assetQuery = e.target.value; ctx.store.notify(); } }),
-//       h("span", { class: "rw-flex" }),
-//       // added 2026-11-02 v0.2.0: pick files already in ComfyUI's input or output folders
-//       button({ label: "From ComfyUI", icon: "search", variant: ctx.eph.browse ? "accent-ghost" : "default", help: "assets.browse",
-//         onClick: () => { if (ctx.eph.browse) ctx.store.setEph({ browse: null }); else openBrowser(ctx); } }),
-//       button({ label: "Upload", icon: "upload", variant: "primary", help: "assets.upload", onClick: () => fileInput.click() }), fileInput),
-//     ctx.eph.browse && browserCard(ctx),
-//     h("div", {
-//       class: "rw-dropzone", help: "assets.drop",
-//       onDragover: e => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.currentTarget.classList.add("over"); } },
-//       onDragleave: e => e.currentTarget.classList.remove("over"),
-//       onDrop: e => { e.preventDefault(); e.currentTarget.classList.remove("over"); uploadFiles(ctx, [...e.dataTransfer.files]); },
-//     }, icon("upload", 14), "Drop images, video or audio here. Video and audio references should be 2–15 s."),
-//     kinds.map(kind => {
-//       const items = p.assets.filter(a => a.kind === kind && (!q || `${a.code} ${a.name} ${a.category} ${a.file}`.toLowerCase().includes(q)));
-//       return section({
-//         title: label[kind], help: "assets.kind." + kind,
-//         actions: h("span", { class: "rw-dim small" }, { image: "identity, places, props, keyframes · up to 9 per pass", video: "motion, camera, edit source · up to 3 per pass", audio: "voice, ambience, music, SFX · up to 3 per pass" }[kind]),
-//         children: items.length ? h("div", { class: "rw-asset-grid" }, items.map(a => {
-//           const uses = assetUsage(p, a.id).length + assetCastUse(p, a.id).length;
-//           return h("button", {
-//             type: "button", class: ["rw-asset-card", ctx.eph.selectedAsset === a.id && "on"], help: "assets.card",
-//             draggable: "true",
-//             onDragstart: e => { e.dataTransfer.setData("application/x-rw-asset", a.id); },
-//             onClick: () => ctx.store.setEph({ selectedAsset: a.id }),
-//             menu: () => { ctx.store.setEph({ selectedAsset: a.id }); return assetMenu(ctx, a); }, // added 2026-11-02 v0.3.0
-//           }, thumb(a),
-//           h("span", { class: "rw-asset-meta" },
-//             h("span", { class: "rw-row" }, h("b", { class: "mono rw-c-" + KIND_CLASS[kind] }, a.code), h("b", { class: "rw-ellipsis" }, a.name || a.file.split("/").pop())),
-//             h("span", { class: "rw-row" }, h("span", { class: "rw-tag" }, a.category || "—"),
-//               a.duration ? h("span", { class: "mono rw-dim" }, a.duration.toFixed(1) + " s") : null,
-//               h("span", { class: "rw-flex" }), h("span", { class: "rw-dim small" }, uses ? `${uses} use${uses > 1 ? "s" : ""}` : "unused"))));
-//         })) : h("div", { class: "rw-empty sm", help: "assets.kind." + kind }, q ? "No matches." : `No ${label[kind].toLowerCase()} yet.`),
-//       });
-//     }),
-//     budgetMatrix(ctx),
-//     cameraPresets(ctx));
-// }
-// [/OLD]
-
-// added 2026-11-06 v0.9.0: the asset list by group (named groups with a description, in their order, then the assets
+// The asset list by group (named groups with a description, in their order, then the assets
 // in no group) or by kind (as before), filtered by kind, by the search field (code, name, category, file, group, tags)
 // and by a tag (the tag row). Cards can be dragged onto a group to move them there.
 const KIND_ORDER = ["image", "video", "audio"];
@@ -197,7 +127,6 @@ function tagRow(ctx, active) {
 }
 
 function assetCard(ctx, a, { showGroup = false } = {}) {
-  // added 2026-11-06 v0.10.0: the card's picture or video is the same element across renders (a video went black)
   const pic = kept(ctx, "acard-" + a.id, a.kind + "|" + a.file, () => thumb(a));
   const p = ctx.p;
   const uses = assetUsage(p, a.id).length + assetCastUse(p, a.id).length;
@@ -208,7 +137,6 @@ function assetCard(ctx, a, { showGroup = false } = {}) {
     onDragstart: e => { e.dataTransfer.setData("application/x-rw-asset", a.id); e.dataTransfer.effectAllowed = "copyMove"; },
     onClick: () => ctx.store.setEph({ selectedAsset: a.id }),
     menu: () => { ctx.store.setEph({ selectedAsset: a.id }); return assetMenu(ctx, a); },
-  // [OLD 2026-11-06 v0.9.0->v0.10.0] }, thumb(a),
   }, pic,
   h("span", { class: "rw-asset-meta" },
     h("span", { class: "rw-row" }, h("b", { class: "mono rw-c-" + KIND_CLASS[a.kind] }, a.code),
@@ -250,10 +178,6 @@ function groupsView(ctx, match, filtered) {
 function groupSection(ctx, g, i, items, total, filtered) {
   const p = ctx.p;
   const id = g ? g.id : "";
-  // [OLD 2026-11-09 v0.14.0->v0.14.1] const closedMap = ctx.eph.assetGroupsClosed || {};
-  // [OLD 2026-11-09 v0.14.0->v0.14.1] const closed = !!closedMap[id || "-"];
-  // added 2026-11-09 v0.14.1: a group folds like every card: project.ui.collapsed["agroup:<id>"] (kept with the
-  // project, no undo step), with the cards' right-click menu and Alt+click (fold or open everything on the tab)
   const foldId = "agroup:" + (id || "-");
   const closed = !!p.ui?.collapsed?.[foldId];
   const flip = e => {
@@ -274,20 +198,11 @@ function groupSection(ctx, g, i, items, total, filtered) {
     ctx.actions.edit(q => { const x = q.assets.find(y => y.id === aid); if (x) x.group = id; }, { label: `Move ${a.code} to ${g ? name : "no group"}` });
   };
   return h("section", {
-    // [OLD 2026-11-09 v0.14.0->v0.14.1] class: ["rw-card", "rw-agroup", !g && "loose", closed && "closed"], key: "agroup-" + (id || "-"), help: g ? "assets.group" : "assets.group.none",
-    class: ["rw-card", "rw-agroup", !g && "loose", closed && "closed", closed && "folded"], key: "agroup-" + (id || "-"), help: g ? "assets.group" : "assets.group.none", dataset: { fold: foldId }, // added 2026-11-09 v0.14.1
+    class: ["rw-card", "rw-agroup", !g && "loose", closed && "closed", closed && "folded"], key: "agroup-" + (id || "-"), help: g ? "assets.group" : "assets.group.none", dataset: { fold: foldId },
     onDragover: e => { if (e.dataTransfer.types.includes("application/x-rw-asset")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; e.currentTarget.classList.add("over"); } },
     onDragleave: e => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove("over"); },
     onDrop: drop,
   },
-  /* [OLD 2026-11-09 v0.14.0->v0.14.1] the group's fold was kept for the session only; no menu, no Alt+click
-  h("div", { class: "rw-card-head" },
-    h("button", { type: "button", class: "rw-agroup-caret", help: "assets.group.collapse", key: "agroup-caret-" + (id || "-"), "aria-expanded": closed ? "false" : "true",
-      onClick: () => ctx.store.setEph({ assetGroupsClosed: { ...closedMap, [id || "-"]: !closed } }) }, icon(closed ? "chevRight" : "chevDown", 12)),
-    h("span", { class: g ? "rw-c-accent" : "rw-dim" }, icon("folder", 13)),
-    h("span", { class: "rw-card-title" }, name),
-  [/OLD] */
-  // added 2026-11-09 v0.14.1
   h("div", { class: "rw-card-head", menu: e => foldMenu(ctx, foldId, closed, e.target.closest(".rw-card"), "group") },
     h("button", { type: "button", class: "rw-agroup-caret", help: "assets.group.collapse", key: "agroup-caret-" + (id || "-"), "aria-expanded": closed ? "false" : "true",
       onClick: flip }, icon(closed ? "chevRight" : "chevDown", 12)),
@@ -316,7 +231,7 @@ function groupSection(ctx, g, i, items, total, filtered) {
       filtered && total ? "No matches in this group." : g ? "Empty: drag assets here, or pick this group in an asset's settings." : "Every asset is in a group."));
 }
 
-// added 2026-11-06 v0.9.0: group actions; each is one undo step
+// Group actions; each is one undo step
 export function addGroup(ctx, name = "New group", assetId = "") {
   const id = newId("g");
   ctx.actions.edit(q => {
@@ -347,9 +262,9 @@ function deleteGroup(ctx, g) {
 }
 
 
-// ---- ComfyUI input/output browser (added 2026-11-02 v0.2.0) ----
+// ---- ComfyUI input/output browser ------------------------------
 
-const browseTimers = new WeakMap(); // added 2026-11-04 v0.6.1: ctx -> the filter field's pending timer (browserCard)
+const browseTimers = new WeakMap();
 
 function openBrowser(ctx, patch = {}) {
   const b = { root: "input", q: "", kind: "all", picked: [], files: null, busy: true, ...(ctx.eph.browse || {}), ...patch };
@@ -365,25 +280,7 @@ function openBrowser(ctx, patch = {}) {
   });
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] closing the card while files were being added brought it back as a broken card ({picked, importing} only)
-async function importPicked(ctx) {
-  const b = ctx.eph.browse;
-  let n = 0;
-  ctx.store.setEph({ browse: { ...b, importing: true } });
-  for (const rel of b.picked) {
-    try {
-      const r = await rw.importFile(ctx.p.slug, b.root, rel);
-      const a = r.asset || r;
-      if (b.root === "input" && ctx.p.assets.some(x => x.file === a.file)) continue;
-      addAsset(ctx, a, rel.split("/").pop().replace(/\.[^.]+$/, ""), a.kind);
-      n++;
-    } catch (err) { ctx.actions.toast(`Could not add ${rel}: ${err.message}`, "error"); }
-  }
-  ctx.store.setEph({ browse: { ...ctx.eph.browse, picked: [], importing: false } });
-  ctx.actions.toast(n ? `Added ${n} asset${n > 1 ? "s" : ""} from ComfyUI ${b.root}.` : "Nothing new to add.", n ? "ok" : "info");
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0: the picked files are added even when the card is closed meanwhile; the card is only updated
+// The picked files are added even when the card is closed meanwhile; the card is only updated
 // while it is still open (the same one), never brought back
 async function importPicked(ctx) {
   const b = ctx.eph.browse;
@@ -410,7 +307,6 @@ function browserCard(ctx) {
   const b = ctx.eph.browse;
   const have = new Set(ctx.p.assets.map(a => a.file));
   const picked = new Set(b.picked);
-  // [OLD 2026-11-04 v0.6.0->v0.6.1] let timer = 0;  (now browseTimers, one per editor)
   const shown = (b.files || []).slice(0, 160);
   const tile = f => {
     const used = b.root === "input" && have.has(f.rel);
@@ -441,11 +337,6 @@ function browserCard(ctx) {
         segmented({ small: true, value: b.kind, help: "assets.browse.kind", options: [
           { value: "all", label: "All" }, { value: "image", label: "Pictures", icon: "image" }, { value: "video", label: "Videos", icon: "video" }, { value: "audio", label: "Audio", icon: "audio" }],
         onChange: v => openBrowser(ctx, { kind: v, busy: true }) }),
-        // [OLD 2026-11-04 v0.6.0->v0.6.1] h("input", { class: "rw-input grow", key: "browse-q", placeholder: "Filter by path, e.g. ComfyUI_0 or portraits", help: "assets.browse.search", value: b.q,
-        // [OLD 2026-11-04 v0.6.0->v0.6.1]   onInput: e => { const v = e.target.value; clearTimeout(timer); timer = setTimeout(() => openBrowser(ctx, { q: v, busy: true }), 300); } })),
-        // (the timer lived in this render: a re-render between two keys left the first one running, and a timer still
-        // running when the card was closed opened it again)
-        // added 2026-11-04 v0.6.1: one filter timer per editor, and it does nothing once the card is closed
         h("input", { class: "rw-input grow", key: "browse-q", placeholder: "Filter by path, e.g. ComfyUI_0 or portraits", help: "assets.browse.search", value: b.q,
           onInput: e => {
             const v = e.target.value;
@@ -465,7 +356,7 @@ function browserCard(ctx) {
   });
 }
 
-// added 2026-11-02 v0.3.4: where this asset's description is used, read live from the project. Scenes build their
+// Where this asset's description is used, read live from the project. Scenes build their
 // prompts from it every time, so an edit here reaches all of them at once.
 function descriptionWhere(ctx, a) {
   const p = ctx.p;
@@ -489,7 +380,7 @@ function descriptionWhere(ctx, a) {
   return h("div", { class: "rw-desc-uses small", help: "assets.description.uses" }, h("b", null, "Used in"), rows);
 }
 
-// ---- describe with a vision LLM (added 2026-11-02 v0.2.0) ----
+// ---- describe with a vision LLM ------------------------------
 
 const DESCRIBE_PROMPTS = {
   subject: "Describe the person or character: build, face, hair, clothing and accessories.",
@@ -506,7 +397,6 @@ export async function describeAssets(ctx, ids, prompt, key) {
   ctx.store.setEph({ describe: { key, busy: true } });
   try {
     const r = await rw.describe(ctx.p, ids, prompt);
-    // [OLD 2026-11-02 v0.3.1->v0.3.2] ctx.store.setEph({ describe: { key, text: r.text, model: r.model, ms: r.ms } });
     ctx.store.setEph({ describe: { key, text: r.text, model: r.model, ms: r.ms, note: r.note || "" } });
   } catch (err) {
     ctx.store.setEph({ describe: { key, error: err.message } });
@@ -527,7 +417,7 @@ export function describeBox(ctx, { key, ids, defaultPrompt, apply, help = "asset
     d?.error ? h("div", { class: "rw-note err" }, icon("warn", 12), d.error) : null,
     d?.text ? h("div", { class: "rw-suggest", help: help + ".result" },
       h("div", { class: "rw-suggest-text" }, d.text),
-      d.note ? h("div", { class: "rw-dim small" }, d.note) : null, // added 2026-11-02 v0.3.2
+      d.note ? h("div", { class: "rw-dim small" }, d.note) : null,
       h("div", { class: "rw-row" },
         h("span", { class: "rw-dim small mono rw-ellipsis grow" }, [d.model, d.ms ? d.ms + " ms" : ""].filter(Boolean).join(" · ")),
         button({ label: "Use", small: true, variant: "primary", help: help + ".use", onClick: () => { apply(d.text, "use"); ctx.store.setEph({ describe: null }); } }),
@@ -563,8 +453,7 @@ function budgetMatrix(ctx) {
 
 function cameraPresets(ctx) {
   const p = ctx.p;
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = (id, fn) => ctx.actions.edit(q => { const c = q.camera_presets.find(x => x.id === id); if (c) fn(c); });  (no History menu name)
-  const edit = (id, fn) => ctx.actions.edit(q => { const c = q.camera_presets.find(x => x.id === id); if (c) fn(c); }, { label: "Camera preset" }); // added 2026-11-03 v0.6.0: History menu name
+  const edit = (id, fn) => ctx.actions.edit(q => { const c = q.camera_presets.find(x => x.id === id); if (c) fn(c); }, { label: "Camera preset" });
   return section({
     title: "Camera presets", help: "assets.camera",
     actions: button({ label: "Preset", icon: "plus", small: true, help: "assets.camera.add", onClick: () => ctx.actions.edit(q => { q.camera_presets.push({ id: newId("k"), name: "New move", text: "" }); }) }),
@@ -577,7 +466,7 @@ function cameraPresets(ctx) {
   });
 }
 
-// added 2026-11-03 v0.6.0: the inspector's preview survives re-renders (as the Files tab's does), so a video or sound
+// The inspector's preview survives re-renders (as the Files tab's does), so a video or sound
 // keeps playing while progress events, autosaves or plan refreshes redraw the tab
 const previews = new WeakMap(); // ctx -> {key, el}
 function assetPreview(ctx, a) {
@@ -591,7 +480,7 @@ function assetPreview(ctx, a) {
   return el;
 }
 
-// added 2026-11-06 v0.9.0: the inspector's group picker: a group id, "" (no group), or a typed name (an existing group's
+// The inspector's group picker: a group id, "" (no group), or a typed name (an existing group's
 // name, any case, or a new group made with it)
 function pickGroup(ctx, a, v) {
   const p = ctx.p;
@@ -610,21 +499,14 @@ function inspector(ctx) {
   const p = ctx.p;
   const a = findAsset(p, ctx.eph.selectedAsset) || p.assets[0];
   if (!a) return h("div", { class: "rw-col mid" }, section({ title: "Asset", help: "assets.inspector", children: h("div", { class: "rw-empty" }, "Upload an asset to see its settings.") }));
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => { const x = q.assets.find(y => y.id === a.id); if (x) fn(x); });  (no History menu name)
-  const edit = fn => ctx.actions.edit(q => { const x = q.assets.find(y => y.id === a.id); if (x) fn(x); }, { label: `Edit ${a.code}` }); // added 2026-11-03 v0.6.0: History menu name
+  const edit = fn => ctx.actions.edit(q => { const x = q.assets.find(y => y.id === a.id); if (x) fn(x); }, { label: `Edit ${a.code}` });
   const usage = assetUsage(p, a.id);
   const castUse = assetCastUse(p, a.id);
   const kc = KIND_CLASS[a.kind];
-  /* [OLD 2026-11-03 v0.5.1->v0.6.0] a new element on every re-render: a playing video or sound restarted on each progress event
-  const preview = a.kind === "image" ? h("img", { class: "rw-asset-preview", src: viewURL(a.file, "input"), alt: a.name })
-    : a.kind === "video" ? h("video", { class: "rw-asset-preview", src: viewURL(a.file, "input"), controls: true, preload: "metadata" })
-      : h("div", { class: "rw-asset-preview aud" }, thumb(a, "rw-asset-wave"), h("audio", { src: viewURL(a.file, "input"), controls: true, preload: "metadata" }));
-  [/OLD] */
-  const preview = assetPreview(ctx, a); // added 2026-11-03 v0.6.0: the same element while the same file is shown
+  const preview = assetPreview(ctx, a);
   const card = h("div", { class: "rw-col mid" },
     section({
       title: "Asset", help: "assets.inspector",
-      // [OLD 2026-11-02 v0.2.2->v0.3.0] actions: h("span", { class: "mono rw-dim small" }, a.width ? `${a.width}×${a.height}` : "", a.duration ? ` · ${a.duration.toFixed(2)} s` : ""),
       actions: [h("span", { class: "mono rw-dim small" }, a.width ? `${a.width}×${a.height}` : "", a.duration ? ` · ${a.duration.toFixed(2)} s` : ""),
         button({ icon: "trash", small: true, variant: "danger-ghost", help: "assets.delete", onClick: () => ctx.actions.deleteAsset(a.id) })],
       children: [
@@ -633,7 +515,6 @@ function inspector(ctx) {
           text({ value: a.name, key: "asset-name-" + a.id, help: "assets.name", onChange: v => edit(x => { x.name = v; }) })),
         h("div", { class: "rw-dim small mono rw-ellipsis", help: "assets.file" }, a.file),
         field("Category", select({ options: ASSET_CATEGORIES[a.kind], value: a.category, help: "assets.category", onChange: v => edit(x => { x.category = v; }) }), { help: "assets.category" }),
-        // added 2026-11-06 v0.9.0: its group (type a new name to make one) and tags; both only sort this tab
         field("Group", select({ options: p.asset_groups.map(g => ({ value: g.id, label: g.name.trim() || "Unnamed group" })), value: a.group || "", free: true, placeholder: "No group",
           help: "assets.group.pick", key: "asset-group-" + a.id, onChange: v => pickGroup(ctx, a, v) }), { help: "assets.group.pick" }),
         field("Tags", keepChips({ values: tagsOf(a), help: "assets.tags", placeholder: "+ tag", key: "asset-tags-" + a.id,
@@ -644,10 +525,8 @@ function inspector(ctx) {
           } }), { help: "assets.tags", wide: true }),
       ],
     }),
-    // added 2026-11-02 v0.2.0: the description becomes this asset's subject line ("<Subject 1> is …")
     a.kind !== "audio" && section({
       title: "Description", help: "assets.description",
-      // [OLD 2026-11-02 v0.3.3->v0.3.4] actions: h("span", { class: "rw-dim small" }, "goes into subject_definitions"),
       actions: h("span", { class: "rw-dim small" }, "every scene that uses it, live"),
       children: [
         textarea({ value: a.description || "", rows: 3, key: "asset-desc-" + a.id, help: "assets.description",
@@ -657,7 +536,7 @@ function inspector(ctx) {
           key: "asset-" + a.id, ids: [a.id], defaultPrompt: DESCRIBE_PROMPTS[a.category] || "Describe the main subject.",
           apply: (t, mode) => edit(x => { x.description = mode === "append" && x.description ? x.description.replace(/[.\s]*$/, "") + "; " + t : t; }),
         }),
-        descriptionWhere(ctx, a), // added 2026-11-02 v0.3.4
+        descriptionWhere(ctx, a),
       ],
     }),
     section({
@@ -665,14 +544,12 @@ function inspector(ctx) {
       actions: h("span", { class: "rw-dim small" }, "any scene can override"),
       children: [
         a.kind === "image" && field("Role", segmented({ small: true, value: a.defaults.role, help: "assets.defaults.role",
-          // [OLD 2026-11-08 v0.11.0->v0.12.0] options: ROLES.map(r => ({ value: r, label: { reference: "reference", first_frame: "first", last_frame: "last", keyframe: "keyframe" }[r], help: "scene.refs.role" })), onChange: v => edit(x => { x.defaults.role = v; }) }), { help: "assets.defaults.role", wide: true }),
-          options: ROLES.map(r => ({ value: r, label: { reference: "reference", first_frame: "first", last_frame: "last", keyframe: "keyframe", pose: "pose" }[r] || r, help: "scene.refs.role" })), onChange: v => edit(x => { x.defaults.role = v; }) }), { help: "assets.defaults.role", wide: true }), // added 2026-11-08 v0.12.0: pose
+          options: ROLES.map(r => ({ value: r, label: { reference: "reference", first_frame: "first", last_frame: "last", keyframe: "keyframe", pose: "pose" }[r] || r, help: "scene.refs.role" })), onChange: v => edit(x => { x.defaults.role = v; }) }), { help: "assets.defaults.role", wide: true }),
         field("Retention", h("div", { class: "rw-ret-grid" }, retentionOptions(a.kind).map(r => h("button", {
           type: "button", class: ["rw-ret", a.defaults.retention === r && "on", "rw-ret-" + kc], help: "retention." + r,
           onClick: () => edit(x => { x.defaults.retention = r; }),
         }, r))), { help: "assets.defaults.retention", wide: true }),
-        // [OLD 2026-11-03 v0.6.0 review] field("Keep", keepChips({ values: a.defaults.keep, help: "assets.defaults.keep", onChange: v => edit(x => { x.defaults.keep = v; }) }), { help: "assets.defaults.keep", wide: true }),
-        field("Keep", keepChips({ values: a.defaults.keep, help: "assets.defaults.keep", key: "asset-keep-" + a.id, onChange: v => edit(x => { x.defaults.keep = v; }) }), { help: "assets.defaults.keep", wide: true }), // added 2026-11-03 v0.6.0 review: key
+        field("Keep", keepChips({ values: a.defaults.keep, help: "assets.defaults.keep", key: "asset-keep-" + a.id, onChange: v => edit(x => { x.defaults.keep = v; }) }), { help: "assets.defaults.keep", wide: true }),
         a.kind === "video" && field("Soundtrack", toggle({ value: a.defaults.soundtrack, help: "assets.defaults.soundtrack", onChange: v => edit(x => { x.defaults.soundtrack = v; }) }), { help: "assets.defaults.soundtrack" }),
         textarea({ value: a.notes, rows: 2, key: "asset-notes-" + a.id, placeholder: "Notes", help: "assets.notes", onChange: v => edit(x => { x.notes = v; }) }),
       ],
@@ -691,9 +568,8 @@ function inspector(ctx) {
       ],
       children: [castUse.map(u => h("div", { class: "rw-list-row", help: "assets.usage.cast" },
         h("span", { class: "rw-c-pic" }, icon("cast", 13)),
-        // [OLD 2026-11-09 v0.15.1->v0.16.0] h("button", { type: "button", class: "link grow", help: "assets.usage.cast", onClick: () => { ctx.store.setEph({ selectedCast: u.cast.id }); ctx.actions.setTab("cast"); } }, `${u.as === "anchor" ? "Anchor" : "Voice"} of ${u.cast.name}`),
         h("button", { type: "button", class: "link grow", help: "assets.usage.cast", onClick: () => { ctx.store.setEph({ selectedCast: u.cast.id }); ctx.actions.setTab("cast"); } },
-          `${u.as === "anchor" ? "Anchor" : u.as === "video anchor" ? "Video anchor" : "Voice"} of ${u.cast.name}`), // added 2026-11-09 v0.16.0
+          `${u.as === "anchor" ? "Anchor" : u.as === "video anchor" ? "Video anchor" : "Voice"} of ${u.cast.name}`),
         h("span", { class: "rw-dim small" }, `${u.scenes} scene${u.scenes === 1 ? "" : "s"}`))),
       usage.length ? h("div", { class: "rw-table usage" }, usage.map(u => {
         const over = (u.ref.retention && u.ref.retention !== a.defaults.retention) || u.ref.role !== a.defaults.role;
@@ -706,18 +582,6 @@ function inspector(ctx) {
         ];
       })) : !castUse.length && h("div", { class: "rw-empty sm" }, "Not used yet.")],
     }));
-  /* [OLD 2026-11-02 v0.2.2->v0.3.0] the confirmation bar appeared at the bottom of a long column, out of sight, so deleting looked broken
-  card.append(h("div", { class: "rw-row end" }, button({ label: "Delete asset", icon: "trash", variant: "danger-ghost", help: "assets.delete", onClick: () => {
-    confirmInline(card, usage.length ? `Remove ${a.code} and its ${usage.length} reference${usage.length > 1 ? "s" : ""}?` : `Remove ${a.code} from the project?`, () => {
-      ctx.actions.edit(q => {
-        q.assets = q.assets.filter(x => x.id !== a.id);
-        for (const s of q.scenes) s.refs = s.refs.filter(r => r.asset !== a.id);
-        for (const c of q.cast) { c.anchors = c.anchors.filter(x => x !== a.id); if (c.voice === a.id) c.voice = ""; }
-      });
-      ctx.store.setEph({ selectedAsset: "" });
-    });
-  } })));
-  [/OLD] */
   card.append(h("div", { class: "rw-row end" }, button({ label: "Delete asset", icon: "trash", variant: "danger-ghost", help: "assets.delete", onClick: () => ctx.actions.deleteAsset(a.id) })));
   return card;
 }

@@ -1,4 +1,4 @@
-"""Disk-use tree and deleting (added 2026-11-03 v0.4.0)."""
+"""Disk-use tree and deleting."""
 
 import json
 import os
@@ -167,8 +167,6 @@ def test_symlink_is_removed_not_its_target(roots, disk, tmp_path):
     assert r["errors"] == [] and os.path.isfile(outside) and not os.path.lexists(os.path.join(store.input_dir, "link.mp4"))
 
 
-# ---- added 2026-11-03 v0.6.0 ---------------------------------------------------------------------------------------
-
 from reelwright import jobs  # noqa: E402
 
 
@@ -254,14 +252,12 @@ def test_pass_cache_and_cut_counter(roots, disk):
 
 
 def test_delete_refuses_ids_that_are_not_a_list(roots):
-    """Bug 7 (v0.6.0 review): ids=5 raised TypeError (the route answered 500)."""
+    """Bug 7: ids=5 raised TypeError (the route answered 500)."""
     for bad in (5, "p:film", {"a": 1}):
         with pytest.raises(ValueError):
             files.delete(roots, bad)
     assert files.delete(roots, None)["removed"] == 0
 
-
-# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) --------------------------------------------------------------------
 
 def test_assets_folder_is_not_offered_for_delete(roots, disk):
     """Review 12c: the Assets group (i:reelwright/<slug>) was offered for delete, and delete always refused it."""
@@ -295,8 +291,6 @@ def test_scan_survives_a_take_folder_removed_meanwhile(roots, disk, monkeypatch)
     r = files.delete(roots, [leftover["id"]], current="harbor_lights")
     assert r["errors"] == [] and not os.path.exists(os.path.join(store.scene_dir("s_one"), "takes", ".deleting-v1-0a1b2c3d"))
 
-
-# ---- added 2026-11-05 v0.7.0 ---------------------------------------------------------------------------------------
 
 def test_a_takes_filmstrip_is_a_cache_that_may_go_alone(roots, disk):
     """The timeline's filmstrip (merge.filmstrip) sits next to the take's video: shown in the take as a cache, and it

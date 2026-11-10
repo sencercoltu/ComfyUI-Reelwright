@@ -1,4 +1,4 @@
-"""Disk use of every Reelwright project, as a tree, and deleting parts of it (added 2026-11-03 v0.4.0).
+"""Disk use of every Reelwright project, as a tree, and deleting parts of it.
 
 Only Reelwright's own folders are scanned and touched:
   output/reelwright/<slug>/   project.json, versions, scenes/<id>/takes/<take>, cuts, cast training sets
@@ -15,21 +15,17 @@ import shutil
 import time
 from collections import Counter
 
-from . import cache  # added 2026-11-04 v0.6.1: cache.created_of
-from . import jobs  # added 2026-11-03 v0.6.0: nothing a render or merge is using is deleted
+from . import cache, jobs
 from .model import normalize_project
-# [OLD 2026-11-03 v0.5.1->v0.6.0] from .storage import SLUG_RE, VERSION_RE, ProjectStore, check_slug, read_json, safe_join
-from .storage import CUT_COUNTER, SLUG_RE, VERSION_RE, ProjectStore, check_slug, read_json, safe_join
-from .storage import DELETING  # added 2026-11-04 v0.6.1
+from .storage import CUT_COUNTER, DELETING, SLUG_RE, VERSION_RE, ProjectStore, check_slug, read_json, safe_join
 
 TAKE_RE = re.compile(r"^scenes/([A-Za-z0-9_-]{1,64})/takes/([A-Za-z0-9_-]{1,64})$")
-# [OLD 2026-11-03 v0.5.1->v0.6.0] CUT_RE = re.compile(r"^(?P<stem>.+_cut_v(?P<n>\d+))(?P<rest>(\.partial)?\..+)$")
-# added 2026-11-03 v0.6.0: draft and range cuts (<slug>_cut_v4_draft_s02-05.mp4), the stems folder and loudness report
+# Draft and range cuts (<slug>_cut_v4_draft_s02-05.mp4), the stems folder and loudness report
 CUT_RE = re.compile(r"^(?P<stem>.+_cut_v(?P<n>\d+)(?:_draft)?(?:_s\d+-\d+)?)"
                     r"(?P<rest>_stems(?:\.partial)?|_loudness\.json|(?:\.partial)?\..+)$")
-STEM_ID_RE = re.compile(r"[A-Za-z0-9_.-]+_cut_v\d+(?:_draft)?(?:_s\d+-\d+)?")  # added 2026-11-03 v0.6.0
-TAKE_PART_RE = re.compile(r"^scenes/[^/]+/takes/[^/]+/(?P<part>.+)$")  # added 2026-11-03 v0.6.0
-# added 2026-11-05 v0.7.0: the timeline's filmstrip of a video (merge.filmstrip: <video>.filmstrip_<h>.jpg / .json, and
+STEM_ID_RE = re.compile(r"[A-Za-z0-9_.-]+_cut_v\d+(?:_draft)?(?:_s\d+-\d+)?")
+TAKE_PART_RE = re.compile(r"^scenes/[^/]+/takes/[^/]+/(?P<part>.+)$")
+# The timeline's filmstrip of a video (merge.filmstrip: <video>.filmstrip_<h>.jpg / .json, and
 # the .partial files of one being made); a cache, made again when needed, so it may go without its take
 FILMSTRIP_RE = re.compile(r"^[^/]*\.filmstrip_\d+\.[^/]*$")
 PROTECTED = {"project.json": "the project file (delete the whole project instead)",
@@ -94,7 +90,7 @@ def _listdir(path):
 
 
 def _mtime(path):
-    """added 2026-11-04 v0.6.1: modification time, 0 when the path went away meanwhile."""
+    """Modification time, 0 when the path went away meanwhile."""
     try:
         return os.path.getmtime(path)
     except OSError:
@@ -117,14 +113,14 @@ def _asset_uses(p):
     score = (p.get("global", {}).get("merge", {}).get("score") or {}).get("asset")
     if score:
         uses[score] += 1
-    for t in p.get("soundtrack") or []:  # added 2026-11-03 v0.5.0
+    for t in p.get("soundtrack") or []:
         if t.get("asset"):
             uses[t["asset"]] += 1
     return uses
 
 
 def _scene_owner(store, p):
-    """added 2026-11-03 v0.6.0: owner(scene_id) -> ("this" | "other" | "unknown", other project's name) for a scene
+    """owner(scene_id) -> ("this" | "other" | "unknown", other project's name) for a scene
     folder that is not in the project. The take list says which project rendered into it (index.json project_id,
     written since v0.6.0); older folders are looked up in the autosaved versions (each has its project's id)."""
     pid = (p or {}).get("project_id") if isinstance((p or {}).get("project_id"), str) else ""
@@ -172,8 +168,7 @@ def _when(ts):
 
 def scan_project(roots, slug, current=None):
     store = ProjectStore(roots, slug)
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] raw = read_json(os.path.join(store.dir, "project.json"), None)
-    raw = store.load_project()  # added 2026-11-03 v0.6.0: a damaged project.json falls back to the newest version
+    raw = store.load_project()
     try:
         p = normalize_project(raw) if isinstance(raw, dict) else None
     except Exception:  # a damaged project.json must not hide the files
@@ -192,15 +187,11 @@ def scan_project(roots, slug, current=None):
         order = {s["id"]: (k, s["title"]) for k, s in enumerate((p or {}).get("scenes", []))}
         scenes = _node("o:" + os.path.relpath(sdir, o).replace(os.sep, "/"), "Scenes and takes", "group")
         ids = [x for x in _listdir(sdir) if os.path.isdir(os.path.join(sdir, x))]
-        owner = _scene_owner(store, p)  # added 2026-11-03 v0.6.0
+        owner = _scene_owner(store, p)
         for sid in sorted(ids, key=lambda x: (x not in order, order.get(x, (0,))[0], x)):
             scene_dir = os.path.join(sdir, sid)
             known = sid in order
             label = "{:02d} · {}".format(order[sid][0] + 1, order[sid][1]) if known else sid
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] sn = _node("o:" + os.path.relpath(scene_dir, o).replace(os.sep, "/"), label, "scene", sid=sid,
-            # [OLD 2026-11-03 v0.5.1->v0.6.0]            flags=[] if known else ["orphan"], note="" if known else "not in the project any more")
-            # added 2026-11-03 v0.6.0: a scene folder that is not in the project is an orphan only when it belongs to
-            # this project (its take list or an autosaved version says so); two projects can share a folder
             flags, note = [], ""
             if not known:
                 who, other_name = owner(sid)
@@ -220,10 +211,7 @@ def scan_project(roots, slug, current=None):
             listed = {t["id"]: t for t in idx["takes"]}
             tdir = os.path.join(scene_dir, "takes")
             take_ids = [x for x in _listdir(tdir) if os.path.isdir(os.path.join(tdir, x))]
-            # [OLD 2026-11-04 v0.6.0->v0.6.1] a take folder removed during the scan (getmtime) or a "created" that is not a
-            # number (unary minus on text) answered 500
-            # take_ids.sort(key=lambda x: (-(listed.get(x, {}).get("created") or os.path.getmtime(os.path.join(tdir, x))), x))
-            take_ids.sort(key=lambda x: (-(cache.created_of(listed.get(x)) or _mtime(os.path.join(tdir, x))), x))  # added 2026-11-04 v0.6.1
+            take_ids.sort(key=lambda x: (-(cache.created_of(listed.get(x)) or _mtime(os.path.join(tdir, x))), x))
             for tid in take_ids:
                 t = listed.get(tid)
                 tn = _dir("o", o, os.path.join(tdir, tid), label=tid, kind="take", skip=())
@@ -234,7 +222,7 @@ def scan_project(roots, slug, current=None):
                         c["kind"] = "passes"
                         c["note"] = "intermediate pass videos; the take's video is already assembled"
                         c["flags"].append("intermediate")
-                    elif c["kind"] == "file" and FILMSTRIP_RE.match(c["label"]):  # added 2026-11-05 v0.7.0
+                    elif c["kind"] == "file" and FILMSTRIP_RE.match(c["label"]):
                         c["note"] = "the timeline's filmstrip of the take; made again when needed"
                         c["flags"].append("cache")
                     else:
@@ -242,23 +230,20 @@ def scan_project(roots, slug, current=None):
                 if t is None:
                     tn["flags"].append("unlisted")
                     tn["note"] = "not in the take list (an unfinished or older render)"
-                    if tid.startswith(DELETING):  # added 2026-11-04 v0.6.1: storage.delete_take sets the folder aside
+                    if tid.startswith(DELETING):
                         tn["note"] = "a deleted take whose folder is being removed (left over if it stays)"
                 else:
                     if idx["starred"] == tid:
                         tn["flags"].append("starred")
-                    # [OLD 2026-11-04 v0.6.0->v0.6.1] _when(t.get("created")) raised on a "created" that is not a number
                     bits = [t.get("quality") or "", "{:.1f} s".format(t["seconds"]) if t.get("seconds") else "",
-                            _when(cache.created_of(t))]  # added 2026-11-04 v0.6.1
+                            _when(cache.created_of(t))]
                     tn["note"] = " · ".join(b for b in bits if b)
                 _add(sn, tn)
             for x in _listdir(scene_dir):  # index.json and anything else next to takes/
                 if x == "takes":
                     continue
                 path = os.path.join(scene_dir, x)
-                # [OLD 2026-11-03 v0.5.1->v0.6.0] if os.path.isdir(path):
                 if x == "passes" and os.path.isdir(path) and not os.path.islink(path):
-                    # added 2026-11-03 v0.6.0: the scene's pass cache (finished passes kept for re-use)
                     c = _add(sn, _dir("o", o, path, label="Pass cache", kind="passes"))
                     c["note"] = "finished passes kept for re-use (after Stop, a retake of one pass, a moved keep window); made again when needed"
                     c["flags"].append("cache")
@@ -279,12 +264,11 @@ def scan_project(roots, slug, current=None):
         for x in _listdir(cdir):
             path = os.path.join(cdir, x)
             m = CUT_RE.match(x)
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] if m and os.path.isfile(path):
             if m and (os.path.isfile(path) or (os.path.isdir(path) and not os.path.islink(path))):
                 groups.setdefault((int(m.group("n")), m.group("stem")), []).append(path)
             elif os.path.isdir(path):
                 loose.append(_dir("o", o, path))
-            elif x == CUT_COUNTER:  # added 2026-11-03 v0.6.0
+            elif x == CUT_COUNTER:
                 f = _file("o", o, path, label="next cut number")
                 f["del"], f["why"] = False, "the next cut number; numbers are never reused"
                 loose.append(f)
@@ -292,13 +276,11 @@ def scan_project(roots, slug, current=None):
                 loose.append(_file("o", o, path))
         newest = max(groups) if groups else None
         for key in sorted(groups, reverse=True):
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] g = _node("cut:{}:{}".format(slug, key[1]), "cut v{}".format(key[0]), "cut", stem=key[1])
             kind_ = [w for w, on in (("draft", "_draft" in key[1]), ("range", re.search(r"_s\d+-\d+$", key[1]))) if on]
             g = _node("cut:{}:{}".format(slug, key[1]), "cut v{}{}".format(key[0], "".join(" " + w for w in kind_)),
                       "cut", stem=key[1])
-            g["flags"] += kind_  # added 2026-11-03 v0.6.0: draft / range cuts
+            g["flags"] += kind_
             for path in sorted(groups[key]):
-                # [OLD 2026-11-03 v0.5.1->v0.6.0] f = _add(g, _file("o", o, path))
                 f = _add(g, _dir("o", o, path, label="stems") if os.path.isdir(path) else _file("o", o, path))
                 if ".partial" in os.path.basename(path):
                     f["flags"].append("unfinished")
@@ -340,7 +322,7 @@ def scan_project(roots, slug, current=None):
             continue
         path = os.path.join(store.dir, x)
         n = _add(proj, _dir("o", o, path) if os.path.isdir(path) else _file("o", o, path))
-        if x == "soundtrack" and os.path.isdir(path):  # added 2026-11-03 v0.5.0
+        if x == "soundtrack" and os.path.isdir(path):
             n["note"] = "the part of the soundtrack each pass was sent; made again when needed"
         if x in PROTECTED and n["kind"] == "file":
             n["note"] = PROTECTED[x]
@@ -355,8 +337,6 @@ def scan_project(roots, slug, current=None):
             by_file.setdefault(a.get("file") or "", []).append(a)
         assets = _dir("i", i, store.input_dir, label="Assets", kind="group")
         assets["note"] = "input/reelwright/" + slug
-        # added 2026-11-04 v0.6.1: the folder itself can't be deleted by id (_resolve wants reelwright/<slug>/<name>;
-        # the whole project goes with "p:<slug>"), so it was offered and always refused; its files are deleted one by one
         assets["del"], assets["why"] = False, "the project's asset folder; select the files in it, or delete the whole project"
 
         def mark(n):
@@ -401,7 +381,6 @@ def _resolve(roots, item):
         return "project", check_slug(item[2:]), None
     if item.startswith("cut:"):
         parts = item.split(":", 2)
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] if len(parts) != 3 or not re.fullmatch(r"[A-Za-z0-9_.-]+_cut_v\d+", parts[2]):
         if len(parts) != 3 or not STEM_ID_RE.fullmatch(parts[2]):
             raise ValueError("invalid cut id: " + item)
         return "cut", check_slug(parts[1]), parts[2]
@@ -411,7 +390,6 @@ def _resolve(roots, item):
     parts = rel.replace("\\", "/").split("/")
     if len(parts) < 3 or parts[0] != "reelwright" or any(x in ("", ".", "..") for x in parts):
         raise ValueError("not a Reelwright file: " + item)
-    # added 2026-11-03 v0.6.0: a drive ("D:", "C:x") or stream name in a part would leave the folder on Windows
     if any(":" in x or "\x00" in x for x in parts):
         raise ValueError("not a Reelwright file: " + item)
     slug = check_slug(parts[1])
@@ -419,13 +397,13 @@ def _resolve(roots, item):
     base = safe_join(root, "reelwright", slug)
     parent = safe_join(base, *parts[2:-1]) if len(parts) > 3 else base
     path = os.path.join(parent, parts[-1])  # the link itself, never what a link points to
-    if os.path.dirname(path) != parent:  # added 2026-11-03 v0.6.0
+    if os.path.dirname(path) != parent:
         raise ValueError("not a Reelwright file: " + item)
     return ("output" if key == "o" else "input"), slug, (path, "/".join(parts[2:]))
 
 
 def _busy_reason(slug, kind, rel=""):
-    """added 2026-11-03 v0.6.0: why this can't be deleted now (a render or merge of the project uses it), or None.
+    """Why this can't be deleted now (a render or merge of the project uses it), or None.
     A render uses the scenes, the soundtrack excerpts and the assets; a merge the takes, cuts and assets."""
     render, merging = jobs.is_busy(slug, "render"), jobs.is_busy(slug, "merge")
     if not (render or merging):
@@ -485,7 +463,6 @@ def _covers(a, b):
 
 def delete(roots, ids, current=None):
     """Delete the named nodes. Returns {removed, freed, errors:[{id, error}], deleted:[ids]}."""
-    # added 2026-11-03 v0.6.0 review: ids that are not a list (5, "x", {...}) are refused, not a TypeError
     if ids is not None and not isinstance(ids, (list, tuple)):
         raise ValueError("ids must be a list of ids")
     ids = [x for x in dict.fromkeys(ids or []) if isinstance(x, str)]
@@ -495,21 +472,14 @@ def delete(roots, ids, current=None):
         try:
             kind, slug, arg = _resolve(roots, item)
             store = ProjectStore(roots, slug)
-            busy = _busy_reason(slug, kind, arg[1] if isinstance(arg, tuple) else "")  # added 2026-11-03 v0.6.0
+            busy = _busy_reason(slug, kind, arg[1] if isinstance(arg, tuple) else "")
             if busy:
                 raise ValueError(busy)
             if kind == "project":
                 if current and slug == current:
                     raise ValueError("the project open in this node can't be deleted as a whole")
-                # [OLD 2026-11-03 v0.5.1->v0.6.0] store.dir is the resolved path: a project folder that is a link was
-                # deleted at its target
-                # for d in (store.dir, store.input_dir):
-                #     if os.path.isdir(d):
-                #         freed += _size(d)
-                #         shutil.rmtree(d)
-                # [/OLD]
                 for d in (os.path.join(roots.output, "reelwright", slug), os.path.join(roots.input, "reelwright", slug)):
-                    if os.path.islink(d):  # added 2026-11-03 v0.6.0: the link goes, its target stays
+                    if os.path.islink(d):
                         os.remove(d)
                     elif os.path.isdir(d):
                         freed += _size(d)
@@ -522,8 +492,7 @@ def delete(roots, ids, current=None):
                     if m and m.group("stem") == arg:
                         path = os.path.join(cdir, x)
                         freed += _size(path)
-                        # [OLD 2026-11-03 v0.5.1->v0.6.0] os.remove(path)
-                        _remove(path)  # added 2026-11-03 v0.6.0: the stems folder too
+                        _remove(path)
                         gone += 1
                 if not gone:
                     raise FileNotFoundError("already gone")
@@ -533,10 +502,7 @@ def delete(roots, ids, current=None):
                     raise ValueError("{} is kept: {}".format(rel, PROTECTED[rel]))
                 if kind == "output" and re.match(r"^scenes/[^/]+/index\.json$", rel):
                     raise ValueError("a scene's take list is kept; delete the scene instead")
-                # added 2026-11-03 v0.6.0: a take's own files go only with the take (its passes/ may go alone)
                 part = TAKE_PART_RE.match(rel) if kind == "output" else None
-                # [OLD 2026-11-05 v0.6.1->v0.7.0] if part and part.group("part").split("/")[0] != "passes":
-                # added 2026-11-05 v0.7.0: a take's filmstrip (a cache) may go alone too
                 if part and part.group("part").split("/")[0] != "passes" and not FILMSTRIP_RE.match(part.group("part")):
                     raise ValueError("part of a take; delete the take")
                 if kind == "output" and rel == "cuts/" + CUT_COUNTER:

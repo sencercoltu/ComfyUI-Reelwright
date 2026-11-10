@@ -1,41 +1,25 @@
-// [OLD 2026-11-06 v0.8.0->v0.9.0] the asset bin is gone (the Assets tab has all of it)
-// // Timeline tab: asset bin, monitor with transport, quick inspector, and the
-// // multi-lane timeline (scenes, pictures, video, audio, dialogue, camera, LoRAs).
-// [/OLD]
-// Timeline tab (v0.9.0): three panels with bars between them to resize: the monitor with its transport (top left), the
+// Timeline tab: three panels with bars between them to resize: the monitor with its transport (top left), the
 // scene inspector and summary (top right), and the multi-lane timeline (scenes, pictures, video, audio, dialogue,
 // camera, LoRAs) below.
 
-// [OLD 2026-11-02 v0.2.2->v0.3.0] import { h, icon, button, toggle, segmented, chip, dot, slider } from "../ui.js";
-// [OLD 2026-11-06 v0.8.0->v0.9.0] import { h, icon, button, toggle, segmented, chip, dot, slider, select } from "../ui.js";
-import { h, icon, button, toggle, segmented, chip, dot, slider, select, splitter, uiNum, rootScale } from "../ui.js"; // added 2026-11-06 v0.9.0: panel bars
-import { foldBlock } from "../ui.js"; // added 2026-11-09 v0.14.1: the inspector's parts fold
-// [OLD 2026-11-05 v0.6.1->v0.7.0] import { viewURL } from "../api.js";
-import { rw, viewURL } from "../api.js"; // added 2026-11-05 v0.7.0: rw.filmstrip
-import { joinOf, TRANSITION, DIRECTED, DIRECTIONS, transitionLabel } from "../cut.js"; // added 2026-11-05 v0.7.0: cut marks
+import {
+  h, icon, button, toggle, segmented, chip, dot, slider, select, splitter, uiNum, rootScale, foldBlock,
+} from "../ui.js";
+import { rw, viewURL } from "../api.js";
+import { joinOf, TRANSITION, DIRECTED, DIRECTIONS, transitionLabel } from "../cut.js";
 import { highlightHTML } from "../prompttext.js";
 import {
-  FPS, sceneStarts, fmtTime, framesOf, nearestGridFrames, estimatePasses, findAsset, findCast,
-  effectiveLoras, overrideCount, sceneIndex, newId, assembledDuration, MIN_PASS_FRAMES,
-  effective, // added 2026-11-02 v0.3.0
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] overlapSeconds, sceneHasSong, trackLength, // added 2026-11-03 v0.5.0  (overlapSeconds is deprecated)
-  sceneHasSong, trackLength, // added 2026-11-03 v0.5.0
-  // added 2026-11-03 v0.6.0: visible starts (Next/Prev/Loop), the real overlap of a continuing scene, locked timing
-  sceneAt, sceneOverlapAt, tailOverlapFrames, soundtrackLocked,
-  effectiveStart, MAX_SCENE_SECONDS, // added 2026-11-03 v0.6.0 review: rollLengths
-  dialogueSeconds, SECTION_KEYS, // added 2026-11-06 v0.9.0: captions and the inspector's summary
-  refClip, refTrimmed, refTokens, // added 2026-11-08 v0.14.0: reference clips on the lanes
+  FPS, sceneStarts, fmtTime, framesOf, nearestGridFrames, estimatePasses, findAsset, findCast, effectiveLoras,
+  overrideCount, sceneIndex, newId, assembledDuration, MIN_PASS_FRAMES, effective, sceneHasSong, trackLength,
+  sceneAt, sceneOverlapAt, tailOverlapFrames, soundtrackLocked, effectiveStart, MAX_SCENE_SECONDS, dialogueSeconds,
+  SECTION_KEYS, refClip, refTrimmed, refTokens, hiresSize, passLabel,
 } from "../model.js";
-import { hiresSize } from "../model.js"; // added 2026-11-10 v0.19.0: the monitor badge shows the film's size
-import { passLabel } from "../model.js"; // added 2026-11-10 v0.19.0: pass names in the tooltip
-import { passLayout, passTextsOf } from "../passes.js"; // added 2026-11-06 v0.9.0: the pass at the playhead
-// [OLD 2026-11-06 v0.8.0->v0.9.0] import { uploadFiles } from "./assets.js";  (only the asset bin used it)
-import { addGroup } from "./assets.js"; // added 2026-11-06 v0.9.0: the asset menu's "New group"
-// [OLD 2026-11-03 v0.5.1->v0.6.0] import { trackLanes, trackInspector, syncAudio, stopAudio, sceneVolume } from "./soundtrack.js"; // added 2026-11-03 v0.5.0
+import { passLayout, passTextsOf } from "../passes.js";
+import { addGroup } from "./assets.js";
 import {
-  trackLanes, trackInspector, syncAudio, stopAudio, sceneVolume, // added 2026-11-03 v0.5.0
-  deleteTrack, nearestBeat, showBeats, beatSnapOn, // added 2026-11-03 v0.6.0
-  monitorGain, // added 2026-11-06 v0.9.0: the monitor's volume and mute
+  trackLanes, trackInspector, syncAudio, stopAudio, sceneVolume,
+  deleteTrack, nearestBeat, showBeats, beatSnapOn,
+  monitorGain,
 } from "./soundtrack.js";
 
 const HEAD_W = 150;
@@ -44,7 +28,6 @@ const STATUS_LABEL = {
   rendering: "Rendering", locked: "Locked", error: "Failed", unknown: "Status unknown",
 };
 
-// added 2026-11-03 v0.5.0
 function trackLengthOf(p, t) {
   return trackLength(t, findAsset(p, t.asset));
 }
@@ -53,17 +36,7 @@ function zoomOf(ctx) {
   return ctx.p.ui.zoom || 22;
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] found scenes by [start, start + duration): a continuing scene's first frames lie inside
-   the scene before, so Next/Prev/Loop stayed on the old scene (review #7). model.sceneAt(project, t) uses the visible
-   ranges [visibleStart, start + duration) instead.
-function sceneAt(ctx, t) {
-  const { starts } = sceneStarts(ctx.p);
-  for (const s of ctx.p.scenes) if (t >= starts[s.id] && t < starts[s.id] + s.duration) return s;
-  return ctx.p.scenes[ctx.p.scenes.length - 1];
-}
-[/OLD] */
-
-// added 2026-11-03 v0.6.0: Roll instead of Ripple while a soundtrack sets the timing (Auto-roll, on unless turned off):
+// Roll instead of Ripple while a soundtrack sets the timing (Auto-roll, on unless turned off):
 // lengthening a scene takes the time from the next one, so every later scene (and its passes) stays on the song.
 export function autoRollOn(p) {
   return soundtrackLocked(p) && p.ui.autoRoll !== false;
@@ -72,29 +45,7 @@ function rolls(p) {
   return !p.ui.ripple || autoRollOn(p);
 }
 
-/* [OLD 2026-11-03 v0.6.0 review] kept d_i + d_(i+1): a tail overlap is capped by the lengths of the scenes on both
-   sides of its seam, so the overlaps changed and every later scene moved on the soundtrack
-// added 2026-11-03 v0.6.0: set a scene's length (Scene tab, timeline). When it rolls (Roll, or Auto-roll), the next
-// scene gives or takes the difference and keeps at least one frame. Returns the length set.
-export function setSceneDuration(ctx, id, d, { label = "Scene length", roll = rolls(ctx.p) } = {}) {
-  const p = ctx.p;
-  const i = sceneIndex(p, id);
-  if (i < 0) return 0;
-  const s = p.scenes[i], next = p.scenes[i + 1];
-  let frames = Math.max(1, framesOf(d));
-  if (roll && next) frames = Math.min(frames, framesOf(s.duration + next.duration) - 1);
-  const d1 = frames / FPS;
-  const d0 = s.duration, nextD0 = next?.duration;
-  ctx.actions.edit(q => {
-    const sc = q.scenes.find(x => x.id === id);
-    if (!sc) return;
-    sc.duration = d1;
-    if (roll && next) q.scenes.find(x => x.id === next.id).duration = Math.max(1 / FPS, Math.round((d0 + nextD0 - d1) * FPS) / FPS);
-  }, { label });
-  return d1;
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0 review: Roll keeps every later scene where it is. Scene i gets `frames`; the next scene gets
+// Roll keeps every later scene where it is. Scene i gets `frames`; the next scene gets
 // the length that keeps the start of the scene after it (sceneStarts; the film's end when the next scene is the last)
 // and, if it can, where that scene becomes visible. Tail overlaps are capped by the lengths on both sides of their
 // seam, so keeping the sum of the two lengths is not enough. Of the lengths that work, the one closest to keeping the
@@ -186,9 +137,9 @@ export function rollLengths(p, i, frames) {
   return { frames: cur, next: Math.max(1, Math.round(n0F)), nextDuration: next.duration, unchanged: true };
 }
 
-// added 2026-11-03 v0.6.0: set a scene's length (Scene tab, timeline). When it rolls (Roll, or Auto-roll), the next
+// Set a scene's length (Scene tab, timeline). When it rolls (Roll, or Auto-roll), the next
 // scene gives or takes the difference and keeps at least one frame. Returns the length set.
-// added 2026-11-03 v0.6.0 review: rolling uses rollLengths (every later scene keeps its start)
+// Rolling uses rollLengths (every later scene keeps its start)
 export function setSceneDuration(ctx, id, d, { label = "Scene length", roll = rolls(ctx.p) } = {}) {
   const p = ctx.p;
   const i = sceneIndex(p, id);
@@ -231,18 +182,10 @@ function monitorOf(ctx) {
   const badgeTR = h("span", { class: "rw-mon-badge tr mono", help: "timeline.monitor.format" });
   const badgeBL = h("span", { class: "rw-mon-badge bl mono" });
   const badgeBR = h("span", { class: "rw-mon-badge br" });
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] const el = h("div", { class: "rw-mon", help: "timeline.monitor" }, video, img, empty, h("div", { class: "rw-mon-safe" }), badgeTL, badgeTR, badgeBL, badgeBR);
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] const m = ctx.monitor = { el, video, img, empty, badgeTL, badgeTR, badgeBL, badgeBR, sceneId: null, src: "" };
-  // added 2026-11-06 v0.9.0: the spoken line is a caption at the bottom (it was the bottom-right badge), timed like the
-  // merge's .srt, and it follows the playhead while the film plays (m.overlay, called on every frame)
   const caption = h("div", { class: "rw-mon-cap", help: "timeline.monitor.caption" });
   badgeBR.style.display = "none";
   const el = h("div", { class: "rw-mon", help: "timeline.monitor" }, video, img, empty, h("div", { class: "rw-mon-safe" }), badgeTL, badgeTR, badgeBL, badgeBR, caption);
   const m = ctx.monitor = { el, video, img, empty, badgeTL, badgeTR, badgeBL, badgeBR, caption, capKey: null, sceneId: null, src: "" };
-  // added 2026-11-08 v0.13.0: full screen (Sencer: "add option to go full screen for preview video"). The monitor moves
-  // into m.fs, a box in the editor's root that re-renders never replace (the tab's own panels are rebuilt on every
-  // render, which would end full screen), with a bar: play/pause, time, scene, exit. Double-click or F toggles it;
-  // in full screen a click plays or pauses and Esc comes back.
   m.fsPlay = h("button", { type: "button", class: "rw-mon-fsbtn", help: "timeline.fullscreen.play", onClick: e => { e.stopPropagation(); togglePlay(ctx); } });
   m.fsTime = h("span", { class: "mono rw-mon-fstime" });
   m.fsTitle = h("span", { class: "rw-mon-fstitle rw-ellipsis" });
@@ -264,12 +207,9 @@ function monitorOf(ctx) {
     const take = ctx.starredTake(scene.id);
     const src = take?.files?.video ? viewURL(take.files.video) : "";
     if (m.sceneId !== scene.id || m.src !== src) {
-      // added 2026-11-08 v0.13.0: a new take of the scene that is playing (a render finished while the film played):
-      // it takes over at the same moment and keeps playing (before, the monitor stopped on its first frame)
       const resume = ctx.eph.playing && m.sceneId === scene.id && !!src;
       m.sceneId = scene.id;
       m.src = src;
-      // [OLD 2026-11-08 v0.12.0->v0.13.0] if (src) { video.src = src; video.style.display = ""; img.style.display = "none"; empty.style.display = "none"; }
       if (src) {
         video.src = src; video.style.display = ""; img.style.display = "none"; empty.style.display = "none";
         if (resume) {
@@ -301,30 +241,16 @@ function monitorOf(ctx) {
     badgeTL.className = "rw-mon-badge tl " + (src ? (status === "stale" ? "warn" : "ok") : "");
     badgeTL.dataset.help = src ? "timeline.monitor.take" : "timeline.monitor.storyboard";
     const g = ctx.p.global.output;
-    // [OLD 2026-11-10 v0.18.0->v0.19.0] badgeTR.textContent = `${g.width}×${g.height} · 24 fps`;
-    const [fw, fh] = hiresSize(ctx.p.global); // added 2026-11-10 v0.19.0: the film's size (Global → Hires)
+    const [fw, fh] = hiresSize(ctx.p.global);
     badgeTR.textContent = `${fw}×${fh} · 24 fps`;
-    /* [OLD 2026-11-06 v0.8.0->v0.9.0] set only when the monitor's scene was shown again (render, seek, a new scene), so
-       the line and the frame count stood still while the film played; the line was shown for 3.5 s whatever its length
-    const idx = sceneIndex(ctx.p, scene.id) + 1;
-    badgeBL.textContent = `${String(idx).padStart(2, "0")} · f ${Math.min(framesOf(local), framesOf(scene.duration))} / ${framesOf(scene.duration)}`;
-    const line = scene.dialogue.find(d => local >= d.t && local < d.t + 3.5);
-    const sp = line && findCast(ctx.p, line.speaker);
-    // [OLD 2026-11-02 v0.1.0->v0.2.0] badgeBR.textContent = line ? `${sp?.name || "?"} (${sp?.speaker || "S?"}): “${line.text}”` : "";  (speaker IDs are per clip now)
-    badgeBR.textContent = line ? `${sp?.name || "?"}: “${line.text}”` : "";
-    badgeBR.style.display = line ? "" : "none";
-    [/OLD] */
-    m.overlay(scene, local); // added 2026-11-06 v0.9.0
+    m.overlay(scene, local);
   };
-  // added 2026-11-06 v0.9.0: the frame count and the caption at `local` (scene time). Cheap: the DOM is touched only
-  // when the text changes. Off with the transport's CC button (ui.captions).
   m.overlay = (scene, local) => {
-    if (ctx.monFull) fullBar(ctx, scene); // added 2026-11-08 v0.13.0
+    if (ctx.monFull) fullBar(ctx, scene);
     const idx = sceneIndex(ctx.p, scene.id) + 1;
     const bl = `${String(idx).padStart(2, "0")} · f ${Math.min(framesOf(local), framesOf(scene.duration))} / ${framesOf(scene.duration)}`;
     if (badgeBL.textContent !== bl) badgeBL.textContent = bl;
-    // [OLD 2026-11-06 v0.9.0->v0.10.0] const line = ctx.p.ui.captions === false ? null : captionAt(ctx.p, scene, local);
-    const line = ctx.p.ui.captions === false ? null : captionAt(ctx.p, scene, local, speechOf(ctx, scene)); // added 2026-11-06 v0.10.0: timed to the speech
+    const line = ctx.p.ui.captions === false ? null : captionAt(ctx.p, scene, local, speechOf(ctx, scene));
     const key = line ? `${scene.id}|${line.id}|${line.speaker}|${line.text}` : "";
     if (key === m.capKey) return;
     m.capKey = key;
@@ -337,7 +263,7 @@ function monitorOf(ctx) {
   return m;
 }
 
-// added 2026-11-08 v0.13.0: the monitor full screen (see monitorOf)
+// The monitor full screen (see monitorOf)
 function enterFull(ctx) {
   const m = monitorOf(ctx);
   if (ctx.monFull) return;
@@ -380,7 +306,7 @@ function fullBar(ctx, scene) {
   if (m.fsTitle.textContent !== title) m.fsTitle.textContent = title;
 }
 
-// added 2026-11-06 v0.10.0: the lines of a scene timed to the speech of its starred take (POST /reelwright/speech, the
+// The lines of a scene timed to the speech of its starred take (POST /reelwright/speech, the
 // same timing as the merge's subtitles), cached per take and lines; null while it loads, without a take or speech, or
 // when Render -> Merge -> Subtitles is set to the planned times. When the answer comes, the captions use it.
 const speechCache = new WeakMap(); // ctx -> Map(key -> {state, byId})
@@ -409,13 +335,13 @@ function speechOf(ctx, scene) {
   return e.state === "ok" ? e.byId : null;
 }
 
-// added 2026-11-06 v0.9.0: a dialogue line as a caption, the way merge.py's subtitle_cues times the .srt: from its time
+// A dialogue line as a caption, the way merge.py's subtitle_cues times the .srt: from its time
 // for its own length (Scene tab), or for its reading time (0.6 s + 0.07 s a character, at least 1.2 s); never past the
 // next line's start or the scene's end. Empty lines are not captions.
 function cueText(d) {
   return String(d.text || "").replace(/\r\n?/g, "\n").split("\n").map(x => x.trim()).filter(Boolean).join("\n");
 }
-// added 2026-11-06 v0.10.0: with `timed` (speechOf: line id -> {t, end} in the take), a line is shown while its speech
+// With `timed` (speechOf: line id -> {t, end} in the take), a line is shown while its speech
 // lasts; lines the take's speech did not match keep their planned time
 function captionAt(p, scene, local, timed = null) {
   if (timed) {
@@ -442,8 +368,7 @@ function captionAt(p, scene, local, timed = null) {
 
 function setPlayhead(ctx, t, { seekVideo = true } = {}) {
   const { total } = sceneStarts(ctx.p);
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] t = Math.max(0, Math.min(total, t));
-  t = Number.isFinite(t) ? Math.max(0, Math.min(total, t)) : 0; // added 2026-11-03 v0.6.0: never NaN
+  t = Number.isFinite(t) ? Math.max(0, Math.min(total, t)) : 0;
   ctx.store.update(p => { p.ui.playhead = t; }, { history: false, plan: false, render: false, autosave: false });
   const refs = ctx.tl;
   const z = zoomOf(ctx);
@@ -452,27 +377,15 @@ function setPlayhead(ctx, t, { seekVideo = true } = {}) {
     refs.playheadLabel.textContent = fmtTime(t);
     refs.timecode.textContent = fmtTime(t);
   }
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const s = sceneAt(ctx, t);
   const s = sceneAt(ctx.p, t);
   const local = t - sceneStarts(ctx.p).starts[s.id];
   const m = monitorOf(ctx);
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] if (seekVideo) m.show(s, local);
-  if (seekVideo) m.show(s, local); else m.overlay(s, local); // added 2026-11-06 v0.9.0: the caption and frame count follow
-  nowAt(ctx, s, local); // added 2026-11-06 v0.9.0: the inspector's "at the playhead" line
+  if (seekVideo) m.show(s, local); else m.overlay(s, local);
+  nowAt(ctx, s, local);
   return { scene: s, local };
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] one animation frame for every editor on the page
-let raf = 0;
-export function stopPlayback(ctx) {
-  cancelAnimationFrame(raf);
-  raf = 0;
-  ctx.eph.playing = false;
-  if (ctx.monitor) ctx.monitor.video.pause();
-  stopAudio(); // added 2026-11-03 v0.5.0
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0: each editor has its own playback frame (ctx.play) and its own audio players
+// Each editor has its own playback frame (ctx.play) and its own audio players
 function playOf(ctx) {
   return ctx.play || (ctx.play = { raf: 0 });
 }
@@ -492,46 +405,6 @@ function pauseExcerpts(ctx) {
   for (const el of ctx.excerptPlayers || []) if (!el.paused) el.pause();
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] a loop over a rendered take wrapped the playhead but never seeked the video (so the
-   next frame jumped back); a deleted or undone playing scene gave a NaN playhead; one rAF for every editor
-function startPlayback(ctx) {
-  if (ctx.eph.playing) return;
-  const { total } = sceneStarts(ctx.p);
-  if (ctx.p.ui.playhead >= total - 1 / FPS) setPlayhead(ctx, 0);
-  ctx.eph.playing = true;
-  const m = monitorOf(ctx);
-  let last = performance.now();
-  let current = setPlayhead(ctx, ctx.p.ui.playhead);
-  m.video.volume = sceneVolume(ctx.p); // added 2026-11-03 v0.5.0: the scene level under the soundtrack
-  if (m.src) { m.video.currentTime = current.local; m.video.play().catch(() => {}); }
-  syncAudio(ctx, ctx.p.ui.playhead, true); // added 2026-11-03 v0.5.0
-  const loop = now => {
-    if (!ctx.eph.playing) return;
-    const dt = (now - last) / 1000;
-    last = now;
-    const { starts, total: tot } = sceneStarts(ctx.p);
-    let t;
-    if (m.src && !m.video.paused && m.sceneId === current.scene.id) t = starts[current.scene.id] + Math.min(m.video.currentTime, current.scene.duration);
-    else t = ctx.p.ui.playhead + dt;
-    const loopR = ctx.eph.loop;
-    if (loopR && t >= loopR.out) t = loopR.in;
-    if (t >= tot) { setPlayhead(ctx, tot); stopPlayback(ctx); ctx.render(); return; }
-    const before = current.scene.id;
-    const localEnd = t - starts[current.scene.id] >= current.scene.duration;
-    current = setPlayhead(ctx, t, { seekVideo: localEnd || current.scene.id !== sceneAt(ctx, t).id || !m.src });
-    if (current.scene.id !== before || localEnd) {
-      if (m.src) { m.video.currentTime = current.local; m.video.play().catch(() => {}); }
-    }
-    // added 2026-11-03 v0.5.0: soundtrack tracks follow the playhead; the take plays at the scene level
-    m.video.volume = sceneVolume(ctx.p);
-    syncAudio(ctx, t, true);
-    raf = requestAnimationFrame(loop);
-  };
-  raf = requestAnimationFrame(loop);
-  ctx.render();
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0
 function startPlayback(ctx) {
   if (ctx.eph.playing) return;
   const pl = playOf(ctx);
@@ -542,8 +415,7 @@ function startPlayback(ctx) {
   const m = monitorOf(ctx);
   let last = performance.now();
   let current = setPlayhead(ctx, ctx.p.ui.playhead);
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] m.video.volume = sceneVolume(ctx.p); // the scene level under the soundtrack
-  applyVolume(ctx); // added 2026-11-06 v0.9.0: the scene level under the soundtrack, times the monitor's volume
+  applyVolume(ctx);
   if (m.src) { m.video.currentTime = current.local; m.video.play().catch(() => {}); }
   syncAudio(ctx, ctx.p.ui.playhead, true);
   const loop = now => {
@@ -570,26 +442,24 @@ function startPlayback(ctx) {
       if (m.src) { m.video.currentTime = current.local; m.video.play().catch(() => {}); }
     }
     // soundtrack tracks follow the playhead; the take plays at the scene level
-    // [OLD 2026-11-06 v0.8.0->v0.9.0] m.video.volume = sceneVolume(ctx.p);
-    applyVolume(ctx); // added 2026-11-06 v0.9.0: times the monitor's volume
+    applyVolume(ctx);
     syncAudio(ctx, t, true, jump);
-    followPlayhead(ctx, t); // added 2026-11-05 v0.8.0
+    followPlayhead(ctx, t);
     pl.raf = requestAnimationFrame(loop);
   };
-  // added 2026-11-05 v0.8.0: pressing play follows the playhead again (see followPlayhead)
   Object.assign(pl, { follow: true, sl: null, prevPx: null });
   pl.raf = requestAnimationFrame(loop);
   ctx.render();
 }
 
-// added 2026-11-06 v0.9.0: the take's volume in the monitor: the scene level under the soundtrack times the monitor's own
+// The take's volume in the monitor: the scene level under the soundtrack times the monitor's own
 // volume (transport); the tracks get the monitor's volume in syncAudio
 function applyVolume(ctx) {
   const m = ctx.monitor;
   if (m) m.video.volume = Math.max(0, Math.min(1, sceneVolume(ctx.p) * monitorGain(ctx.p)));
 }
 
-// added 2026-11-05 v0.8.0: while the film plays, the lanes scroll so the playhead stays in the middle of the view
+// While the film plays, the lanes scroll so the playhead stays in the middle of the view
 // (the browser clamps it at the film's start and end). A manual scroll, wheel or drag pauses following (pl.follow =
 // false) until play is pressed again or the playhead reaches the middle of the view again. Only scrollLeft is set,
 // so a long film is rebuilt only when the view nears the edge of the lanes that were built (lanesScroll).
@@ -646,7 +516,7 @@ function togglePlay(ctx) {
 
 // ---- Keyboard ----
 
-// added 2026-11-04 v0.6.1: a letter shortcut is the letter key without Shift (Shift+S is not S; Caps Lock does not
+// A letter shortcut is the letter key without Shift (Shift+S is not S; Caps Lock does not
 // matter). The editor has already kept Ctrl/Cmd/Alt combinations away (editor.js plainKey).
 const letter = (e, ch) => !e.shiftKey && e.key.length === 1 && e.key.toLowerCase() === ch;
 
@@ -654,31 +524,19 @@ export function onKey(ctx, e) {
   const p = ctx.p;
   const k = e.key;
   if (k === " ") { togglePlay(ctx); return true; }
-  /* [OLD 2026-11-04 v0.6.0->v0.6.1] Shift+letter (and Ctrl/Cmd/Alt+letter) acted like the letter
-  if (k === "k" || k === "K") { stopPlayback(ctx); ctx.render(); return true; }
-  if (k === "l" || k === "L") { startPlayback(ctx); return true; }
-  if (k === "j" || k === "J") { setPlayhead(ctx, p.ui.playhead - 1); return true; }
-  [/OLD] */
-  if (letter(e, "k")) { stopPlayback(ctx); ctx.render(); return true; } // added 2026-11-04 v0.6.1: letter()
-  if (letter(e, "l")) { startPlayback(ctx); return true; } // added 2026-11-04 v0.6.1
-  if (letter(e, "j")) { setPlayhead(ctx, p.ui.playhead - 1); return true; } // added 2026-11-04 v0.6.1
+  if (letter(e, "k")) { stopPlayback(ctx); ctx.render(); return true; }
+  if (letter(e, "l")) { startPlayback(ctx); return true; }
+  if (letter(e, "j")) { setPlayhead(ctx, p.ui.playhead - 1); return true; }
   if (k === "ArrowLeft") { setPlayhead(ctx, p.ui.playhead - (e.shiftKey ? 1 : 1 / FPS)); return true; }
   if (k === "ArrowRight") { setPlayhead(ctx, p.ui.playhead + (e.shiftKey ? 1 : 1 / FPS)); return true; }
   if (k === "Home") { setPlayhead(ctx, 0); return true; }
   if (k === "End") { setPlayhead(ctx, sceneStarts(p).total); return true; }
-  /* [OLD 2026-11-04 v0.6.0->v0.6.1] Shift+letter acted like the letter
-  if (k === "i" || k === "I") { ctx.store.setEph({ loop: { in: p.ui.playhead, out: Math.max(p.ui.playhead + 0.5, ctx.eph.loop?.out ?? sceneStarts(p).total) } }); return true; }
-  if (k === "o" || k === "O") { ctx.store.setEph({ loop: { in: Math.min(ctx.eph.loop?.in ?? 0, p.ui.playhead - 0.5), out: p.ui.playhead } }); return true; }
-  if (k === "m" || k === "M") { addMarker(ctx); return true; }
-  [/OLD] */
-  if (letter(e, "i")) { ctx.store.setEph({ loop: { in: p.ui.playhead, out: Math.max(p.ui.playhead + 0.5, ctx.eph.loop?.out ?? sceneStarts(p).total) } }); return true; } // added 2026-11-04 v0.6.1
-  if (letter(e, "o")) { ctx.store.setEph({ loop: { in: Math.min(ctx.eph.loop?.in ?? 0, p.ui.playhead - 0.5), out: p.ui.playhead } }); return true; } // added 2026-11-04 v0.6.1
-  if (letter(e, "m")) { addMarker(ctx); return true; } // added 2026-11-04 v0.6.1
-  if (letter(e, "f")) { toggleFull(ctx); return true; } // added 2026-11-08 v0.13.0: the monitor full screen
+  if (letter(e, "i")) { ctx.store.setEph({ loop: { in: p.ui.playhead, out: Math.max(p.ui.playhead + 0.5, ctx.eph.loop?.out ?? sceneStarts(p).total) } }); return true; }
+  if (letter(e, "o")) { ctx.store.setEph({ loop: { in: Math.min(ctx.eph.loop?.in ?? 0, p.ui.playhead - 0.5), out: p.ui.playhead } }); return true; }
+  if (letter(e, "m")) { addMarker(ctx); return true; }
+  if (letter(e, "f")) { toggleFull(ctx); return true; }
   if (k === "+" || k === "=") { setZoom(ctx, zoomOf(ctx) * 1.25); return true; }
   if (k === "-") { setZoom(ctx, zoomOf(ctx) / 1.25); return true; }
-  // added 2026-11-03 v0.6.0: Delete removes what the inspector shows: a marker, a soundtrack track, else the scene
-  // (sceneKeys, which asks first)
   if (k === "Delete" || k === "Backspace") {
     const mk = ctx.eph.selectedMarker && p.markers.find(m => m.id === ctx.eph.selectedMarker);
     if (mk) { deleteMarker(ctx, mk); return true; }
@@ -688,7 +546,6 @@ export function onKey(ctx, e) {
   return false;
 }
 
-// added 2026-11-03 v0.6.0
 function deleteMarker(ctx, marker) {
   ctx.actions.edit(q => { q.markers = q.markers.filter(m => m.id !== marker.id); }, { label: "Delete marker" });
   ctx.store.setEph({ selectedMarker: null });
@@ -700,18 +557,6 @@ export function sceneKeys(ctx, e) {
   const s = ctx.scene;
   if (!s) return false;
   const k = e.key;
-  /* [OLD 2026-11-04 v0.6.0->v0.6.1] Shift+S / Shift+D / Shift+N (and Ctrl/Cmd/Alt with them) split, duplicated, added
-  if (k === "s" || k === "S") {
-    const { starts } = sceneStarts(ctx.p);
-    ctx.actions.splitScene(s.id, ctx.p.ui.playhead - starts[s.id]);
-    return true;
-  }
-  if (k === "d" || k === "D") { ctx.actions.duplicateScene(s.id); return true; }
-  if (k === "Delete" || k === "Backspace") { ctx.actions.deleteScene(s.id); return true; }
-  if (k === "n" || k === "N") { ctx.actions.addScene(s.id); return true; }
-  return false;
-  [/OLD] */
-  // added 2026-11-04 v0.6.1: letters without Shift only (letter())
   if (letter(e, "s")) {
     const { starts } = sceneStarts(ctx.p);
     ctx.actions.splitScene(s.id, ctx.p.ui.playhead - starts[s.id]);
@@ -725,66 +570,24 @@ export function sceneKeys(ctx, e) {
 
 function setZoom(ctx, z) {
   z = Math.max(4, Math.min(160, z));
-  if (ctx.play) ctx.play.sl = null; // added 2026-11-05 v0.8.0: a zoom moves the view; that is not a manual scroll
+  if (ctx.play) ctx.play.sl = null;
   ctx.store.update(p => { p.ui.zoom = Math.round(z * 10) / 10; }, { history: false, plan: false, autosave: false });
 }
 
 function addMarker(ctx) {
   const id = newId("m");
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] ctx.store.update(p => { p.markers.push({ id, t: p.ui.playhead, text: "Marker", color: "amber" }); });
   ctx.store.update(p => { p.markers.push({ id, t: p.ui.playhead, text: "Marker", color: "amber" }); }, { label: "Add marker" });
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] ctx.store.setEph({ selectedMarker: id });
-  ctx.store.setEph({ selectedMarker: id, selectedTrack: null }); // v0.6.0: the marker is what Delete removes now
+  ctx.store.setEph({ selectedMarker: id, selectedTrack: null });
 }
 
 // ---- Asset bin ----
-// [OLD 2026-11-06 v0.8.0->v0.9.0] the asset bin was removed from the Timeline tab (the Assets tab has all of it)
-// function renderBin(ctx) {
-//   const p = ctx.p;
-//   const groups = [["image", "Pictures", "pic"], ["video", "Videos", "vid"], ["audio", "Audio", "aud"]];
-//   const fileInput = h("input", {
-//     type: "file", multiple: true, accept: "image/*,video/*,audio/*", style: { display: "none" },
-//     onChange: e => uploadFiles(ctx, [...e.target.files]),
-//   });
-//   return h("div", { class: "rw-bin rw-panel" },
-//     h("div", { class: "rw-panel-head" }, h("b", null, "Asset bin"), h("span", { class: "mono rw-dim" }, p.assets.length),
-//       h("button", { type: "button", class: "rw-q", dataset: { more: "timeline.bin" }, help: "timeline.bin", "aria-label": "Help" }, "?"),
-//       h("span", { class: "rw-flex" }),
-//       button({ icon: "upload", help: "timeline.bin.upload", small: true, onClick: () => fileInput.click() }), fileInput),
-//     h("div", { class: "rw-bin-list", dataset: { scroll: "bin" } },
-//       p.assets.length === 0 && h("div", { class: "rw-empty sm", help: "timeline.bin" }, "Drop images, video or audio here, then drag them onto a scene."),
-//       groups.map(([kind, label, cls]) => {
-//         const items = p.assets.filter(a => a.kind === kind);
-//         if (!items.length) return null;
-//         return h("div", { class: "rw-bin-group" },
-//           h("div", { class: "rw-bin-label rw-c-" + cls }, icon(kind, 12), label, h("span", { class: "mono rw-dim" }, items.length)),
-//           items.map(a => h("div", {
-//             class: ["rw-bin-item", ctx.eph.selectedAsset === a.id && "on"], draggable: "true", help: "timeline.bin.item",
-//             onDragstart: e => { e.dataTransfer.setData("application/x-rw-asset", a.id); e.dataTransfer.effectAllowed = "copy"; },
-//             onClick: () => ctx.store.setEph({ selectedAsset: a.id }),
-//             onDblclick: () => { ctx.store.setEph({ selectedAsset: a.id }); ctx.actions.setTab("assets"); },
-//             menu: () => assetMenu(ctx, a), // added 2026-11-02 v0.3.0
-//           },
-//           kind === "image" ? h("img", { class: "rw-bin-thumb", src: viewURL(a.file, "input"), alt: "", loading: "lazy" }) : h("span", { class: "rw-bin-thumb rw-bg-" + cls + "-soft" }, icon(kind, 12)),
-//           h("b", { class: "mono rw-c-" + cls }, a.code), h("span", { class: "rw-ellipsis" }, a.name || a.file.split("/").pop()),
-//           a.duration ? h("span", { class: "mono rw-dim" }, a.duration.toFixed(1) + "s") : null)));
-//       })),
-//     h("div", {
-//       class: "rw-bin-drop", help: "timeline.bin.upload",
-//       onDragover: e => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.currentTarget.classList.add("over"); } },
-//       onDragleave: e => e.currentTarget.classList.remove("over"),
-//       onDrop: e => { e.preventDefault(); e.currentTarget.classList.remove("over"); uploadFiles(ctx, [...e.dataTransfer.files]); },
-//     }, icon("upload", 12), "Drop files to upload"));
-// }
-// [/OLD]
 
 // ---- Inspector ----
 
-const START_WORD = { fresh: "fresh", last_frame: "from the last frame", tail: "tail clip" }; // added 2026-11-09 v0.14.1: folded Details
+const START_WORD = { fresh: "fresh", last_frame: "from the last frame", tail: "tail clip" };
 
 function renderInspector(ctx) {
   const p = ctx.p;
-  // added 2026-11-03 v0.5.0: a soundtrack track selected on its lane
   const track = !ctx.eph.selectedMarker && p.soundtrack.find(t => t.id === ctx.eph.selectedTrack);
   if (track) return trackInspector(ctx, track, { playFrom: t => { stopPlayback(ctx); setPlayhead(ctx, t); startPlayback(ctx); } });
   const marker = p.markers.find(m => m.id === ctx.eph.selectedMarker);
@@ -795,20 +598,6 @@ function renderInspector(ctx) {
         button({ icon: "close", help: "common.close", variant: "ghost", small: true, onClick: () => ctx.store.setEph({ selectedMarker: null }) })),
       h("div", { class: "rw-form" },
         h("label", { class: "rw-field" }, h("span", { class: "rw-field-label", help: "timeline.marker.text" }, "Text"),
-          /* [OLD 2026-11-03 v0.5.1->v0.6.0] no history labels; the key was the same for every marker
-          h("input", { class: "rw-input", key: "marker-text", value: marker.text, help: "timeline.marker.text",
-            onChange: e => ctx.actions.edit(q => { q.markers.find(m => m.id === marker.id).text = e.target.value; }) })),
-        h("div", { class: "rw-field" }, h("span", { class: "rw-field-label", help: "timeline.marker.color" }, "Colour"),
-          segmented({ options: ["amber", "coral", "blue", "green", "pink"], value: marker.color, help: "timeline.marker.color", small: true,
-            onChange: v => ctx.actions.edit(q => { q.markers.find(m => m.id === marker.id).color = v; }) })),
-        h("div", { class: "rw-row" },
-          button({ label: "Jump to marker", icon: "marker", help: "timeline.marker.jump", onClick: () => setPlayhead(ctx, marker.t) }),
-          button({ label: "Delete marker", icon: "trash", help: "timeline.marker.delete", variant: "danger-ghost", onClick: () => {
-            ctx.actions.edit(q => { q.markers = q.markers.filter(m => m.id !== marker.id); });
-            ctx.store.setEph({ selectedMarker: null });
-          } }))));
-          [/OLD] */
-          // added 2026-11-03 v0.6.0
           h("input", { class: "rw-input", key: "marker-text-" + marker.id, value: marker.text, help: "timeline.marker.text",
             onChange: e => ctx.actions.edit(q => { const m = q.markers.find(x => x.id === marker.id); if (m) m.text = e.target.value; }, { label: "Marker text" }) })),
         h("div", { class: "rw-field" }, h("span", { class: "rw-field-label", help: "timeline.marker.color" }, "Colour"),
@@ -834,34 +623,6 @@ function renderInspector(ctx) {
       h("span", { class: ["rw-status", "st-" + status], help: "status." + status }, h("span", { class: "rw-led" }), STATUS_LABEL[status] || status),
       h("span", { class: "rw-flex" }),
       button({ label: "Open in Scene tab", icon: "chevRight", help: "timeline.inspector.open", variant: "link", small: true, onClick: () => ctx.actions.setTab("scene") })),
-    /* [OLD 2026-11-09 v0.14.0->v0.14.1] the details, summary, chips and prompt could not be folded
-    h("div", { class: "rw-kv-grid" },
-      h("div", { class: "rw-kv", help: "timeline.inspector.duration" }, h("span", null, "Duration"),
-        h("b", { class: "mono" }, s.duration.toFixed(2) + " s ", h("small", null, framesOf(s.duration) + " f"))),
-      h("div", { class: "rw-kv", help: "timeline.inspector.passes" }, h("span", null, "Generation"),
-        h("b", null, passes > 1 ? `${passes} passes` : est.short ? `1 pass · trimmed from ${(MIN_PASS_FRAMES / FPS).toFixed(2)} s` : "1 pass")),
-      h("div", { class: "rw-kv", help: "timeline.inspector.overrides" }, h("span", null, "Overrides"),
-        h("b", null, overrideCount(s) ? h("span", { class: "rw-c-accent" }, "● " + overrideCount(s)) : h("span", { class: "rw-dim" }, "none")))),
-    h("div", { class: "rw-field", help: "scene.start" }, h("span", { class: "rw-field-label" }, "Starts from"),
-      segmented({
-        small: true, value: s.start.mode, help: "scene.start",
-        options: [
-          { value: "fresh", label: "Fresh", icon: "cut", help: "scene.start.fresh" },
-          { value: "last_frame", label: "Last frame", icon: "link", help: "scene.start.last_frame" },
-          { value: "tail", label: "Tail clip", icon: "tail", help: "scene.start.tail" },
-        ],
-        onChange: v => {
-          if (v !== "fresh" && !prev) { ctx.actions.toast("The first scene has nothing to continue from.", "warn"); return; }
-          ctx.actions.editScene(s.id, sc => { sc.start.mode = v; });
-        },
-      })),
-    summaryBlock(ctx, s), // added 2026-11-06 v0.9.0: the scene's summary and what is on screen at the playhead
-    h("div", { class: "rw-chips" }, refChips(ctx, s)),
-    h("pre", { class: "rw-prompt-preview mono", help: "timeline.inspector.prompt", html: prompt ? highlightHTML(prompt) : "" },
-      prompt ? null : h("span", { class: "rw-dim" }, ctx.eph.backend === "online" ? "The prompt preview appears once the scene has a prompt." : "Prompt preview needs the Reelwright backend (start ComfyUI with the node installed).")),
-    [/OLD] */
-    // added 2026-11-09 v0.14.1: every part folds (Sencer: "make every section under every tab collapsible"); a folded
-    // part shows a short summary on its line
     foldBlock({
       ctx, id: "tl.details", label: "Details", help: "timeline.inspector.details",
       summary: `${s.duration.toFixed(2)} s · ${passes > 1 ? passes + " passes" : "1 pass"} · ${START_WORD[s.start.mode] || s.start.mode}`,
@@ -910,7 +671,7 @@ function renderInspector(ctx) {
       toggle({ value: s.lock, label: "Lock take", help: "scene.lock", onChange: v => ctx.actions.editScene(s.id, sc => { sc.lock = v; }) })));
 }
 
-// added 2026-11-06 v0.9.0: the inspector's summary: the scene's summary (in a scene of several passes, the whole-scene
+// The inspector's summary: the scene's summary (in a scene of several passes, the whole-scene
 // note), then the pass, shot and spoken line at the playhead, which follow the playhead while the film plays (nowAt)
 function summaryBlock(ctx, s) {
   const p = ctx.p;
@@ -920,21 +681,10 @@ function summaryBlock(ctx, s) {
   const txt = (raw ? s.prompt.raw : s.prompt.sections.summary || "").trim();
   const now = h("div", { class: "rw-insp-now", help: "timeline.inspector.now" });
   ctx.tl = ctx.tl || {};
-  // [OLD 2026-11-09 v0.14.0->v0.14.1] Object.assign(ctx.tl, { now, nowScene: s.id, nowPlan: plan, nowTexts: multi ? passTextsOf(p, s, plan).texts : null, nowKey: null });
-  // added 2026-11-09 v0.14.1: the summary folds; folded, "at the playhead" is not built or kept up to date
   const folded = !!p.ui?.collapsed?.["tl.summary"];
   Object.assign(ctx.tl, { now: folded ? null : now, nowScene: s.id, nowPlan: plan, nowTexts: multi && !folded ? passTextsOf(p, s, plan).texts : null, nowKey: null });
   const { starts } = sceneStarts(p);
   nowAt(ctx, sceneAt(p, p.ui.playhead), p.ui.playhead - (starts[sceneAt(p, p.ui.playhead).id] ?? 0));
-  /* [OLD 2026-11-09 v0.14.0->v0.14.1] the summary could not be folded
-  return h("div", { class: "rw-insp-sum" },
-    h("div", { class: "rw-insp-label", help: multi && !raw ? "scene.prompt.sceneNote" : "timeline.inspector.summary" },
-      raw ? "Raw prompt" : multi ? `Scene note · ${plan.passes.length} passes` : "Summary"),
-    txt ? h("div", { class: "rw-insp-text", help: "timeline.inspector.summary" }, txt)
-      : h("div", { class: "rw-insp-text rw-dim", help: "timeline.inspector.summary" }, raw ? "No raw prompt yet." : "No summary yet: write one in the Scene tab, or let Write prompts do it."),
-    now);
-  [/OLD] */
-  // added 2026-11-09 v0.14.1: a folded summary shows its start on its line
   const short = txt.replace(/\s+/g, " ");
   return foldBlock({
     ctx, id: "tl.summary", cls: "rw-insp-sum", help: multi && !raw ? "scene.prompt.sceneNote" : "timeline.inspector.summary",
@@ -947,7 +697,7 @@ function summaryBlock(ctx, s) {
   });
 }
 
-// added 2026-11-06 v0.9.0: fill the inspector's "at the playhead" line (called by setPlayhead on every frame while
+// Fill the inspector's "at the playhead" line (called by setPlayhead on every frame while
 // playing, so the DOM is touched only when what it shows changes)
 function nowAt(ctx, scene, local) {
   const tl = ctx.tl;
@@ -967,8 +717,7 @@ function nowAt(ctx, scene, local) {
   const k = plan && plan.passes.length > 1 ? Math.max(0, plan.passes.findIndex((ps, i) => local < ps.end || i === plan.passes.length - 1)) : -1;
   let shot = null, n = 0;
   for (let i = 0; i < s.shots.length; i++) if (s.shots[i].t <= local + 1e-6) { shot = s.shots[i]; n = i + 1; }
-  // [OLD 2026-11-06 v0.9.0->v0.10.0] const line = captionAt(p, s, local);
-  const line = captionAt(p, s, local, speechOf(ctx, s)); // added 2026-11-06 v0.10.0: timed to the speech
+  const line = captionAt(p, s, local, speechOf(ctx, s));
   const key = [k, shot?.id, shot?.text, shot?.camera, line?.id, line?.text].join("|");
   if (key === tl.nowKey) return;
   tl.nowKey = key;
@@ -977,9 +726,7 @@ function nowAt(ctx, scene, local) {
   if (k >= 0) {
     const ps = plan.passes[k];
     const own = tl.nowTexts?.[k]?.summary?.trim();
-    // [OLD 2026-11-10 v0.18.0->v0.19.0] rows.push(h("div", null, h("b", null, `Pass ${k + 1} of ${plan.passes.length}`), h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)}`),
-    // [OLD 2026-11-10 v0.19.0 bug search] rows.push(h("div", null, h("b", null, `${passLabel(s, k + 1)} (of ${plan.passes.length})`), h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)}`), // v0.19.0: its name
-    rows.push(h("div", null, h("b", null, passLabel(s, k + 1, plan.passes.length)), h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)}`), // v0.19.0: "Pass 2 of 3 · name"
+    rows.push(h("div", null, h("b", null, passLabel(s, k + 1, plan.passes.length)), h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)}`),
       own ? h("span", null, " · " + clip(own, 160)) : h("span", { class: "rw-dim" }, " · summary made from its shots")));
   }
   if (shot) rows.push(h("div", null, h("b", null, `Shot ${n}`), shot.camera ? h("span", { class: "rw-dim" }, ` · ${clip(shot.camera, 40)}`) : null, shot.text ? " · " + clip(shot.text, 180) : ""));
@@ -1000,25 +747,19 @@ function refChips(ctx, s) {
     if (!a) continue;
     const kind = a.kind === "image" ? "pic" : a.kind === "video" ? "vid" : "aud";
     const what = r.role === "keyframe" ? `keyframe @ ${fmtTime(r.time)}` : r.role === "reference" ? (r.retention || a.defaults.retention) : r.role;
-    // [OLD 2026-11-08 v0.13.1->v0.14.0] out.push(chip({ code: a.code, label: (a.name || "").slice(0, 18) + " · " + what, kind, help: "timeline.chip.ref" }));
-    // added 2026-11-08 v0.14.0: a clip shows its tag (V1.2) and the part of the file
     const tok = (refTokens(p, s)[r.id] || "@" + a.code).slice(1);
     const c = a.kind !== "image" && refTrimmed(r) ? refClip(r, a) : null;
     const part = c ? ` · ${fmtTime(c.start, false)}–${c.end !== null ? fmtTime(c.end, false) : "end"}` : "";
     out.push(chip({ code: tok, label: (a.name || "").slice(0, 18) + part + " · " + what, kind, help: "timeline.chip.ref" }));
   }
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] if (s.start.mode === "tail") out.push(chip({ code: "TAIL", label: `${s.start.overlap_frames} f of previous`, kind: "vid", help: "scene.start.tail" }));
-  // added 2026-11-03 v0.6.0: the overlap it really gets (capped by both scenes' lengths), or that it is re-anchored
   const si = sceneIndex(p, s.id);
   if (si > 0 && s.start.mode === "tail") {
     const f = tailOverlapFrames(p, si);
     out.push(f > 0 ? chip({ code: "TAIL", label: `${f} f of previous`, kind: "vid", help: "scene.start.tail" })
       : chip({ code: "TAIL", label: "last frame only (re-anchored)", kind: "vid", help: "scene.start.effective" }));
   }
-  // added 2026-11-03 v0.5.0: the part of the soundtrack each pass covers
   if (sceneHasSong(p, s)) out.push(chip({ code: "SONG", label: "soundtrack · lips and cuts follow it", kind: "aud", help: "timeline.chip.song" }));
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] if (!out.length) out.push(h("span", { class: "rw-dim", help: "timeline.chip.none" }, "No references yet: drag assets from the bin onto the scene."));
-  if (!out.length) out.push(h("span", { class: "rw-dim", help: "timeline.chip.none" }, "No references yet: add them in the Scene tab.")); // added 2026-11-06 v0.9.0: no asset bin
+  if (!out.length) out.push(h("span", { class: "rw-dim", help: "timeline.chip.none" }, "No references yet: add them in the Scene tab."));
   return out;
 }
 
@@ -1032,27 +773,6 @@ function renderTransport(ctx) {
   ctx.tl.timecode = timecode;
   const loop = ctx.eph.loop;
   return h("div", { class: "rw-transport rw-panel" },
-    /* [OLD 2026-11-03 v0.5.1->v0.6.0] by frame 0 of each scene: a continuing scene's frame 0 lies inside the scene before,
-       so Next/Prev/Loop stayed there (review #7)
-    button({ icon: "prev", help: "timeline.transport.prev", variant: "ghost", onClick: () => {
-      const { starts } = sceneStarts(p);
-      const s = sceneAt(ctx, p.ui.playhead);
-      const i = sceneIndex(p, s.id);
-      const t = p.ui.playhead - starts[s.id] > 0.25 || i === 0 ? starts[s.id] : starts[p.scenes[i - 1].id];
-      setPlayhead(ctx, t);
-    } }),
-    button({ icon: ctx.eph.playing ? "pause" : "play", help: "timeline.transport.play", variant: "solid", onClick: () => togglePlay(ctx) }),
-    button({ icon: "next", help: "timeline.transport.next", variant: "ghost", onClick: () => {
-      const { starts } = sceneStarts(p);
-      const i = sceneIndex(p, sceneAt(ctx, p.ui.playhead).id);
-      const n = p.scenes[i + 1];
-      setPlayhead(ctx, n ? starts[n.id] : total);
-    } }),
-    button({ icon: "refresh", help: "timeline.transport.loop", variant: loop ? "accent-ghost" : "ghost", onClick: () => {
-      ctx.store.setEph({ loop: loop ? null : (() => { const s = sceneAt(ctx, p.ui.playhead); const st = sceneStarts(p).starts[s.id]; return { in: st, out: st + s.duration }; })() });
-    } }),
-    [/OLD] */
-    // added 2026-11-03 v0.6.0: every jump goes to where a scene first shows new content (its visible start)
     button({ icon: "prev", help: "timeline.transport.prev", variant: "ghost", onClick: () => {
       const q = ctx.p;
       const { visible } = sceneStarts(q);
@@ -1075,20 +795,17 @@ function renderTransport(ctx) {
     } }),
     timecode, h("span", { class: "mono rw-dim" }, "/ " + fmtTime(total)),
     loop && h("span", { class: "mono rw-loop-label", help: "timeline.transport.loop" }, `loop ${fmtTime(loop.in, false)}–${fmtTime(loop.out, false)}`),
-    // added 2026-11-05 v0.8.0: following the playhead was paused by a scroll or drag; click to follow again
     ctx.eph.playing && ctx.play && ctx.play.follow === false && button({ label: "Follow", icon: "eye", small: true, variant: "accent-ghost", key: "tl-follow",
       help: "timeline.follow", extra: null, onClick: () => resumeFollow(ctx) }),
     h("span", { class: "rw-flex" }),
-    // added 2026-11-08 v0.13.0: the monitor full screen (also: double-click it, or F)
     button({ icon: "expand", small: true, variant: ctx.monFull ? "accent-ghost" : "ghost", key: "tl-full", help: "timeline.fullscreen", onClick: () => toggleFull(ctx) }),
-    // added 2026-11-06 v0.9.0: captions on/off, and the monitor's volume (the merge never reads either)
     button({ label: "CC", small: true, variant: p.ui.captions === false ? "ghost" : "accent-ghost", key: "tl-cc", help: "timeline.captions",
       onClick: () => { ctx.store.update(q => { q.ui.captions = q.ui.captions === false; }, { history: false, plan: false, autosave: false }); } }),
     volumeControl(ctx),
     h("span", { class: "rw-dim", help: "timeline.transport.cut" }, "cut " + fmtTime(assembledDuration(p))));
 }
 
-// added 2026-11-06 v0.9.0: mute button and volume slider of the monitor (ui.mon_muted, ui.mon_volume 0–1). Dragging the
+// Mute button and volume slider of the monitor (ui.mon_muted, ui.mon_volume 0–1). Dragging the
 // slider changes the sound at once without redrawing the tab (a redraw would take the slider from under the pointer).
 function volumeControl(ctx) {
   const p = ctx.p;
@@ -1115,10 +832,7 @@ function pickStep(z) {
   return 300;
 }
 
-// [OLD 2026-11-03 v0.4.3->v0.5.0] function laneHead(label, ic, cls, help, extra) {
-// [OLD 2026-11-03 v0.4.3->v0.5.0]   return h("div", { class: "rw-lane-head", help }, icon(ic, 13), h("span", { class: "rw-lane-name rw-c-" + cls }, label), h("span", { class: "rw-flex" }), extra);
-// [OLD 2026-11-03 v0.4.3->v0.5.0] }
-// onClick: added 2026-11-03 v0.5.0 (a soundtrack lane's head selects its track)
+// onClick: (a soundtrack lane's head selects its track)
 function laneHead(label, ic, cls, help, extra, onClick) {
   return h("div", { class: ["rw-lane-head", onClick && "click"], help, onClick }, icon(ic, 13), h("span", { class: "rw-lane-name rw-c-" + cls }, label), h("span", { class: "rw-flex" }), extra);
 }
@@ -1152,46 +866,19 @@ function renderLanes(ctx) {
   const p = ctx.p;
   const z = zoomOf(ctx);
   const { starts, total } = sceneStarts(p);
-  // [OLD 2026-11-03 v0.4.3->v0.5.0] const width = Math.max(total * z + 160, 600);
-  // added 2026-11-03 v0.5.0: a soundtrack can run past the last scene; the lanes show it all
   const trackEnd = Math.max(0, ...p.soundtrack.map(t => t.loop ? 0 : t.start + trackLengthOf(p, t)));
   const width = Math.max(Math.max(total, trackEnd) * z + 160, 600);
-  // added 2026-11-03 v0.5.0: a continuing scene begins inside the one before (the repeated tail or last frame);
-  // its block and lane bars start where it becomes visible
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const ov = (s, i) => (i > 0 ? overlapSeconds(s) : 0);
-  // added 2026-11-03 v0.6.0: the real overlap (model.sceneOverlapAt: capped by the scene before, re-anchored tails
-  // repeat one frame), read from the memoised timing in O(1)
   const { visible } = sceneStarts(p);
   const ov = s => visible[s.id] - starts[s.id];
-  // added 2026-11-03 v0.6.0: only what is near the view is built (a long film has thousands of bars; building and
-  // laying them all out cost 200+ ms per render at 300 scenes). Scrolling past the built part renders again.
   const vis = laneWindow(ctx, width);
   const near = (left, w = 0) => left + w >= vis.from && left <= vis.to;
   const lazyTiles = []; // waveform tiles, painted when they scroll into view
-  const camNames = new Map((p.camera_presets || []).map(c => [c.text, c.name])); // added 2026-11-05 v0.8.0: camera lane labels
+  const camNames = new Map((p.camera_presets || []).map(c => [c.text, c.name]));
   const step = pickStep(z);
   const selectScene = id => () => ctx.actions.select(id);
 
   // Ruler
-  /* [OLD 2026-11-02 v0.3.2->v0.3.3] press-and-drag scrubbed the playhead with window listeners; when ComfyUI swallowed the
-     pointerup the listener stayed and the playhead followed the mouse over the node
-  const ruler = h("div", {
-    class: "rw-ruler-lane", style: { width: width + "px", "background-size": `${z}px 6px` }, help: "timeline.ruler",
-    onPointerdown: e => {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const go = ev => setPlayhead(ctx, (ev.clientX - rect.left) / z);
-      go(e);
-      const move = ev => go(ev);
-      const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
-    },
-  });
-  [/OLD] */
-  // added 2026-11-02 v0.3.3: clicks and drags on the ruler are handled by lanesPointerdown (click = playhead, drag = pan)
   const ruler = h("div", { class: "rw-ruler-lane", style: { width: width + "px", "background-size": `${z}px 6px` }, help: "timeline.ruler" });
-  // [OLD 2026-11-03 v0.4.3->v0.5.0] for (let t = 0; t <= total + step; t += step) {
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] for (let t = 0; t <= Math.max(total, trackEnd) + step; t += step) {
   for (let t = Math.max(0, Math.floor(vis.from / z / step) * step); t <= Math.min(Math.max(total, trackEnd) + step, vis.to / z + step); t += step) {
     ruler.append(h("span", { class: "rw-tick", style: { left: t * z + "px" } }), h("span", { class: "rw-tick-label mono", style: { left: t * z + 4 + "px" } }, fmtTime(t, false)));
   }
@@ -1206,16 +893,13 @@ function renderLanes(ctx) {
 
   // Scenes
   const scenesLane = h("div", { class: "rw-lane-body scenes", style: { width: width + "px" } });
-  // [OLD 2026-11-03 v0.4.3->v0.5.0] p.scenes.forEach((s, i) => scenesLane.append(sceneBlock(ctx, s, i, starts[s.id], z)));
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] p.scenes.forEach((s, i) => scenesLane.append(sceneBlock(ctx, s, i, starts[s.id], z, ov(s, i))));
   p.scenes.forEach((s, i) => { if (near(starts[s.id] * z, s.duration * z)) scenesLane.append(sceneBlock(ctx, s, i, starts[s.id], z, ov(s, i))); });
   p.scenes.forEach((s, i) => {
     if (i === 0) return;
-    if (!near(visible[s.id] * z - 12, 24)) return; // added 2026-11-03 v0.6.0
+    if (!near(visible[s.id] * z - 12, 24)) return;
     const mode = s.start.mode;
     const ic = mode === "fresh" ? "cut" : mode === "tail" ? "tail" : "link";
     scenesLane.append(h("button", {
-      // [OLD 2026-11-03 v0.4.3->v0.5.0] type: "button", class: ["rw-join", "j-" + mode], style: { left: starts[s.id] * z - 11 + "px" }, help: "timeline.join." + mode,
       type: "button", class: ["rw-join", "j-" + mode], style: { left: (starts[s.id] + ov(s, i)) * z - 11 + "px" }, help: "timeline.join." + mode,
       "aria-label": "Change how this scene starts",
       onClick: e => {
@@ -1241,39 +925,23 @@ function renderLanes(ctx) {
   const allLines = p.scenes.flatMap(s => s.dialogue.map(d => ({ s, d, x: (starts[s.id] + d.t) * z }))).sort((a, b) => a.x - b.x);
   allLines.forEach((it, k) => {
     const next = allLines[k + 1]?.x ?? Infinity;
-    if (!near(it.x, Math.min(Math.max(28, next - it.x), 2000))) return; // added 2026-11-03 v0.6.0: far from the view
+    if (!near(it.x, Math.min(Math.max(28, next - it.x), 2000))) return;
     const c = findCast(p, it.d.speaker);
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] const c = findCast(p, it.d.speaker);  (moved after the view check)
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] const next = allLines[k + 1]?.x ?? Infinity;  (moved up)
     dlg.append(h("span", {
       class: "rw-dlg", style: { left: it.x + "px", "max-width": Math.max(28, next - it.x - 4) + "px" }, help: "timeline.lane.dialogue", onClick: selectScene(it.s.id),
-    /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are per clip now
-    }, h("b", { class: "mono" }, (it.d.language || "").slice(0, 2).toUpperCase()), ` ${c?.name || "?"} (${c?.speaker || "S?"}) “${it.d.text}”`));
-    [/OLD] */
-    /* [OLD 2026-11-06 v0.9.0->v0.10.0] a cut-off line had no way to read it in full
-    }, h("b", { class: "mono" }, (it.d.language || "").slice(0, 2).toUpperCase()), ` ${c?.name || "?"} “${it.d.text}”`));
-    [/OLD] */
-    // added 2026-11-06 v0.10.0: the whole line, who says it, how and when, in the tooltip (and right-click → Copy text)
       detail: `${c?.name || "?"}${it.d.delivery ? ` (${it.d.delivery})` : ""}: “${String(it.d.text || "").trim()}”\n${it.s.title} · ${fmtTime(it.d.t)}${it.d.language ? " · " + it.d.language : ""}`,
       dataset: { copy: String(it.d.text || "").trim() },
     }, h("b", { class: "mono" }, (it.d.language || "").slice(0, 2).toUpperCase()), ` ${c?.name || "?"} “${it.d.text}”`));
   });
 
-  // [OLD 2026-11-03 v0.4.3->v0.5.0] for (const s of p.scenes) {
-  // [OLD 2026-11-03 v0.4.3->v0.5.0]   const x0 = starts[s.id] * z;
-  // [OLD 2026-11-03 v0.4.3->v0.5.0]   const w = s.duration * z;
   p.scenes.forEach((s, si) => {
-    // added 2026-11-03 v0.5.0: x0 is the scene's frame 0 (times inside the scene count from it); bars that span the
-    // scene start at vx0, where it becomes visible in the cut, and are w wide
     const x00 = starts[s.id] * z;
     const x0 = x00 + ov(s, si) * z;
     const w = (s.duration - ov(s, si)) * z;
-    if (!near(x00, s.duration * z)) return; // added 2026-11-03 v0.6.0: far from the view
-    // added 2026-11-03 v0.6.0: how it really starts (a re-anchored tail continues from the last frame only)
+    if (!near(x00, s.duration * z)) return;
     const eff = si === 0 ? "fresh" : ov(s, si) * FPS > 1.5 ? "tail" : ov(s, si) > 0 ? "last_frame" : "fresh";
-    // [OLD 2026-11-08 v0.13.1->v0.14.0] const picItems = [], audItems = [];
-    const picItems = [], audItems = [], vidItems = []; // added 2026-11-08 v0.14.0: video clips in rows too
-    const tokens = refTokens(p, s); // added 2026-11-08 v0.14.0
+    const picItems = [], audItems = [], vidItems = [];
+    const tokens = refTokens(p, s);
     const anchored = s.cast.map(sc => findCast(p, sc.id)).filter(c => c?.anchors.length);
     if (anchored.length) picItems.push({ left: x0 + 3, width: w - 6, cls: "pic soft", label: anchored.map(c => c.name).join(" · ") + " · anchors", help: "timeline.lane.castAnchors", onClick: selectScene(s.id) });
     for (const sc of s.cast) {
@@ -1289,21 +957,10 @@ function renderLanes(ctx) {
         if (r.role === "reference") picItems.push({ left: x0 + 3, width: w - 6, cls: "pic", code: a.code, label: `${a.name || ""} · ${ret}`, help: "timeline.lane.picRef", onClick: selectScene(s.id) });
         else {
           const t = r.role === "first_frame" ? 0 : r.role === "last_frame" ? s.duration : Math.min(r.time, s.duration);
-          // [OLD 2026-11-03 v0.4.3->v0.5.0] pics.append(diamond(x0 + t * z, "pic", "timeline.lane.keyframe." + r.role));
-          // [OLD 2026-11-03 v0.4.3->v0.5.0] const left = Math.min(x0 + t * z + 8, x0 + w - 40);
           pics.append(diamond(x00 + t * z, "pic", "timeline.lane.keyframe." + r.role));
           const left = Math.min(x00 + t * z + 8, x0 + w - 40);
           picItems.push({ left, width: Math.max(34, Math.min(110, x0 + w - 3 - left)), cls: "pic", code: a.code, label: r.role === "keyframe" ? "@ " + fmtTime(r.time) : r.role.replace("_", " "), help: "timeline.lane.keyframe." + r.role, onClick: selectScene(s.id) });
         }
-      /* [OLD 2026-11-08 v0.13.1->v0.14.0] the whole file's length, every video bar on one row
-      } else if (a.kind === "video") {
-        vids.append(bar({ left: x0 + 3, width: Math.min(w - 6, (a.duration || 2) * z), cls: "vid", code: a.code, label: `${a.name || ""} · ${a.category || r.role}`, help: "timeline.lane.vidRef", onClick: selectScene(s.id) }));
-        if (r.soundtrack) audItems.push({ left: x0 + 3, width: Math.min(w - 6, (a.duration || 2) * z), cls: "aud soft", code: a.code, label: "soundtrack", help: "timeline.lane.soundtrack", onClick: selectScene(s.id) });
-      } else {
-        audItems.push({ left: x0 + 3, width: Math.min(w - 6, (a.duration || 2) * z), cls: "aud", code: a.code, label: `${a.name || ""} · ${ret}`, help: "timeline.lane.audRef", onClick: selectScene(s.id) });
-      }
-      [/OLD] */
-      // added 2026-11-08 v0.14.0: each reference as its clip (From / To): its length, its @ tag and the part of the file
       } else {
         const c = refClip(r, a);
         const len = Math.min(w - 6, Math.max(1, (c.seconds ?? 2) * z));
@@ -1317,27 +974,17 @@ function renderLanes(ctx) {
         }
       }
     }
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] if (s.start.mode === "last_frame") pics.append(diamond(x0, "pic", "timeline.lane.lastFrameAuto", true));
     if (eff === "last_frame") pics.append(diamond(x0, "pic", "timeline.lane.lastFrameAuto", true));
-    // [OLD 2026-11-03 v0.4.3->v0.5.0] if (s.start.mode === "tail") vids.append(bar({ left: x0, width: (s.start.overlap_frames / FPS) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
-    // added 2026-11-03 v0.5.0: the tail clip is the end of the scene before, so it sits under that scene's end
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] if (s.start.mode === "tail" && si > 0) vids.append(bar({ left: x00, width: ov(s, si) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
     if (eff === "tail") vids.append(bar({ left: x00, width: ov(s, si) * z, cls: "vid", label: "tail", hatch: true, help: "scene.start.tail" }));
     placeRows(picItems, 2).forEach(it => pics.append(bar({ ...it, rows: 2 })));
     placeRows(audItems, 2).forEach(it => auds.append(bar({ ...it, rows: 2 })));
-    placeRows(vidItems, 2).forEach(it => vids.append(bar({ ...it, rows: 2 }))); // added 2026-11-08 v0.14.0
+    placeRows(vidItems, 2).forEach(it => vids.append(bar({ ...it, rows: 2 })));
     s.shots.forEach((sh, k) => {
-      // [OLD 2026-11-05 v0.7.0->v0.8.0] if (!sh.camera) return;
-      if (!sh.camera && !sh.framing) return; // added 2026-11-05 v0.8.0: a framing alone is shown too
+      if (!sh.camera && !sh.framing) return;
       const end = s.shots[k + 1]?.t ?? s.duration;
-      // [OLD 2026-11-03 v0.4.3->v0.5.0] cam.append(h("span", { class: "rw-cam", style: { left: x0 + sh.t * z + 3 + "px", "max-width": Math.max(24, (end - sh.t) * z - 6) + "px" }, help: "timeline.lane.camera", onClick: selectScene(s.id) }, sh.camera));
-      const from = Math.max(sh.t, ov(s, si)); // added 2026-11-03 v0.5.0
-      // [OLD 2026-11-05 v0.7.0->v0.8.0] cam.append(h("span", { class: "rw-cam", style: { left: x00 + from * z + 3 + "px", "max-width": Math.max(24, (end - from) * z - 6) + "px" }, help: "timeline.lane.camera", onClick: selectScene(s.id) }, sh.camera));
-      // added 2026-11-05 v0.8.0: framing · move (the preset's name for a preset's words) · amplitude and speed
+      const from = Math.max(sh.t, ov(s, si));
       const word = camNames.get(sh.camera) || sh.camera || "";
       const label = [sh.framing && sh.framing[0].toUpperCase() + sh.framing.slice(1), word, [sh.camera_amp, sh.camera_speed].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
-      // [OLD 2026-11-06 v0.9.0->v0.10.0] cam.append(h("span", { class: "rw-cam", style: { left: x00 + from * z + 3 + "px", "max-width": Math.max(24, (end - from) * z - 6) + "px" }, help: "timeline.lane.camera", title: label, onClick: selectScene(s.id) }, label));
-      // added 2026-11-06 v0.10.0: the whole camera direction in the tooltip: the label, the words H3 gets and the shot
       const camDetail = [`Shot ${k + 1}: ${label}`, sh.camera && sh.camera !== word ? `“${sh.camera}”` : "", sh.text ? sh.text.trim() : "", `${s.title} · ${fmtTime(sh.t)}–${fmtTime(end)}`].filter(Boolean).join("\n");
       cam.append(h("span", { class: "rw-cam", style: { left: x00 + from * z + 3 + "px", "max-width": Math.max(24, (end - from) * z - 6) + "px" }, help: "timeline.lane.camera", detail: camDetail,
         dataset: { copy: [label, sh.camera && sh.camera !== word ? sh.camera : ""].filter(Boolean).join(" · ") }, onClick: selectScene(s.id) }, label));
@@ -1350,7 +997,6 @@ function renderLanes(ctx) {
         style: { left: x0 + 2 + "px", width: Math.max(6, w - 4) + "px", top: "20px", height: "17px" },
       }, own.map(l => `${l.name.replace(/\.safetensors$/, "")} ${Number(l.strength).toFixed(2)}${l.source === "override" ? "*" : ""}`).join(" · ")));
     }
-  // [OLD 2026-11-03 v0.4.3->v0.5.0] }
   });
   const globals = p.global.loras.filter(l => l.enabled);
   if (globals.length) {
@@ -1360,9 +1006,6 @@ function renderLanes(ctx) {
 
   const lanes = [
     ["Scenes", "film", "text", "timeline.lane.scenes", scenesLane, "scenes", h("span", { class: "mono rw-dim" }, `${p.scenes.length} / ∞`)],
-    // added 2026-11-03 v0.5.0: soundtrack tracks under the scenes, then a lane to add one
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] ...trackLanes(ctx, z, width, { trackDrag, scaleOf: () => scaleOf(ctx), zoom: () => zoomOf(ctx) })
-    // window, lazy: added 2026-11-03 v0.6.0 (waveform tiles near the view only, painted when seen)
     ...trackLanes(ctx, z, width, { trackDrag, scaleOf: () => scaleOf(ctx), zoom: () => zoomOf(ctx), window: vis, lazy: c => lazyTiles.push(c) })
       .map(l => [l.label, l.ic, l.cls, l.help, l.body, l.kind.filter(Boolean).join(" "), l.extra, l.onHead]),
     ["Pictures", "image", "pic", "timeline.lane.pictures", pics, "two"],
@@ -1374,8 +1017,6 @@ function renderLanes(ctx) {
   ];
 
   const playhead = h("div", { class: "rw-playhead", style: { left: HEAD_W + p.ui.playhead * z + "px" } });
-  // [OLD 2026-11-02 v0.3.2->v0.3.3] const playheadLabel = h("span", { class: "rw-playhead-label mono" }, fmtTime(p.ui.playhead));
-  // added 2026-11-02 v0.3.3: drag the playhead's label to scrub
   const playheadLabel = h("span", { class: "rw-playhead-label mono", help: "timeline.playhead", onPointerdown: e => {
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -1388,39 +1029,6 @@ function renderLanes(ctx) {
   ctx.tl.playhead = playhead;
   ctx.tl.playheadLabel = playheadLabel;
 
-  /* [OLD 2026-11-02 v0.2.1->v0.2.2] wheel events are now routed by editor.js, so a DOM listener here never fires
-  return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onWheel: e => {
-    if (e.ctrlKey || e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }
-  } },
-  [/OLD] */
-  /* [OLD 2026-11-02 v0.2.2->v0.3.0] Ctrl + wheel now zooms ComfyUI's canvas (editor.js), so only Alt zooms the timeline
-  return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, wheel: e => {
-    if (e.ctrlKey || e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }
-  } },
-  [/OLD] */
-  /* [OLD 2026-11-02 v0.3.2->v0.3.3] plain wheel only scrolled up and down, so a long film could not be scrolled sideways with the mouse
-  return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, wheel: e => {
-    if (e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }
-  } },
-  [/OLD] */
-  // added 2026-11-02 v0.3.3: wheel scrolls sideways when the film is wider than the lanes; Shift + wheel scrolls
-  // up and down; Alt + wheel zooms. Click = playhead, drag = pan (see lanesPointerdown).
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] return h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onPointerdown: e => lanesPointerdown(ctx, e), wheel: e => {
-  // added 2026-11-03 v0.6.0: onScroll renders again when the view leaves the part that was built
-  /* [OLD 2026-11-05 v0.7.0->v0.8.0] no follow-playback: a scroll or sideways wheel did not pause it
-  const lanesEl = h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onPointerdown: e => lanesPointerdown(ctx, e), onScroll: e => lanesScroll(ctx, e.currentTarget), wheel: e => {
-    if (e.altKey) { e.preventDefault(); setZoom(ctx, zoomOf(ctx) * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); return; }
-    const el = ctx.root.querySelector(".rw-lanes");
-    if (!el) return;
-    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientWidth : 1;
-    if (e.shiftKey) {
-      if (el.scrollHeight > el.clientHeight + 1) { e.preventDefault(); el.scrollTop += (e.deltaY || e.deltaX) * unit; }
-      return;
-    }
-    if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && el.scrollWidth > el.clientWidth + 1) { e.preventDefault(); el.scrollLeft += e.deltaY * unit; }
-  } },
-  [/OLD] */
-  // added 2026-11-05 v0.8.0: a manual scroll (scrollbar or sideways wheel) pauses following the playhead
   const lanesEl = h("div", { class: "rw-lanes", dataset: { scroll: "lanes" }, onPointerdown: e => lanesPointerdown(ctx, e),
     // a lanes element a render replaced still gets the scroll event of its last scroll (and reads 0 when detached):
     // it rebuilt the lanes on every frame while the view followed the playhead, so only the lanes on the page count
@@ -1438,10 +1046,8 @@ function renderLanes(ctx) {
     } },
   h("div", { class: "rw-lanes-inner", style: { width: HEAD_W + width + "px" } },
     h("div", { class: "rw-lane ruler" }, h("div", { class: "rw-lane-head mono rw-dim", help: "timeline.ruler" }, "24 fps"), ruler),
-    // [OLD 2026-11-03 v0.4.3->v0.5.0] lanes.map(([label, ic, cls, help, el, kind, extra]) => h("div", { class: ["rw-lane", kind] }, laneHead(label, ic, cls, help, extra), el)),
     lanes.map(([label, ic, cls, help, el, kind, extra, onHead]) => h("div", { class: ["rw-lane", kind] }, laneHead(label, ic, cls, help, extra, onHead), el)),
     playhead));
-  // added 2026-11-03 v0.6.0: waveform tiles are painted when they come near the view (one observer per render)
   ctx.tl.io?.disconnect();
   ctx.tl.io = null;
   if (lazyTiles.length) {
@@ -1455,22 +1061,9 @@ function renderLanes(ctx) {
   return lanesEl;
 }
 
-// added 2026-11-03 v0.6.0: the part of the lanes (lane pixels, 0 = film start) that a render builds: the view and
+// The part of the lanes (lane pixels, 0 = film start) that a render builds: the view and
 // one and a half views on either side, read from the lanes being replaced (the editor restores their scroll).
-/* [OLD 2026-11-03 v0.6.0 review] used the old scroll position as it was: after a big zoom-out it lay past the end of
-   the new lanes, so nothing near the view was built and the restored scrollLeft (clamped to the new end, no scroll
-   event) showed empty lanes
-function laneWindow(ctx, width) {
-  const el = ctx.root.querySelector(".rw-lanes");
-  const vw = Math.max(400, (el?.clientWidth || ctx.root.clientWidth || 1600) - HEAD_W);
-  const sl = el ? el.scrollLeft : 0;
-  const win = { from: sl - vw * 1.5, to: sl + vw * 2.5, width, vw };
-  ctx.tl = ctx.tl || {};
-  ctx.tl.window = win;
-  return win;
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0 review: the old scroll position is clamped to the new lanes' end first (where the browser
+// The old scroll position is clamped to the new lanes' end first (where the browser
 // will put it when the editor restores it); `sl` is kept so afterRender can check what the view really shows
 function laneWindow(ctx, width) {
   const el = ctx.root.querySelector(".rw-lanes");
@@ -1483,7 +1076,7 @@ function laneWindow(ctx, width) {
   return win;
 }
 
-// added 2026-11-03 v0.6.0 review: after the editor restored the lanes' scroll: when the view is not where the window
+// After the editor restored the lanes' scroll: when the view is not where the window
 // was built for (more than a few pixels off), build again once for the real position
 export function afterRender(ctx) {
   const el = ctx.root.querySelector(".rw-lanes");
@@ -1505,14 +1098,14 @@ function lanesScroll(ctx, el) {
   }
 }
 
-// added 2026-11-02 v0.3.3: screen pixels per editor pixel. ComfyUI scales the whole node with the canvas zoom, so
+// Screen pixels per editor pixel. ComfyUI scales the whole node with the canvas zoom, so
 // mouse distances must be divided by this before they become seconds.
 function scaleOf(ctx) {
   const r = ctx.root.getBoundingClientRect();
   return (r.width / (ctx.root.offsetWidth || r.width)) || 1;
 }
 
-// added 2026-11-02 v0.3.3: follow the pointer while the button is held. Capture-phase window listeners still see the
+// Follow the pointer while the button is held. Capture-phase window listeners still see the
 // release when ComfyUI stops it on the way up, and a move with no button pressed ends the drag, so the
 // tracking can never outlive the press.
 function trackDrag(onMove, onEnd) {
@@ -1533,16 +1126,13 @@ function trackDrag(onMove, onEnd) {
   window.addEventListener("blur", stop);
 }
 
-// added 2026-11-02 v0.3.3: a press on the lanes. A drag pans the timeline (the playhead stays where it is); a click
+// A press on the lanes. A drag pans the timeline (the playhead stays where it is); a click
 // on the ruler or on an empty part of a lane moves the playhead there. Clicks on scenes and chips keep their own action.
-// [OLD 2026-11-03 v0.4.3->v0.5.0] const LANE_CONTROLS = ".rw-lane-head, button, input, select, textarea, a, .rw-resize, .rw-shot-tick, .rw-marker, .rw-playhead-label";
 const LANE_CONTROLS = ".rw-lane-head, button, input, select, textarea, a, .rw-resize, .rw-shot-tick, .rw-marker, .rw-playhead-label, .rw-track-clip";
 function lanesPointerdown(ctx, e) {
   if (e.button !== 0 || !(e.target instanceof Element) || e.target.closest(LANE_CONTROLS)) return;
   e.rwOwned = true; // the editor root stops it there, so Nodes 2.0 doesn't start dragging the whole node
   const t = e.target;
-  // added 2026-11-08 v0.13.1: a sideways drag on a scene block moves the scene in the order (sceneDrag); a drag that
-  // starts mostly up or down still pans, and so does Alt + drag
   const block = !e.altKey && ctx.p.scenes.length > 1 ? t.closest(".rw-scene[data-sid]") : null;
   if (block) { sceneDrag(ctx, e, block.dataset.sid); return; }
   const empty = !!t.closest(".rw-ruler-lane") || t.matches(".rw-lane-body, .rw-lane, .rw-lanes-inner, .rw-lanes");
@@ -1552,8 +1142,7 @@ function lanesPointerdown(ctx, e) {
   let panning = false;
   trackDrag(ev => {
     if (!panning && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
-    // [OLD 2026-11-05 v0.7.0->v0.8.0] if (!panning) { panning = true; ctx.root.classList.add("rw-panning"); }
-    if (!panning) { panning = true; ctx.root.classList.add("rw-panning"); pauseFollow(ctx); } // added 2026-11-05 v0.8.0: a drag pauses following
+    if (!panning) { panning = true; ctx.root.classList.add("rw-panning"); pauseFollow(ctx); }
     const el = ctx.root.querySelector(".rw-lanes") || el0; // a re-render may have replaced the lanes
     el.scrollLeft = sl0 - (ev.clientX - x0) / sc;
     el.scrollTop = st0 - (ev.clientY - y0) / sc;
@@ -1572,8 +1161,7 @@ function lanesPointerdown(ctx, e) {
   });
 }
 
-// added 2026-11-08 v0.13.1: drag a scene block left or right to move the scene in the order (Sencer: "I should be able
-// to reorganise scenes, move/drag them left/right"). The block follows the pointer and a marker with a label shows
+// Drag a scene block left or right to move the scene in the order. The block follows the pointer and a marker with a label shows
 // where it lands: before the first scene whose middle is right of the pointer. The release moves it there
 // (actions.moveSceneTo, one undo step). Esc cancels; near the lanes' edges the timeline scrolls. A drag that starts
 // mostly up or down pans the lanes as before. The release after a move is no click (and no double-click).
@@ -1671,7 +1259,7 @@ function sceneDrag(ctx, e, sid) {
   });
 }
 
-// added 2026-11-02 v0.3.0: right-click menu for an asset (timeline bin and Assets tab)
+// right-click menu for an asset (timeline bin and Assets tab)
 export function assetMenu(ctx, a) {
   const s = ctx.scene;
   return [
@@ -1680,7 +1268,6 @@ export function assetMenu(ctx, a) {
       ctx.actions.editScene(s.id, sc => { sc.refs.push({ id: newId("r"), asset: a.id, role: a.defaults.role, time: 0, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack }); });
       ctx.actions.toast(`Added ${a.code} to ${s.title}.`, "ok");
     } },
-    // added 2026-11-06 v0.9.0: move it to a group (the first 12), out of its group, or into a new one
     { sep: true },
     { head: "Move to group" },
     ...ctx.p.asset_groups.slice(0, 12).map(g => ({ label: g.name.trim() || "Unnamed group", icon: "folder", help: "assets.group.pick", disabled: a.group === g.id,
@@ -1693,7 +1280,7 @@ export function assetMenu(ctx, a) {
   ];
 }
 
-// added 2026-11-02 v0.3.0: offered once on a freshly added node when saved profiles exist
+// Offered once on a freshly added node when saved profiles exist
 export function profileBanner(ctx) {
   const pr = ctx.eph.profiles;
   if (!ctx.eph.fresh || !pr?.profiles?.length) return null;
@@ -1707,7 +1294,7 @@ export function profileBanner(ctx) {
     button({ icon: "close", small: true, variant: "ghost", help: "common.close", onClick: () => ctx.store.setEph({ fresh: false }) }));
 }
 
-// added 2026-11-02 v0.2.2: right-click menu for a scene (timeline block and the Scene tab strip)
+// right-click menu for a scene (timeline block and the Scene tab strip)
 export function sceneMenu(ctx, s) {
   const p = ctx.p;
   const i = sceneIndex(p, s.id);
@@ -1722,31 +1309,21 @@ export function sceneMenu(ctx, s) {
     { label: "Move left", icon: "chevLeft", help: "timeline.moveLeft", disabled: i === 0, onClick: () => ctx.actions.moveScene(s.id, -1) },
     { label: "Move right", icon: "chevRight", help: "timeline.moveRight", disabled: i === p.scenes.length - 1, onClick: () => ctx.actions.moveScene(s.id, 1) },
     { label: s.lock ? "Unlock take" : "Lock take", icon: s.lock ? "unlock" : "lock", help: "scene.lock", onClick: () => ctx.actions.editScene(s.id, sc => { sc.lock = !sc.lock; }) },
-    // added 2026-11-02 v0.3.0: draft or final per scene
     { sep: true },
     ...[["", `Quality: follow Global (${p.global.quality})`], ["draft", "Quality: draft"], ["final", "Quality: final"]].map(([v, label]) => ({
       label, icon: (s.overrides.quality || "") === v ? "check" : null, help: "scene.override.quality",
       onClick: () => ctx.actions.editScene(s.id, sc => { if (v) sc.overrides.quality = v; else delete sc.overrides.quality; }),
     })),
     { sep: true },
-    /* [OLD 2026-11-02 v0.2.2->v0.3.0] no confirmation, and the only scene could not be deleted
-    { label: "Delete scene", icon: "trash", hint: "Del", help: "timeline.delete", danger: true, disabled: p.scenes.length <= 1,
-      onClick: () => { ctx.actions.deleteScene(s.id); ctx.actions.toast(`Deleted ${s.title}. Ctrl+Z brings it back.`, "info"); } },
-    [/OLD] */
-    /* [OLD 2026-11-03 v0.5.1->v0.6.0] the count was read after the delete, so deleting one of two scenes said "Scene reset."
-    { label: p.scenes.length <= 1 ? "Reset scene" : "Delete scene", icon: "trash", hint: "Del", help: "timeline.delete", danger: true,
-      onClick: async () => { if (await ctx.actions.deleteScene(s.id)) ctx.actions.toast(p.scenes.length <= 1 ? "Scene reset." : `Deleted ${s.title}.`, "info"); } },
-    [/OLD] */
     { label: p.scenes.length <= 1 ? "Reset scene" : "Delete scene", icon: "trash", hint: "Del", help: "timeline.delete", danger: true,
       onClick: async () => {
-        const last = ctx.p.scenes.length <= 1; // added 2026-11-03 v0.6.0: before the delete
+        const last = ctx.p.scenes.length <= 1;
         if (await ctx.actions.deleteScene(s.id)) ctx.actions.toast(last ? "Scene reset." : `Deleted ${s.title}.`, "info");
       } },
   ];
 }
 
-// [OLD 2026-11-03 v0.4.3->v0.5.0] function sceneBlock(ctx, s, i, start, z) {
-// ov: added 2026-11-03 v0.5.0, the seconds at the scene's start that repeat the scene before. The block starts after
+// ov: the seconds at the scene's start that repeat the scene before. The block starts after
 // them; everything inside it is placed at (t - ov) * z.
 function sceneBlock(ctx, s, i, start, z, ov = 0) {
   const p = ctx.p;
@@ -1757,23 +1334,18 @@ function sceneBlock(ctx, s, i, start, z, ov = 0) {
   const take = ctx.starredTake(s.id);
   const thumb = take?.files?.first ? viewURL(take.files.first) : storyboardImage(ctx, s);
   const selected = s.id === ctx.scene.id;
-  // [OLD 2026-11-03 v0.4.3->v0.5.0] const w = s.duration * z - 2;
   const w = (s.duration - ov) * z - 2;
   const block = h("div", {
     class: ["rw-scene", selected && "on", "st-" + status, s.lock && "locked"],
-    // [OLD 2026-11-03 v0.4.3->v0.5.0] style: { left: start * z + 1 + "px", width: w + "px", "--tint": s.color || null },
     style: { left: (start + ov) * z + 1 + "px", width: w + "px", "--tint": s.color || null },
     help: "timeline.scene",
-    dataset: { sid: s.id }, // added 2026-11-03 v0.6.0: found again by onProgress and the stale preview
-    // [OLD 2026-11-03 v0.4.3->v0.5.0] onClick: () => ctx.actions.select(s.id),
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] onClick: () => { if (ctx.eph.selectedTrack) ctx.store.setEph({ selectedTrack: null }, false); ctx.actions.select(s.id); },
-    // added 2026-11-03 v0.6.0: a click on a scene closes the marker inspector too (the scene is what Delete removes then)
+    dataset: { sid: s.id },
     onClick: () => {
       if (ctx.eph.selectedTrack || ctx.eph.selectedMarker) ctx.store.setEph({ selectedTrack: null, selectedMarker: null }, false);
       ctx.actions.select(s.id);
     },
     onDblclick: () => ctx.actions.select(s.id, "scene"),
-    menu: () => { ctx.actions.select(s.id); return sceneMenu(ctx, s); }, // added 2026-11-02 v0.2.2
+    menu: () => { ctx.actions.select(s.id); return sceneMenu(ctx, s); },
     onDragover: e => { if (e.dataTransfer.types.includes("application/x-rw-asset")) { e.preventDefault(); e.currentTarget.classList.add("drop"); } },
     onDragleave: e => e.currentTarget.classList.remove("drop"),
     onDrop: e => {
@@ -1783,8 +1355,6 @@ function sceneBlock(ctx, s, i, start, z, ov = 0) {
       const a = findAsset(p, id);
       if (!a) return;
       const rect = e.currentTarget.getBoundingClientRect();
-      // [OLD 2026-11-02 v0.3.2->v0.3.3] ignored ComfyUI's canvas zoom: const t = Math.max(0, Math.min(s.duration, (e.clientX - rect.left) / z));
-      // [OLD 2026-11-03 v0.4.3->v0.5.0] const t = Math.max(0, Math.min(s.duration, (e.clientX - rect.left) / scaleOf(ctx) / z));
       const t = Math.max(0, Math.min(s.duration, ov + (e.clientX - rect.left) / scaleOf(ctx) / z));
       ctx.actions.editScene(s.id, sc => {
         sc.refs.push({ id: newId("r"), asset: id, role: a.defaults.role, time: Math.round(t * FPS) / FPS, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack });
@@ -1796,37 +1366,18 @@ function sceneBlock(ctx, s, i, start, z, ov = 0) {
     h("span", { class: "mono rw-scene-idx" }, String(i + 1).padStart(2, "0")),
     h("span", { class: "rw-scene-title" }, s.title),
     s.lock && icon("lock", 11),
-    // added 2026-11-02 v0.3.0: show draft scenes
     effective(p, s, "quality").value === "draft" && h("span", { class: "rw-qtag", help: "scene.override.quality" }, "draft"),
     est.count > 1 && h("span", { class: "rw-badge vid", help: "timeline.scene.passes" }, `${plan?.passes?.length || est.count} passes`),
     est.short && h("span", { class: "rw-badge", help: "timeline.scene.short" }, "trim"),
     dot(status === "cached" || status === "locked" ? "ok" : status === "stale" ? "warn" : status === "rendering" ? "busy" : "empty", "status." + status));
   const strip = h("div", { class: "rw-scene-strip", style: thumb ? { "background-image": `url("${thumb}")` } : null });
   block.append(head, strip);
-  // added 2026-11-05 v0.7.0: the frame that is at each time, from the starred take's filmstrip (fetched once per video
+  // The frame that is at each time, from the starred take's filmstrip (fetched once per video
   // file; the first frame above stays underneath until it is there, and when it fails), and marks for the join into
   // the scene and its fades
   const film = take?.files?.video ? filmstripOf(ctx, take) : null;
   if (film) filmCells(ctx, strip, film, (start + ov) * z + 1, w, ov, z);
   cutMarks(ctx, strip, s, i, z, w);
-  /* [OLD 2026-11-03 v0.4.3->v0.5.0] the tail hatch sat inside the block; the block now starts after the repeated tail
-  if (s.start.mode === "tail" && i > 0) strip.append(h("span", { class: "rw-hatch", style: { width: (s.start.overlap_frames / FPS) * z + "px" }, help: "scene.start.tail" }, "tail"));
-  const passes = plan?.passes;
-  if (passes?.length > 1) {
-    for (const ps of passes.slice(1)) {
-      strip.append(h("span", { class: ["rw-pass-tick", ps.seam_before === "cut" ? "cut" : "overlap"], style: { left: ps.start * z + "px" }, help: "timeline.scene.seam." + (ps.seam_before === "cut" ? "cut" : "overlap") }));
-      if (ps.seam_before !== "cut" && ps.overlap_frames) strip.append(h("span", { class: "rw-hatch thin", style: { left: ps.start * z + "px", width: (ps.overlap_frames / FPS) * z + "px" } }));
-    }
-  } else if (est.count > 1) {
-    const span = s.duration / est.count;
-    for (let k = 1; k < est.count; k++) strip.append(h("span", { class: "rw-pass-tick overlap", style: { left: k * span * z + "px" }, help: "timeline.scene.seam.overlap" }));
-  }
-  for (const sh of s.shots) {
-    if (sh.t <= 0) continue;
-    strip.append(shotTick(ctx, s, sh, z));
-  }
-  [/OLD] */
-  // added 2026-11-03 v0.5.0: positions inside the block count from where it becomes visible (ov)
   const passes = plan?.passes;
   if (passes?.length > 1) {
     for (const ps of passes.slice(1)) {
@@ -1842,20 +1393,12 @@ function sceneBlock(ctx, s, i, start, z, ov = 0) {
     strip.append(shotTick(ctx, s, sh, z, ov));
   }
   block.append(h("span", { class: "rw-scene-dur mono" }, `${s.duration.toFixed(2)}s · ${framesOf(s.duration)}f`));
-  /* [OLD 2026-11-03 v0.5.1->v0.6.0] built on every render (now also updated in place by onProgress); "skipped" counted as running
-  if (prog && !["done", "cached", "error"].includes(prog.phase)) {
-    const passPart = prog.passes ? (prog.pass - 1 + (prog.steps ? prog.step / prog.steps : 0)) / prog.passes : 0;
-    block.append(h("div", { class: "rw-scene-prog", help: "timeline.scene.progress" }, h("span", { style: { width: Math.round(passPart * 100) + "%" } })),
-      h("span", { class: "rw-scene-prog-label mono" }, `${prog.phase} ${prog.pass}/${prog.passes}${prog.steps ? " · " + prog.step + "/" + prog.steps : ""}`));
-  }
-  [/OLD] */
-  if (prog && !ctx.isFinal(prog.phase)) block.append(...progressParts(prog)); // added 2026-11-03 v0.6.0
-  // [OLD 2026-11-03 v0.4.3->v0.5.0] block.append(resizeHandle(ctx, s, z, block));
+  if (prog && !ctx.isFinal(prog.phase)) block.append(...progressParts(prog));
   block.append(resizeHandle(ctx, s, z, block, i));
   return block;
 }
 
-// added 2026-11-03 v0.6.0: a scene's progress bar and label (sceneBlock; onProgress updates them in place)
+// A scene's progress bar and label (sceneBlock; onProgress updates them in place)
 function progressParts(prog) {
   const passPart = prog.passes ? (Math.max(1, prog.pass || 1) - 1 + (prog.steps ? prog.step / prog.steps : 0)) / prog.passes : 0;
   return [
@@ -1864,7 +1407,7 @@ function progressParts(prog) {
   ];
 }
 
-// ---- filmstrip and cut marks (added 2026-11-05 v0.7.0) ----
+// ---- filmstrip and cut marks ------------------------------
 // The scene strip shows the frame that is at each time: cells of the sprite's tile aspect, each showing the tile
 // nearest the cell's middle time (scene time = where the block starts in the scene + x / zoom). The sprite comes from
 // GET /reelwright/filmstrip for the starred take's video. It is asked for only when a block that needs it is built (the
@@ -1980,7 +1523,7 @@ function cutMarks(ctx, strip, s, i, z, w) {
   }
 }
 
-// added 2026-11-03 v0.6.0: a render step (reelwright.progress) updates the scene's progress bar in place; the editor
+// A render step (reelwright.progress) updates the scene's progress bar in place; the editor
 // renders the whole tab only when a scene starts or ends or its phase or pass changes (it took 230+ ms at 300 scenes)
 export function onProgress(ctx, d) {
   if (!d?.scene_id || ctx.isFinal(d.phase)) return;
@@ -1998,7 +1541,7 @@ export function onProgress(ctx, d) {
   }
 }
 
-// added 2026-11-03 v0.6.0: a shot or resize drag that always ends. It follows the pointer with window listeners
+// A shot or resize drag that always ends. It follows the pointer with window listeners
 // (trackDrag) instead of pointer capture on the element: a render in the middle of the drag (the plan or the autosave
 // state arriving) replaces the element, which used to drop the capture and leave the drag dead. It ends on pointerup
 // (seen in the capture phase even when ComfyUI stops it), on pointercancel, when the window loses focus, or on a move
@@ -2007,46 +1550,12 @@ function captureDrag(onMove, onEnd) {
   trackDrag(onMove, ev => onEnd(ev?.type !== "pointercancel"));
 }
 
-// added 2026-11-03 v0.6.0: the element on screen now: `el` itself, or what a render put in its place (`sel`)
+// The element on screen now: `el` itself, or what a render put in its place (`sel`)
 function liveEl(ctx, el, sel) {
   return el.isConnected ? el : ctx.root.querySelector(sel) || el;
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] a lost pointerup left the drag running; the tick could be dragged into the hidden
-   tail (trimmed from the cut); no beat snap, no history label
-// [OLD 2026-11-03 v0.4.3->v0.5.0] function shotTick(ctx, s, sh, z) {
-// [OLD 2026-11-03 v0.4.3->v0.5.0]   const tick = h("span", { class: "rw-shot-tick", style: { left: sh.t * z + "px" }, help: "timeline.scene.shot", title: sh.camera || sh.text });
 function shotTick(ctx, s, sh, z, ov = 0) {
-  const tick = h("span", { class: "rw-shot-tick", style: { left: (sh.t - ov) * z + "px" }, help: "timeline.scene.shot", title: sh.camera || sh.text });
-  tick.addEventListener("pointerdown", e => {
-    e.stopPropagation();
-    e.preventDefault();
-    const x0 = e.clientX, t0 = sh.t;
-    let t = t0;
-    tick.setPointerCapture(e.pointerId);
-    const move = ev => {
-      // [OLD 2026-11-02 v0.3.2->v0.3.3] ignored ComfyUI's canvas zoom: t = Math.max(1 / FPS, Math.min(s.duration - 1 / FPS, t0 + (ev.clientX - x0) / z));
-      t = Math.max(1 / FPS, Math.min(s.duration - 1 / FPS, t0 + (ev.clientX - x0) / scaleOf(ctx) / z));
-      t = Math.round(t * FPS) / FPS;
-      // [OLD 2026-11-03 v0.4.3->v0.5.0] tick.style.left = t * z + "px";
-      tick.style.left = (t - ov) * z + "px";
-      tick.dataset.label = fmtTime(t);
-    };
-    const up = () => {
-      tick.removeEventListener("pointermove", move);
-      tick.removeEventListener("pointerup", up);
-      if (t !== t0) ctx.actions.editScene(s.id, sc => { const x = sc.shots.find(q => q.id === sh.id); x.t = t; sc.shots.sort((a, b) => a.t - b.t); });
-    };
-    tick.addEventListener("pointermove", move);
-    tick.addEventListener("pointerup", up);
-  });
-  return tick;
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0
-function shotTick(ctx, s, sh, z, ov = 0) {
-  // [OLD 2026-11-06 v0.9.0->v0.10.0] const tick = h("span", { class: "rw-shot-tick", style: { left: (sh.t - ov) * z + "px" }, help: "timeline.scene.shot", title: sh.camera || sh.text, dataset: { shot: sh.id } });
-  // added 2026-11-06 v0.10.0: the shot's camera and text in full in the tooltip
   const tick = h("span", { class: "rw-shot-tick", style: { left: (sh.t - ov) * z + "px" }, help: "timeline.scene.shot", dataset: { shot: sh.id },
     detail: [`${fmtTime(sh.t)}${sh.camera ? " · " + sh.camera : ""}${sh.framing ? " · " + sh.framing : ""}`, (sh.text || "").trim()].filter(Boolean).join("\n") });
   tick.addEventListener("pointerdown", e => {
@@ -2084,52 +1593,7 @@ function shotTick(ctx, s, sh, z, ov = 0) {
   return tick;
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] a lost pointerup left the drag running; used the deprecated overlapSeconds; Ripple
-   even while the soundtrack sets the timing; no beat snap, no history label
-// [OLD 2026-11-03 v0.4.3->v0.5.0] function resizeHandle(ctx, s, z, block) {
-function resizeHandle(ctx, s, z, block, index = 0) {
-  const handle = h("span", { class: "rw-resize", help: "timeline.scene.resize" });
-  handle.addEventListener("pointerdown", e => {
-    e.stopPropagation();
-    e.preventDefault();
-    handle.setPointerCapture(e.pointerId);
-    const x0 = e.clientX, d0 = s.duration;
-    const p = ctx.p;
-    const i = sceneIndex(p, s.id);
-    const next = p.scenes[i + 1];
-    const nextD0 = next?.duration;
-    const tip = h("div", { class: "rw-drag-tip mono" });
-    block.append(tip);
-    let d = d0;
-    const move = ev => {
-      // [OLD 2026-11-02 v0.3.2->v0.3.3] ignored ComfyUI's canvas zoom: let frames = framesOf(Math.max(1 / FPS, d0 + (ev.clientX - x0) / z));
-      let frames = framesOf(Math.max(1 / FPS, d0 + (ev.clientX - x0) / scaleOf(ctx) / z));
-      if (p.ui.snap) frames = Math.max(5, nearestGridFrames(frames));
-      if (!p.ui.ripple && next) frames = Math.min(frames, framesOf(d0 + nextD0) - 1);
-      d = frames / FPS;
-      // [OLD 2026-11-03 v0.4.3->v0.5.0] block.style.width = d * z - 2 + "px";
-      block.style.width = (d - (index > 0 ? overlapSeconds({ ...s, duration: d }) : 0)) * z - 2 + "px";
-      const est = estimatePasses(d, p.global.long);
-      tip.textContent = `${d.toFixed(2)} s · ${frames} f · ${est.count > 1 ? est.count + " passes" : est.short ? "trimmed" : "1 pass"}${p.ui.snap ? " · grid" : ""}`;
-    };
-    const up = () => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", up);
-      tip.remove();
-      if (d === d0) return;
-      ctx.actions.edit(q => {
-        const sc = q.scenes.find(x => x.id === s.id);
-        sc.duration = d;
-        if (!q.ui.ripple && next) q.scenes.find(x => x.id === next.id).duration = Math.max(1 / FPS, Math.round((d0 + nextD0 - d) * FPS) / FPS);
-      });
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", up);
-  });
-  return handle;
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0: Roll / Auto-roll take the time from the next scene; Snap to beats puts the cut on a beat
+// Roll / Auto-roll take the time from the next scene; Snap to beats puts the cut on a beat
 // (before the 17k+5 grid; Alt: free of beats)
 function resizeHandle(ctx, s, z, block, index = 0) {
   const handle = h("span", { class: "rw-resize", help: "timeline.scene.resize" });
@@ -2150,21 +1614,17 @@ function resizeHandle(ctx, s, z, block, index = 0) {
     const tip = h("div", { class: "rw-drag-tip mono" });
     block.append(tip);
     let d = d0;
-    let nextF = null; // added 2026-11-03 v0.6.0 review: the next scene's length (s) while rolling (rollLengths)
+    let nextF = null;
     captureDrag(ev => {
       const raw = Math.max(1 / FPS, d0 + (ev.clientX - x0) / scaleOf(ctx) / z);
       let frames = framesOf(raw), how = "";
       const b = beatSnapOn(p) && !ev.altKey ? nearestBeat(ctx, start + raw, 8 / z) : null;
       if (b !== null && b - start >= 1 / FPS) { frames = framesOf(b - start); how = " · beat"; }
       else if (p.ui.snap) { frames = Math.max(5, nearestGridFrames(frames)); how = " · grid"; }
-      // [OLD 2026-11-03 v0.6.0 review] if (roll) frames = Math.min(frames, framesOf(d0 + nextD0) - 1);
-      // [OLD 2026-11-03 v0.6.0 review] frames = Math.max(1, frames);
-      // added 2026-11-03 v0.6.0 review: rolling keeps every later scene's start (rollLengths; may clamp the drag)
       frames = Math.max(1, frames);
       let same = false;
       if (roll) ({ frames, nextDuration: nextF, unchanged: same } = rollLengths(p, i, frames));
-      // [OLD 2026-11-03 v0.6.0 review] d = frames / FPS;
-      d = same ? d0 : frames / FPS; // added 2026-11-03 v0.6.0 review: a roll that cannot keep the later scenes keeps both lengths
+      d = same ? d0 : frames / FPS;
       // the block starts where the scene becomes visible; a shorter scene can shorten its own tail overlap
       const q = { ...p, scenes: p.scenes.slice() };
       q.scenes[i] = { ...s, duration: d };
@@ -2182,8 +1642,7 @@ function resizeHandle(ctx, s, z, block, index = 0) {
         if (!sc) return;
         sc.duration = d;
         const nx = roll && q.scenes.find(x => x.id === next.id);
-        // [OLD 2026-11-03 v0.6.0 review] if (nx) nx.duration = Math.max(1 / FPS, Math.round((d0 + nextD0 - d) * FPS) / FPS);
-        if (nx) nx.duration = nextF !== null ? nextF : Math.max(1 / FPS, Math.round((d0 + nextD0 - d) * FPS) / FPS); // added 2026-11-03 v0.6.0 review
+        if (nx) nx.duration = nextF !== null ? nextF : Math.max(1 / FPS, Math.round((d0 + nextD0 - d) * FPS) / FPS);
       }, { label: roll ? "Roll scene edge" : "Scene length" });
     });
   });
@@ -2205,12 +1664,9 @@ function renderToolbar(ctx) {
     button({ icon: "trash", small: true, help: "timeline.delete", variant: "danger-ghost", onClick: () => ctx.actions.deleteScene(s.id) }),
     h("span", { class: "rw-sep" }),
     toggle({ value: p.ui.snap, label: "Snap to 17k+5", help: "timeline.snap", onChange: v => ctx.store.update(q => { q.ui.snap = v; }, { history: false, plan: false }) }),
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] toggle({ value: p.ui.ripple, label: p.ui.ripple ? "Ripple" : "Roll", help: "timeline.ripple", onChange: v => ctx.store.update(q => { q.ui.ripple = v; }, { history: false, plan: false }) }),
-    // added 2026-11-03 v0.6.0: Auto-roll (below) overrides Ripple while the soundtrack sets the timing
     toggle({ value: p.ui.ripple && !autoRollOn(p), label: autoRollOn(p) ? "Roll (auto)" : p.ui.ripple ? "Ripple" : "Roll", help: "timeline.ripple", disabled: autoRollOn(p),
       onChange: v => ctx.store.update(q => { q.ui.ripple = v; }, { history: false, plan: false }) }),
     button({ label: "Marker", icon: "marker", small: true, help: "timeline.addMarker", onClick: () => addMarker(ctx) }),
-    // added 2026-11-03 v0.6.0: beat ticks on the soundtrack lanes, snapping to them, and Auto-roll (shown with a soundtrack)
     p.soundtrack.some(t => !t.mute) && h("span", { class: "rw-sep" }),
     p.soundtrack.some(t => !t.mute) && toggle({ value: showBeats(p), label: "Beats", help: "timeline.beats",
       onChange: v => ctx.store.update(q => { q.ui.beats = v; }, { history: false, plan: false, autosave: false }) }),
@@ -2231,24 +1687,12 @@ function renderToolbar(ctx) {
 export function render(ctx) {
   const p = ctx.p;
   const { starts } = sceneStarts(p);
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const s = sceneAt(ctx, p.ui.playhead);
   const s = sceneAt(p, p.ui.playhead);
   const m = monitorOf(ctx);
   m.show(s, p.ui.playhead - starts[s.id]);
-  /* [OLD 2026-11-06 v0.8.0->v0.9.0] asset bin | monitor | inspector at fixed sizes
-  return h("div", { class: "rw-tl" },
-    profileBanner(ctx), // added 2026-11-02 v0.3.0
-    h("div", { class: "rw-tl-top" },
-      renderBin(ctx),
-      h("div", { class: "rw-mon-col" }, m.el, renderTransport(ctx)),
-      renderInspector(ctx)),
-    h("div", { class: "rw-tl-main rw-panel" }, renderToolbar(ctx), renderLanes(ctx)));
-  [/OLD] */
-  // added 2026-11-06 v0.9.0: three panels. The bar between the monitor and the inspector sets the monitor's share of
+  // Three panels. The bar between the monitor and the inspector sets the monitor's share of
   // the width (ui.tl_mon, 0.15–0.85); the bar under them sets their height (ui.tl_top, px). Double-click a bar to
   // reset it. Sizes are kept in the project like the zoom (no undo step).
-  // [OLD 2026-11-08 v0.12.0->v0.13.0] const monCol = h("div", { class: "rw-mon-col rw-panel", style: { width: (uiNum(p, "tl_mon", MON_SHARE, 0.15, 0.85) * 100).toFixed(2) + "%" } }, m.el, renderTransport(ctx));
-  // added 2026-11-08 v0.13.0: while the monitor is full screen it stays in its full-screen box; the panel says so
   const monEl = ctx.monFull ? h("div", { class: "rw-mon rw-mon-away", help: "timeline.fullscreen", onClick: () => toggleFull(ctx) }, icon("expand", 18), h("span", null, "Full screen · Esc to come back")) : m.el;
   const monCol = h("div", { class: "rw-mon-col rw-panel", style: { width: (uiNum(p, "tl_mon", MON_SHARE, 0.15, 0.85) * 100).toFixed(2) + "%" } }, monEl, renderTransport(ctx));
   const top = h("div", { class: "rw-tl-top", style: { height: Math.round(uiNum(p, "tl_top", TOP_H, TOP_MIN, 4000)) + "px" } });
@@ -2266,7 +1710,7 @@ export function render(ctx) {
     renderInspector(ctx));
   const tlEl = h("div", { class: "rw-tl" });
   const topPx = px => Math.max(TOP_MIN, Math.min(Math.max(TOP_MIN, tlH - 190), px));
-  const banner = profileBanner(ctx); // added 2026-11-02 v0.3.0
+  const banner = profileBanner(ctx);
   if (banner) tlEl.append(banner);
   tlEl.append(
     top,
@@ -2278,5 +1722,5 @@ export function render(ctx) {
     h("div", { class: "rw-tl-main rw-panel" }, renderToolbar(ctx), renderLanes(ctx)));
   return tlEl;
 }
-// added 2026-11-06 v0.9.0: default panel sizes (ui.tl_top in px, ui.tl_mon as a share of the width)
+// Default panel sizes (ui.tl_top in px, ui.tl_mon as a share of the width)
 const TOP_H = 340, TOP_MIN = 170, MON_SHARE = 0.42;

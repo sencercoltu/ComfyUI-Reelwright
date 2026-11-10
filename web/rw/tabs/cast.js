@@ -1,24 +1,18 @@
 // Cast tab: the story bible (characters, locations, props) and the rules that
 // keep a subject consistent across distant scenes.
 
-// [OLD 2026-11-03 v0.5.1->v0.6.0] import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, confirmInline, chip } from "../ui.js";  (the inline bar vanished on re-render)
-import { h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, chip, confirmDialog } from "../ui.js";
-import { choiceDialog } from "../ui.js"; // added 2026-11-06 v0.10.0: Voice from a take asks which scene
-import { dialogueSeconds, sceneIndex } from "../model.js"; // added 2026-11-06 v0.10.0
+import {
+  h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, chip,
+  confirmDialog, choiceDialog, sortable, dragGrip, moveItem, kept,
+} from "../ui.js";
+import {
+  dialogueSeconds, sceneIndex, STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes,
+  castDescription, sheetGrid, anchorPixels, sheetURL, castPacks, assetGroupName, partOwner, SMALL_TILE_PX, refClip,
+  fmtTime, unskipAnchor, clearAnchorFrame,
+} from "../model.js";
 import { rw, viewURL } from "../api.js";
-// [OLD 2026-11-02 v0.3.3->v0.3.4] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes } from "../model.js";
-// [OLD 2026-11-03 v0.4.0->v0.4.1] import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription } from "../model.js";
-import { STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes, castDescription, sheetGrid, anchorPixels, sheetURL, castPacks } from "../model.js";
-import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
-import { partOwner } from "../model.js"; // added 2026-11-08 v0.11.0: a prop that is part of a character
-import { SMALL_TILE_PX } from "../model.js"; // added 2026-11-09 v0.16.0: sheet pictures too small for identity
-import { refClip, fmtTime } from "../model.js"; // added 2026-11-09 v0.16.0: video anchors
-import { sortable, dragGrip, moveItem } from "../ui.js"; // added 2026-11-09 v0.16.0: video anchors in the order you drag them to
-import { kept } from "../ui.js"; // added 2026-11-09 v0.17.3: the sheet picture survives re-renders
-// [OLD 2026-11-09 v0.16.0->v0.16.1] import { clipTimeField } from "./scene.js"; // added 2026-11-09 v0.16.0: From / To of a video anchor
-import { clipEditor } from "./scene.js"; // added 2026-11-09 v0.16.1: the scene reference's clip editor (Preview, From here / To here, the bar)
-import { describeBox } from "./assets.js"; // added 2026-11-02 v0.2.0: describe from anchors
-import { unskipAnchor, clearAnchorFrame } from "../model.js"; // added 2026-11-10 v0.18.0: scene anchor picks, a video anchor's frame picture
+import { clipEditor } from "./scene.js";
+import { describeBox } from "./assets.js";
 
 const KINDS = [["character", "Characters"], ["location", "Locations"], ["prop", "Props"]];
 
@@ -34,16 +28,14 @@ function addEntry(ctx, kind) {
   ctx.actions.edit(p => {
     p.cast.push({
       id, kind, name: kind === "character" ? "New character" : kind === "location" ? "New location" : "New prop",
-      // [OLD 2026-11-03 v0.4.0->v0.4.1] speaker: kind === "character" ? nextSpeaker(p) : "", description: "", anchors: [], pack_sheet: true,
-      speaker: kind === "character" ? nextSpeaker(p) : "", description: "", anchors: [], pack_sheet: "auto", // auto: added 2026-11-03 v0.4.1
-      // [OLD 2026-11-06 v0.9.0->v0.10.0] outfits: [], default_outfit: "", voice: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 },
-      outfits: [], default_outfit: "", voice: "", voice_desc: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 }, // added 2026-11-06 v0.10.0: voice_desc
+      speaker: kind === "character" ? nextSpeaker(p) : "", description: "", anchors: [], pack_sheet: "auto",
+      outfits: [], default_outfit: "", voice: "", voice_desc: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 },
     });
   });
   ctx.store.setEph({ selectedCast: id });
 }
 
-// added 2026-11-06 v0.10.0: Voice from a take. The scenes whose starred take has lines of this character are offered;
+// Voice from a take. The scenes whose starred take has lines of this character are offered;
 // the server times them to the speech in the take, cuts them (up to 15 s) into a WAV in the project's input folder, and
 // it becomes the character's voice reference (one undo step with the new asset).
 async function voiceFromTake(ctx, c) {
@@ -99,11 +91,6 @@ function list(ctx, sel) {
           type: "button", class: ["rw-bible-item", sel === c.id && "on"], help: "cast.item",
           onClick: () => ctx.store.setEph({ selectedCast: c.id }),
         }, anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
-        /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are assigned per clip now
-        h("span", { class: "grow" }, h("b", null, c.name), h("span", { class: "rw-dim small" }, `${c.speaker ? c.speaker + " · " : ""}${scenes} scene${scenes === 1 ? "" : "s"} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}`)));
-        [/OLD] */
-        // [OLD 2026-11-08 v0.10.3->v0.11.0] h("span", { class: "grow" }, h("b", null, c.name), h("span", { class: "rw-dim small" }, `${scenes} scene${scenes === 1 ? "" : "s"} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}`)));
-        // added 2026-11-08 v0.11.0: a prop that is part of a character says whose
         h("span", { class: "grow" }, h("b", null, c.name), h("span", { class: "rw-dim small" }, `${partOf(p, c) ? `part of ${partOf(p, c).name} · ` : ""}${scenes} scene${scenes === 1 ? "" : "s"} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}`)));
       }),
       p.cast.every(c => c.kind !== kind) && h("div", { class: "rw-dim small" }, "None yet."))),
@@ -112,12 +99,7 @@ function list(ctx, sel) {
 
 function anchorsCard(ctx, c) {
   const p = ctx.p;
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); });  (no History menu name)
-  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label: `Edit ${c.name}` }); // added 2026-11-03 v0.6.0: History menu name
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] const images = p.assets.filter(a => a.kind === "image" && !c.anchors.includes(a.id)).map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
-  // [OLD 2026-11-10 v0.17.3->v0.18.0] const images = p.assets.filter(a => a.kind === "image" && !c.anchors.includes(a.id)).map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) })); // added 2026-11-06 v0.9.0: group first
-  // added 2026-11-10 v0.18.0: the frame pictures of this cast member's video anchors come first (Sencer: "select frame
-  // -> set as picture anchor -> then it is added to "Add anchors" in Anchors card, where i can select it if I want")
+  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label: `Edit ${c.name}` });
   const frames = (c.video_anchors || []).map(va => ({ va, fa: findAsset(p, va.frame_asset), v: findAsset(p, va.asset) }))
     .filter(x => x.fa?.kind === "image" && !c.anchors.includes(x.fa.id));
   const frameIds = new Set(frames.map(x => x.fa.id));
@@ -132,24 +114,11 @@ function anchorsCard(ctx, c) {
     try {
       const res = await rw.promoteFrame(p.slug, sid, take.id, which);
       const a = res.asset;
-      /* [OLD 2026-11-04 v0.6.0->v0.6.1] threw when the cast member was deleted while the request ran (half-applied edit, raw TypeError toast)
-      ctx.actions.edit(q => {
-        q.assets.push({ id: a.id || newId("a"), code: "", kind: "image", name: a.name || `${c.name} frame`, file: a.file, duration: 0, width: a.width || 0, height: a.height || 0,
-          category: "subject", defaults: { role: "reference", retention: "fully_preserved", keep: [], soundtrack: false }, notes: "" });
-        assignCodes(q.assets);
-        findCast(q, c.id).anchors.push(q.assets[q.assets.length - 1].id);
-      });
-      ctx.actions.toast("Frame added as an anchor.", "ok");
-      [/OLD] */
-      // added 2026-11-04 v0.6.1: the cast member may be gone by now (deleted while the request ran): the frame still
-      // joins the assets, as an anchor only while the member exists
       let anchored = false;
       ctx.actions.edit(q => {
-        // [OLD 2026-11-06 v0.8.0->v0.9.0] q.assets.push({ id: a.id || newId("a"), code: "", kind: "image", name: a.name || `${c.name} frame`, file: a.file, duration: 0, width: a.width || 0, height: a.height || 0,
-        // [OLD 2026-11-06 v0.8.0->v0.9.0]   category: "subject", defaults: { role: "reference", retention: "fully_preserved", keep: [], soundtrack: false }, notes: "" });
         q.assets.push({ id: a.id || newId("a"), code: "", kind: "image", name: a.name || `${c.name} frame`, file: a.file, duration: 0, width: a.width || 0, height: a.height || 0,
           category: "subject", defaults: { role: "reference", retention: "fully_preserved", keep: [], soundtrack: false }, notes: "",
-          description: "", group: "", tags: [] }); // added 2026-11-06 v0.9.0: every field an asset has after normalising
+          description: "", group: "", tags: [] });
         assignCodes(q.assets);
         const x = findCast(q, c.id);
         if (x) { x.anchors.push(q.assets[q.assets.length - 1].id); anchored = true; }
@@ -159,8 +128,6 @@ function anchorsCard(ctx, c) {
     } catch (err) { ctx.actions.toast("Could not promote the frame: " + err.message, "error"); }
   };
   const anchors = c.anchors.map(id => findAsset(p, id)).filter(Boolean);
-  // [OLD 2026-11-03 v0.4.0->v0.4.1] const sheetN = anchors.length <= 4 ? 2 : 3;   (the preview stopped at 3×3; the renderer never did)
-  // added 2026-11-03 v0.4.1: the real grid, the sheet as the renderer makes it, and how big each anchor arrives
   const [cols, rows] = sheetGrid(anchors.filter(a => a.kind === "image").length);
   const scenesIn = p.scenes.filter(s => s.cast.some(e => e.id === c.id));
   const packedSomewhere = anchors.length > 1 && (c.pack_sheet === true || (c.pack_sheet === "auto" && scenesIn.some(s => castPacks(p, s, c))));
@@ -183,26 +150,14 @@ function anchorsCard(ctx, c) {
     children: [
       anchors.length ? h("div", { class: "rw-anchor-grid" }, anchors.map(a => h("div", { class: "rw-anchor" },
         h("img", { src: viewURL(a.file, "input"), alt: a.name }),
-        // [OLD 2026-11-10 v0.17.3->v0.18.0] h("span", { class: "rw-anchor-label" }, h("b", { class: "mono rw-c-pic" }, a.code), " ", a.name),
         h("span", { class: "rw-anchor-label" }, h("b", { class: "mono rw-c-pic" }, a.code), " ", a.name,
-          (c.video_anchors || []).some(va => va.frame_asset === a.id) && h("span", { class: "rw-dim" }, " · video frame")), // added 2026-11-10 v0.18.0
-        // [OLD 2026-11-10 v0.17.3->v0.18.0] h("button", { type: "button", class: "rw-anchor-x", "aria-label": "Remove anchor", help: "cast.anchors.remove", onClick: () => edit(x => { x.anchors = x.anchors.filter(y => y !== a.id); }) }, icon("close", 11)))))
-        // added 2026-11-10 v0.18.0: the scenes forget it was unticked there
+          (c.video_anchors || []).some(va => va.frame_asset === a.id) && h("span", { class: "rw-dim" }, " · video frame")),
         h("button", { type: "button", class: "rw-anchor-x", "aria-label": "Remove anchor", help: "cast.anchors.remove", onClick: () => edit((x, q) => { x.anchors = x.anchors.filter(y => y !== a.id); unskipAnchor(q, x.id, a.id); }) }, icon("close", 11)))))
         : h("div", { class: "rw-empty sm", help: "cast.anchors" }, "No anchors yet. Add front, ¾, profile and full-body pictures for the strongest identity."),
-      // added 2026-11-10 v0.18.0: frame pictures of video anchors that are not anchors yet, one click away
       frames.length > 0 && h("div", { class: "rw-anchor-ready small", help: "cast.anchors.frames" },
         h("span", { class: "rw-dim" }, frames.length === 1 ? "A frame picture is ready:" : "Frame pictures are ready:"),
         frames.map(x => button({ label: "+ " + frameLabel(x), small: true, variant: "ghost", key: `anchor-frame-add-${x.fa.id}`, help: "cast.anchors.frames",
           onClick: () => edit(y => { if (!y.anchors.includes(x.fa.id)) y.anchors.push(x.fa.id); }) }))),
-      /* [OLD 2026-11-03 v0.4.0->v0.4.1] an on/off toggle and a CSS grid capped at 3×3
-      h("div", { class: "rw-sheet-row" },
-        h("div", { class: "grow" },
-          toggle({ value: c.pack_sheet, label: "Pack into one sheet", help: "cast.anchors.sheet", onChange: v => edit(x => { x.pack_sheet = v; }) }),
-          h("div", { class: "rw-dim small" }, c.pack_sheet ? `Sent as one ${sheetN}×${sheetN} image: 1 picture slot instead of ${anchors.length || "N"}.` : `Sent as ${anchors.length} separate pictures.`)),
-        c.pack_sheet && anchors.length > 0 && h("div", { class: "rw-sheet", style: { "grid-template-columns": `repeat(${sheetN}, 1fr)` }, help: "cast.anchors.sheet" },
-          anchors.slice(0, sheetN * sheetN).map(a => h("img", { src: viewURL(a.file, "input"), alt: "" })))),
-      [/OLD] */
       h("div", { class: "rw-sheet-row" },
         h("div", { class: "grow rw-col-tight" },
           segmented({ small: true, value: c.pack_sheet === "auto" ? "auto" : c.pack_sheet ? "sheet" : "separate", help: "cast.anchors.sheet",
@@ -212,14 +167,8 @@ function anchorsCard(ctx, c) {
               { value: "separate", label: "Separate", help: "cast.anchors.sheet.off" }] }),
           h("div", { class: "rw-dim small" }, packNote),
           sizeNote && h("div", { class: ["small", (packedSomewhere ? draftS : draftA) < 200 ? "rw-c-warn" : "rw-dim"], help: "cast.anchors.size" }, sizeNote),
-          // added 2026-11-09 v0.16.0: say it plainly when the sheet makes each picture too small (model.tilePixels)
           packedSomewhere && fullS < SMALL_TILE_PX && h("div", { class: "rw-note warn small", help: "cast.anchors.small" }, icon("warn", 12),
             h("span", null, `In the ${cols}×${rows} sheet each picture reaches H3 at only about ${fullS} px, too small for a reliable identity. Keep a sheet to about 4 pictures (a clear face and a full body), pick Separate or Auto, or set Global → Output → Reference images to max.`))),
-        /* [OLD 2026-11-09 v0.17.2->v0.17.3] a new sheet picture every render (its click handler kept editor.js adoptMedia from reusing it)
-        packedSomewhere && h("img", { class: "rw-sheet-img", src: ctx.host.apiURL(sheetURL(p, c, 160)), alt: "", help: "cast.anchors.sheetPreview",
-          onClick: () => window.open(ctx.host.apiURL(sheetURL(p, c, 768)), "_blank", "noopener") })),
-        [/OLD] */
-        // added 2026-11-09 v0.17.3: the same picture across renders (no blank frame); same address, same sheet to open
         packedSomewhere && kept(ctx, "sheet160-" + c.id, sheetURL(p, c, 160), () => h("img", { class: "rw-sheet-img", src: ctx.host.apiURL(sheetURL(p, c, 160)), alt: "", help: "cast.anchors.sheetPreview",
           onClick: () => window.open(ctx.host.apiURL(sheetURL(p, c, 768)), "_blank", "noopener") }))),
       h("div", { class: "rw-row wrap", help: "cast.promote" },
@@ -232,26 +181,23 @@ function anchorsCard(ctx, c) {
   });
 }
 
-// ---- added 2026-11-09 v0.16.0: video anchors (Sencer: "why didn't we add video anchors? if possible, lets add them as
-// well"). Clips of the cast member that go with its pictures as part of its subject ("shown in <Picture 1> and in
+// ---- video anchors: clips of the cast member that go with its pictures as part of its subject ("shown in <Picture 1> and in
 // <Video 2>"), to every scene it is in, after the scene's own videos while H3's budget has room (3 videos, 15 s of
 // video in all; model.pickVideoAnchors). Each has a From / To like a scene's video reference and sends its sound only
 // when "with sound" is on. Drag the grip to reorder: the first ones go first when room is short.
-// added 2026-11-09 v0.16.1: help keys of a video anchor's clip editor (From / To / Length keep their v0.16.0 names)
+// Help keys of a video anchor's clip editor (From / To / Length keep their v0.16.0 names)
 const VA_HELP = name => ({ clipFrom: "cast.videoAnchors.from", clipTo: "cast.videoAnchors.to", clipLength: "cast.videoAnchors.length" })[name] || "cast.videoAnchors." + name;
 function videoAnchorsCard(ctx, c) {
   const p = ctx.p;
   const edit = (fn, label = `Edit ${c.name}`) => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label });
   const one = (id, fn) => edit(x => { const va = (x.video_anchors || []).find(y => y.id === id); if (va) fn(va); });
-  // added 2026-11-10 v0.18.0: removing a video anchor unsets its frame picture and the scenes forget it was unticked
   const remove = id => edit((x, q) => {
     const va = (x.video_anchors || []).find(y => y.id === id);
     if (va) clearAnchorFrame(q, x, va);
     x.video_anchors = x.video_anchors.filter(y => y.id !== id);
     unskipAnchor(q, x.id, id);
   }, "Remove video anchor");
-  // added 2026-11-10 v0.18.0: a frame of the clip as a picture (Sencer: "let me select a specific frame of a video for
-  // character identity (optional), that will be revealed as picture anchor"). One picture per video anchor: taking
+  // A frame of the clip as a picture for the character's identity. One picture per video anchor: taking
   // another frame replaces its file (an anchor it already is stays one); it is offered under Anchors → + Add anchor.
   const setFrame = async (va, a, t) => {
     let res;
@@ -303,41 +249,18 @@ function videoAnchorsCard(ctx, c) {
     if (!a || a.kind !== "video") {
       return h("div", { class: "rw-note warn rw-vanchor" }, dragGrip({ help: "cast.videoAnchors.order", key: `va-grip-${va.id}` }),
         h("span", { class: "grow" }, a ? `${a.code} is not a video, so it is not sent.` : "This video anchor's asset was deleted."),
-        // [OLD 2026-11-10 v0.17.3->v0.18.0] button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => edit(x => { x.video_anchors = x.video_anchors.filter(y => y.id !== va.id); }, "Remove video anchor") }));
-        button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => remove(va.id) })); // added 2026-11-10 v0.18.0: remove()
+        button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => remove(va.id) }));
     }
-    /* [OLD 2026-11-09 v0.16.0->v0.16.1] own From / To fields and notes; the scene's clip editor does this now
-    const clip = refClip(va, a);
     const dur = Number(a.duration) || 0;
-    const secs = clip.seconds;
-    const note = secs !== null && secs <= 0 ? "From / To leave no clip: it is not sent"
-      : secs !== null && secs > 15 + 1e-6 ? `${secs.toFixed(1)} s: only its first 15 s are sent`
-        : secs !== null && secs < 2 - 1e-6 ? "under 2 s: H3 video references are 2–15 s" : "";
-    [/OLD] */
-    const dur = Number(a.duration) || 0; // added 2026-11-09 v0.16.1
     return h("div", { class: "rw-vanchor" },
       dragGrip({ help: "cast.videoAnchors.order", key: `va-grip-${va.id}` }),
       h("span", { class: "rw-vanchor-thumb rw-bg-vid-soft" }, icon("video", 16)),
       h("div", { class: "rw-vanchor-body" },
         h("div", { class: "rw-row" }, h("b", { class: "mono rw-c-vid" }, a.code), h("b", { class: "rw-ellipsis grow" }, a.name || a.file.split("/").pop()),
           h("span", { class: "rw-dim small mono" }, dur ? fmtTime(dur) : ""),
-          // [OLD 2026-11-10 v0.17.3->v0.18.0] button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => edit(x => { x.video_anchors = x.video_anchors.filter(y => y.id !== va.id); }, "Remove video anchor") })),
-          button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => remove(va.id) })), // added 2026-11-10 v0.18.0: remove()
-        /* [OLD 2026-11-09 v0.16.0->v0.16.1] From / To / length only, without Preview, From here / To here or the bar
-        h("div", { class: "rw-row wrap rw-clip-row" },
-          clipTimeField(ctx, { label: "From", value: va.in, placeholder: "0", help: "cast.videoAnchors.from", key: `va-in-${va.id}`, onCommit: v => one(va.id, x => { x.in = v ?? 0; }) }),
-          clipTimeField(ctx, { label: "To", value: va.out, placeholder: dur ? fmtTime(dur) : "end", help: "cast.videoAnchors.to", key: `va-out-${va.id}`, onCommit: v => one(va.id, x => { x.out = v; }) }),
-          h("span", { class: "rw-dim small mono", help: "cast.videoAnchors.length" }, secs === null ? "length unknown" : `${Math.min(secs, 15).toFixed(2)} s sent`),
-          toggle({ value: !!va.soundtrack, label: "with sound", help: "cast.videoAnchors.sound", key: `va-snd-${va.id}`, onChange: v => one(va.id, x => { x.soundtrack = v; }) })),
-        note && h("div", { class: "small rw-c-warn", help: "cast.videoAnchors.length" }, note)));
-        [/OLD] */
-        // added 2026-11-09 v0.16.1: the scene reference's clip editor (Sencer: "add the same options to video anchors as
-        // in scene tab/reference card/video reference. preview, from and to buttons etc."): Whole file, Preview with
-        // From here / To here / Play clip, From / To / Length, the bar with draggable ends, and its notes
+          button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => remove(va.id) })),
         h("div", { class: "rw-row wrap" },
           toggle({ value: !!va.soundtrack, label: "with sound", help: "cast.videoAnchors.sound", key: `va-snd-${va.id}`, onChange: v => one(va.id, x => { x.soundtrack = v; }) })),
-        // [OLD 2026-11-10 v0.17.3->v0.18.0] clipEditor(ctx, null, va, a, one, { help: VA_HELP, key: "va", token: false, tok: a.code, short: "is under 2 s, so it is not sent (H3 takes 2–15 s)" })));
-        // added 2026-11-10 v0.18.0: Preview → Use this frame as a picture, its mark on the bar, and the picture's row
         clipEditor(ctx, null, va, a, one, { help: VA_HELP, key: "va", token: false, tok: a.code, short: "is under 2 s, so it is not sent (H3 takes 2–15 s)",
           frame: t => setFrame(va, a, t), frameAt: va.frame_asset && findAsset(p, va.frame_asset) ? va.frame : null }),
         frameRow(va, a)));
@@ -358,22 +281,11 @@ function videoAnchorsCard(ctx, c) {
 
 function profileCard(ctx, c) {
   const p = ctx.p;
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); });  (no History menu name)
-  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label: `Edit ${c.name}` }); // added 2026-11-03 v0.6.0: History menu name
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] const audio = p.assets.filter(a => a.kind === "audio").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
-  const audio = p.assets.filter(a => a.kind === "audio").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) })); // added 2026-11-06 v0.9.0: group first
+  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label: `Edit ${c.name}` });
+  const audio = p.assets.filter(a => a.kind === "audio").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) }));
   const loras = ctx.eph.models?.loras || [];
   return section({
     title: c.kind === "character" ? "Character" : c.kind === "location" ? "Location" : "Prop", help: "cast.profile",
-    /* [OLD 2026-11-03 v0.5.1->v0.6.0] an inline bar that vanished on any re-render; the step had no name in the History menu
-    actions: button({ icon: "trash", small: true, variant: "danger-ghost", label: "Delete", help: "cast.delete", onClick: e => {
-      confirmInline(e.currentTarget.closest(".rw-card"), `Delete ${c.name}? Scenes keep their other references.`, () => {
-        ctx.actions.edit(q => { q.cast = q.cast.filter(x => x.id !== c.id); for (const s of q.scenes) { s.cast = s.cast.filter(x => x.id !== c.id); for (const d of s.dialogue) if (d.speaker === c.id) d.speaker = ""; } });
-        ctx.store.setEph({ selectedCast: "" });
-      });
-    } }),
-    [/OLD] */
-    // added 2026-11-03 v0.6.0: a dialog that says what goes with it
     actions: button({ icon: "trash", small: true, variant: "danger-ghost", label: "Delete", help: "cast.delete", onClick: async () => {
       const scenes = p.scenes.filter(s => s.cast.some(x => x.id === c.id)).length;
       const lines = p.scenes.reduce((n, s) => n + s.dialogue.filter(d => d.speaker === c.id).length, 0);
@@ -386,14 +298,7 @@ function profileCard(ctx, c) {
     children: [
       field("Name", text({ value: c.name, key: "cast-name-" + c.id, help: "cast.name", onChange: v => edit(x => { x.name = v; }) }), { help: "cast.name" }),
       field("Kind", segmented({ small: true, value: c.kind, help: "cast.kind", options: KINDS.map(([k]) => k), onChange: v => edit(x => { x.kind = v; }) }), { help: "cast.kind" }),
-      partOfField(ctx, c, edit), // added 2026-11-08 v0.11.0: a prop that is part of a character; a character's parts
-      /* [OLD 2026-11-02 v0.1.0->v0.2.0] H3's guide numbers speakers S1, S2… by speaking order in each clip, so the prompt builder assigns them
-      c.kind === "character" && field("Speaker ID", text({ value: c.speaker, key: "cast-spk-" + c.id, mono: true, width: "70px", help: "cast.speaker", onChange: v => edit(x => { x.speaker = v.toUpperCase(); }) }), { help: "cast.speaker" }),
-      [/OLD] */
-      /* [OLD 2026-11-02 v0.3.3->v0.3.4] the anchors' descriptions were not used when this was empty
-      h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.description" }, "Description"),
-        textarea({ value: c.description, rows: 3, key: "cast-desc-" + c.id, help: "cast.description", placeholder: "Woman, early 30s, short auburn hair, navy pea coat with brass buttons.", onChange: v => edit(x => { x.description = v; }) })),
-      [/OLD] */
+      partOfField(ctx, c, edit),
       (() => {
         const d = castDescription(p, c);
         return h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.description" }, "Description"),
@@ -403,7 +308,6 @@ function profileCard(ctx, c) {
               onChange: v => edit(x => { x.description = v; }) }),
             d.asset ? h("div", { class: "rw-dim small", help: "cast.description.fromAnchor" }, `Using ${d.asset.code}'s description (its first described anchor). Type here to override it.`) : null));
       })(),
-      // added 2026-11-02 v0.2.0: fill the description from the anchor pictures with a vision LLM
       c.anchors.length > 0 && h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.describe" }, "From anchors"),
         describeBox(ctx, {
           key: "cast-" + c.id, ids: c.anchors.slice(0, 4), help: "cast.describe",
@@ -412,9 +316,6 @@ function profileCard(ctx, c) {
               : "Describe the main object: what it is, shape, material, colour and condition.",
           apply: (t, mode) => edit(x => { x.description = mode === "append" && x.description ? x.description.replace(/[.\s]*$/, "") + "; " + t : t; }),
         })),
-      // [OLD 2026-11-06 v0.9.0->v0.10.0] c.kind === "character" && field("Voice", select({ options: audio, value: c.voice, placeholder: "no voice reference", help: "cast.voice", onChange: v => edit(x => { x.voice = v; }) }), { help: "cast.voice" }),
-      // added 2026-11-06 v0.10.0: the voice reference can be cut from a rendered take; the voice description goes into
-      // every pass at the character's first line
       c.kind === "character" && field("Voice", h("span", { class: "rw-row" },
         select({ options: audio, value: c.voice, placeholder: "no voice reference", help: "cast.voice", key: "cast-voice-" + c.id, onChange: v => edit(x => { x.voice = v; }) }),
         button({ label: ctx.eph.voiceCut === c.id ? "Cutting…" : "From a take…", icon: "audio", small: true, help: "cast.voiceFromTake", key: "cast-voice-take-" + c.id,
@@ -425,9 +326,6 @@ function profileCard(ctx, c) {
             onChange: v => edit(x => { x.voice_desc = v.trim(); }) }),
           p.global.continuity.describe_voices === false && (c.voice_desc || "").trim()
             ? h("div", { class: "rw-dim small", help: "cast.rules.describeVoices" }, "Not written into the prompts: Describe voices is off in the continuity rules below.") : null)),
-      /* [OLD 2026-11-02 v0.1.0->v0.2.0] language is now typed or picked (free combobox)
-      c.kind === "character" && field("Language", select({ options: STABLE_LANGUAGES, value: c.language, help: "cast.language", onChange: v => edit(x => { x.language = v; }) }), { help: "cast.language" }),
-      [/OLD] */
       c.kind === "character" && field("Language", select({ options: STABLE_LANGUAGES, value: c.language, free: true, help: "cast.language", onChange: v => edit(x => { x.language = v; }) }), { help: "cast.language" }),
       field("Identity LoRA", h("span", { class: "rw-row" },
         select({ options: loras, value: c.lora.name, placeholder: "none", mono: true, help: "cast.lora", onChange: v => edit(x => { x.lora.name = v; }) }),
@@ -441,8 +339,8 @@ function profileCard(ctx, c) {
   });
 }
 
-// added 2026-11-08 v0.11.0: a prop can be part of a character (a beer belly, a tattoo, a prosthetic arm). H3 puts every
-// subject in the shot as a separate thing, so a prop of its own showing a body part became a second person (Sencer).
+// A prop can be part of a character (a beer belly, a tattoo, a prosthetic arm). H3 puts every
+// subject in the shot as a separate thing, so a prop of its own showing a body part became a second person.
 // A part's pictures and description go into its character's subject in the scenes where both are in the cast.
 function partOf(p, c) {
   const id = partOwner(c, new Map(p.cast.map(x => [x.id, x])));
@@ -470,7 +368,7 @@ function partOfField(ctx, c, edit) {
     help: "cast.parts", key: "cast-partlink-" + x.id, onClick: () => ctx.store.setEph({ selectedCast: x.id }) }))), { help: "cast.parts" }) : null;
 }
 
-// added 2026-11-08 v0.11.0: pictures of an outfit (or a prop's variant): sent with the anchors in the scenes that pick
+// Pictures of an outfit (or a prop's variant): sent with the anchors in the scenes that pick
 // it, as the same subject (a look: other clothes, a beard, a belly). Before, only a project file could hold them.
 function outfitPictures(ctx, c, o, editO) {
   const p = ctx.p;
@@ -489,7 +387,7 @@ function outfitPictures(ctx, c, o, editO) {
       h("div", { class: "rw-dim small" }, pics.length ? `Sent with the anchors in scenes that pick “${o.name || "this"}”.` : "No pictures of its own: the anchors show this look.")));
 }
 
-// added 2026-11-03 v0.6.0: delete an outfit; scenes that wore it fall back to the default outfit (their entry's outfit
+// Delete an outfit; scenes that wore it fall back to the default outfit (their entry's outfit
 // becomes "", which follows the default), so no scene keeps pointing at an outfit that is gone
 export function removeOutfit(ctx, c, o) {
   const users = ctx.p.scenes.filter(s => s.cast.some(x => x.id === c.id && x.outfit === o.id)).length;
@@ -504,8 +402,7 @@ export function removeOutfit(ctx, c, o) {
 }
 
 function outfitsCard(ctx, c) {
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x); });  (no History menu name)
-  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x); }, { label: `Outfits of ${c.name}` }); // added 2026-11-03 v0.6.0: History menu name
+  const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x); }, { label: `Outfits of ${c.name}` });
   const editO = (id, fn) => edit(x => { const o = x.outfits.find(y => y.id === id); if (o) fn(o); });
   return section({
     title: c.kind === "character" ? "Outfits" : "Variants", help: "cast.outfits",
@@ -514,28 +411,15 @@ function outfitsCard(ctx, c) {
       x.outfits.push(o);
       if (!x.default_outfit) x.default_outfit = o.id;
     }) }),
-    /* [OLD 2026-11-03 v0.5.1->v0.6.0] deleting an outfit left scenes pointing at it (the Scene tab showed a missing outfit); no key on the retention list
-    children: c.outfits.length ? c.outfits.map(o => h("div", { class: "rw-outfit" },
-      h("div", { class: "rw-row" },
-        h("button", { type: "button", class: ["rw-radio-btn", c.default_outfit === o.id && "on"], help: "cast.outfits.default", "aria-label": "Default outfit", onClick: () => edit(x => { x.default_outfit = o.id; }) }),
-        text({ value: o.name, key: "outfit-" + o.id, help: "cast.outfits.name", onChange: v => editO(o.id, y => { y.name = v; }) }),
-        select({ options: VISUAL_RETENTION, value: o.retention, mono: true, help: "cast.outfits.retention", onChange: v => editO(o.id, y => { y.retention = v; }) }),
-        button({ icon: "trash", small: true, variant: "ghost", help: "cast.outfits.remove", onClick: () => edit(x => { x.outfits = x.outfits.filter(y => y.id !== o.id); if (x.default_outfit === o.id) x.default_outfit = x.outfits[0]?.id || ""; }) })),
-      keepChips({ values: o.keep, help: "cast.outfits.keep", onChange: v => editO(o.id, y => { y.keep = v; }) })))
-    [/OLD] */
-    // added 2026-11-03 v0.6.0: scenes that wore a deleted outfit fall back to the default one ("" = default)
     children: c.outfits.length ? c.outfits.map(o => h("div", { class: "rw-outfit" },
       h("div", { class: "rw-row" },
         h("button", { type: "button", class: ["rw-radio-btn", c.default_outfit === o.id && "on"], help: "cast.outfits.default", "aria-label": "Default outfit", onClick: () => edit(x => { x.default_outfit = o.id; }) }),
         text({ value: o.name, key: "outfit-" + o.id, help: "cast.outfits.name", onChange: v => editO(o.id, y => { y.name = v; }) }),
         select({ options: VISUAL_RETENTION, value: o.retention, key: "outfit-ret-" + o.id, mono: true, help: "cast.outfits.retention", onChange: v => editO(o.id, y => { y.retention = v; }) }),
         button({ icon: "trash", small: true, variant: "ghost", help: "cast.outfits.remove", onClick: () => removeOutfit(ctx, c, o) })),
-      // [OLD 2026-11-03 v0.6.0 review] keepChips({ values: o.keep, help: "cast.outfits.keep", onChange: v => editO(o.id, y => { y.keep = v; }) })))
-      // [OLD 2026-11-08 v0.10.3->v0.11.0] keepChips({ values: o.keep, help: "cast.outfits.keep", key: "outfit-keep-" + o.id, onChange: v => editO(o.id, y => { y.keep = v; }) }))) // added 2026-11-03 v0.6.0 review: key
-      keepChips({ values: o.keep, help: "cast.outfits.keep", key: "outfit-keep-" + o.id, onChange: v => editO(o.id, y => { y.keep = v; }) }), // added 2026-11-03 v0.6.0 review: key
-      outfitPictures(ctx, c, o, editO))) // added 2026-11-08 v0.11.0: the outfit's own pictures
-      // [OLD 2026-11-08 v0.10.3->v0.11.0] : h("div", { class: "rw-empty sm", help: "cast.outfits" }, "One look everywhere. Add outfits when the character changes clothes."),
-      : h("div", { class: "rw-empty sm", help: "cast.outfits" }, c.kind === "character" ? "One look everywhere. Add an outfit when the character's look changes: other clothes, a beard, a belly." : "One look everywhere. Add a variant when it changes."), // added 2026-11-08 v0.11.0
+      keepChips({ values: o.keep, help: "cast.outfits.keep", key: "outfit-keep-" + o.id, onChange: v => editO(o.id, y => { y.keep = v; }) }),
+      outfitPictures(ctx, c, o, editO)))
+      : h("div", { class: "rw-empty sm", help: "cast.outfits" }, c.kind === "character" ? "One look everywhere. Add an outfit when the character's look changes: other clothes, a beard, a belly." : "One look everywhere. Add a variant when it changes."),
   });
 }
 
@@ -574,8 +458,7 @@ function appearances(ctx, c) {
 
 function rulesCard(ctx) {
   const g = ctx.p.global.continuity;
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const set = fn => ctx.actions.edit(q => fn(q.global.continuity));  (no History menu name)
-  const set = fn => ctx.actions.edit(q => fn(q.global.continuity), { label: "Continuity setting" }); // added 2026-11-03 v0.6.0: History menu name
+  const set = fn => ctx.actions.edit(q => fn(q.global.continuity), { label: "Continuity setting" });
   return section({
     title: "Continuity rules", help: "cast.rules",
     children: [
@@ -586,12 +469,9 @@ function rulesCard(ctx) {
           h("span", { class: "rw-chain" }, h("span", { class: "rw-chain-src" }, "anchors"), ["02", "03", "06", "10"].map(n => h("span", { class: "rw-chain-dot" }, n)))),
         h("div", { class: "rw-dim small" }, "Reelwright always sends the anchors, so scene 10 gets the same identity input as scene 2.")),
       field("Re-anchor after", number({ value: g.reanchor_after, min: 0, max: 20, width: "64px", help: "cast.rules.reanchor", onChange: v => set(c => { c.reanchor_after = v ?? 2; }) }), { help: "cast.rules.reanchor" }),
-      // added 2026-11-05 v0.7.0: the continuation (previous last frame or tail clip) as a named reference in the prompt
-      // (global.continuity.name_continuation, contract A; missing in an older project = on)
       field("Continuation", toggle({ value: g.name_continuation !== false, label: "Name it in the prompt", key: "rules-name-cont", help: "cast.rules.nameContinuation",
         onChange: v => ctx.actions.edit(q => { q.global.continuity.name_continuation = v; }, { label: v ? "Name the continuation" : "Don't name the continuation" }) }),
       { help: "cast.rules.nameContinuation" }),
-      // added 2026-11-06 v0.10.0: each character's voice description at their first line in every pass
       field("Voices", toggle({ value: g.describe_voices !== false, label: "Describe them in every pass", key: "rules-describe-voices", help: "cast.rules.describeVoices",
         onChange: v => ctx.actions.edit(q => { q.global.continuity.describe_voices = v; }, { label: v ? "Describe voices" : "Don't describe voices" }) }),
       { help: "cast.rules.describeVoices" }),
@@ -612,12 +492,8 @@ export function render(ctx) {
     list(ctx, c?.id),
     c ? h("div", { class: "rw-col wide" },
       h("div", { class: "rw-cast-head" }, h("span", { class: "rw-cast-name" }, c.name),
-        /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are assigned per clip now
-        c.speaker && chip({ label: `<Subject> · ${c.speaker}`, kind: "pic", help: "cast.speaker" }),
-        [/OLD] */
         h("span", { class: "rw-flex" })),
-      // [OLD 2026-11-09 v0.15.1->v0.16.0] anchorsCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c))
-      anchorsCard(ctx, c), videoAnchorsCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c)) // v0.16.0: video anchors
+      anchorsCard(ctx, c), videoAnchorsCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c))
       : h("div", { class: "rw-col wide" }, section({ title: "Story bible", help: "cast.bible", children: [
         h("div", { class: "rw-empty" }, "Add a character, location or prop. Its anchors are sent to every scene it appears in, which keeps it looking the same."),
         h("div", { class: "rw-row" }, KINDS.map(([k, label]) => button({ label: "New " + label.slice(0, -1).toLowerCase(), icon: "plus", help: "cast.add." + k, onClick: () => addEntry(ctx, k) }))),

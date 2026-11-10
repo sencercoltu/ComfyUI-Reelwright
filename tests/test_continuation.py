@@ -1,4 +1,4 @@
-"""The continuation as a named reference (added 2026-11-05 v0.7.0, Global -> Continuity -> name_continuation).
+"""The continuation as a named reference (Global -> Continuity -> name_continuation).
 
 A last-frame start sends the last frame of the scene before as <Picture 1>, a tail start its tail clip as <Video 1>
 (with its sound when an audio slot is free), a pass after an overlap seam the end of the pass before as <Video 1>.
@@ -8,8 +8,8 @@ With the switch off everything is exactly as in v0.6.1: tests/data/v061_continua
 
 import copy
 import json
-import re  # added 2026-11-08 v0.14.0
 import os
+import re
 
 import pytest
 
@@ -25,7 +25,7 @@ BUILD_KEYS = ("prompt", "tags", "tag_map", "unknown", "issues", "images", "video
 
 
 def _v061_tags(b):
-    """added 2026-11-08 v0.14.0: a build without the tag map's @V1.2 style entries (a scene's further references of an
+    """A build without the tag map's @V1.2 style entries (a scene's further references of an
     asset), which v0.6.1 did not write; the cache key does not read the tag map."""
     b = dict(b)
     b["tag_map"] = {k: v for k, v in b["tag_map"].items() if not re.fullmatch(r"@[PVA]\d+\.\d+", k)}
@@ -93,7 +93,7 @@ def _sections(text):
 
 # ---- switch off: exactly v0.6.1 ----------------------------------------------------------------------------------
 
-# added 2026-11-09 v0.16.0: a packed anchor sheet is named in its subject line ("shown in <Picture 1>, a sheet of 2 views
+# A packed anchor sheet is named in its subject line ("shown in <Picture 1>, a sheet of 2 views
 # of the same person"); without those words a build is v0.6.1's. A scene that sends a sheet gets new keys (re-renders).
 SHEET_WORDS = re.compile(r", a sheet of \d+ views of the same (?:person|place|object|subject)")
 
@@ -102,7 +102,7 @@ def _no_sheet_words(b):
     return dict(b, prompt=SHEET_WORDS.sub("", b["prompt"])) if isinstance(b.get("prompt"), str) else b
 
 
-# added 2026-11-09 v0.17.0: every spoken line opens with its time ("At 00:02.400, <Subject 1> (S1) says, …"); without
+# Every spoken line opens with its time ("At 00:02.400, <Subject 1> (S1) says, …"); without
 # the time a build is v0.6.1's. A scene with spoken lines gets new keys (re-renders).
 LINE_TIME = re.compile(r"At \d{2}:\d{2}\.\d{3}, (<Subject \d+>|an off-screen voice|[A-Z][^,(<]{0,40}?) (\(S\d+(?:,S\d+)*\))")
 
@@ -120,36 +120,22 @@ def _sends_sheet(builds):
 def test_off_gives_the_v061_builds_and_cache_keys(v061, roots):
     assert model.default_global()["continuity"]["name_continuation"] is True
     for raw, expect in zip(v061["projects"], v061["expect"]):
-        # [OLD v0.7.0] r = _analyze(_project(raw, on=False), roots)
-        # v0.8.0: with the scene summary written as each pass's own summary (a multi-pass scene no longer sends the
-        # scene summary), every build and key is v0.6.1's
-        # [OLD 2026-11-09 v0.15.1->v0.16.0] r = _analyze(_pass_summaries(_project(raw, on=False)), roots)
-        q = _pass_summaries(_project(raw, on=False))  # added 2026-11-09 v0.16.0: the scene order, for chained keys
+        q = _pass_summaries(_project(raw, on=False))
         r = _analyze(q, roots)
         assert set(r["scenes"]) == set(expect)
-        moved = set()  # added 2026-11-09 v0.16.0: scenes with new keys (a sheet, or continuing from such a scene)
-        # [OLD 2026-11-09 v0.15.1->v0.16.0] for sid, want in expect.items():
+        moved = set()
         for i, sid in enumerate(x["id"] for x in q["scenes"]):
             want = expect[sid]
             sr = r["scenes"][sid]
             got = [{k: b[k] for k in BUILD_KEYS} for b in sr["builds"]]
-            # [OLD 2026-11-08 v0.13.1->v0.14.0] assert json.loads(json.dumps(got)) == want["builds"], sid
-            # added 2026-11-08 v0.14.0: the tag map also names a scene's further references of an asset (@V1.2); the
-            # cache key does not read the tag map, so everything else is still v0.6.1's
             for g in got:
                 g["tag_map"] = {k: v for k, v in g["tag_map"].items() if not re.fullmatch(r"@[PVA]\d+\.\d+", k)}
-            # [OLD 2026-11-09 v0.15.1->v0.16.0] assert json.loads(json.dumps(got)) == want["builds"], sid
-            got = [_no_sheet_words(g) for g in got]  # added 2026-11-09 v0.16.0
-            timed = any(LINE_TIME.search(g["prompt"] or "") for g in got)  # added 2026-11-09 v0.17.0
-            got = [_no_line_times(g) for g in got]  # added 2026-11-09 v0.17.0
+            got = [_no_sheet_words(g) for g in got]
+            timed = any(LINE_TIME.search(g["prompt"] or "") for g in got)
+            got = [_no_line_times(g) for g in got]
             assert json.loads(json.dumps(got)) == want["builds"], sid
             assert all(b["continuation"] is None for b in sr["builds"]), sid
-            # [OLD 2026-11-09 v0.15.1->v0.16.0] assert sr["pass_keys"] == want["pass_keys"], sid
-            # [OLD 2026-11-09 v0.15.1->v0.16.0] assert sr["key"] == want["key"], sid
-            # added 2026-11-09 v0.16.0: the sheet words change its prompt, so its keys, and the keys of the scenes that
-            # continue from it
-            # [OLD 2026-11-09 v0.16.1->v0.17.0] if _sends_sheet(sr["builds"]) or (i > 0 and model.effective_start(q, i) != "fresh" and
-            if _sends_sheet(sr["builds"]) or timed or (i > 0 and model.effective_start(q, i) != "fresh" and  # v0.17.0: timed lines
+            if _sends_sheet(sr["builds"]) or timed or (i > 0 and model.effective_start(q, i) != "fresh" and
                                               q["scenes"][i - 1]["id"] in moved):
                 moved.add(sid)
                 assert sr["key"] != want["key"], sid
@@ -160,7 +146,7 @@ def test_off_gives_the_v061_builds_and_cache_keys(v061, roots):
 
 
 def test_v080_changes_only_the_summary_of_multi_pass_scenes_with_a_written_summary(v061, roots):
-    """added 2026-11-05 v0.8.0: what re-renders after the update (switch off, so only P1 counts): a multi-pass scene
+    """What re-renders after the update (switch off, so only P1 counts): a multi-pass scene
     whose scene summary was written sends each pass a summary made from its own shots instead, and a guide picture
     named only in that summary is no longer sent as a reference (s_long pass 3: the letter keyframe @P3, still
     anchored); every other section, reference and every other scene (single-pass, or multi-pass with an empty
@@ -178,15 +164,11 @@ def test_v080_changes_only_the_summary_of_multi_pass_scenes_with_a_written_summa
                     assert [x["assets"] for x in b["images"]] == [x["assets"] for x in was["images"]][:-1] and \
                         was["images"][-1]["assets"] == ["a_letter"] and b["guides"] == was["guides"]
                     continue
-                # [OLD 2026-11-09 v0.15.1->v0.16.0] now, old = _sections(b["prompt"]), _sections(was["prompt"])
-                # [OLD 2026-11-09 v0.16.1->v0.17.0] now, old = _sections(_no_sheet_words(b)["prompt"]), _sections(was["prompt"])  # added 2026-11-09 v0.16.0
-                now, old = _sections(_no_line_times(_no_sheet_words(b))["prompt"]), _sections(was["prompt"])  # v0.17.0: line times
+                now, old = _sections(_no_line_times(_no_sheet_words(b))["prompt"]), _sections(was["prompt"])
                 assert {k: v for k, v in now.items() if k != "summary"} == \
                     {k: v for k, v in old.items() if k != "summary"}, s["id"]
-                # [OLD 2026-11-08 v0.13.1->v0.14.0] assert {k: b[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")} == \
-                # [OLD 2026-11-08 v0.13.1->v0.14.0]     {k: was[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")}, s["id"]
                 assert {k: _v061_tags(b)[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")} == \
-                    {k: was[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")}, s["id"]  # added 2026-11-08 v0.14.0
+                    {k: was[k] for k in BUILD_KEYS if k not in ("prompt", "issues", "unknown")}, s["id"]
             if multi and written:
                 changed.append(s["id"])
                 assert all(_sections(b["prompt"])["summary"] != _sections(w["prompt"])["summary"]
@@ -194,16 +176,14 @@ def test_v080_changes_only_the_summary_of_multi_pass_scenes_with_a_written_summa
                 assert sr["key"] != want["key"]
             elif i > 0 and model.effective_start(p, i) != "fresh" and p["scenes"][i - 1]["id"] in chained:
                 chained.add(s["id"])  # continues from a scene that renders again: same prompts, new key
-                # [OLD 2026-11-09 v0.15.1->v0.16.0] assert [b["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]
-                # [OLD 2026-11-09 v0.16.1->v0.17.0] assert [_no_sheet_words(b)["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]
-                assert [_no_line_times(_no_sheet_words(b))["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]  # v0.17.0
+                assert [_no_line_times(_no_sheet_words(b))["prompt"] for b in sr["builds"]] == [w["prompt"] for w in want["builds"]], s["id"]
                 assert sr["key"] != want["key"], s["id"]
                 continue
-            elif _sends_sheet(sr["builds"]):  # added 2026-11-09 v0.16.0: its sheet is named now (new prompt, new key)
+            elif _sends_sheet(sr["builds"]):
                 chained.add(s["id"])
                 assert sr["key"] != want["key"], s["id"]
                 continue
-            elif any(LINE_TIME.search(b["prompt"] or "") for b in sr["builds"]):  # added 2026-11-09 v0.17.0: timed lines
+            elif any(LINE_TIME.search(b["prompt"] or "") for b in sr["builds"]):
                 chained.add(s["id"])
                 assert sr["key"] != want["key"], s["id"]
                 continue
@@ -222,17 +202,14 @@ def test_on_changes_only_the_passes_that_continue(v061, roots):
         for i, s in enumerate(p["scenes"]):
             sr, want = r["scenes"][s["id"]], expect[s["id"]]
             named = [b["continuation"] is not None for b in sr["builds"]]
-            timed = [bool(LINE_TIME.search(b["prompt"] or "")) for b in sr["builds"]]  # added 2026-11-09 v0.17.0
+            timed = [bool(LINE_TIME.search(b["prompt"] or "")) for b in sr["builds"]]
             for n, (b, was) in enumerate(zip(sr["builds"], want["builds"])):
                 same_so_far = not any(named[:n + 1]) and (i == 0 or not sr["continues"])
                 if same_so_far:
-                    # [OLD 2026-11-09 v0.16.1->v0.17.0] assert b["prompt"] == was["prompt"] and sr["pass_keys"][n] == want["pass_keys"][n], (s["id"], n)
-                    # added 2026-11-09 v0.17.0: the same prompt but for the lines' times; a pass with lines has a new key
                     assert _no_line_times(b)["prompt"] == was["prompt"] and (timed[n] or sr["pass_keys"][n] == want["pass_keys"][n]), (s["id"], n)
                 if named[n]:
                     assert b["prompt"] != was["prompt"] and sr["pass_keys"][n] != want["pass_keys"][n], (s["id"], n)
-            # [OLD 2026-11-09 v0.16.1->v0.17.0] if not sr["continues"] and not any(named):
-            if not sr["continues"] and not any(named) and not any(timed):  # v0.17.0
+            if not sr["continues"] and not any(named) and not any(timed):
                 assert sr["key"] == want["key"], s["id"]
             if any(named):
                 assert sr["key"] != want["key"], s["id"]
@@ -270,7 +247,7 @@ def test_last_frame_start_names_the_frame_as_picture_1(v061):
 
 
 def test_tail_start_names_the_tail_clip_as_video_1_with_its_sound(v061):
-    p = _pass_summaries(_project(v061["projects"][0]))  # v0.8.0: the summary as each pass's own
+    p = _pass_summaries(_project(v061["projects"][0]))
     builds, plan = _builds(p, "s_long")
     b = builds[0]
     assert b["continuation"] == {"kind": "video", "source": "prev_scene_tail", "frames": 124, "label": "<Video 1>",
@@ -296,7 +273,7 @@ def test_tail_start_names_the_tail_clip_as_video_1_with_its_sound(v061):
 
 
 def test_overlap_seams_name_the_end_of_the_pass_before(v061):
-    p = _pass_summaries(_project(v061["projects"][0]))  # v0.8.0: the summary as each pass's own
+    p = _pass_summaries(_project(v061["projects"][0]))
     builds, plan = _builds(p, "s_long")
     assert [x["seam_before"] for x in plan["passes"]] == ["none", "overlap", "overlap"]
     for b in builds[1:]:

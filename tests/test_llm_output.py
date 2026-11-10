@@ -1,4 +1,4 @@
-"""added 2026-11-09 v0.15.0: the editor keeps what an LLM request receives, for the output popup (Sencer: "When
+"""The editor keeps what an LLM request receives, for the output popup (Sencer: "When
 waiting for response, we receive thinking, but cannot see what it thinks. Add the thinking progress and received
 content as output so we can see what's going on. It should only be shown by a toggle button inside a popup.")
 

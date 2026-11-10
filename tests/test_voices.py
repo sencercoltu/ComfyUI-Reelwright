@@ -1,4 +1,4 @@
-"""Voices that stay the same from pass to pass (added 2026-11-06 v0.10.0): a character's voice description (cast
+"""Voices that stay the same from pass to pass: a character's voice description (cast
 voice_desc) at their first line in every pass, the switch for it, the Issues warning for a character heard in several
 passes with nothing that fixes the voice, Script import's voice, and Write prompts' Voices list."""
 

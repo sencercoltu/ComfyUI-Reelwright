@@ -1,6 +1,3 @@
-// added 2026-11-05 v0.7.0: per-scene cut settings (scene.merge) for the Scene tab's "In the cut" card, the timeline's
-// marks and the Render tab. The schema, defaults and normalisation live in model.js / model.py (contract B); this file
-// only reads them, with a fallback for a scene that has no merge object yet.
 
 import * as model from "./model.js";
 import { effectiveStart, tailOverlapFrames, soundtrackLocked } from "./model.js";

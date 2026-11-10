@@ -1,4 +1,4 @@
-"""Soundtrack tracks (added 2026-11-03 v0.5.0): a song laid on the cut, sent to every pass as the part it covers,
+"""Soundtrack tracks: a song laid on the cut, sent to every pass as the part it covers,
 mixed unchanged in the merge."""
 
 import copy
@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from reelwright import assemble, cache, merge, soundtrack, spec, validate
+from reelwright import assemble, cache, merge, soundtrack, validate
 from reelwright.analysis import analyze
 from reelwright.model import default_project, normalize_project, scene_starts
 from reelwright.planner import plan_scene
@@ -110,14 +110,11 @@ def test_too_little_sound_and_loops(harbor):
 # ---- prompt, cache, lint --------------------------------------------------------------------------------------------
 
 def test_prompt_sends_the_song_instead_of_voices(harbor):
-    # v0.6.0: a voice goes only to the passes where its character speaks (Mara's line at 16 s)
     plan = plan_scene(harbor, harbor["scenes"][1], 1)
     k = next(n for n, x in enumerate(plan["passes"]) if x["dialogue"])
     before, _ = _build(harbor, 1, k)
     assert any(a["cast"] for a in before["audios"])
     p = _song(harbor)
-    # [OLD v0.7.0] p["scenes"][1]["prompt"]["sections"]["summary"] += " She sings along to @soundtrack."
-    # v0.8.0: a multi-pass scene does not send the scene summary; the sentence is this pass's own summary
     s = p["scenes"][1]
     s["prompt"]["passes"] = [{"start": x["start"], "end": x["end"], "sections": {"summary": s["prompt"]["sections"][
         "summary"] + " She sings along to @soundtrack." if n == k else ""}} for n, x in enumerate(plan["passes"])]
@@ -156,13 +153,11 @@ def test_cache_key_follows_the_song(harbor):
 
 def test_lint_counts_the_song_and_checks_tracks(harbor, store):
     p = _song(harbor, start=0.0)
-    # [OLD 2026-11-05 v0.6.1->v0.7.0] p["scenes"][2]["transition"] = {"mode": "crossfade", "frames": 12, "audio_fade_frames": None}
-    p["scenes"][2]["merge"].update(transition="crossfade", frames=12)  # added 2026-11-05 v0.7.0: scene.merge
+    p["scenes"][2]["merge"].update(transition="crossfade", frames=12)
     r = analyze(p, store)
     msgs = [i["message"] for s in r["scenes"].values() for i in s["issues"]] + [i["message"] for i in r["issues"]]
     assert not any("reference audio clips" in m for m in msgs)
-    # [OLD 2026-11-05 v0.6.1->v0.7.0] assert any("dip through black inside the scenes" in m for m in msgs)
-    assert any("crossfade plays as a dip through black inside both scenes" in m for m in msgs)  # v0.7.0: per scene
+    assert any("crossfade plays as a dip through black inside both scenes" in m for m in msgs)
     p["soundtrack"].append(soundtrack.normalize_track({"asset": "a_front"}))
     p["soundtrack"].append(soundtrack.normalize_track({"asset": "a_song", "in": 200.0}))
     p["soundtrack"].append(soundtrack.normalize_track({"asset": "gone"}))
@@ -250,7 +245,7 @@ def _take(store, r, sid, secs, overlap=0):
 def test_locked_cut_plan_matches_the_timeline(harbor, store, roots):
     p = _song(harbor)
     p["global"]["merge"].update(missing="skip", hard_cut="crossfade", transition_frames=12)
-    for s in p["scenes"]:  # added 2026-11-05 v0.7.0: Global -> Merge's hard cut is read once, into scene.merge
+    for s in p["scenes"]:
         s.pop("merge", None)
     r = analyze(p, store)
     _take(store, r, "s_one", 7.0)  # an old take, 1 s shorter than the scene
@@ -318,7 +313,7 @@ def test_scene_sound_under_ducked_and_looped_tracks_runs(tmp_path):
     assert min(w["peaks"][10:150]) > 5  # song from the first frame (its first half second is before the film)
 
 
-# ---- added 2026-11-03 v0.6.0: soundtrack in the side files, stems, the pass excerpt, old profiles ------------------
+# ---- soundtrack in the side files, stems, the pass excerpt, old profiles -------------------------------------------
 
 @needs_ffmpeg
 def test_range_merge_exports_the_soundtrack_where_it_plays(harbor, store, roots):

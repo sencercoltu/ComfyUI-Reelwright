@@ -1,6 +1,6 @@
 import copy
 
-import pytest  # added 2026-11-03 v0.5.0
+import pytest
 
 from reelwright.analysis import analyze, plan_response
 from reelwright.planner import plan_scene
@@ -24,10 +24,6 @@ def _every_pass(p, i, **sections):
 
 
 def test_reference_numbering_follows_native_order(harbor):
-    # v0.6.0: pass 1 (0-14.4 s) gets the cast sheet and the dolly video whose soundtrack takes <Audio 1>; Mara speaks
-    # only in pass 2 (her voice comes after the video's sound there) and the 25 s letter keyframe guides pass 3
-    # v0.7.0: the scene starts from the tail of the scene before, which is <Video 1> with its sound <Audio 1>, so
-    # the dolly video is <Video 2> (its sound <Audio 2>); pass 2 follows a cut, so it numbers as before
     b, _ = _build(harbor, 1)
     assert [img["assets"] for img in b["images"]] == [["a_front", "a_side"]]
     assert b["videos"][0]["continuation"] and b["videos"][0]["audio_number"] == 1
@@ -35,15 +31,10 @@ def test_reference_numbering_follows_native_order(harbor):
     assert b["tag_map"]["@V1"] == "<Video 2>" and b["tag_map"]["@tail"] == "<Video 1>"
     assert "@A1" not in b["tag_map"] and not any(a.get("cast") for a in b["audios"])
     assert b["tag_map"]["@Mara"] == "<Subject 1>"
-    # [OLD v0.7.0] assert "<Subject 1> walks home" in b["prompt"]
-    # v0.8.0: the scene summary of a multi-pass scene is a note, never sent; @P3 there names nothing now
     assert "walks home" not in b["prompt"] and "@P3" not in b["tag_map"]
     b2, _ = _build(harbor, 1, 1)
     assert b2["tag_map"]["@A1"] == "<Audio 2>" and "@tail" not in b2["tag_map"]
     b3, _ = _build(harbor, 1, 2)
-    # [OLD v0.7.0] assert [img["assets"] for img in b3["images"]] == [["a_front", "a_side"], ["a_letter"]]
-    # v0.8.0: the 25 s letter keyframe was named only in the scene summary, which a multi-pass scene does not send, so
-    # pass 3 only anchors it (guide) and does not send it as <Picture 2>
     assert [img["assets"] for img in b3["images"]] == [["a_front", "a_side"]]
     assert any(g["source"] == "asset" and g["asset"] == "a_letter" for g in b3["guides"])
     _every_pass(harbor, 1, summary=harbor["scenes"][1]["prompt"]["sections"]["summary"])  # named in the pass's own
@@ -52,8 +43,6 @@ def test_reference_numbering_follows_native_order(harbor):
 
 
 def test_keyframe_named_in_prompt_becomes_a_picture(harbor):
-    # v0.6.0: only in the pass the keyframe guides; the other passes name it in words
-    # v0.8.0: the sentence is each pass's own summary (the scene summary is not sent in a multi-pass scene)
     _every_pass(harbor, 1, summary=harbor["scenes"][1]["prompt"]["sections"]["summary"])
     b, _ = _build(harbor, 1, 2)
     assert b["tag_map"]["@P3"] == "<Picture 2>"
@@ -83,12 +72,8 @@ def test_dialogue_line_format(harbor):
 
 def test_unknown_tags_are_reported(harbor):
     p = copy.deepcopy(harbor)
-    # [OLD v0.7.0] p["scenes"][1]["prompt"]["sections"]["summary"] += " @Nobody looks at @P9."
-    # v0.8.0: a multi-pass scene sends each pass's own summary, not the scene summary
     _every_pass(p, 1, summary=p["scenes"][1]["prompt"]["sections"]["summary"] + " @Nobody looks at @P9.")
     b, _ = _build(p, 1)
-    # [OLD v0.5.1] assert set(b["unknown"]) == {"@Nobody", "@P9"}
-    # v0.6.0: only a name that looks like an asset code is an error; any other unknown name is a warning
     assert b["unknown"] == ["@P9"]
     levels = {x["tag"]: x["level"] for x in b["issues"]}
     assert levels["@P9"] == "error" and levels["@Nobody"] == "warn"
@@ -100,15 +85,10 @@ def test_raw_mode_and_pass_override(harbor):
     p["scenes"][1]["prompt"].update(mode="raw", raw="@Mara walks. @V1 camera.")
     b, _ = _build(p, 1)
     assert b["prompt"].startswith("[reference generation")
-    # v0.7.0: the tail clip is <Video 1>, defined in front of the written prompt
     assert "<Subject 1> walks. <Video 2> camera." in b["prompt"]
     assert "] <Video 1> is the end of the scene before; the target video continues from its final frames." in b["prompt"]
     p["scenes"][1]["prompt"]["pass_prompts"] = {"1": "[video continuation] custom @Mara"}
     b, _ = _build(p, 1)
-    # [OLD v0.5.1] assert b["prompt"] == "[video continuation] custom <Subject 1>"
-    # v0.6.0: written task tags are replaced by the ones the pass needs, so they are there exactly once
-    # [OLD v0.6.1] assert b["prompt"] == "[reference generation + video continuation + audio reference] custom <Subject 1>"
-    # v0.7.0: and the tail clip (<Video 1>, its sound <Audio 1>) is defined after them
     assert b["prompt"] == "[reference generation + video continuation + audio reference] <Video 1> is the end of the " \
         "scene before; the target video continues from its final frames. <Audio 1> is the synchronized audio track of " \
         "<Video 1>.\ncustom <Subject 1>"
@@ -174,12 +154,10 @@ def test_plan_response_shape(harbor, store):
     s = out["scenes"]["s_long"]
     assert set(s) >= {"status", "key", "passes", "prompts", "issues", "takes"}
     assert {"index", "start", "end", "gen_frames", "keep_in", "keep_out", "seam_before", "overlap_frames", "seed"} <= set(s["passes"][0])
-    # [OLD 2026-11-03 v0.4.3->v0.5.0] assert out["timeline"]["total"] == 42.5
-    # added 2026-11-03 v0.5.0: the timeline is the cut, so the tail scene's 39 repeated frames overlap the scene before
     assert out["timeline"]["total"] == pytest.approx(42.5 - 39 / 24)
 
 
-# added 2026-11-02 v0.2.0: output follows MiniMax's official Ref2VA guide (ref-en.txt)
+# Output follows MiniMax's official Ref2VA guide (ref-en.txt)
 def test_ref2va_sections_follow_the_guide(harbor):
     b, _ = _build(harbor, 1)
     heads = [line for line in b["prompt"].split("\n") if line.endswith(":") and " " not in line]
@@ -187,16 +165,12 @@ def test_ref2va_sections_follow_the_guide(harbor):
                      "overall_soundscape:", "non_diegetic_music:"]
     for old in ("Subjects:", "Retention:", "Shots:", "Single continuous take", "[Shot1]"):
         assert old not in b["prompt"]
-    # [OLD 2026-11-09 v0.15.1->v0.16.0] assert "<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>." in b["prompt"]
     assert ("<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>, a sheet of 2 views of the same "
-            "person.") in b["prompt"]  # added 2026-11-09 v0.16.0: the sheet is named
+            "person.") in b["prompt"]
     assert "<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - identity and appearance are retained." in b["prompt"]
-    # v0.7.0: [Shot 1] cites the tail clip it continues from (<Video 1>)
     assert "[Shot 1] The shot continues seamlessly from the final frames of <Video 1>. A wide shot: Mara leaves the " \
            "pier." in b["prompt"]
     assert "[Shot 2] At 00:06.000, the shot cuts to a tracking shot: along the seawall." in b["prompt"]
-    # [OLD v0.7.0] assert "summary:\n[reference generation + video continuation + audio reference] <Subject 1> walks home" in b["prompt"]
-    # v0.8.0: pass 1 of a multi-pass scene gets a summary made from its own shots, not the scene summary
     assert "summary:\n[reference generation + video continuation + audio reference] The target video shows " \
            "<Subject 1> and unfolds over 2 shots. Mara leaves the pier. Along the seawall. It continues seamlessly " \
            "from the final frames of <Video 1>, the end of the scene before.\n" in b["prompt"]
@@ -231,7 +205,7 @@ def test_reference_pictures_become_subjects(harbor):
     assert "boats rock beside <Subject 1>" in b["prompt"]
 
 
-# added 2026-11-02 v0.3.4: an asset's description reaches every scene, including through a character's anchors
+# An asset's description reaches every scene, including through a character's anchors
 def test_asset_description_reaches_every_scene_and_character(harbor):
     from reelwright.model import cast_description, project_index
     p = copy.deepcopy(harbor)
@@ -244,9 +218,8 @@ def test_asset_description_reaches_every_scene_and_character(harbor):
     assert cast_description(mara, project_index(p)["assets"]) == ("a woman in her thirties with short auburn hair", "a_front")
     p["scenes"][1]["cast"] = [{"id": "c_mara", "outfit": ""}]
     b, _ = _build(p, 1)
-    # [OLD 2026-11-09 v0.15.1->v0.16.0] assert "<Subject 1> is Mara, a woman in her thirties with short auburn hair, shown in <Picture 1>." in b["prompt"]
     assert ("<Subject 1> is Mara, a woman in her thirties with short auburn hair, shown in <Picture 1>, a sheet of 2 "
-            "views of the same person.") in b["prompt"]  # added 2026-11-09 v0.16.0: the sheet is named
+            "views of the same person.") in b["prompt"]
     # an edit to the asset changes the prompt; the character's own description still wins
     p["assets"][0]["description"] = "a woman with a grey wool coat"
     b, _ = _build(p, 1)
@@ -270,7 +243,7 @@ def test_llm_context_uses_live_descriptions(harbor):
     assert "a folded letter with a red wax seal" in ctx and "a woman with a grey wool coat" in ctx
 
 
-# ---- added 2026-11-03 v0.4.1: written sections no longer repeat the automatic ones -------------------------------
+# ---- written sections no longer repeat the automatic ones --------------------------------------------------------
 
 def _sections(prompt):
     out, key = {}, None
@@ -289,8 +262,6 @@ def test_written_subject_line_replaces_the_automatic_one(harbor):
     s["prompt"]["auto"] = {"subjects": True, "retention": True, "shots": True}
     s["prompt"]["sections"]["subject_definitions"] = "@Mara is a tall woman in a navy coat."
     s["prompt"]["sections"]["retention_analysis"] = "@Mara (appears in [Shot 1]): fully_preserved - her face is retained."
-    # [OLD v0.7.0] s["prompt"]["sections"]["summary"] = "[reference generation + audio reference + keyframe completion] Mara walks home."
-    # v0.8.0: a pass's own summary (a multi-pass scene does not send the scene summary)
     _every_pass(harbor, 1, summary="[reference generation + audio reference + keyframe completion] Mara walks home.")
     b, _ = _build(harbor, 1)
     sec = _sections(b["prompt"])
@@ -316,7 +287,6 @@ def test_written_shot_replaces_the_automatic_shot_and_keeps_its_dialogue(harbor)
     plan = plan_scene(harbor, s, 1)
     texts = [build_pass(harbor, s, 1, plan, x)["prompt"] for x in plan["passes"]]
     first = _sections(texts[0])["detailed_description"].split("\n")
-    # v0.7.0: the written [Shot 1] cites the tail clip it continues from
     assert first[0] == "Live-action, soft rain light." and first[1].startswith(
         "[Shot 1] The shot continues seamlessly from the final frames of <Video 1>. A wide shot: <Subject 1> walks")
     assert sum(x.startswith("[Shot 1]") for x in first) == 1
@@ -343,11 +313,10 @@ def test_tidy_rewrite():
     assert out["summary"] == "@{Old Keeper} waits." and out["subject_definitions"] == "@{Old Keeper} is old."
 
 
-# added 2026-11-03 v0.4.1: pack_sheet "auto" packs a character's anchors only when the pass would not fit 9 pictures
+# pack_sheet "auto" packs a character's anchors only when the pass would not fit 9 pictures
 def test_auto_packing(harbor):
     s = harbor["scenes"][0]
     s["cast"] = [{"id": "c_mara"}]
-    mara = harbor["cast"][0]
     extra = [{"id": "a_x%d" % i, "code": "", "kind": "image", "name": "x%d" % i, "file": "reelwright/harbor_lights/x%d.png" % i,
               "width": 800, "height": 1000, "defaults": {"role": "reference", "retention": "fully_preserved", "keep": [], "soundtrack": False}}
              for i in range(8)]
@@ -361,15 +330,13 @@ def test_auto_packing(harbor):
     p["scenes"][0]["refs"] = [{"id": "r%d" % i, "asset": a["id"], "role": "reference"} for i, a in enumerate(extra[5:])]
     b, _ = _build(p, 0)
     assert [len(x["assets"]) for x in b["images"]] == [7, 1, 1, 1]                     # 10 pictures: the anchors pack
-    # [OLD 2026-11-09 v0.15.1->v0.16.0] assert "<Subject 1> is Mara" in b["prompt"] and "shown in <Picture 1>." in b["prompt"]
-    assert "<Subject 1> is Mara" in b["prompt"] and "shown in <Picture 1>, a sheet of 7 views of the same person." in b["prompt"]  # v0.16.0
+    assert "<Subject 1> is Mara" in b["prompt"] and "shown in <Picture 1>, a sheet of 7 views of the same person." in b["prompt"]
     p["cast"][0]["pack_sheet"] = False
     assert len(_build(p, 0)[0]["images"]) == 10
     p["cast"][0]["pack_sheet"] = "nonsense"
     assert normalize_project(p)["cast"][0]["pack_sheet"] is True
 
 
-# ---- added 2026-11-03 v0.6.0 --------------------------------------------------------------------------------------
 from reelwright import prompt as P  # noqa: E402
 from reelwright.validate import lint_project  # noqa: E402
 
@@ -452,7 +419,7 @@ def test_soundtrack_tag_without_song_is_not_an_error(harbor):
 def test_task_tags_once_in_overrides_and_raw(harbor):
     p = copy.deepcopy(harbor)
     s = p["scenes"][1]
-    _every_pass(p, 1, summary=s["prompt"]["sections"]["summary"])  # v0.8.0: the scene summary is not sent
+    _every_pass(p, 1, summary=s["prompt"]["sections"]["summary"])
     builds, plan = _passes(p, 1)
     tags = "[reference generation + video continuation + audio reference]"
     s["prompt"]["pass_prompts"] = {"1": builds[0]["prompt"]}  # Edit this pass by hand: a copy of the built prompt
@@ -471,7 +438,6 @@ def test_task_tags_once_in_overrides_and_raw(harbor):
     # a raw prompt that starts with [Shot 1] still gets its tags
     s["prompt"].update(mode="raw", raw="[Shot 1] @Mara walks.", pass_prompts={})
     b = build_pass(p, s, 1, plan, plan["passes"][0])
-    # v0.7.0: the tail clip it continues from is defined in front and cited in [Shot 1]
     assert b["prompt"] == tags + " <Video 1> is the end of the scene before; the target video continues from its " \
         "final frames. <Audio 1> is the synchronized audio track of <Video 1>.\n[Shot 1] The shot continues " \
         "seamlessly from the final frames of <Video 1>. <Subject 1> walks."
@@ -486,7 +452,6 @@ def test_written_shot_lines_go_to_the_pass_that_holds_the_shot(harbor):
         "[Shot 5] An insert of the key.")
     builds, plan = _passes(p, 1)   # passes: shots 1-2 | shot 3 (from 14.375 s) | shot 4 (from 22 s)
     d1, d2, d3 = (_desc(b["prompt"]).split("\n") for b in builds)
-    # v0.7.0: pass 1's [Shot 1] cites the tail clip of the scene before (passes 2 and 3 follow cuts: no continuation)
     assert d1 == ["Live action, rain light.", "[Shot 1] The shot continues seamlessly from the final frames of "
                   "<Video 1>. A wide shot: Mara leaves the pier.",
                   "[Shot 2] At 00:06.000, the shot cuts to a tracking shot: along the seawall."]
@@ -498,7 +463,6 @@ def test_written_shot_lines_go_to_the_pass_that_holds_the_shot(harbor):
     # the same without automatic shots
     s["prompt"]["auto"]["shots"] = False
     builds, _ = _passes(p, 1)
-    # v0.7.0: without automatic shots a [Shot 1] that cites the tail clip is added
     assert _desc(builds[0]["prompt"]) == "Live action, rain light.\n[Shot 1] The shot continues seamlessly from the " \
         "final frames of <Video 1>."
     assert _desc(builds[2]["prompt"]) == "Live action, rain light.\n[Shot 1] She opens the door.\n[Shot 2] An insert of the key."
@@ -515,8 +479,6 @@ def test_written_shot_lines_across_overlap_seams(harbor):
     d1, d2 = _desc(builds[0]["prompt"]).split("\n"), _desc(builds[1]["prompt"]).split("\n")
     assert d1[1:] == ["[Shot 2] At 00:06.000, the shot cuts to a tracking shot along the seawall.",
                       "[Shot 3] At 00:14.375, the shot cuts to rain."]
-    # [OLD v0.6.1] assert d2[0] == "[Shot 1] The shot continues seamlessly from the previous moment. A tracking shot along the seawall."
-    # v0.7.0: the end of pass 1 is <Video 1> of pass 2, so the continuing shot says what it continues from
     assert d2[0] == "[Shot 1] The shot continues seamlessly from the final frames of <Video 1>. A tracking shot along " \
         "the seawall."
     assert d2[1].startswith("[Shot 2] At 00:00.917, the shot cuts to rain.")
@@ -540,8 +502,7 @@ def test_guide_clip_named_in_text_is_a_video_of_its_pass(harbor):
     p["assets"].append({"id": "a_wave", "code": "V2", "kind": "video", "name": "wave", "file": p["assets"][4]["file"],
                         "duration": 2.0, "defaults": {}, "description": "a wave breaking over the wall"})
     s["refs"].append({"id": "r_wave", "asset": "a_wave", "role": "keyframe", "time": 23.0})
-    # [OLD v0.7.0] s["prompt"]["sections"]["summary"] += " The wall is hit by @V2."
-    _every_pass(p, 1, summary=s["prompt"]["sections"]["summary"] + " The wall is hit by @V2.")  # v0.8.0
+    _every_pass(p, 1, summary=s["prompt"]["sections"]["summary"] + " The wall is hit by @V2.")
     builds, plan = _passes(p, 1)
     b3 = builds[2]
     assert b3["tag_map"]["@V2"] == "<Video 2>" and b3["videos"][1]["guide"] is True
@@ -654,8 +615,6 @@ def test_lint_budget_counts_video_sound_and_levels_of_tags(harbor):
     assert msgs["01 Harbor at dusk: the prompt written for pass 4 is not used, because the scene has 1 pass now"] == "warn"
 
 
-# ---- added 2026-11-03 v0.6.0 review --------------------------------------------------------------------------------
-
 def test_scene_assets_not_sent_with_a_pass_are_words_never_errors(harbor, store):
     """Bug 2: a cast voice goes only to the passes where that character speaks, so @A1 (Mara's voice) in another
     pass was the error "is not a reference of this scene" and blocked the render."""
@@ -696,7 +655,7 @@ def test_scene_assets_not_sent_with_a_pass_are_words_never_errors(harbor, store)
 
 
 def test_written_shot_lines_move_only_timeline_times(harbor):
-    """Bug 5 (v0.6.0 review): every MM:SS in a written [Shot N] line moved to pass time, clock times in the action
+    """Bug 5: every MM:SS in a written [Shot N] line moved to pass time, clock times in the action
     and inside spoken lines too ("the last ferry leaves at 11:45" -> "at 11:30.625" in pass 2)."""
     p = copy.deepcopy(harbor)
     p["scenes"][1]["prompt"]["sections"]["detailed_description"] = (
@@ -716,8 +675,6 @@ def test_written_shot_lines_move_only_timeline_times(harbor):
     d2 = _desc(builds[1]["prompt"]).split("\n")
     assert d2[1].startswith("[Shot 2] At 00:00.917, the shot cuts to rain: <d>[English] Meet me at 10:30.</d>")
 
-
-# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) --------------------------------------------------------------------
 
 def test_rewrite_keeps_hand_written_subject_and_retention_lines():
     """Review 1: with automatic subject definitions / retention lines off, a rewrite answer that left the key out

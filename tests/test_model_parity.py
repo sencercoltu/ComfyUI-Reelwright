@@ -1,4 +1,4 @@
-"""web/rw/model.js and reelwright/model.py must agree (added 2026-11-03 v0.6.0).
+"""web/rw/model.js and reelwright/model.py must agree.
 
 Runs model.js under node (skipped when node is missing) on the same fixtures, malformed ones included, and compares
 normalisation, scene timing (starts, overlaps, visible starts, effective starts), frames_of, seeds, slugify, the pass
@@ -139,21 +139,19 @@ def harbor_like():
         {"id": "a_amb", "kind": "audio", "name": "rain", "file": "x/rain.wav", "duration": 6.0},
         {"id": "a_song", "kind": "audio", "name": "song", "file": "x/song.wav", "duration": 40.0},
         {"id": "a_nofile", "kind": "audio", "name": "lost", "file": "", "duration": 30.0},
-        {"id": "a_belly", "kind": "image", "name": "belly", "file": "x/belly.png"},  # added 2026-11-08 v0.11.0
-        {"id": "a_pose", "kind": "image", "name": "pose", "file": "x/pose.png"},  # added 2026-11-08 v0.12.0
+        {"id": "a_belly", "kind": "image", "name": "belly", "file": "x/belly.png"},
+        {"id": "a_pose", "kind": "image", "name": "pose", "file": "x/pose.png"},
     ]
     p["cast"] = [
         {"id": "c_mara", "name": "Mara", "speaker": "S1", "anchors": ["a_front", "a_side"], "voice": "a_voice",
          "pack_sheet": "auto", "outfits": [{"id": "o_coat", "name": "coat", "assets": ["a_coat", "a_coat"]}],
          "default_outfit": "o_coat"},
         {"id": "c_tom", "name": "Tom O'Brien", "speaker": "S2", "anchors": ["a_letter"], "voice": "a_voice2"},
-        # added 2026-11-08 v0.11.0: a prop that is part of Mara (one picture she sends already), and one part of nobody
         {"id": "c_belly", "name": "Beer belly", "kind": "prop", "part_of": "c_mara", "anchors": ["a_belly", "a_front"]},
         {"id": "c_badge", "name": "Badge", "kind": "prop", "part_of": "c_badge", "anchors": ["a_letter"]},
     ]
     p["scenes"] = [
         {"id": "s_one", "title": "Harbor", "duration": 8.0, "seed_n": 0,
-         # [OLD 2026-11-08 v0.11.0] "cast": [{"id": "c_mara"}], "refs": [{"id": "r_amb", "asset": "a_amb", "role": "reference"}],
          "cast": [{"id": "c_belly"}, {"id": "c_mara"}, {"id": "c_badge"}], "refs": [{"id": "r_amb", "asset": "a_amb", "role": "reference"}],
          "dialogue": [{"id": "d_neg", "speaker": "c_mara", "t": -0.5, "text": "early"},
                       {"id": "d_end", "speaker": "c_mara", "t": 8.0 - 0.4 / 24, "text": "last half frame"}],
@@ -167,17 +165,11 @@ def harbor_like():
                   {"id": "r_first", "asset": "a_front", "role": "first_frame"},
                   {"id": "r_last", "asset": "a_side", "role": "last_frame"},
                   {"id": "r_amb2", "asset": "a_amb", "role": "reference"},
-                  # [OLD 2026-11-08 v0.12.0] {"id": "r_amb3", "asset": "a_amb", "role": "reference"}],
                   {"id": "r_amb3", "asset": "a_amb", "role": "reference"},
-                  # added 2026-11-08 v0.12.0: pose references: Mara in pass 2, Tom (only speaks here) at the very end,
-                  # one for nobody of this scene, one on a sound (no picture)
                   {"id": "r_pose", "asset": "a_pose", "role": "pose", "cast": "c_mara", "time": 20.0},
                   {"id": "r_pose_end", "asset": "a_pose", "role": "pose", "cast": "c_tom", "time": 99.0},
                   {"id": "r_pose_x", "asset": "a_belly", "role": "pose", "cast": "c_nobody", "time": 1.0},
                   {"id": "r_pose_snd", "asset": "a_amb", "role": "pose", "cast": "c_mara", "time": 1.0},
-                  # added 2026-11-08 v0.14.0: clips: the dolly again from 1 s to 3.5 s with its sound, from 2 s to its
-                  # end, the rain from 2 s to 4 s (twice: sent once), Mara's voice from 0.5 s (a clip of its own), a To
-                  # past the end, a From past the end
                   {"id": "r_dolly_b", "asset": "a_dolly", "role": "reference", "in": 1.0, "out": 3.5, "soundtrack": True},
                   {"id": "r_dolly_c", "asset": "a_dolly", "role": "reference", "in": "2"},
                   {"id": "r_amb_clip", "asset": "a_amb", "role": "reference", "in": 2.0, "out": 4.0},
@@ -190,7 +182,7 @@ def harbor_like():
                       {"id": "d_2", "speaker": "c_tom", "t": 28.0, "text": "b"}]},
         {"id": "s_short", "title": "Hand", "duration": 2.5, "start": {"mode": "fresh"},
          "trim": {"keep": "custom", "in": 1.208}, "seed_n": 2,
-         "cast": [{"id": "c_belly"}]},  # added 2026-11-08 v0.11.0: a part without its character is left out
+         "cast": [{"id": "c_belly"}]},
         {"id": "s_mid", "title": "Middle", "duration": 3.1, "trim": {"keep": "middle"}, "start": {"mode": "fresh"},
          "seed_n": 7},
         {"id": "s_end", "title": "End keep", "duration": 1.0, "trim": {"keep": "end"}, "start": {"mode": "last_frame"},
@@ -222,8 +214,7 @@ def malformed():
         {"scenes": [None]},
         {"scenes": [], "global": "x"},
         {"scenes": [1, "two", None, {"refs": {}, "prompt": "text", "start": "tail", "duration": "abc"}],
-         # [OLD 2026-11-08 v0.11.0] "soundtrack": 5, "cast": [{"name": 5}, None, "c_x"], "assets": {}, "markers": "m", "ui": 3},
-         "soundtrack": 5, "cast": [{"name": 5, "part_of": 7}, None, "c_x", {"kind": "prop", "part_of": None}],  # v0.11.0: part_of
+         "soundtrack": 5, "cast": [{"name": 5, "part_of": 7}, None, "c_x", {"kind": "prop", "part_of": None}],
          "assets": {}, "markers": "m", "ui": 3},
         {"scenes": [{"id": "s_a", "duration": "12.5"}, {"id": "s_a", "duration": -3}, {"id": "s_a", "duration": 1e9},
                     {"id": "s a!", "duration": None}, {"id": 7, "duration": True}, {"id": "", "duration": [1]}]},
@@ -236,11 +227,8 @@ def malformed():
         {"scenes": [{
             "shots": [{"t": 5, "id": "h_1"}, {"t": "2", "id": "h_1"}, {"t": "abc"}, None, {"t": -1, "camera": 3}],
             "dialogue": [{"t": 4, "speaker": 5}, {"t": 1, "id": "d"}, {"t": 1, "id": "d"}, "x"],
-            # [OLD 2026-11-08 v0.12.0] "refs": [{"id": "r", "asset": 3, "role": "x", "time": "1.5", "keep": ["a", 1, None, {}],
-            # [OLD 2026-11-08 v0.12.0]           "soundtrack": 1}, {"id": "r"}, 7],
             "refs": [{"id": "r", "asset": 3, "role": "x", "time": "1.5", "keep": ["a", 1, None, {}],
-                      "soundtrack": 1}, {"id": "r"}, 7, {"role": "pose", "cast": 5, "time": "x"},  # v0.12.0: pose
-                     # added 2026-11-08 v0.14.0: From / To as text, negative, past a frame, zero, not a number
+                      "soundtrack": 1}, {"id": "r"}, 7, {"role": "pose", "cast": 5, "time": "x"},
                      {"in": "1.02", "out": "3.51"}, {"in": -2, "out": -1}, {"in": 1.0208333, "out": 0},
                      {"in": "x", "out": True}, {"in": None, "out": "4"}],
             "cast": ["c_1", {"id": 2, "outfit": None}, 3, None],
@@ -272,7 +260,6 @@ def malformed():
          "global": {"merge": {"score": {"asset": "a_old", "volume_db": -6, "duck": False}}}},
         {"scenes": [{}], "camera_presets": [None, {"name": 3}], "markers": [{"t": "2"}, None, {"text": None}]},
         {"scenes": [{}], "camera_presets": "x", "ui": {"selected": "nope", "zoom": "abc", "snap": 0}},
-        # added 2026-11-05 v0.7.0: scene.merge, junk and the migration from scene.transition / Global -> Merge
         {"scenes": [{"id": "s_a", "merge": 5, "transition": {"mode": "dip", "frames": "7.9"}},
                     {"id": "s_b", "merge": {"transition": "WIPE", "direction": 3, "frames": "24.7", "color": "#ABCDEF",
                                             "audio_frames": -3, "fade_in": {"frames": -5, "color": "red"},
@@ -290,7 +277,6 @@ def malformed():
         {"scenes": [{"id": "s_a"}, {"id": "s_b", "transition": {"mode": "", "frames": 30}}, {"id": "s_c"}],
          "global": {"merge": {"hard_cut": "dip", "color_match": True, "color_ref_scene": "s_b"}}},
         {"scenes": [{"id": "s_a"}, {"id": "s_b"}], "global": {"merge": {"color_match": "yes", "hard_cut": 5}}},
-        # added 2026-11-05 v0.8.0 (Agent V): Global -> Long scenes continuity keys, junk and valid
         {"scenes": [{"duration": 40.0}, {"duration": 30.0, "start": {"mode": "tail"}}],
          "global": {"long": {"guide_vae": 5, "carry_audio": "no", "seam_video_ref": 0, "handoff": "LATENT",
                              "pass_cache": None, "seam_mode": "overlap"}}},
@@ -299,7 +285,6 @@ def malformed():
                                                              "pass_cache": "lossless"}}},
         {"scenes": [{}], "global": {"long": {"handoff": ["pixels"], "pass_cache": {"x": 1}, "carry_audio": 1.5,
                                              "seam_video_ref": None, "guide_vae": None}}},
-        # added 2026-11-06 v0.9.0: asset groups and tags, junk and valid
         {"scenes": [{}], "asset_groups": [{"id": "g_set", "name": "Harbor set", "description": "night"},
                                           {"id": "g_set", "name": 5}, None, "x", {"name": None, "description": []},
                                           {"id": 7, "extra": "kept"}],
@@ -308,7 +293,6 @@ def malformed():
                     {"kind": "video", "group": "g_set_2", "tags": "x"}, {"kind": "audio", "group": "g_gone"},
                     {"kind": "image", "group": 7, "tags": [True, False]}, {"kind": "image", "group": None}]},
         {"scenes": [{}], "asset_groups": "x", "assets": [{"kind": "image", "group": "g_a", "tags": None}]},
-        # added 2026-11-06 v0.10.0: voice descriptions, Describe voices, subtitle timing, junk and valid
         {"scenes": [{}], "cast": [{"kind": "character", "name": "Nar", "voice_desc": "  a deep voice  "},
                                   {"kind": "character", "name": "Tom", "voice_desc": 5}, {"kind": "prop", "name": "Box", "voice_desc": None},
                                   {"kind": "character", "name": "Ada", "voice_desc": ["x"]}],
@@ -345,12 +329,6 @@ def timing_fixtures():
     many["scenes"][0]["refs"] += [{"id": "r_p{}".format(k), "asset": "a_p{}".format(k)} for k in range(9)]
     many["cast"][1]["pack_sheet"] = False
     many["cast"][1]["anchors"] = ["a_p1", "a_p2"]
-    # [OLD 2026-11-05 v0.6.1->v0.7.0] no scene.merge fixtures
-    # return [harbor_like(), chain(), chain(reanchor=0), tiny, over, mixed, long_cuts, overlap_only, fixed, over_seed,
-    #         random_mode, loop_song, many]
-    # [/OLD]
-    # added 2026-11-05 v0.7.0: a v0.6.1 project migrated to scene.merge, and one with scene.merge set (the fuzz puts
-    # junk into its fields)
     v061 = chain(durations=(4.0, 4.0, 4.0, 4.0), modes=("fresh", "fresh", "last_frame", "fresh"))
     v061["global"]["merge"].update(hard_cut="crossfade", transition_frames=12, audio_fade_frames=6, color_match=True,
                                    color_ref_scene="s_1")
@@ -362,15 +340,12 @@ def timing_fixtures():
                           fade_out={"frames": 2 * k, "color": "#0000ff"}, audio_fade_in=k, audio_fade_out=k + 1,
                           volume_db=-3.5, mute=k == 2, color_match=model.COLOR_MATCH_MODES[k % 3],
                           color_ref="s_0", brightness=0.1, contrast=1.2, saturation=0.8)
-    # [OLD 2026-11-05 v0.7.0->v0.8.0] return [harbor_like(), chain(), chain(reanchor=0), tiny, over, mixed, long_cuts, overlap_only, fixed, over_seed,
-    #         random_mode, loop_song, many, v061, merged] + continuation_fixtures()  # continuation: v0.7.0 (Agent A)
-    # v0.8.0 (Agent P): per-pass sections, dialogue lengths, camera fields, <Video 1> at pass seams off
     return [harbor_like(), chain(), chain(reanchor=0), tiny, over, mixed, long_cuts, overlap_only, fixed, over_seed,
             random_mode, loop_song, many, v061, merged] + continuation_fixtures() + v080_fixtures()
 
 
 def v080_fixtures():
-    """added 2026-11-05 v0.8.0 (Agent P): scene.prompt.passes in every state (the current layout, a pass that moved,
+    """scene.prompt.passes in every state (the current layout, a pass that moved,
     another layout, junk entries), dialogue lines with and without a duration (CJK, junk values, lines across a seam
     and past the end), shots with camera_amp / camera_speed / framing (and junk), and Global -> Long scenes ->
     seam_video_ref off (continuation_fixtures again)."""
@@ -415,7 +390,7 @@ def v080_fixtures():
 
 
 def continuation_fixtures():
-    """added 2026-11-05 v0.7.0: the continuation reference in the budget (model.pass_continuation / sceneBudget):
+    """The continuation reference in the budget (model.pass_continuation / sceneBudget):
     a picture that packs the anchors, one that does not fit, a clip next to three videos, a clip without an audio
     slot for its sound, a clip from a 1 s scene, overlap seams, and the same projects with the switch off."""
     p = harbor_like()
@@ -637,7 +612,7 @@ def test_fuzzed_projects_match(tmp_path):
                     t["budgets"], "fuzz[{}].budgets".format(k))
 
 
-# ---- v0.8.0 (Agent P, contract P1): per-pass sections, dialogue lengths, camera wording ----
+# ---- per-pass sections, dialogue lengths, camera wording -----------------------------------
 RUNNER_V080 = r"""
 import { pathToFileURL } from "node:url";
 const m = await import(pathToFileURL(process.argv[2]).href);
@@ -721,7 +696,7 @@ def test_v080_helpers_match(tmp_path):
 
 
 def test_v080_seam_video_ref_off_budget_matches_the_build():
-    """added 2026-11-05 v0.8.0: with Global -> Long scenes -> seam_video_ref off a pass after an overlap seam sends no
+    """With Global -> Long scenes -> seam_video_ref off a pass after an overlap seam sends no
     <Video 1> (only the anchor), the budget (model.scene_media_counts = model.js sceneBudget) counts it the same way,
     and the tail clip a continuing scene starts from is still sent."""
     from reelwright import prompt
@@ -744,7 +719,7 @@ def test_v080_seam_video_ref_off_budget_matches_the_build():
 
 
 def test_v0140_clip_helpers_match(tmp_path):
-    """added 2026-11-08 v0.14.0: model.ref_clip / ref_trimmed / clip_key / ref_tokens = model.js refClip / refTrimmed /
+    """model.ref_clip / ref_trimmed / clip_key / ref_tokens = model.js refClip / refTrimmed /
     clipKey / refTokens."""
     p = model.normalize_project(harbor_like())
     p["assets"].append({"id": "a_v2", "kind": "video", "code": "V9", "name": "x", "file": "x/v.mp4", "duration": 0})

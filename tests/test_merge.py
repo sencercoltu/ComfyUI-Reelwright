@@ -142,7 +142,7 @@ def test_pass_segments_for_long_scene(harbor):
     assert total == pytest.approx(32.0, abs=1 / 24)
 
 
-# added 2026-11-02 v0.2.1: ffmpeg 8 lets aac take any channel layout, so the last audio link must be pinned
+# Ffmpeg 8 lets aac take any channel layout, so the last audio link must be pinned
 def test_final_audio_link_is_pinned_to_stereo(tmp_path):
     segs = [{"path": "a.mp4", "in": 0, "out": 2, "has_audio": True, "join": "first", "dur": 0}]
     for loudness in (-16.0, None):
@@ -165,7 +165,7 @@ def test_failed_join_leaves_no_cut_and_probe_raises(tmp_path):
     assert not out.exists() and not (tmp_path / "cut_v1.partial.mp4").exists()
 
 
-# added 2026-11-02 v0.3.0: each scene chooses the transition into it
+# Each scene chooses the transition into it
 def test_per_scene_transition(harbor, store, roots):
     a = clip(os.path.join(roots.output, "a.mp4"), 3)
     b = clip(os.path.join(roots.output, "b.mp4"), 3, "smptebars")
@@ -176,9 +176,8 @@ def test_per_scene_transition(harbor, store, roots):
     p["global"]["merge"].update(hard_cut="cut", transition_frames=12, audio_fade_frames=6, missing="block")
     p["scenes"][1]["transition"] = {"mode": "dip", "frames": 24, "audio_fade_frames": None}
     p["scenes"][2]["transition"] = {"mode": "", "frames": None, "audio_fade_frames": 0}
-    for s in p["scenes"]:  # added 2026-11-05 v0.7.0: a v0.6.1 project; scene.merge is built from these on load
+    for s in p["scenes"]:
         s.pop("merge", None)
-    takes = {}
     for s, path in zip(p["scenes"], (a, b, c)):
         store.add_take(s["id"], {"id": "v1", "key": "k", "files": {"video": os.path.relpath(path, roots.output)}, "seconds": 3.0})
     segs, _, _ = assemble.cut_plan(analyze(p, store), store)
@@ -190,8 +189,6 @@ def test_per_scene_transition(harbor, store, roots):
     a1 = [x for x in graph.split(";") if x.endswith("[a1]")][0]
     assert "afade=t=out" not in a1  # scene 3 asked for no fade at its cut
 
-
-# ---- added 2026-11-03 v0.6.0 ---------------------------------------------------------------------------------------
 
 import sys  # noqa: E402
 import time  # noqa: E402
@@ -471,8 +468,6 @@ def test_one_merge_per_project_and_cancel(harbor, store, roots):
     assert out["files"]["video"].endswith("_cut_v2.mp4")  # the cancelled merge's number is not reused
 
 
-# ---- added 2026-11-03 v0.6.0 review --------------------------------------------------------------------------------
-
 from reelwright.model import scene_starts  # noqa: E402
 
 
@@ -641,7 +636,7 @@ def test_scene_with_no_frame_of_its_own_is_left_out(harbor, store, roots, tmp_pa
 
 
 def test_subtitle_cue_uses_a_lines_own_duration():
-    """added 2026-11-06 v0.8.0: a dialogue line with a duration is shown that long (clipped by the next line)."""
+    """A dialogue line with a duration is shown that long (clipped by the next line)."""
     e = [{"start": 0.0, "src_in": 0.0, "src_out": 10.0, "dialogue": [
         {"t": 1.0, "text": "Hi there", "speaker": "S1"},
         {"t": 2.0, "text": "Long line here", "duration": 6.5},

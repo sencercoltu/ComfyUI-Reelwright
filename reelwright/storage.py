@@ -1,34 +1,29 @@
 """Folders, path containment, take indexes and autosave versions.
 
-added 2026-11-03 v0.6.0: every read-modify-write of a project's files (index.json, project.json, the cut counter)
+Every read-modify-write of a project's files (index.json, project.json, the cut counter)
 holds the project's lock (jobs.lock); JSON is written through a unique temp file; damaged JSON reads as missing
 (project.json falls back to the newest readable autosave); repair() rebuilds take lists from the takes' meta.json.
 """
 
 import json
-import logging  # added 2026-11-03 v0.6.0
+import logging
 import os
 import re
-import shutil  # added 2026-11-03 v0.6.0
-import sys  # added 2026-11-03 v0.6.0
+import shutil
+import sys
 import time
-import uuid  # added 2026-11-03 v0.6.0
+import uuid
 
-from . import jobs  # added 2026-11-03 v0.6.0
+from . import jobs
 
-log = logging.getLogger("reelwright")  # added 2026-11-03 v0.6.0
+log = logging.getLogger("reelwright")
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] "$" also matches before a final newline, so "name\n" passed the checks
-# SLUG_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,63}$")
-# ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-# VERSION_RE = re.compile(r"^project_\d{8}_\d{6}\.json$")
-# [/OLD]
-SLUG_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,63}\Z")  # added 2026-11-03 v0.6.0: \Z, no trailing newline
+SLUG_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,63}\Z")
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
 VERSION_RE = re.compile(r"^project_\d{8}_\d{6}\.json\Z")
 MAX_VERSIONS = 50
 VERSION_INTERVAL = 120  # seconds between automatic version snapshots
-# added 2026-11-04 v0.6.1: a deleted take's folder while delete_take removes it (ID_RE refuses the ".", so
+# A deleted take's folder while delete_take removes it (ID_RE refuses the ".", so
 # takes_on_disk, repair() and the take routes never see it as a take)
 DELETING = ".deleting-"
 DELETING_RE = re.compile(r"^\.deleting-v(\d+)-[0-9a-f]+\Z")
@@ -61,24 +56,8 @@ def check_id(value):
     return value
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] fixed <file>.tmp (two writers collided) and no fsync; a damaged file raised
-# def write_json(path, data):
-#     os.makedirs(os.path.dirname(path), exist_ok=True)
-#     tmp = path + ".tmp"
-#     with open(tmp, "w", encoding="utf-8") as f:
-#         json.dump(data, f, ensure_ascii=False, indent=1)
-#     os.replace(tmp, path)
-#
-#
-# def read_json(path, default=None):
-#     try:
-#         with open(path, "r", encoding="utf-8") as f:
-#             return json.load(f)
-#     except FileNotFoundError:
-#         return default
-# [/OLD]
 def write_json(path, data):
-    """added 2026-11-03 v0.6.0: written to a temp file of its own (two writers never share one), flushed to disk,
+    """Written to a temp file of its own (two writers never share one), flushed to disk,
     then moved over the old file in one step."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = "{}.{}.{}.tmp".format(path, os.getpid(), uuid.uuid4().hex[:12])
@@ -97,7 +76,7 @@ def write_json(path, data):
 
 
 def _replace(src, dst):
-    """added 2026-11-03 v0.6.0: os.replace; on Windows a reader holding the file open makes it fail for a moment."""
+    """os.replace; on Windows a reader holding the file open makes it fail for a moment."""
     for attempt in range(10):
         try:
             os.replace(src, dst)
@@ -109,7 +88,7 @@ def _replace(src, dst):
 
 
 def load_json(path):
-    """added 2026-11-03 v0.6.0: (data, status) with status "ok", "missing" or "damaged"."""
+    """(data, status) with status "ok", "missing" or "damaged"."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f), "ok"
@@ -121,7 +100,7 @@ def load_json(path):
 
 
 def read_json(path, default=None):
-    """added 2026-11-03 v0.6.0: a damaged file (half written, not JSON) reads as `default` and is logged."""
+    """A damaged file (half written, not JSON) reads as `default` and is logged."""
     data, status = load_json(path)
     return data if status == "ok" else default
 
@@ -156,31 +135,20 @@ class ProjectStore:
         return safe_join(self.roots.input, rel)
 
     # takes
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] a damaged index.json read as an empty take list (the next render then overwrote it)
-    # def read_index(self, scene_id):
-    #     idx = read_json(os.path.join(self.scene_dir(scene_id), "index.json"), None)
-    #     if not isinstance(idx, dict):
-    #         idx = {"starred": None, "takes": []}
-    #     idx.setdefault("starred", None)
-    #     idx.setdefault("takes", [])
-    #     return idx
-    # [/OLD]
     def read_index(self, scene_id):
         idx, status = load_json(os.path.join(self.scene_dir(scene_id), "index.json"))
         if status == "damaged" or (status == "ok" and not isinstance(idx, dict)):
-            # added 2026-11-03 v0.6.0: a damaged take list is rebuilt from the takes' meta.json; the next write (or
-            # repair()) saves it
             idx = self.index_from_takes(scene_id)
         if not isinstance(idx, dict):
             idx = {"starred": None, "takes": []}
         idx.setdefault("starred", None)
         idx.setdefault("takes", [])
-        if not isinstance(idx["takes"], list):  # added 2026-11-03 v0.6.0: entries without an id are dropped
+        if not isinstance(idx["takes"], list):
             idx["takes"] = []
         idx["takes"] = [t for t in idx["takes"] if isinstance(t, dict) and isinstance(t.get("id"), str)]
         return idx
 
-    # ---- added 2026-11-03 v0.6.0: rebuilding take lists from the takes' meta.json -----------------------------
+    # ---- rebuilding take lists from the takes' meta.json ------------------------------------------------------
     META_ONLY = ("passes", "settings", "loras")  # in meta.json but not in a take list entry
 
     def take_from_meta(self, scene_id, take_id):
@@ -251,58 +219,18 @@ class ProjectStore:
             return {"repaired": repaired, "takes_found": found, "added": added, "dropped": dropped,
                     "project": pstatus}
 
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] no lock (lost updates); take ids reused folders; delete followed a linked take folder
-    # def write_index(self, scene_id, idx):
-    #     write_json(os.path.join(self.scene_dir(scene_id), "index.json"), idx)
-    #
-    # def new_take_id(self, scene_id):
-    #     idx = self.read_index(scene_id)
-    #     n = 1 + max([int(t["id"][1:]) for t in idx["takes"] if re.match(r"^v\d+$", t["id"])] or [0])
-    #     return "v{}".format(n)
-    #
-    # def add_take(self, scene_id, take, star=True):
-    #     idx = self.read_index(scene_id)
-    #     idx["takes"] = [t for t in idx["takes"] if t["id"] != take["id"]] + [take]
-    #     if star:
-    #         idx["starred"] = take["id"]
-    #     self.write_index(scene_id, idx)
-    #     return idx
-    #
-    # def star(self, scene_id, take_id):
-    #     idx = self.read_index(scene_id)
-    #     if not any(t["id"] == take_id for t in idx["takes"]):
-    #         raise ValueError("unknown take {}".format(take_id))
-    #     idx["starred"] = take_id
-    #     self.write_index(scene_id, idx)
-    #
-    # def delete_take(self, scene_id, take_id):
-    #     idx = self.read_index(scene_id)
-    #     idx["takes"] = [t for t in idx["takes"] if t["id"] != take_id]
-    #     if idx["starred"] == take_id:
-    #         idx["starred"] = idx["takes"][-1]["id"] if idx["takes"] else None
-    #     self.write_index(scene_id, idx)
-    #     d = self.take_dir(scene_id, take_id)
-    #     if os.path.isdir(d):
-    #         for root, dirs, files in os.walk(d, topdown=False):
-    #             for f in files:
-    #                 os.remove(os.path.join(root, f))
-    #             for x in dirs:
-    #                 os.rmdir(os.path.join(root, x))
-    #         os.rmdir(d)
-    # [/OLD]
     def write_index(self, scene_id, idx):
-        with jobs.lock(self.slug):  # added 2026-11-03 v0.6.0
+        with jobs.lock(self.slug):
             write_json(os.path.join(self.scene_dir(scene_id), "index.json"), idx)
 
     def new_take_id(self, scene_id):
-        """added 2026-11-03 v0.6.0: the next take number after every listed take AND every take folder on disk; the
+        """The next take number after every listed take AND every take folder on disk; the
         folder is created at once, so the id is never handed out twice and never reuses an old folder."""
         with jobs.lock(self.slug):
             idx = self.read_index(scene_id)
             tdir = os.path.join(self.scene_dir(scene_id), "takes")
             used = [int(t["id"][1:]) for t in idx["takes"] if re.match(r"^v\d+$", str(t.get("id")))]
             used += [int(x[1:]) for x in _listdir(tdir) if re.match(r"^v\d+$", x)]
-            # added 2026-11-04 v0.6.1: a take folder delete_take is still removing (.deleting-vN-<hex>) keeps its number
             used += [int(m.group(1)) for m in (DELETING_RE.match(x) for x in _listdir(tdir)) if m]
             n = 1 + max(used or [0])
             os.makedirs(tdir, exist_ok=True)
@@ -314,7 +242,7 @@ class ProjectStore:
                     n += 1
 
     def _stamp(self, idx):
-        """added 2026-11-03 v0.6.0: the take list remembers which project rendered into it (project.json's
+        """The take list remembers which project rendered into it (project.json's
         project_id), so the Files tab can tell this project's deleted scenes from another project's."""
         p = read_json(os.path.join(self.dir, "project.json"), None)
         pid = p.get("project_id") if isinstance(p, dict) else None
@@ -322,17 +250,17 @@ class ProjectStore:
             idx["project_id"] = pid
 
     def add_take(self, scene_id, take, star=True):
-        with jobs.lock(self.slug):  # added 2026-11-03 v0.6.0
+        with jobs.lock(self.slug):
             idx = self.read_index(scene_id)
             idx["takes"] = [t for t in idx["takes"] if t["id"] != take["id"]] + [take]
             if star:
                 idx["starred"] = take["id"]
-            self._stamp(idx)  # added 2026-11-03 v0.6.0
+            self._stamp(idx)
             self.write_index(scene_id, idx)
             return idx
 
     def star(self, scene_id, take_id):
-        with jobs.lock(self.slug):  # added 2026-11-03 v0.6.0
+        with jobs.lock(self.slug):
             idx = self.read_index(scene_id)
             if not any(t["id"] == take_id for t in idx["takes"]):
                 raise ValueError("unknown take {}".format(take_id))
@@ -340,28 +268,13 @@ class ProjectStore:
             self.write_index(scene_id, idx)
 
     def delete_take(self, scene_id, take_id):
-        with jobs.lock(self.slug):  # added 2026-11-03 v0.6.0
+        with jobs.lock(self.slug):
             idx = self.read_index(scene_id)
             idx["takes"] = [t for t in idx["takes"] if t["id"] != take_id]
             if idx["starred"] == take_id:
-                # [OLD 2026-11-09 v0.17.0->v0.17.1] idx["starred"] = idx["takes"][-1]["id"] if idx["takes"] else None  (list order)
-                # added 2026-11-09 v0.17.1 (third review): the newest take, in the order repair() uses (_take_order)
                 idx["starred"] = max(idx["takes"], key=_take_order)["id"] if idx["takes"] else None
-                # added 2026-11-03 v0.6.0: the fallback star is automatic, so the next render may re-star a matching take
                 idx["auto_star"] = idx["starred"]
             self.write_index(scene_id, idx)
-            # [OLD 2026-11-03 v0.6.0 review] the folder was removed while holding the lock (a big take kept every other
-            # change to the project waiting)
-            #     # added 2026-11-03 v0.6.0: the take folder by its own name (a link is removed, never followed)
-            #     d = os.path.join(self.scene_dir(scene_id), "takes", check_id(take_id))
-            #     if os.path.islink(d) or os.path.isfile(d):
-            #         os.remove(d)
-            #     elif os.path.isdir(d):
-            #         shutil.rmtree(d)
-            # [/OLD]
-            # added 2026-11-04 v0.6.1: the folder is renamed to .deleting-<id>-<hex> before the lock is let go, so a
-            # repair() or a damaged-index rebuild (takes_on_disk) during the removal no longer lists it again (and
-            # stars it); new_take_id still counts the renamed folder, so the id is not handed out meanwhile
             d = os.path.join(self.scene_dir(scene_id), "takes", check_id(take_id))
             target = d
             if os.path.isdir(d) and not os.path.islink(d):
@@ -371,18 +284,6 @@ class ProjectStore:
                     target = moved
                 except OSError as e:  # e.g. Windows while a file in it is open: removed in place, as before
                     log.warning("Reelwright: could not set the take folder %s aside before removing it: %s", d, e)
-        # [OLD 2026-11-04 v0.6.0->v0.6.1] the folder was removed under its own name: repair() could list it again meanwhile
-        # # added 2026-11-03 v0.6.0 review: the take is off the list, so its folder is removed after the lock is let go
-        # # (new_take_id never hands out the id of a folder that is still on disk)
-        # # added 2026-11-03 v0.6.0: the take folder by its own name (a link is removed, never followed)
-        # d = os.path.join(self.scene_dir(scene_id), "takes", check_id(take_id))
-        # if os.path.islink(d) or os.path.isfile(d):
-        #     os.remove(d)
-        # elif os.path.isdir(d):
-        #     shutil.rmtree(d)
-        # [/OLD]
-        # added 2026-11-04 v0.6.1: the take is off the list and its folder set aside; removed after the lock is let go
-        # (a link is removed, never followed)
         if os.path.islink(target) or os.path.isfile(target):
             os.remove(target)
         elif os.path.isdir(target):
@@ -393,26 +294,8 @@ class ProjectStore:
         return next((t for t in idx["takes"] if t["id"] == idx["starred"]), None)
 
     # project file and versions
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] no lock: two autosaves at once could lose one
-    # def autosave(self, project, force_version=False):
-    #     os.makedirs(self.dir, exist_ok=True)
-    #     path = os.path.join(self.dir, "project.json")
-    #     previous = read_json(path)
-    #     write_json(path, project)
-    #     vdir = os.path.join(self.dir, "versions")
-    #     versions = self.list_versions()
-    #     newest = versions[0]["created"] if versions else 0
-    #     changed = previous != project
-    #     name = None
-    #     if force_version or (changed and time.time() - newest >= VERSION_INTERVAL):
-    #         name = time.strftime("project_%Y%m%d_%H%M%S.json")
-    #         write_json(os.path.join(vdir, name), project)
-    #         for v in self.list_versions()[MAX_VERSIONS:]:
-    #             os.remove(os.path.join(vdir, v["name"]))
-    #     return name
-    # [/OLD]
     def load_project(self):
-        """added 2026-11-03 v0.6.0: project.json, or the newest readable autosaved version when project.json is
+        """project.json, or the newest readable autosaved version when project.json is
         missing or damaged; None when there is neither."""
         p = read_json(os.path.join(self.dir, "project.json"), None)
         if isinstance(p, dict):
@@ -424,7 +307,7 @@ class ProjectStore:
         return None
 
     def slug_conflict(self, project):
-        """added 2026-11-03 v0.6.0: {id, name} of a different project that already lives in this folder, else
+        """{id, name} of a different project that already lives in this folder, else
         None. Only projects that both have a project_id can conflict (a folder from an older version adopts the
         incoming id)."""
         pid = project.get("project_id") if isinstance(project, dict) else None
@@ -436,9 +319,8 @@ class ProjectStore:
             return {"id": other, "name": str(cur.get("name") or "")}
         return None
 
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] def autosave(self, project, force_version=False):
     def autosave(self, project, force_version=False, owner_check=False):
-        """added 2026-11-03 v0.6.0: holds the project lock; with owner_check a folder that holds another project
+        """Holds the project lock; with owner_check a folder that holds another project
         (see slug_conflict) raises SlugConflict instead of being overwritten."""
         with jobs.lock(self.slug):
             if owner_check:
@@ -455,9 +337,7 @@ class ProjectStore:
             changed = previous != project
             name = None
             if force_version or (changed and time.time() - newest >= VERSION_INTERVAL):
-                # [OLD 2026-11-04 v0.6.0->v0.6.1] a second version in the same second overwrote the first
-                # name = time.strftime("project_%Y%m%d_%H%M%S.json")
-                name = _free_version_name(vdir)  # added 2026-11-04 v0.6.1
+                name = _free_version_name(vdir)
                 write_json(os.path.join(vdir, name), project)
                 for v in self.list_versions()[MAX_VERSIONS:]:
                     try:
@@ -470,40 +350,19 @@ class ProjectStore:
         vdir = os.path.join(self.dir, "versions")
         if not os.path.isdir(vdir):
             return []
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] a version deleted while listing raised
-        # out = []
-        # for name in os.listdir(vdir):
-        #     if VERSION_RE.match(name):
-        #         st = os.stat(os.path.join(vdir, name))
-        #         out.append({"name": name, "created": int(st.st_mtime), "size": st.st_size})
-        # return sorted(out, key=lambda v: v["name"], reverse=True)
-        # [/OLD]
         out = []
         for name in _listdir(vdir):
             if VERSION_RE.match(name):
-                try:  # added 2026-11-03 v0.6.0: a version deleted meanwhile is skipped
+                try:
                     st = os.stat(os.path.join(vdir, name))
                 except OSError:
                     continue
                 out.append({"name": name, "created": int(st.st_mtime), "size": st.st_size})
         return sorted(out, key=lambda v: v["name"], reverse=True)
 
-    # added 2026-11-02 v0.3.6: delete autosaved versions (project.json, the latest autosave, is never touched)
+    # Delete autosaved versions (project.json, the latest autosave, is never touched)
     def delete_versions(self, names):
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] a name that is not a string raised TypeError (500)
-        # names = list(names or [])
-        # bad = [n for n in names if not VERSION_RE.match(n or "")]
-        # if bad:
-        #     raise ValueError("invalid version name: " + bad[0])
-        # removed = 0
-        # for name in names:
-        #     path = safe_join(self.dir, "versions", name)
-        #     if os.path.isfile(path):
-        #         os.remove(path)
-        #         removed += 1
-        # return removed
-        # [/OLD]
-        if not isinstance(names, (list, tuple)):  # added 2026-11-03 v0.6.0: non-strings are refused, not a 500
+        if not isinstance(names, (list, tuple)):
             raise ValueError("names must be a list of version names")
         names = list(names or [])
         bad = [n for n in names if not isinstance(n, str) or not VERSION_RE.match(n)]
@@ -519,27 +378,15 @@ class ProjectStore:
         return removed
 
     def read_version(self, name):
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] if not VERSION_RE.match(name or ""):
         if not isinstance(name, str) or not VERSION_RE.match(name):
             raise ValueError("invalid version name")
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] return read_json(safe_join(self.dir, "versions", name))
         data = read_json(safe_join(self.dir, "versions", name))
         if not isinstance(data, dict):
             raise ValueError("this version can't be read (missing or damaged)")
         return data
 
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] the first free number: after deleting cut v3 the next merge was v3 again, and two
-    # merges at once got the same number
-    # def next_cut_path(self, ext=".mp4"):
-    #     d = self.cuts_dir()
-    #     os.makedirs(d, exist_ok=True)
-    #     n = 1
-    #     while os.path.exists(os.path.join(d, "{}_cut_v{}{}".format(self.slug, n, ext))):
-    #         n += 1
-    #     return os.path.join(d, "{}_cut_v{}".format(self.slug, n))
-    # [/OLD]
     def next_cut_path(self, ext=".mp4", suffix=""):
-        """added 2026-11-03 v0.6.0: cut numbers come from the counter cuts/.next (never reused, also after deletes),
+        """Cut numbers come from the counter cuts/.next (never reused, also after deletes),
         taken under the project lock. Returns the path without extension: <cuts>/<slug>_cut_vN<suffix>."""
         with jobs.lock(self.slug):
             d = self.cuts_dir()
@@ -560,11 +407,11 @@ class ProjectStore:
             return os.path.join(d, "{}_cut_v{}{}".format(self.slug, n, suffix))
 
 
-CUT_COUNTER = ".next"  # added 2026-11-03 v0.6.0
+CUT_COUNTER = ".next"
 
 
 class SlugConflict(ValueError):
-    """added 2026-11-03 v0.6.0: the project folder holds a different project (see ProjectStore.slug_conflict)."""
+    """The project folder holds a different project (see ProjectStore.slug_conflict)."""
 
     def __init__(self, other):
         super().__init__("the folder {!r} holds another project".format(other.get("name") or other.get("id")))
@@ -572,7 +419,7 @@ class SlugConflict(ValueError):
 
 
 def _free_version_name(vdir, now=None):
-    """added 2026-11-04 v0.6.1: project_<date>_<time>.json for now, or for the next second that has no version yet
+    """project_<date>_<time>.json for now, or for the next second that has no version yet
     (two versions in one second used to share one file: the second overwrote the first). The name keeps VERSION_RE's
     shape, so the editor and delete_versions read it as before."""
     now = time.time() if now is None else now
@@ -584,7 +431,6 @@ def _free_version_name(vdir, now=None):
 
 
 def _listdir(path):
-    """added 2026-11-03 v0.6.0"""
     try:
         return sorted(os.listdir(path))
     except OSError:
@@ -592,7 +438,7 @@ def _listdir(path):
 
 
 def _take_order(t):
-    """added 2026-11-03 v0.6.0: takes in the order they were made (created time, then take number)."""
+    """Takes in the order they were made (created time, then take number)."""
     m = re.match(r"^v(\d+)$", str(t.get("id")))
     try:
         created = float(t.get("created") or 0)

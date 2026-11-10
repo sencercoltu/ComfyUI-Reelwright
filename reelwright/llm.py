@@ -3,46 +3,33 @@ script import. Every call is started by a button in the editor; nothing here
 runs during a queue run.
 """
 
+import asyncio
 import json
 import os
 import re
 import time
 
-import asyncio  # added 2026-11-02 v0.3.0
 import aiohttp
 
-from .model import cast_description  # added 2026-11-02 v0.3.4
-from .prompt import tidy_rewrite  # added 2026-11-03 v0.4.1
-from . import prompt as _prompt  # added 2026-11-03 v0.6.0: the editor's tag rule (prompt.tag_re), as_text, tag_token
-from .scriptparts import fit_scene  # added 2026-11-03 v0.4.3
+from . import model as _model
+from . import prompt as _prompt
+from . import spec
+from .model import cast_description
+from .planner import plan_scene
+from .prompt import tidy_rewrite
+from .scriptparts import fit_scene
 from .storage import read_json, write_json
-from . import model as _model  # added 2026-11-05 v0.8.0: pass_texts / dialogue_seconds (Agent P), when present
-from . import spec  # added 2026-11-05 v0.8.0: fmt_time, FPS for the per-pass requests
-from .planner import plan_scene  # added 2026-11-05 v0.8.0: scene_builds (the passes a scene is made in)
 
 TIMEOUT = aiohttp.ClientTimeout(total=180)
-# [OLD 2026-11-03 v0.5.1->v0.6.0] TAG_RE = re.compile(r"@\{[^}]+\}|@[A-Za-z][\w-]*")  (preserved_warnings uses prompt.tag_re now)
 DIALOGUE_RE = re.compile(r"<d>.*?</d>", re.S)
-# added 2026-11-03 v0.6.0
 HTML_PAGE = "the server sent a web page, not JSON — check the base URL (usually ends in /v1)"
 CUT_RETRY_CAP = 32768  # a cut-off answer is asked again with twice the budget, up to this many tokens
 RETRY_AFTER_MAX = 60   # a 429 asking to wait longer than this is not retried
-# added 2026-11-05 v0.8.0: the import's default answer budget per part (was 16384). Since v0.8.0 every shot is 2-4
+# The import's default answer budget per part (was 16384). Since v0.8.0 every shot is 2-4
 # sentences and the summary a note on the whole scene: a 3,000-character part of a shot table answers with about
 # 7,000 tokens instead of 5,000, plus a thinking model's reasoning. model.py / model.js have the same default.
 IMPORT_MAX_TOKENS = 24576
 
-# [OLD 2026-11-02 v0.1.0->v0.2.0] rules used "[Shot1]"; MiniMax's guide writes "[Shot 1]" and the guides
-# themselves are now sent along (see GUIDES below)
-# H3_RULES = """You write prompts for MiniMax H3 ref2va, a reference-to-video-with-audio model.
-# Rules you must follow:
-# - Keep every reference token exactly as written: @P1, @V2, @A1, @Name, @{Two Words}, @tail. Never invent new ones, never rename them.
-# - Keep every dialogue span <d>[Language] ...</d> exactly as written, word for word.
-# - Keep shot markers like [Shot1] and timestamps like "At 00:05.000" unless asked to change them; timestamps mark cuts.
-# - One main action per shot, physically achievable in the time given. State camera framing and movement or say the camera is static.
-# - Concrete visual and sound detail; no camera brand names, no meta commentary."""
-# [/OLD]
-# [OLD 2026-11-09 v0.16.1->v0.17.0] H3_RULES: "- Keep shot markers like [Shot 2] and cut times like "At 00:05.000" unless asked to change them; cut times mark cuts and the first shot has none." (the times of spoken lines were not mentioned)
 H3_RULES = """You write prompts for MiniMax H3 Ref2VA, a reference-to-video-with-audio model.
 Rules you must follow:
 - Keep every reference token exactly as written: @P1, @V2, @A1, @Name, @{Two Words}, @tail. Never invent new ones, never rename them. The editor turns them into <Subject N>, <Picture N>, <Video N> and <Audio N> labels later.
@@ -51,7 +38,7 @@ Rules you must follow:
 - Write in English. Describe each shot by composition, subject appearance and position, environment and lighting, action, camera movement and sound.
 - One main action per shot, physically achievable in the time given. Concrete visual and sound detail; no plot summaries, no meta commentary."""
 
-# added 2026-11-02 v0.2.0: MiniMax's official prompt guides. They are published under the MiniMax H3
+# MiniMax's official prompt guides. They are published under the MiniMax H3
 # Community License, so Reelwright downloads them on request instead of shipping copies.
 GUIDES = {
     "ref-en.txt": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/main/skills/h3-prompt-writing/references/ref-en.txt",
@@ -154,7 +141,7 @@ def system_prompt(cfg, extra=""):
     return "\n\n".join(parts)
 
 
-# added 2026-11-03 v0.6.0: "localhost:8000/v1" used to fail inside aiohttp with an unreadable error
+# "localhost:8000/v1" used to fail inside aiohttp with an unreadable error
 def normalize_base_url(url):
     """'localhost:8000/v1' -> 'http://localhost:8000/v1'; a pasted '.../v1/chat/completions' loses the endpoint; no
     trailing slash. Raises ValueError for another scheme."""
@@ -174,38 +161,19 @@ def normalize_base_url(url):
 
 def resolve(project_llm, stored):
     """Project values win for URL/model; the key always comes from the user folder."""
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] base = (project_llm.get("base_url") or stored["base_url"] or "").rstrip("/")  (no scheme check)
     base = normalize_base_url(project_llm.get("base_url") or stored["base_url"] or "")
     if not base:
         raise ValueError("Set the LLM base URL in Global -> Prompt rewriter")
-    # [OLD 2026-11-02 v0.1.0->v0.2.0] guides were not part of the config
-    # return {"base_url": base, "model": project_llm.get("model") or stored["model"], "api_key": stored["api_key"],
-    #         "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
-    #         "preset": project_llm.get("preset", "h3_ref2va")}
-    # [/OLD]
-    # [OLD 2026-11-02 v0.3.1->v0.3.2] no thinking switch
-    # return {"base_url": base, "model": project_llm.get("model") or stored["model"], "api_key": stored["api_key"],
-    #         "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
-    #         "preset": project_llm.get("preset", "h3_ref2va"), "include_guides": bool(project_llm.get("include_guides", True)),
-    #         "guides": stored.get("guides") or {}}
-    # [/OLD]
-    # [OLD 2026-11-03 v0.4.1->v0.4.2] no limits
-    # return {"base_url": base, "model": project_llm.get("model") or stored["model"], "api_key": stored["api_key"],
-    #         "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
-    #         "preset": project_llm.get("preset", "h3_ref2va"), "include_guides": bool(project_llm.get("include_guides", True)),
-    #         "guides": stored.get("guides") or {},
-    #         "thinking": "off" if project_llm.get("thinking") == "off" else "auto"}  # added 2026-11-02 v0.3.2
-    # [/OLD]
     cfg = {"base_url": base, "model": project_llm.get("model") or stored["model"], "api_key": stored["api_key"],
            "temperature": float(project_llm.get("temperature", 0.4)), "max_tokens": int(project_llm.get("max_tokens", 2048)),
            "preset": project_llm.get("preset", "h3_ref2va"), "include_guides": bool(project_llm.get("include_guides", True)),
            "guides": stored.get("guides") or {},
-           "thinking": "off" if project_llm.get("thinking") == "off" else "auto"}  # added 2026-11-02 v0.3.2
-    cfg.update(limits(project_llm))  # added 2026-11-03 v0.4.2
+           "thinking": "off" if project_llm.get("thinking") == "off" else "auto"}
+    cfg.update(limits(project_llm))
     return cfg
 
 
-# added 2026-11-03 v0.4.2: tweakable limits (Global -> Prompt rewriter -> Limits)
+# Tweakable limits (Global -> Prompt rewriter -> Limits)
 def _num(v, default, lo, hi, kind=int):
     try:
         v = kind(v)
@@ -223,8 +191,6 @@ def limits(project_llm):
             "retries": _num(project_llm.get("retries"), 2, 0, 5),
             "context_tokens": ctx if ctx >= 1024 else 0,
             "import_part_chars": part if part >= 500 else 0,
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] "import_max_tokens": _num(project_llm.get("import_max_tokens"), 16384, 256, 1_000_000),
-            # added 2026-11-05 v0.8.0: 2-4 sentences per shot make an answer about 1.5 times as long (IMPORT_MAX_TOKENS)
             "import_max_tokens": _num(project_llm.get("import_max_tokens"), IMPORT_MAX_TOKENS, 256, 1_000_000),
             "import_thinking": "off" if project_llm.get("import_thinking") == "off" else "same",
             "import_guides": bool(project_llm.get("import_guides", False))}
@@ -237,15 +203,6 @@ def _headers(key):
     return h
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] a URL without http:// or a web page answer gave an unreadable error
-# async def list_models(base_url, api_key):
-#     async with aiohttp.ClientSession(timeout=TIMEOUT) as s:
-#         async with s.get(base_url.rstrip("/") + "/models", headers=_headers(api_key)) as r:
-#             data = await r.json(content_type=None)
-#             if r.status >= 400:
-#                 raise RuntimeError(_err(data, r.status))
-#     return sorted(m.get("id", "") for m in data.get("data", []) if m.get("id"))
-# [/OLD]
 async def list_models(base_url, api_key):
     base = normalize_base_url(base_url)
     if not base:
@@ -265,7 +222,6 @@ async def list_models(base_url, api_key):
     return sorted(m.get("id", "") for m in models if isinstance(m, dict) and m.get("id"))
 
 
-# added 2026-11-03 v0.6.0
 def _looks_like_page(raw, content_type=""):
     head = (raw or "").lstrip()[:200].lower()
     return "text/html" in (content_type or "").lower() or head.startswith(("<!doctype", "<html", "<head", "<body"))
@@ -294,7 +250,7 @@ def _err(data, status):
     return "HTTP {}".format(status)
 
 
-# added 2026-11-02 v0.3.2: a reply with no answer text, and why
+# A reply with no answer text, and why
 class NoAnswer(RuntimeError):
     def __init__(self, message, reason):
         super().__init__(message)
@@ -311,17 +267,6 @@ def read_reply(data, max_tokens):
     if isinstance(text, list):  # some servers return content parts
         text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
     reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] a reply that starts inside the think block (the chat template opened <think>) kept its
-    # reasoning as the answer; _split_reasoning handles that now
-    # inline = re.findall(r"<think>(.*?)</think>", text, flags=re.S)
-    # text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
-    # # an unclosed <think> means the reply was cut off while still thinking
-    # if "<think>" in text:
-    #     head, _, tail = text.partition("<think>")
-    #     text, inline = head, inline + [tail]
-    # reasoning = (reasoning + "".join(inline)).strip()
-    # return text.strip(), reasoning, choice.get("finish_reason") or ""
-    # [/OLD]
     text, reasoning = _split_reasoning(text if isinstance(text, str) else str(text), reasoning or "")
     return text, reasoning, choice.get("finish_reason") or ""
 
@@ -338,65 +283,19 @@ def no_answer(reasoning, finish, max_tokens):
     return NoAnswer("The model returned no text.", "empty")
 
 
-# [OLD 2026-11-02 v0.3.1->v0.3.2] ignored the reasoning field and finish_reason, so a thinking model that ran out of tokens
-# looked like an empty answer ("Is it a vision model?")
-# async def chat(cfg, system, user, max_tokens=None, timeout=None):
-#     # `user` may be a list of OpenAI content parts (text + image_url) for vision models (added 2026-11-02 v0.2.0)
-#     body = {"model": cfg["model"], "temperature": cfg["temperature"],
-#             "max_tokens": max_tokens or cfg["max_tokens"],
-#             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
-#     t0 = time.time()
-#     async with aiohttp.ClientSession(timeout=timeout or TIMEOUT) as s:
-#         async with s.post(cfg["base_url"] + "/chat/completions", headers=_headers(cfg["api_key"]), json=body) as r:
-#             data = await r.json(content_type=None)
-#             if r.status >= 400:
-#                 raise RuntimeError(_err(data, r.status))
-#     text = data["choices"][0]["message"].get("content") or ""
-#     # reasoning models may wrap their answer after a think block
-#     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
-#     return text, int((time.time() - t0) * 1000), data.get("model", cfg["model"])
-# [/OLD]
-# [OLD 2026-11-03 v0.4.1->v0.4.2] one non-streaming request with a fixed 180 s total timeout. A long answer (a 46-scene script import)
-# could take longer than that; the timeout surfaced as an empty error message, and a reply cut off at the token budget
-# only showed up later as unreadable JSON.
-# async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None):
-#     # `user` may be a list of OpenAI content parts (text + image_url) for vision models (added 2026-11-02 v0.2.0)
-#     limit = max_tokens or cfg["max_tokens"]
-#     body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit,
-#             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
-#     if cfg.get("thinking") == "off":
-#         # Qwen3-style chat templates (SGLang, vLLM) skip the think block with this
-#         body["chat_template_kwargs"] = {"enable_thinking": False}
-#     t0 = time.time()
-#     async with aiohttp.ClientSession(timeout=timeout or TIMEOUT) as s:
-#         async with s.post(cfg["base_url"] + "/chat/completions", headers=_headers(cfg["api_key"]), json=body) as r:
-#             data = await r.json(content_type=None)
-#             if r.status >= 400:
-#                 raise RuntimeError(_err(data, r.status))
-#     text, reasoning, finish = read_reply(data if isinstance(data, dict) else {}, limit)
-#     if info is not None:
-#         info.update(finish=finish, reasoning_chars=len(reasoning))
-#     if not text and require_text:
-#         raise no_answer(reasoning, finish, limit)
-#     return text, int((time.time() - t0) * 1000), data.get("model", cfg["model"])
-# [/OLD]
-
-
-# ---- transport (added 2026-11-03 v0.4.2) ------------------------------------------------------
+# ---- transport --------------------------------------------------------------------------------
 
 class LLMError(RuntimeError):
     """A request that failed on the way: reason is stall | gave_up | connect | server | http | context | cut | bad_json
     (v0.6.0: also busy (HTTP 429), html (a web page instead of JSON)). wait: seconds the server asked to wait."""
 
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] def __init__(self, message, reason, retry=True):
     def __init__(self, message, reason, retry=True, wait=None):
         super().__init__(message)
         self.reason = reason
         self.retry = retry
-        self.wait = wait  # added 2026-11-03 v0.6.0
+        self.wait = wait
 
 
-# added 2026-11-03 v0.6.0
 CONTEXT_WORDS = ("context length", "context_length", "maximum context", "context window", "too many tokens",
                  "exceeds the model", "prompt is too long", "input is too long", "max_model_len", "too long for the model")
 
@@ -422,10 +321,9 @@ def retry_after(value):
 
 
 def http_error(status, raw, content_type="", headers=None):
-    # [OLD 2026-11-04 v0.6.0->v0.6.1] docstring: "429 is retried (after Retry-After), ..." (it left out RETRY_AFTER_MAX)
     """LLMError for an HTTP error answer: 429 is retried after Retry-After (ask() gives up at once when the server
     asks for more than RETRY_AFTER_MAX seconds, and says so), other 4xx are not, 5xx are; a context window error is
-    never retried; a web page says the base URL is wrong. (docstring corrected 2026-11-04 v0.6.1)"""
+    never retried; a web page says the base URL is wrong."""
     if _looks_like_page(raw, content_type):
         return LLMError("HTTP {}: {}.".format(status, HTML_PAGE), "html", retry=False)
     try:
@@ -493,13 +391,6 @@ async def budget(cfg, system, user, want):
 
 
 def _context_hint(message):
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] the hint was appended to the server's words only
-    # low = message.lower()
-    # if any(x in low for x in ("context length", "context_length", "maximum context", "context window", "too many tokens",
-    #                           "exceeds the model", "prompt is too long")):
-    #     return message + " — lower Max tokens or Script part size, or set Context window (Global → Prompt rewriter → Limits)."
-    # return message
-    # [/OLD]
     if is_context_error(message):
         return ("The request does not fit in the model's context window ({}). Lower Max tokens or Script part size, "
                 "turn off the H3 guides, or set Context window (Global → Prompt rewriter → Limits).".format(
@@ -509,8 +400,6 @@ def _context_hint(message):
 
 def _split_reasoning(content, reasoning):
     """Answer text without inline <think> blocks, and all the reasoning (same rules as read_reply)."""
-    # added 2026-11-03 v0.6.0: Qwen3-style templates open <think> in the prompt, so the reply has only "</think>":
-    # everything before the first </think> that no <think> opened is reasoning
     close = content.find("</think>")
     if close >= 0 and "<think>" not in content[:close]:
         reasoning = (reasoning or "") + content[:close]
@@ -523,26 +412,21 @@ def _split_reasoning(content, reasoning):
     return content.strip(), (reasoning + "".join(inline)).strip()
 
 
-# [OLD 2026-11-08 v0.12.0->v0.13.0] async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None, progress=None):
-# added 2026-11-08 v0.13.0: history (earlier turns of the Chat tab, [{role: user|assistant, content}], sent between the
+# history (earlier turns of the Chat tab, [{role: user|assistant, content}], sent between the
 # system prompt and `user`) and with_text (progress events carry the answer so far, "text", four times a second)
 async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=True, info=None, progress=None, history=None,
                with_text=False):
     """Stream one chat completion. timeout: a fixed aiohttp timeout (Test connection); otherwise no data for
     cfg timeout_s seconds, or cfg max_wait_s in all, ends the request. progress(dict) gets the running counts about
     twice a second. Servers that ignore "stream" and answer with one JSON body work too."""
-    # `user` may be a list of OpenAI content parts (text + image_url) for vision models (added 2026-11-02 v0.2.0)
+    # `user` may be a list of OpenAI content parts (text + image_url) for vision models
     want = max_tokens or cfg["max_tokens"]
-    history = [m for m in history or [] if isinstance(m, dict) and m.get("role") in ("user", "assistant")]  # v0.13.0
-    counted = "\n".join([str(m.get("content") or "") for m in history] + [user]) if history else user  # v0.13.0
+    history = [m for m in history or [] if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
+    counted = "\n".join([str(m.get("content") or "") for m in history] + [user]) if history else user
     if timeout is None:
-        # [OLD 2026-11-08 v0.12.0->v0.13.0] limit, est, ctx = await budget(cfg, system, user, want)
         limit, est, ctx = await budget(cfg, system, counted, want)
     else:
-        # [OLD 2026-11-08 v0.12.0->v0.13.0] limit, est, ctx = want, estimate_tokens(system) + estimate_tokens(user), None
         limit, est, ctx = want, estimate_tokens(system) + estimate_tokens(counted), None
-    # [OLD 2026-11-08 v0.12.0->v0.13.0] body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit, "stream": True,
-    # [OLD 2026-11-08 v0.12.0->v0.13.0]         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     body = {"model": cfg["model"], "temperature": cfg["temperature"], "max_tokens": limit, "stream": True,
             "messages": [{"role": "system", "content": system}] +
                         [{"role": m["role"], "content": str(m.get("content") or "")} for m in history] +
@@ -556,32 +440,21 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
     t0 = time.time()
     state = {"tokens": 0, "reasoning": 0, "chars": 0, "last": 0.0}
     content, reasoning, finish, model = [], [], "", cfg["model"]
-    # added 2026-11-09 v0.15.0: how much of the answer and of the reasoning the progress events have carried so far
-    # (Sencer: "When waiting for response, we receive thinking, but cannot see what it thinks. Add the thinking progress
-    # and received content as output so we can see what's going on")
     sent = {"text": 0, "think": 0, "text_n": 0, "think_n": 0}
 
     def report(phase, force=False):
         now = time.time()
-        # [OLD 2026-11-08 v0.12.0->v0.13.0] if progress and (force or now - state["last"] >= 0.5):
         if progress and (force or now - state["last"] >= (0.25 if with_text else 0.5)):
             state["last"] = now
-            # [OLD 2026-11-08 v0.12.0->v0.13.0] progress({"phase": phase, "tokens": state["tokens"], "reasoning": state["reasoning"], "chars": state["chars"],
-            # [OLD 2026-11-08 v0.12.0->v0.13.0]           "elapsed": round(now - t0, 1), "budget": limit, "input": est, "context": ctx})
             d = {"phase": phase, "tokens": state["tokens"], "reasoning": state["reasoning"], "chars": state["chars"],
                  "elapsed": round(now - t0, 1), "budget": limit, "input": est, "context": ctx}
-            if with_text:  # added 2026-11-08 v0.13.0: the answer so far (an inline <think> block shows as it comes)
+            if with_text:
                 d["text"] = "".join(content)
-            # added 2026-11-09 v0.15.0: what came since the last event: text_add (answer) at text_at, think_add
-            # (reasoning) at think_at, character offsets in what this request received, so the editor can show the
-            # reasoning and the answer as they arrive (llmjob.js jobStream) without the whole text in every event
             for k, parts in (("text", content), ("think", reasoning)):
                 if len(parts) > sent[k + "_n"]:
                     add = "".join(parts[sent[k + "_n"]:])
                     d[k + "_at"], d[k + "_add"] = sent[k], add
-                    # [OLD 2026-11-09 v0.17.0->v0.17.1] sent[k] += len(add)  (code points; the editor counts UTF-16 units, so after
-                    # an emoji the popup cut the start of the next piece)
-                    sent[k] += len(add.encode("utf-16-le")) // 2  # added 2026-11-09 v0.17.1: UTF-16 units, as JavaScript
+                    sent[k] += len(add.encode("utf-16-le")) // 2
                     sent[k + "_n"] = len(parts)
             progress(d)
 
@@ -591,16 +464,8 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
             async with s.post(cfg["base_url"] + "/chat/completions", headers=_headers(cfg["api_key"]), json=body) as r:
                 if r.status >= 400:
                     raw = await r.text()
-                    # [OLD 2026-11-03 v0.5.1->v0.6.0] 429 was not retried, a context error from a 5xx was, a web page showed as raw HTML
-                    # try:
-                    #     msg = _err(json.loads(raw), r.status)
-                    # except ValueError:
-                    #     msg = raw.strip()[:300] or "HTTP {}".format(r.status)
-                    # raise LLMError(_context_hint(msg), "server" if r.status >= 500 else "http", retry=r.status >= 500)
-                    # [/OLD]
                     raise http_error(r.status, raw, r.headers.get("Content-Type") or "", r.headers)
                 if "text/event-stream" not in (r.headers.get("Content-Type") or ""):
-                    # [OLD 2026-11-03 v0.5.1->v0.6.0] data = await r.json(content_type=None)  (a web page gave "Expecting value")
                     data = _json_or_page(await r.text(), r.headers.get("Content-Type") or "", r.status)
                     data = data if isinstance(data, dict) else {}
                     text, why, finish = read_reply(data, limit)
@@ -621,7 +486,6 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
                         if not isinstance(chunk, dict):
                             continue
                         if chunk.get("error"):
-                            # [OLD 2026-11-03 v0.5.1->v0.6.0] raise LLMError(_context_hint(_err(chunk, 500)), "server")  (a context error was retried)
                             msg = _err(chunk, 500)
                             if is_context_error(msg):
                                 raise LLMError(_context_hint(msg), "context", retry=False)
@@ -671,7 +535,7 @@ async def chat(cfg, system, user, max_tokens=None, timeout=None, require_text=Tr
     return text, ms, model
 
 
-# added 2026-11-08 v0.13.0: the Chat tab (general questions to the configured LLM, not about a scene)
+# The Chat tab (general questions to the configured LLM, not about a scene)
 CHAT_SYSTEM = ("You are a helpful assistant inside Reelwright, a timeline editor in ComfyUI that makes films of any length "
                "with MiniMax H3 reference-to-video generation. Answer the user's questions directly and concisely, about "
                "anything they ask. Use Markdown for lists, tables and code.")
@@ -693,23 +557,6 @@ async def ask(cfg, system, user, parse=None, max_tokens=None, progress=None, inf
     tried again. parse(text, info) turns the answer into the result and raises LLMError(reason "bad_json" or "cut")."""
     info = {} if info is None else info
     tries = cfg.get("retries", 2) + 1
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] a cut-off answer was asked again with the same budget; 429 was not retried
-    # for attempt in range(1, tries + 1):
-    #     info["attempt"] = attempt
-    #     step = (lambda d, a=attempt: progress(dict(d, attempt=a, attempts=tries))) if progress else None
-    #     try:
-    #         text, ms, model = await chat(cfg, system, user, max_tokens=max_tokens, info=info, progress=step)
-    #         return parse(text, info) if parse else text
-    #     except (LLMError, NoAnswer) as e:
-    #         again = getattr(e, "retry", True) and (retry_cut or e.reason not in ("cut", "thinking_cut"))
-    #         if not again or attempt == tries:
-    #             if attempt > 1:
-    #                 e.args = (str(e) + " (tried {} times)".format(attempt),)
-    #             raise
-    #         if progress:
-    #             progress({"phase": "retry", "attempt": attempt + 1, "attempts": tries, "note": str(e)})
-    #         await asyncio.sleep(min(cfg.get("retry_wait", 2) * attempt, 6))  # retry_wait: tests use 0
-    # [/OLD]
     want = max_tokens or cfg["max_tokens"]
     for attempt in range(1, tries + 1):
         info["attempt"] = attempt
@@ -720,7 +567,6 @@ async def ask(cfg, system, user, parse=None, max_tokens=None, progress=None, inf
         except (LLMError, NoAnswer) as e:
             again = getattr(e, "retry", True) and (retry_cut or e.reason not in ("cut", "thinking_cut"))
             note = ""
-            # added 2026-11-03 v0.6.0: a cut-off answer is asked again with twice the budget, up to CUT_RETRY_CAP
             if again and e.reason in ("cut", "thinking_cut"):
                 used = int(info.get("budget") or want)
                 bigger = min(CUT_RETRY_CAP, used * 2)
@@ -732,7 +578,6 @@ async def ask(cfg, system, user, parse=None, max_tokens=None, progress=None, inf
                     note = " It already had {:,} tokens.".format(used)
                 else:
                     want = bigger
-            # added 2026-11-03 v0.6.0: HTTP 429: wait as long as the server asks (Retry-After), else back off
             wait = min(cfg.get("retry_wait", 2) * attempt, 6)  # retry_wait: tests use 0
             if again and e.reason == "busy":
                 wait = e.wait if getattr(e, "wait", None) is not None else min(cfg.get("retry_wait", 2) * 2 ** attempt, 30)
@@ -748,7 +593,7 @@ async def ask(cfg, system, user, parse=None, max_tokens=None, progress=None, inf
             await asyncio.sleep(wait)
 
 
-# added 2026-11-03 v0.6.0: a plain-text answer that stopped at the token limit is not used as it is
+# A plain-text answer that stopped at the token limit is not used as it is
 def _whole(what):
     """parse() for ask() with a text answer: refuses one cut off at the token budget (ask retries it bigger)."""
     def parse(text, info):
@@ -759,13 +604,11 @@ def _whole(what):
     return parse
 
 
-# [OLD 2026-11-03 v0.6.0 review] def json_answer(text, info, what="answer"):
 def json_answer(text, info, what="answer", expect=None):
     """parse() for ask(): the JSON in an answer, with a clear reason when it was cut off or is not JSON.
-    added 2026-11-03 v0.6.0 review: expect (dict or list) is the type the task asks for, see parse_json."""
+    Expect (dict or list) is the type the task asks for, see parse_json."""
     try:
-        # [OLD 2026-11-03 v0.6.0 review] return parse_json(text)
-        return parse_json(text, expect)  # added 2026-11-03 v0.6.0 review
+        return parse_json(text, expect)
     except ValueError:
         if info.get("finish") == "length":
             raise LLMError("The {} was cut off at {:,} tokens before its JSON was complete. Raise the token budget "
@@ -773,56 +616,16 @@ def json_answer(text, info, what="answer", expect=None):
         raise LLMError("The {} was not valid JSON.".format(what), "bad_json")
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] text after the JSON that held a "}" or a trailing comma made the whole answer unreadable
-# def parse_json(text):
-#     m = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
-#     if m:
-#         text = m.group(1)
-#     start = min([i for i in (text.find("{"), text.find("[")) if i >= 0] or [0])
-#     end = max(text.rfind("}"), text.rfind("]"))
-#     return json.loads(text[start:end + 1])
-# [/OLD]
 _TRAILING_COMMA = re.compile(r",(\s*[}\]])")
 _SMART_QUOTES = str.maketrans({"“": '"', "”": '"'})
 
 
-# [OLD 2026-11-03 v0.6.0 review] the first value from the first { or [ won: "Here are the prompts for passes [1, 2]:"
-# before the answer made the answer [1, 2]
-# def parse_json(text):
-#     """The JSON value in an LLM answer (added 2026-11-03 v0.6.0: tolerant). Tries, in order: a ```json fence, the first
-#     complete value from the first { or [ (text after it is ignored), the same with trailing commas removed and curly
-#     quotes made straight, and a Python-style literal (single quotes, True/None). Raises ValueError."""
-#     text = text or ""
-#     m = re.search(r"```(?:json|JSON)?\s*(.*?)```", text, re.S)
-#     candidates = [m.group(1)] if m else []
-#     candidates.append(text)
-#     decoder = json.JSONDecoder()
-#     for body in candidates:
-#         starts = sorted(i for i in (body.find("{"), body.find("[")) if i >= 0)
-#         for start in starts:
-#             for fix in (lambda t: t, lambda t: _TRAILING_COMMA.sub(r"\1", t),
-#                         lambda t: _TRAILING_COMMA.sub(r"\1", t.translate(_SMART_QUOTES))):
-#                 try:
-#                     return decoder.raw_decode(fix(body[start:]))[0]
-#                 except ValueError:
-#                     pass
-#             end = max(body.rfind("}"), body.rfind("]"))
-#             if end > start:
-#                 try:
-#                     import ast
-#                     value = ast.literal_eval(body[start:end + 1])
-#                     if isinstance(value, (dict, list)):
-#                         return json.loads(json.dumps(value))
-#                 except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
-#                     pass
-#     return json.loads(text)  # raises with the parser's own message
-# [/OLD]
 _JSON_START = re.compile(r"[{\[]")
-_MAX_JSON_STARTS = 2000  # added 2026-11-03 v0.6.0 review: positions tried per text (an answer full of brackets)
+_MAX_JSON_STARTS = 2000
 
 
 def _json_values(body):
-    """added 2026-11-03 v0.6.0 review: every JSON value in `body`, left to right, each one found after the end of the
+    """Every JSON value in `body`, left to right, each one found after the end of the
     one before (so the objects inside a value are not values of their own). A value may need its trailing commas
     removed or its curly quotes made straight, or be a Python-style literal."""
     import bisect
@@ -851,7 +654,7 @@ def _json_values(body):
             break
         if not found and m.group(0) not in py_tried:
             # a Python-style literal (single quotes, True/None), tried from the first { and the first [ that are not
-            # JSON, up to the last } or ] of the text (as before v0.6.0 review)
+            # JSON, up to the last } or ] of the text
             py_tried.add(m.group(0))
             last = max(body.rfind("}"), body.rfind("]"))
             if last > start:
@@ -871,10 +674,10 @@ def _json_values(body):
 
 
 def parse_json(text, expect=None):
-    """The JSON value in an LLM answer (added 2026-11-03 v0.6.0: tolerant). Looks in a ```json fence first, then in
+    """The JSON value in an LLM answer (tolerant). Looks in a ```json fence first, then in
     the whole text; a value may need trailing commas removed or curly quotes made straight, or be a Python-style
     literal (single quotes, True/None). Raises ValueError.
-    added 2026-11-03 v0.6.0 review: every JSON value in the text is read, not only the first. A value of the type
+    Every JSON value in the text is read, not only the first. A value of the type
     the task expects (`expect`: dict or list) wins over the others, and a value with more JSON (of that type) after
     it is skipped, so "Here are the prompts for passes [1, 2]:" before the answer is not the answer. Without a value
     of the expected type, the last value is used."""
@@ -898,9 +701,7 @@ def parse_json(text, expect=None):
 def preserved_warnings(before, after):
     """Tokens and dialogue lines that the model changed or dropped."""
     warnings = []
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] missing = sorted(set(TAG_RE.findall(before)) - set(TAG_RE.findall(after)))
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] added = sorted(set(TAG_RE.findall(after)) - set(TAG_RE.findall(before)))
-    tags = lambda t: {m.group(0) for m in _prompt.tag_re().finditer(t or "")}  # same rule as the editor (v0.6.0)
+    tags = lambda t: {m.group(0) for m in _prompt.tag_re().finditer(t or "")}  # same rule as the editor
     missing = sorted(tags(before) - tags(after))
     added = sorted(tags(after) - tags(before))
     if missing:
@@ -916,29 +717,17 @@ def preserved_warnings(before, after):
 def scene_context(p, scene):
     idx_assets = {a["id"]: a for a in p["assets"]}
     cast = {c["id"]: c for c in p["cast"]}
-    tokens = _model.ref_tokens(p, scene) if hasattr(_model, "ref_tokens") else {}  # added 2026-11-08 v0.14.0
+    tokens = _model.ref_tokens(p, scene) if hasattr(_model, "ref_tokens") else {}
     refs = []
     for r in scene["refs"]:
         a = idx_assets.get(r["asset"])
         if a:
-            # [OLD 2026-11-02 v0.3.3->v0.3.4] the LLM saw the asset's name but not its description
-            # refs.append("@{} {} ({}, {}{})".format(a["code"], a["name"] or a["file"], a["kind"], r["role"],
-            #                                      ", at {:.2f}s".format(r["time"]) if r["role"] == "keyframe" else ""))
             desc = (a.get("description") or "").strip()
-            # [OLD 2026-11-08 v0.11.0->v0.12.0] refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], r["role"],
-            # [OLD 2026-11-08 v0.11.0->v0.12.0]                                        ", at {:.2f}s".format(r["time"]) if r["role"] == "keyframe" else "",
-            # [OLD 2026-11-08 v0.11.0->v0.12.0]                                        " - " + desc if desc else ""))
-            # added 2026-11-08 v0.12.0: a pose reference says whose pose it is, and that only the pose is used
             role = r["role"]
             if role == "pose":
                 who = cast.get(r.get("cast") or "")
                 role = "pose for {}: only the body pose is used, the person in it does not appear".format(
                     _prompt.tag_token(who["name"]) if who else "nobody yet")
-            # [OLD 2026-11-08 v0.13.1->v0.14.0] refs.append("@{} {} ({}, {}{}){}".format(a["code"], a["name"] or a["file"], a["kind"], role,
-            # [OLD 2026-11-08 v0.13.1->v0.14.0]                                        ", at {:.2f}s".format(r["time"]) if r["role"] in ("keyframe", "pose") else "",
-            # [OLD 2026-11-08 v0.13.1->v0.14.0]                                        " - " + desc if desc else ""))
-            # added 2026-11-08 v0.14.0: a video or audio reference names its clip (@V1.2 for the second one of V1) and
-            # whether a video's own sound goes with it
             tok = tokens.get(r["id"], "@" + a["code"])
             clip = ""
             if a["kind"] in ("video", "audio") and r["role"] == "reference" and hasattr(_model, "ref_clip"):
@@ -955,13 +744,6 @@ def scene_context(p, scene):
     for e in scene["cast"]:
         c = cast.get(e["id"])
         if c:
-            # [OLD 2026-11-02 v0.3.3->v0.3.4] people.append("@{} - {} ({}){}".format(c["name"] if " " not in c["name"] else "{" + c["name"] + "}",
-            #                                       c["description"], c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] people.append("@{} - {} ({}){}".format(c["name"] if " " not in c["name"] else "{" + c["name"] + "}",
-            #                                       cast_description(c, idx_assets)[0], c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
-            # [OLD 2026-11-08 v0.10.3->v0.11.0] people.append("{} - {} ({}){}".format(_prompt.tag_token(c["name"]), cast_description(c, idx_assets)[0],
-            # [OLD 2026-11-08 v0.10.3->v0.11.0]                                     c["kind"], ", speaker " + c["speaker"] if c["speaker"] else ""))
-            # added 2026-11-08 v0.11.0: a prop that is part of a character is said to be so (not a separate thing)
             owner = cast.get(_model.part_owner(c, cast)) if hasattr(_model, "part_owner") else None
             kind = "part of {}'s body or look, not a separate person or object".format(
                 _prompt.tag_token(owner["name"])) if owner else c["kind"]
@@ -975,9 +757,7 @@ def scene_context(p, scene):
         cast="\n".join(people) or "(none)", shots="\n".join(shots) or "(none)", lines="\n".join(lines) or "(none)"))
 
 
-# [OLD 2026-11-03 v0.4.0->v0.4.1] async def rewrite(cfg, p, scene, instruction, built=""):  # built: added 2026-11-02 v0.2.0
-# [OLD 2026-11-03 v0.4.1->v0.4.2] async def rewrite(cfg, p, scene, instruction, built="", tag_map=None):  # tag_map: added 2026-11-03 v0.4.1
-async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=None):  # progress: added 2026-11-03 v0.4.2
+async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=None):
     pr = scene["prompt"]
     ctx = scene_context(p, scene)
     preset = PRESETS.get(cfg["preset"], PRESETS["h3_ref2va"])
@@ -985,30 +765,14 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
         before = pr["raw"]
         user = ("{}\n\nCurrent prompt:\n{}\n\nInstruction: {}\n\nReturn only the rewritten prompt text.").format(
             ctx, before, instruction or "Improve clarity and visual precision.")
-        # [OLD 2026-11-02 v0.1.0->v0.2.0] text, _, _ = await chat(cfg, H3_RULES + "\n" + preset, user)
-        # [OLD 2026-11-03 v0.4.1->v0.4.2] text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] text = await ask(cfg, system_prompt(cfg, preset), user, progress=progress)  (a cut-off answer was accepted)
         text = await ask(cfg, system_prompt(cfg, preset), user, parse=_whole("rewrite"), progress=progress)
         text = re.sub(r"^```\w*\n|```$", "", text.strip()).strip()
         return {"raw": text, "warnings": preserved_warnings(before, text)}
     sections = pr["sections"]
     before = json.dumps(sections, ensure_ascii=False)
-    # [OLD 2026-11-02 v0.1.0->v0.2.0] the model did not see what the editor adds around its sections
-    # user = ("{}\n\nCurrent sections (JSON):\n{}\n\nInstruction: {}\n\n"
-    #         "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
-    #         "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
-    #         "Shots and dialogue are added automatically from the timeline, so detailed_description only holds extra direction.").format(
-    #     ctx, before, instruction or "Improve clarity and visual precision.")
-    # text, _, _ = await chat(cfg, H3_RULES + "\n" + preset, user)
-    # [/OLD]
     auto = pr["auto"]
-    # added 2026-11-09 v0.14.2: a scene made in one pass with no shots is written as its [Shot 1] line with its spoken
-    # lines, which the editor puts on the timeline (fills_timeline, web/rw/shotfill.js)
     i = next((n for n, x in enumerate(p["scenes"]) if x["id"] == scene["id"]), None)
     fill = bool(auto.get("shots")) and i is not None and fills_timeline(scene, plan_scene(p, scene, i))
-    # [OLD 2026-11-09 v0.14.1->v0.14.2] added = [x for x, on in (("the <Subject N>/<Picture N>/<Audio N> definition lines", auto.get("subjects")),
-    # [OLD 2026-11-09 v0.14.1->v0.14.2]                          ("the retention lines for every reference", auto.get("retention")),
-    # [OLD 2026-11-09 v0.14.1->v0.14.2]                          ("the [Shot N] lines with their cut times and the dialogue", auto.get("shots"))) if on]
     added = [x for x, on in (("the <Subject N>/<Picture N>/<Audio N> definition lines", auto.get("subjects")),
                              ("the retention lines for every reference", auto.get("retention")),
                              ("the [Shot N] lines with their cut times and the dialogue", auto.get("shots") and not fill))
@@ -1020,32 +784,8 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
                      "sentences, then the scene as one [Shot 1] line (composition, subject appearance and position, "
                      "environment and lighting, action, camera movement and sound){}. {}").format(
             ", with every spoken line of the scene, word for word" if scene.get("dialogue") else
-            # [OLD 2026-11-09 v0.14.4->v0.15.0] "; when the summary or the instruction has someone speak, write those lines in it",
             "; when the summary, the brief or the instruction has someone speak, write those lines in it",
-            # [OLD 2026-11-09 v0.14.2->v0.14.3] FILL_LINES_RULE)  (the camera move was not asked for in the guide's words)
-            FILL_LINES_RULE + " " + FILL_CAMERA_RULE)  # FILL_CAMERA_RULE: added 2026-11-09 v0.14.3
-    # [OLD 2026-11-09 v0.14.1->v0.14.2] the description rule was always the style sentences
-    # user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}Instruction: {}\n\n"
-    #         "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
-    #         "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
-    #         "Do not repeat what the editor adds automatically: {}. In detailed_description write the one or two "
-    #         "style sentences that open the description and any extra direction. Write overall_soundscape and "
-    #         "non_diegetic_music as the guide describes.").format(
-    #     ctx, before,
-    #     ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
-    #     instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing")
-    # [/OLD]
-    # [OLD 2026-11-09 v0.14.4->v0.15.0] no brief
-    # user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}Instruction: {}\n\n"
-    #         "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
-    #         "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
-    #         "Do not repeat what the editor adds automatically: {}. {} Write overall_soundscape and "
-    #         "non_diegetic_music as the guide describes.").format(
-    #     ctx, before,
-    #     ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
-    #     instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing",
-    #     desc_rule)
-    # [/OLD]
+            FILL_LINES_RULE + " " + FILL_CAMERA_RULE)
     user = ("{}\n\nCurrent sections (JSON, written with @ tokens):\n{}\n\n{}{}Instruction: {}\n\n"
             "Return JSON with exactly these keys: subject_definitions, summary, retention_analysis, "
             "detailed_description, overall_soundscape, non_diegetic_music. Leave a key empty if it should stay empty. "
@@ -1053,28 +793,16 @@ async def rewrite(cfg, p, scene, instruction, built="", tag_map=None, progress=N
             "non_diegetic_music as the guide describes.").format(
         ctx, before,
         ("What H3 currently receives for the first pass (labels already resolved):\n{}\n\n".format(built) if built else ""),
-        # added 2026-11-09 v0.15.0: the author's brief (brief_text)
         (BRIEF_HEAD + brief_text(scene) + "\n\n" if brief_text(scene) else ""),
         instruction or "Improve clarity and visual precision, following the guide.", "; ".join(added) or "nothing",
         desc_rule)
-    # [OLD 2026-11-03 v0.4.1->v0.4.2] an unreadable or cut-off answer raised a bare JSON error
-    # text, _, _ = await chat(cfg, system_prompt(cfg, preset), user)
-    # data = parse_json(text)
-    # [/OLD]
-    # [OLD 2026-11-03 v0.6.0 review] data = await ask(cfg, system_prompt(cfg, preset), user, parse=lambda t, i: json_answer(t, i, "rewrite"),
-    # [OLD 2026-11-03 v0.6.0 review]                  progress=progress)
-    # added 2026-11-03 v0.6.0 review: the rewrite is an object
     data = await ask(cfg, system_prompt(cfg, preset), user, parse=lambda t, i: json_answer(t, i, "rewrite", dict),
                      progress=progress)
-    # [OLD 2026-11-03 v0.4.0->v0.4.1] the reply was used as it came: repeated automatic parts, "<Subject 1>" instead of @Name, labels inside values
-    # out = {k: str(data.get(k, sections.get(k, "")) or "") for k in sections}
-    # [OLD 2026-11-09 v0.14.1->v0.14.2] out = dict(sections, **tidy_rewrite(data if isinstance(data, dict) else {}, sections, auto, tag_map))  # added 2026-11-03 v0.4.1
     out = dict(sections, **tidy_rewrite(data if isinstance(data, dict) else {}, sections, auto, tag_map,
-                                        new_shots=fill))  # new_shots: added 2026-11-09 v0.14.2
+                                        new_shots=fill))
     return {"sections": out, "warnings": preserved_warnings(before, json.dumps(out, ensure_ascii=False))}
 
 
-# [OLD 2026-11-03 v0.4.1->v0.4.2] async def split(cfg, p, scene, passes, built_prompts):
 async def split(cfg, p, scene, passes, built_prompts, progress=None):
     ranges = "\n".join("Pass {}: scene time {:.3f}s to {:.3f}s ({} frames, seam before: {})".format(
         x["index"], max(0.0, x["start"]), x["end"], x["gen_frames"], x["seam_before"]) for x in passes)
@@ -1085,27 +813,14 @@ async def split(cfg, p, scene, passes, built_prompts, progress=None):
             "Return JSON: {{\"1\": \"...\", \"2\": \"...\"}}. Use @ tokens (not <Picture N>) for references.").format(
         scene_context(p, scene), len(passes), ranges,
         "\n\n".join("--- pass {} ---\n{}".format(i + 1, t) for i, t in enumerate(built_prompts)))
-    # [OLD 2026-11-02 v0.1.0->v0.2.0] text, _, _ = await chat(cfg, H3_RULES + "\n" + PRESETS.get(cfg["preset"], ""), user)
-    # [OLD 2026-11-03 v0.4.1->v0.4.2] text, _, _ = await chat(cfg, system_prompt(cfg, PRESETS.get(cfg["preset"], "")), user)
-    # data = parse_json(text)
-    # [/OLD]
-    # [OLD 2026-11-03 v0.6.0 review] data = await ask(cfg, system_prompt(cfg, PRESETS.get(cfg["preset"], "")), user,
-    # [OLD 2026-11-03 v0.6.0 review]                  parse=lambda t, i: json_answer(t, i, "split"), progress=progress)
-    # added 2026-11-03 v0.6.0 review: Split asks for an object ("passes [1, 2]" in a preface is not the answer)
     data = await ask(cfg, system_prompt(cfg, PRESETS.get(cfg["preset"], "")), user,
                      parse=lambda t, i: json_answer(t, i, "split", dict), progress=progress)
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] values went through str() (an object became a Python repr); "pass 2" or "02" keys were dropped
-    # if not isinstance(data, dict):
-    #     raise LLMError("The split answer was not a JSON object.", "bad_json")
-    # return {str(k): str(v) for k, v in data.items() if str(k).isdigit()}
-    # [/OLD]
     out = split_prompts(data, len(passes))
     if not out:
         raise LLMError("The split answer had no prompt for any of the {} passes.".format(len(passes)), "bad_json")
     return out
 
 
-# added 2026-11-03 v0.6.0
 _PASS_KEY = re.compile(r"^\s*(?:pass(?:es)?|part|p)?[\s_#:.-]*0*(\d+)\s*$", re.I)
 
 
@@ -1142,7 +857,7 @@ def split_prompts(data, n_passes=0):
     return out
 
 
-# ---- Write prompts: each pass's own six sections, one request per pass (added 2026-11-05 v0.8.0) ------------------
+# ---- Write prompts: each pass's own six sections, one request per pass --------------------------------------------
 # Split (above) rewrites the whole prompt of every pass in one answer, as text that replaces the pass's prompt
 # (scene.prompt.pass_prompts, edited by hand afterwards). write_passes asks for one pass at a time and returns the
 # six sections, which the editor stores as scene.prompt.passes[k] = {start, end, sections}; prompt.build_pass sends a
@@ -1153,9 +868,6 @@ PASS_WORDS_WARN = (300, 650)   # an answer outside this range gets a warning
 PASS_MIN_TOKENS = 4096         # one pass answers with about 1,000-1,500 tokens
 PASS_MIN_TOKENS_THINKING = 8192  # ... and a thinking model reasons before it
 
-# [OLD 2026-11-09 v0.16.1->v0.17.0] PASS_RULES said: "Every spoken line of the pass appears exactly once, word for
-# word, in the shot where it is spoken, after its speaker and speaker ID, for example: @Mara (S1) mutters, <d>[English]
-# Almost home.</d>" (no time, no place in the action) and the Voices example had no time either
 PASS_RULES = """How these requests work: H3 makes at most about 15 seconds per generation, so a longer scene is made \
 in passes, one after another, and every pass gets its own prompt. Each request asks for the prompt of ONE pass:
 - Write only what happens in this pass, from its first frame to its last, with its own shots and spoken lines. The \
@@ -1389,7 +1101,7 @@ def _scene_tokens(p, scene, tag_map=None):
     for r in scene["refs"]:
         if r.get("asset") in idx:
             keys.add(_prompt.name_key(idx[r["asset"]]["code"]))
-    if hasattr(_model, "ref_tokens"):  # added 2026-11-08 v0.14.0: @V1.2 ...
+    if hasattr(_model, "ref_tokens"):
         keys |= {_prompt.name_key(tok[1:]) for tok in _model.ref_tokens(p, scene).values()}
     for e in scene["cast"]:
         c = cast.get(e.get("id"))
@@ -1403,7 +1115,6 @@ def _scene_tokens(p, scene, tag_map=None):
     return keys
 
 
-# added 2026-11-06 v0.10.0
 def pass_voices(p, x):
     """One line per cast member who speaks in pass x and has a voice description: "@Mara: with a husky low voice"
     (prompt.voice_phrase; nothing when Global -> Continuity -> describe_voices is off)."""
@@ -1420,15 +1131,12 @@ def pass_voices(p, x):
     return out
 
 
-# added 2026-11-09 v0.14.2 (Sencer: "when creating a single shot scene, the shot section (and dialogues) are not
+# Are not
 # populated"): a scene made in one pass with no shots on the timeline is written as [Shot N] lines with its spoken
 # lines, and the editor puts them on the timeline (web/rw/shotfill.js). The request asks for every spoken line as a
 # sentence of its own, so the editor can take it out of the shot's text, and, when the scene has no lines yet, lets
 # the LLM write the lines the note calls for (tidy_pass keeps them: free_lines).
-# [OLD 2026-11-09 v0.16.1->v0.17.0] FILL_LINES_RULE = ("Write every spoken line as a sentence of its own: the speaker's @name, the speaker ID and how they "
-#                    "speak, then the line, for example: @Mara (S1) mutters, <d>[English] Almost home.</d> Describe the "
-#                    "action in sentences of their own. The editor puts the shot and its spoken lines on the timeline.")
-# added 2026-11-09 v0.17.0: each line (and each action after one) opens with its time, so the editor puts it on the
+# Each line (and each action after one) opens with its time, so the editor puts it on the
 # timeline at that time and keeps its place in the shot (web/rw/shotfill.js)
 FILL_LINES_RULE = ("Write every spoken line as a sentence of its own, where it is spoken in the shot's action, opening "
                    "with the time it is spoken in the pass: the time, the speaker's @name, the speaker ID and how they "
@@ -1443,7 +1151,7 @@ def fills_timeline(scene, plan):
     return (scene.get("prompt") or {}).get("mode") != "raw" and len(plan["passes"]) == 1 and not scene.get("shots")
 
 
-# added 2026-11-09 v0.14.3 (Sencer: "camera movements are not reflected to shots when using Write prompts"): the
+# the
 # editor also takes each written shot's framing and camera move into the shot's fields (web/rw/shotfill.js cameraOf),
 # for a scene made in one pass with automatic shot lines, so the request asks for them in the words of H3's guide
 FILL_CAMERA_RULE = ("Start each [Shot N] line with its framing, for example \"[Shot 1] A medium shot: ...\" (extreme "
@@ -1457,29 +1165,21 @@ FILL_CAMERA_RULE = ("Start each [Shot N] line with its framing, for example \"[S
                     "the framing and the camera move in the shot's fields.")
 
 
-# [OLD 2026-11-09 v0.14.3->v0.14.4] only a scene made in one pass
-# def writes_shots(scene, plan):
-#     """Does the editor take the written shots into the scene's shots (fills_timeline, or a scene made in one pass
-#     whose shot lines are automatic)?"""
-#     pr = scene.get("prompt") or {}
-#     return fills_timeline(scene, plan) or (pr.get("mode") != "raw" and len(plan["passes"]) == 1 and
-#                                           bool((pr.get("auto") or {}).get("shots")))
-# [/OLD]
 def writes_shots(scene, plan):
     """Does the editor take the written shots into the scene's shots (fills_timeline, or a scene whose shot lines are
-    automatic; added 2026-11-09 v0.14.4: in a scene of several passes too, web/rw/shotfill.js takePassShots)?"""
+    automatic, also in a scene of several passes: web/rw/shotfill.js takePassShots)?"""
     pr = scene.get("prompt") or {}
     return fills_timeline(scene, plan) or (pr.get("mode") != "raw" and bool((pr.get("auto") or {}).get("shots")))
 
 
-# added 2026-11-09 v0.15.0: scene.prompt.brief, the author's own words for Write prompts (the Prompt card's Brief).
+# scene.prompt.brief, the author's own words for Write prompts (the Prompt card's Brief).
 # Nothing the LLM writes goes there, so it stays the same from one Write prompts to the next, unlike the summary.
 BRIEF_HEAD = ("Author's brief for this scene (the author's own words; follow it, and where it and the whole-scene note "
               "disagree, the brief wins):\n")
 
 
 def brief_text(scene):
-    """added 2026-11-09 v0.15.0: the scene's Write prompts brief, stripped ("" when it has none)."""
+    """The scene's Write prompts brief, stripped ("" when it has none)."""
     pr = scene.get("prompt") if isinstance(scene.get("prompt"), dict) else {}
     return str(pr.get("brief") or "").strip()
 
@@ -1497,7 +1197,7 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
     parts = ["The whole scene, for context (you write only pass {}):\n{}".format(k, scene_context(p, scene))]
     note = _prompt._strip_task_tags(str((pr.get("sections") or {}).get("summary") or "")).strip()
     parts.append("Whole-scene note (what the whole scene is about; not a prompt of its own):\n" + (note or "(none)"))
-    if brief_text(scene):  # added 2026-11-09 v0.15.0: the author's Write prompts brief, kept between runs
+    if brief_text(scene):
         parts.append(BRIEF_HEAD + brief_text(scene))
 
     start, end, gen = float(x["start"]), float(x["end"]), int(x["gen_frames"])
@@ -1521,24 +1221,16 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
     elif cont.get("source") == "prev_scene_tail" or (k == 1 and plan.get("start_mode") == "tail"):
         head += " It continues seamlessly from the end of the scene before (@tail)."
     shot_lines, spoken = _pass_lines(p, scene, x, k - 1 if k > 1 else 0)
-    # [OLD 2026-11-09 v0.14.1->v0.14.2] a scene without shots or lines got no lines: the rules forbid other spoken words
-    # parts.append(head + "\nIts shots:\n" + ("\n".join(shot_lines) or "(no shots on the timeline: write it as one shot)") +
-    #              "\nIts spoken lines:\n" + ("\n".join(spoken) or "(none)"))
-    # added 2026-11-09 v0.14.2: a scene written into the timeline (fills_timeline)
     fill = fills_timeline(scene, plan)
     free = fill and not scene.get("dialogue")
     parts.append(head + "\nIts shots:\n" + ("\n".join(shot_lines) or (
         "(none on the timeline yet: write it as one shot; the editor puts it on the timeline)" if fill else
         "(no shots on the timeline: write it as one shot)")) +
         "\nIts spoken lines:\n" + ("\n".join(spoken) or (
-            # [OLD 2026-11-09 v0.14.4->v0.15.0] "(none on the timeline yet: when the whole-scene note or the instruction has someone speak, write those "
-            # [OLD 2026-11-09 v0.14.4->v0.15.0] "lines, word for word as the note gives them, and only those; the editor puts them on the timeline)"
-            # added 2026-11-09 v0.15.0: or the author's brief, when the scene has one
             "(none on the timeline yet: when the whole-scene note{} or the instruction has someone speak, write those "
             "lines, word for word as the note gives them, and only those; the editor puts them on the timeline)".format(
                 ", the author's brief" if brief_text(scene) else "")
             if free else "(none)")))
-    # added 2026-11-06 v0.10.0: how each speaker of this pass sounds (cast voice_desc), to describe at their first line
     voices = pass_voices(p, x)
     if voices:
         parts.append("Voices (describe each at the speaker's first line in this pass, in these words, so the voice "
@@ -1579,10 +1271,6 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
         block.append("Its last shot: " + (last or "(none)"))
         if px["dialogue"]:
             d = px["dialogue"][-1]
-            # [OLD 2026-11-06 v0.9.0->v0.10.0] block.append("Its last spoken line: {} <d>[{}] {}</d>".format(_speaker(p, d), d.get("language") or "English",
-            # [OLD 2026-11-06 v0.9.0->v0.10.0]                                                              _clean_line(d.get("text"))))
-            # added 2026-11-06 v0.10.0: written as plain words, marked as already spoken (answers copied it, and H3
-            # said it again)
             block.append('Its last spoken line (already spoken in pass {}; never write it again): {}: "{}"'.format(
                 k - 1, _speaker(p, d), _clean_line(d.get("text"))))
         parts.append("\n".join(block))
@@ -1611,9 +1299,7 @@ def pass_request(p, scene, plan, builds, k, written=None, stored=None, instructi
         m, "s" if m > 1 else "", int(round(sum(PASS_WORDS) / 2.0 / m)), *PASS_WORDS)]
     if auto.get("shots"):
         rules.append("Your [Shot N] lines replace the editor's automatic shot lines, so describe every shot in full.")
-    # [OLD 2026-11-09 v0.14.2->v0.14.3] if fill:  # added 2026-11-09 v0.14.2
-    # [OLD 2026-11-09 v0.14.2->v0.14.3]     rules.append(FILL_LINES_RULE)
-    if fill or writes_shots(scene, plan):  # v0.14.2: spoken lines; v0.14.3: framing and camera move too
+    if fill or writes_shots(scene, plan):
         rules += [FILL_LINES_RULE, FILL_CAMERA_RULE]
     rules.append("Leave subject_definitions empty: the editor writes a definition line for every reference this pass "
                  "sends." if auto.get("subjects") else
@@ -1723,7 +1409,7 @@ def _core(line):
     return " ".join(str(line or "").split()).rstrip(" .!?…\"'").lower()
 
 
-# added 2026-11-06 v0.10.0: the sentence around a spoken line, to take it out of a description
+# The sentence around a spoken line, to take it out of a description
 _SENTENCE_STOP = re.compile(r"[.!?…](?=\s)|\n|\]\s")
 
 
@@ -1768,8 +1454,7 @@ def drop_foreign_lines(text, belongs):
     return text.strip(), removed, twice
 
 
-# [OLD 2026-11-09 v0.14.1->v0.14.2] def tidy_pass(sections, x, build, auto, k=1, known=None, guides=()):
-def tidy_pass(sections, x, build, auto, k=1, known=None, guides=(), free_lines=False):  # free_lines: added v0.14.2
+def tidy_pass(sections, x, build, auto, k=1, known=None, guides=(), free_lines=False):
     """(six sections as text, warnings) of one pass's answer, ready to store as scene.prompt.passes[k-1].sections:
     - a whole six-section prompt inside one key is split into its sections; a value's own label is dropped;
     - <Subject N>, <Picture N>, <Video N>, <Audio N> become the @ tokens of this pass's tag_map (the clip's own sound
@@ -1782,7 +1467,7 @@ def tidy_pass(sections, x, build, auto, k=1, known=None, guides=(), free_lines=F
       start time in the pass (the timeline's).
     Warnings: the description's length, spoken lines missing or added, unknown @ names, labels left as written,
     a [Shot N] count that does not match the pass's shots, cut times moved, a frame guide (pass_guides) not named.
-    free_lines (added 2026-11-09 v0.14.2): the scene has no spoken lines yet and the LLM may write them
+    free_lines: the scene has no spoken lines yet and the LLM may write them
     (fills_timeline), so only a second copy of a line is taken out."""
     warnings = []
     out = {key: _prompt.as_text(sections.get(key)).strip() if sections.get(key) is not None else ""
@@ -1830,9 +1515,7 @@ def tidy_pass(sections, x, build, auto, k=1, known=None, guides=(), free_lines=F
                     body = _prompt._drop_cut_lead(body)
                 else:
                     t = float(shots[j - 1]["t"])
-                    # [OLD 2026-11-09 v0.17.1->v0.17.2] m = _CUT_TIME.match(body)  (a shot that opens with a timed spoken line
-                    # had the line's time rewritten to the shot's start)
-                    timed_line = _prompt._lead_kind(body) == "line"  # added 2026-11-09 v0.17.2 (third review 11)
+                    timed_line = _prompt._lead_kind(body) == "line"
                     m = None if timed_line else _CUT_TIME.match(body)
                     if timed_line:
                         body = "At {}, the shot cuts to a new angle. {}".format(spec.fmt_time(t), body)
@@ -1868,19 +1551,7 @@ def tidy_pass(sections, x, build, auto, k=1, known=None, guides=(), free_lines=F
     missing = [t for t in lines if _core(t) and not any(_core(t) in s for s in said)]
     if missing:
         warnings.append("spoken lines missing or changed: " + " | ".join('"{}"'.format(t) for t in missing))
-    # [OLD 2026-11-06 v0.9.0->v0.10.0] kept in the text with a warning, so H3 said them: a line of the pass before
-    # written again, or a line written twice, was heard twice
-    # extra = [s for s in _spoken(out["detailed_description"])
-    #          if _core(s) and not any(_core(t) in _core(s) or _core(s) in _core(t) for t in lines)]
-    # if extra:
-    #     warnings.append("spoken lines that are not this pass's (H3 would say them): " +
-    #                     " | ".join('"{}"'.format(t) for t in extra))
-    # [/OLD]
-    # added 2026-11-06 v0.10.0: a spoken line that is not one of this pass's, and a second copy of one that is, are
-    # taken out of the text with their sentence ("Mara (S1) says, <d>…</d>"); the warning says which
     own = [_core(t) for t in lines if _core(t)]
-    # [OLD 2026-11-09 v0.14.1->v0.14.2] out["detailed_description"], extra, twice = drop_foreign_lines(
-    # [OLD 2026-11-09 v0.14.1->v0.14.2]     out["detailed_description"], lambda c: any(t in c or c in t for t in own))
     out["detailed_description"], extra, twice = drop_foreign_lines(
         out["detailed_description"], lambda c: free_lines or any(t in c or c in t for t in own))
     if extra:
@@ -1957,11 +1628,9 @@ async def write_passes(cfg, p, scene, wanted=None, instruction="", progress=None
             state["warnings"].append("Pass {} was not written: {}".format(k, e))
             return state
         state["tokens"] += int(info.get("tokens") or 0)
-        # [OLD 2026-11-09 v0.14.1->v0.14.2] sections, warns = tidy_pass(secs, x, b, pr.get("auto") or {}, k, _scene_tokens(p, scene),
-        # [OLD 2026-11-09 v0.14.1->v0.14.2]                             pass_guides(p, scene, x))
         sections, warns = tidy_pass(secs, x, b, pr.get("auto") or {}, k, _scene_tokens(p, scene),
                                     pass_guides(p, scene, x),
-                                    free_lines=fills_timeline(scene, plan) and not scene.get("dialogue"))  # v0.14.2
+                                    free_lines=fills_timeline(scene, plan) and not scene.get("dialogue"))
         override = overrides.get(str(k))
         if isinstance(override, str) and override.strip():
             warns.append("its prompt was edited by hand (or by Split), and that prompt is sent instead of these "
@@ -1973,24 +1642,6 @@ async def write_passes(cfg, p, scene, wanted=None, instruction="", progress=None
     return state
 
 
-# [OLD 2026-11-03 v0.4.1->v0.4.2] the whole script in one request with max(Max tokens, 6000) tokens and the H3 guides: a long script's answer
-# ran past the budget or the 180 s timeout (see script_part)
-# async def script_to_scenes(cfg, p, script):
-#     names = ", ".join(c["name"] for c in p["cast"]) or "(none yet)"
-#     user = ("Break this script into scenes for a video timeline. Existing cast: {}.\n\n"
-#             "Return JSON: {{\"cast\": [{{\"name\", \"kind\": \"character|location|prop\", \"description\", \"speaker\": \"S1\", \"language\"}}], "
-#             "\"scenes\": [{{\"title\", \"duration\": seconds (any length), \"summary\", \"soundscape\", \"music\", "
-#             "\"cast\": [names], \"shots\": [{{\"t\": seconds from scene start, \"camera\", \"text\"}}], "
-#             "\"dialogue\": [{{\"speaker\": name, \"t\": seconds, \"text\", \"language\", \"delivery\"}}]}}]}}.\n"
-#             "Give each speaking character a speaker id S1, S2... Leave timings realistic for the action and lines.\n\n"
-#             "Script:\n{}").format(names, script)
-#     # [OLD 2026-11-02 v0.1.0->v0.2.0] text, _, _ = await chat(cfg, H3_RULES, user, max_tokens=max(cfg["max_tokens"], 6000))
-#     text, _, _ = await chat(cfg, system_prompt(cfg), user, max_tokens=max(cfg["max_tokens"], 6000))
-#     data = parse_json(text)
-#     if not isinstance(data, dict):
-#         raise ValueError("The LLM did not return a JSON object")
-#     return {"scenes": list(data.get("scenes") or []), "cast": list(data.get("cast") or [])}
-# [/OLD]
 async def script_to_scenes(cfg, p, script, progress=None):
     """The whole script as one part (the old request shape)."""
     return await script_part(cfg, p, script, progress=progress)
@@ -2009,13 +1660,11 @@ def _cast_line(c):
 
 
 async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), progress=None, retry_cut=True):
-    """Scenes and cast for one part of a script (added 2026-11-03 v0.4.2). known_cast: cast proposed by earlier
+    """Scenes and cast for one part of a script. known_cast: cast proposed by earlier
     parts, so names stay the same across parts."""
     known = [_cast_line(c) for c in p["cast"]]
     seen = {c["name"].lower() for c in p["cast"]}
     for c in known_cast or ():
-        # [OLD 2026-11-03 v0.6.0 review] if isinstance(c, dict) and c.get("name") and c["name"].lower() not in seen:
-        # added 2026-11-03 v0.6.0 review: a name that is not text ({"name": 5}) is skipped, not an AttributeError
         if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip() \
                 and c["name"].lower() not in seen:
             seen.add(c["name"].lower())
@@ -2029,33 +1678,6 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
     if notes:
         lines.append("Notes from the start of the script (they apply to every part; do not make scenes from them):\n"
                      + notes)
-    # [OLD 2026-11-03 v0.4.2->v0.4.3] shots had only a start time, and nothing tied them to the scene's length: a scene made of several
-    # table rows came back 30 s long with shots starting up to 61.8 s
-    # lines.append(
-    #     "Return JSON: {\"cast\": [{\"name\", \"kind\": \"character|location|prop\", \"description\", \"speaker\": \"S1\", "
-    #     "\"language\"}], \"scenes\": [{\"title\", \"duration\": seconds (any length), \"summary\", \"soundscape\", \"music\", "
-    #     "\"cast\": [names], \"shots\": [{\"t\": seconds from scene start, \"camera\", \"text\"}], "
-    #     "\"dialogue\": [{\"speaker\": name, \"t\": seconds, \"text\", \"language\", \"delivery\"}]}]}.\n"
-    #     "In \"cast\" list only characters, locations and props that are not in the existing cast. Give each speaking "
-    #     "character a speaker id S1, S2... Leave timings realistic for the action and lines; when the script gives "
-    #     "durations or times, use them.")
-    # [/OLD]
-    # [OLD 2026-11-05 v0.7.0->v0.8.0] nothing said how long a shot's text or the summary should be: shots came back as
-    # one short sentence, so each pass of a long scene got 1-2 sentences per shot, far below the 350-500 words of
-    # detailed description H3's guide asks for
-    # lines.append(
-    #     "Return JSON: {\"cast\": [{\"name\", \"kind\": \"character|location|prop\", \"description\", \"speaker\": \"S1\", "
-    #     "\"language\"}], \"scenes\": [{\"title\", \"duration\": seconds (any length), \"summary\", \"soundscape\", \"music\", "
-    #     "\"cast\": [names], \"shots\": [{\"t\": seconds from scene start, \"duration\": seconds, \"camera\", \"text\"}], "
-    #     "\"dialogue\": [{\"speaker\": name, \"t\": seconds, \"text\", \"language\", \"delivery\"}]}]}.\n"
-    #     "In \"cast\" list only characters, locations and props that are not in the existing cast. Give each speaking "
-    #     "character a speaker id S1, S2... Every shot has a duration; a shot's t is the sum of the durations of the shots "
-    #     "before it in the same scene, and the scene's duration is the sum of all its shot durations, so no shot starts "
-    #     "after the scene ends. Leave timings realistic for the action and lines; when the script gives durations or "
-    #     "times, use them (a scene made of several timed rows lasts as long as those rows together).")
-    # [/OLD]
-    # added 2026-11-05 v0.8.0: the same JSON, with 2-4 sentences per shot and the summary as a note on the whole scene
-    # (each pass's own summary and 350-500-word description are written later, by Write prompts: write_passes)
     lines.append(
         "Return JSON: {\"cast\": [{\"name\", \"kind\": \"character|location|prop\", \"description\", \"speaker\": \"S1\", "
         "\"language\"}], \"scenes\": [{\"title\", \"duration\": seconds (any length), \"summary\", \"soundscape\", \"music\", "
@@ -2074,8 +1696,6 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
         "Each scene's \"summary\" is a note on the whole scene in 2-4 sentences: setting, time of day and mood, who is "
         "in it, and what happens from its start to its end. \"soundscape\" is the scene's ambience and physical "
         "sounds; \"music\" is the score only the audience hears, or empty.")
-    # added 2026-11-06 v0.10.0: every speaking character (a narrator too) gets a voice description, written into every
-    # pass so H3 keeps the voice (it picked a new one in each pass, a narrator turned from male to female)
     lines.append(
         "Give every character who speaks (a narrator or an off-screen voice too) a \"voice\" in their cast entry: one "
         "short phrase on how the voice sounds, with gender, age, pitch, timbre, pace and accent where the script implies "
@@ -2086,36 +1706,27 @@ async def script_part(cfg, p, text, part=1, parts=1, notes="", known_cast=(), pr
     icfg = import_cfg(cfg)
 
     def parse(answer, info):
-        # [OLD 2026-11-03 v0.6.0 review] data = json_answer(answer, info, "answer" if parts == 1 else "answer for part {}".format(part))
-        # added 2026-11-03 v0.6.0 review: the script answer is an object (a bare list of scenes still works)
         data = json_answer(answer, info, "answer" if parts == 1 else "answer for part {}".format(part), dict)
-        if isinstance(data, list):  # added 2026-11-03 v0.6.0: a bare list of scenes
+        if isinstance(data, list):
             data = {"scenes": data}
         if not isinstance(data, dict):
             raise LLMError("The answer was not a JSON object.", "bad_json")
         return data
 
     info = {}
-    # [OLD 2026-11-05 v0.7.0->v0.8.0] data = await ask(icfg, system_prompt(icfg), user, parse=parse, max_tokens=cfg.get("import_max_tokens", 16384),
     data = await ask(icfg, system_prompt(icfg), user, parse=parse, max_tokens=cfg.get("import_max_tokens", IMPORT_MAX_TOKENS),
                      progress=progress, info=info, retry_cut=retry_cut)
-    # [OLD 2026-11-03 v0.4.2->v0.4.3] return {"scenes": [s for s in (data.get("scenes") or []) if isinstance(s, dict)],
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] wrong types reached the project (a list as a title, text as a time) and /plan failed later
-    # scenes = [s for s in (data.get("scenes") or []) if isinstance(s, dict)]
-    # [/OLD]
     scenes, cast, warnings = coerce_script(data)
-    for s in scenes:  # added 2026-11-03 v0.4.3: no shot or line after the scene's end
+    for s in scenes:
         note = fit_scene(s)
         if note:
             s["fit_note"] = note
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] return {"scenes": scenes,
-    #         "cast": [c for c in (data.get("cast") or []) if isinstance(c, dict)],
-    return {"scenes": scenes, "cast": cast, "warnings": warnings,  # warnings: added 2026-11-03 v0.6.0
+    return {"scenes": scenes, "cast": cast, "warnings": warnings,
             "tokens": info.get("tokens", 0), "ms": info.get("ms", 0), "attempts": info.get("attempt", 1),
             "budget": info.get("budget"), "input": info.get("input"), "context": info.get("context")}
 
 
-# ---- script import answer, checked (added 2026-11-03 v0.6.0) ------------------------------------------------------
+# ---- script import answer, checked --------------------------------------------------------------------------------
 CAST_KINDS = ("character", "location", "prop")
 
 
@@ -2148,7 +1759,7 @@ def _items(v):
     return [v]
 
 
-# added 2026-11-05 v0.8.0: a shot answered as separate parts ({"composition", "subject", "action", "sound"}) instead
+# A shot answered as separate parts ({"composition", "subject", "action", "sound"}) instead
 # of one "text" is joined in reading order, so none of the 2-4 sentences is lost
 SHOT_PARTS_BEFORE = ("composition", "framing", "subject", "subjects", "appearance", "position")
 SHOT_PARTS_AFTER = ("environment", "lighting", "camera_movement", "movement", "sound", "audio")
@@ -2221,12 +1832,6 @@ def coerce_script(data):
             if not isinstance(sh, dict):
                 warn("{}, shot {}: not an object, left out".format(where, k))
                 continue
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] one field only: a shot written as "composition", "action", "sound"...
-            # (the parts v0.8.0 asks for) kept only its action
-            # o = {"camera": text(sh.get("camera"), where, "a shot's camera"),
-            #      "text": text(next((sh[x] for x in ("text", "action", "description") if sh.get(x) is not None), ""),
-            #                   where, "a shot's text")}
-            # [/OLD]
             o = {"camera": text(sh.get("camera"), where, "a shot's camera"),
                  "text": _shot_text(sh, text(next((sh[x] for x in ("text", "action", "description")
                                                    if sh.get(x) is not None), ""), where, "a shot's text"))}
@@ -2288,11 +1893,6 @@ def coerce_script(data):
         if kind not in CAST_KINDS:
             warn("Cast {} ({}): kind {!r} is not character, location or prop, so it is a character".format(n, name, kind))
             kind = "character"
-        # [OLD 2026-11-06 v0.9.0->v0.10.0] cast.append({"name": name, "kind": kind,
-        # [OLD 2026-11-06 v0.9.0->v0.10.0]              "description": text(c.get("description"), "Cast " + name, "description"),
-        # [OLD 2026-11-06 v0.9.0->v0.10.0]              "speaker": _prompt.as_text(c.get("speaker")).strip(),
-        # [OLD 2026-11-06 v0.9.0->v0.10.0]              "language": _prompt.as_text(c.get("language")).strip()})
-        # added 2026-11-06 v0.10.0: voice (how a speaking character sounds) -> the cast member's voice_desc
         voice = next((c[x] for x in ("voice", "voice_desc", "voice_description") if c.get(x) is not None), "")
         cast.append({"name": name, "kind": kind,
                      "description": text(c.get("description"), "Cast " + name, "description"),
@@ -2303,28 +1903,15 @@ def coerce_script(data):
 
 
 async def test(cfg):
-    # [OLD 2026-11-02 v0.2.2->v0.3.0] waited up to 180 s, so an unreachable server looked like "nothing happens"
-    # text, ms, model = await chat(cfg, "Reply with the single word OK.", "ping", max_tokens=8)
-    # return {"ok": True, "ms": ms, "model": model, "reply": text[:40]}
-    # [/OLD]
-    info = {}  # added 2026-11-02 v0.3.2: report whether the model thinks first
+    info = {}
     try:
-        # [OLD 2026-11-02 v0.3.1->v0.3.2] an empty reply from a thinking model counted as a failure only later, in Describe
-        # text, ms, model = await chat(cfg, "Reply with the single word OK.", "ping", max_tokens=16,
-        #                              timeout=aiohttp.ClientTimeout(total=20, connect=6))
         text, ms, model = await chat(cfg, "Reply with the single word OK.", "ping", max_tokens=16,
                                      timeout=aiohttp.ClientTimeout(total=20, connect=6), require_text=False, info=info)
     except asyncio.TimeoutError:
         raise RuntimeError("No answer from {} within 20 s".format(cfg["base_url"]))
     except aiohttp.ClientConnectorError as e:
         raise RuntimeError("Cannot connect to {}: {}".format(cfg["base_url"], e.os_error or e))
-    # [OLD 2026-11-02 v0.3.1->v0.3.2] return {"ok": True, "ms": ms, "model": model, "reply": text[:40], "base_url": cfg["base_url"]}
     thinking = info.get("reasoning_chars", 0) > 0
-    # [OLD 2026-11-03 v0.4.1->v0.4.2] no context window in the answer
-    # return {"ok": True, "ms": ms, "model": model, "reply": text[:40], "base_url": cfg["base_url"], "thinking": thinking,
-    #         "note": ("This model thinks before it answers, so Describe, Rewrite, Split and Import get a bigger token budget. "
-    #                  "Set Thinking to Off for faster answers.") if thinking and cfg.get("thinking") != "off" else ""}
-    # [/OLD]
     _SERVER_CONTEXT.pop((cfg["base_url"], cfg.get("model") or ""), None)  # ask again on every test
     return {"ok": True, "ms": ms, "model": model, "reply": text[:40], "base_url": cfg["base_url"], "thinking": thinking,
             "context": await server_context(cfg),
@@ -2332,7 +1919,7 @@ async def test(cfg):
                      "Set Thinking to Off for faster answers.") if thinking and cfg.get("thinking") != "off" else ""}
 
 
-# ---- vision (added 2026-11-02 v0.2.0) ------------------------------------------------------
+# ---- vision --------------------------------------------------------------------------------
 
 DESCRIBE_SYSTEM = """You describe reference media for MiniMax H3 video generation.
 Answer with one or two English sentences that can follow "<Subject 1> is ..." in a subject definition, for
@@ -2351,8 +1938,6 @@ async def describe(cfg, images, prompt):
     if not images:
         raise ValueError("Nothing to describe")
     parts = [{"type": "text", "text": prompt or "Describe the main subject."}] + [image_part(d, m) for d, m in images]
-    # [OLD 2026-11-02 v0.3.1->v0.3.2] 400 tokens: a thinking model often used them all on reasoning, which read as "no text"
-    # text, ms, model = await chat(cfg, DESCRIBE_SYSTEM, parts, max_tokens=400)
     note = ""
     try:
         text, ms, model = await chat(cfg, DESCRIBE_SYSTEM, parts, max_tokens=describe_budget(cfg))
@@ -2370,10 +1955,9 @@ async def describe(cfg, images, prompt):
     text = text.strip().strip('"').strip()
     if not text:
         raise RuntimeError("The model returned no text. Is it a vision model?")
-    # [OLD 2026-11-02 v0.3.1->v0.3.2] return {"text": text, "ms": ms, "model": model}
     return {"text": text, "ms": ms, "model": model, "note": note}
 
 
 def describe_budget(cfg):
-    """The answer is two sentences; a thinking model needs room to reason first (added 2026-11-02 v0.3.2)."""
+    """The answer is two sentences; a thinking model needs room to reason first."""
     return 600 if cfg.get("thinking") == "off" else max(int(cfg["max_tokens"]), 6000)

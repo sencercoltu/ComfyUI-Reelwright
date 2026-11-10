@@ -1,4 +1,4 @@
-"""Where speech is in a rendered take, and spoken lines timed to it (added 2026-11-06 v0.10.0).
+"""Where speech is in a rendered take, and spoken lines timed to it.
 
 H3 is told when each shot starts but not when each line is spoken inside a shot, so a line is often heard earlier or
 later than its time on the timeline. Subtitles (the merge's .srt) and the Timeline monitor's captions use these
@@ -159,9 +159,6 @@ def align(lines, segs, end_time=None):
                 end = b
         else:
             end = starts[i] + durs[i]
-        # [OLD 2026-11-09 v0.17.1->v0.17.2] end = min(end, nxt - 0.05)
-        # [OLD 2026-11-09 v0.17.1->v0.17.2] end = max(end, starts[i] + 0.4)  (lines under 0.45 s apart overlapped)
-        # added 2026-11-09 v0.17.2 (third review 13): at least 0.4 s, but never into the next line (lines are 0.2 s apart at least)
         end = max(end, starts[i] + 0.4)
         end = max(min(end, nxt - 0.05), starts[i] + 0.05)
         out.append({"id": ls[i].get("id", ""), "t": round(starts[i], 3), "end": round(end, 3),

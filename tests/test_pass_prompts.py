@@ -1,4 +1,4 @@
-"""Per-pass prompt sections, dialogue length and H3's camera vocabulary (added 2026-11-05 v0.8.0, Agent P, contract P1).
+"""Per-pass prompt sections, dialogue length and H3's camera vocabulary.
 
 - scene.prompt.passes: each pass's own six sections; a multi-pass scene never sends the scene summary (a pass gets its
   own, or one made from its shots); the other sections fall back to the scene's (shared);
@@ -473,7 +473,7 @@ def test_prompt_passes_are_normalised():
 
 
 def test_an_official_camera_name_is_written_as_its_phrase():
-    """added 2026-11-06 v0.8.0 (lead review): "Tracking Shot" in a shot's camera became "A tracking Shot:"."""
+    """"Tracking Shot" in a shot's camera became "A tracking Shot:"."""
     from reelwright import model
     assert model.official_camera("Tracking Shot") == "the camera tracks the moving subject"
     assert model.official_camera(" push in. ") == "the camera pushes in"

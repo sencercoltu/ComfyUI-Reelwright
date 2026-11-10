@@ -1,6 +1,13 @@
 from reelwright import spec
-from reelwright.model import (assign_codes, default_project, effective_loras, normalize_project,
-                              resolve_settings, scene_seed, slugify)
+from reelwright.model import (
+    assign_codes,
+    default_project,
+    effective_loras,
+    normalize_project,
+    resolve_settings,
+    scene_seed,
+    slugify,
+)
 
 
 def test_frame_grid_matches_native_node():
@@ -31,7 +38,6 @@ def test_normalize_fills_and_keeps_user_values():
 def test_slugify():
     assert slugify("Harbor Lights — v2") == "harbor_lights_v2"
     assert slugify("") == "untitled"
-    # v0.6.0: accents transliterated, no ASCII letters -> untitled, at most 64 characters (storage.SLUG_RE)
     assert slugify("Ömer's Café") == "omers_cafe"
     assert slugify("Москва") == slugify("日本") == slugify("2024") == "untitled"
     long = slugify("word " * 40)
@@ -50,7 +56,6 @@ def test_seed_modes():
     p = default_project()
     s = p["scenes"][0]
     p["global"]["sampling"].update(seed=10, seed_mode="increment")
-    # v0.6.0: "+1 per scene" adds the scene's seed_n (fixed at creation), not its position
     assert s["seed_n"] == 0 and scene_seed(p, s, 3) == 10
     s["seed_n"] = 3
     assert scene_seed(p, s, 0) == 13
@@ -90,9 +95,8 @@ def test_scene_overrides_win():
     assert st["audio_vae"] == p["global"]["models"]["audio_vae"]
 
 
-# ---- added 2026-11-02 v0.3.0 ----
 def test_scene_quality_override():
-    from reelwright.model import default_project, resolve_settings, effective_loras
+    from reelwright.model import default_project, effective_loras, resolve_settings
     p = default_project("Q")
     p["global"]["quality"] = "final"
     p["global"]["draft"].update(lora="turbo.safetensors", scale=0.5, steps=4)
@@ -132,10 +136,12 @@ def test_profiles_store(tmp_path):
         profiles.delete(root, "nope")
 
 
-# added 2026-11-02 v0.3.6: autosaved versions can be deleted; project.json stays
+# Autosaved versions can be deleted; project.json stays
 def test_delete_versions(store, harbor):
     import os
+
     import pytest
+
     from reelwright.storage import read_json
     vdir = os.path.join(store.dir, "versions")
     os.makedirs(vdir, exist_ok=True)
@@ -154,7 +160,6 @@ def test_delete_versions(store, harbor):
     assert store.list_versions() == [] and read_json(os.path.join(store.dir, "project.json"))["slug"] == harbor["slug"]
 
 
-# ---- added 2026-11-03 v0.6.0 ----
 import json  # noqa: E402
 
 from reelwright import model, soundtrack  # noqa: E402
@@ -254,7 +259,6 @@ def test_scene_starts_and_visible_start():
 
 def test_media_counts_voice_video_sound_and_song():
     p = default_project()
-    # v0.7.0: without the continuation clips of the overlap seams (tests/test_continuation.py counts those)
     p["global"]["continuity"]["name_continuation"] = False
     p["assets"] = [{"id": "a_pic", "kind": "image", "file": "x.png"},
                    {"id": "a_v", "kind": "audio", "file": "v.wav", "duration": 4.0},
@@ -285,11 +289,11 @@ def test_media_counts_voice_video_sound_and_song():
     assert not any(model.scene_media_counts(p, s, x)["song"] for x in passes)
 
 
-# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) ----
 def test_profile_update_of_a_deleted_profile_is_refused(tmp_path):
     """Review 13: save() with an id that is not saved (deleted in another tab) added a second profile of that name;
     delete() and set_default() refuse such an id, and so does save() now. "Save as new" sends no id."""
     import pytest
+
     from reelwright import profiles
     root = str(tmp_path)
     a = profiles.save(root, "Box", {"steps": 8})["profile"]

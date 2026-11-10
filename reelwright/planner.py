@@ -10,8 +10,6 @@ handle before a short scene's window).
 """
 
 from . import spec
-# [OLD 2026-11-03 v0.5.1->v0.6.0] from .model import scene_seed
-# continuation_depth moved to model.py in v0.6.0 and is re-exported here for older imports
 from .model import _start_info, continuation_depth, scene_seed  # noqa: F401
 
 
@@ -70,7 +68,7 @@ def _segments(scene, total, max_f, ov, seam_mode, snap_f, first_overlap):
         s, seam, ov_in = s + gen - ov, "overlap", ov
 
 
-# added 2026-11-03 v0.6.0: a shot, line or keyframe before 0 s or in the last half frame was dropped from every pass
+# A shot, line or keyframe before 0 s or in the last half frame was dropped from every pass
 def _clamp_frame(t, duration, total):
     """Scene frame of time t, kept inside the scene (0 .. total-1). None when t is at or after the scene's end
     (validate reports those)."""
@@ -80,14 +78,9 @@ def _clamp_frame(t, duration, total):
     return min(max(spec.frames_of(t), 0), total - 1)
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] def _shot_ranges(scene, total):  (needs the duration to clamp shot starts)
 def _shot_ranges(scene, total, duration=None):
     shots = scene["shots"]
     ranges = []
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] for i, sh in enumerate(shots):
-    # [OLD 2026-11-03 v0.5.1->v0.6.0]     a = spec.frames_of(float(sh["t"]))
-    # [OLD 2026-11-03 v0.5.1->v0.6.0]     b = spec.frames_of(float(shots[i + 1]["t"])) if i + 1 < len(shots) else total
-    # [OLD 2026-11-03 v0.5.1->v0.6.0]     ranges.append((i + 1, sh, a, max(a, b)))
     if duration is None:
         duration = total / spec.FPS
     starts = []
@@ -107,12 +100,6 @@ def plan_scene(p, scene, scene_index):
     duration = max(1.0 / spec.FPS, float(scene["duration"]))
     total = max(1, spec.frames_of(duration))
     seed = scene_seed(p, scene, scene_index)
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] re-anchored tails were still trimmed as tails; the overlap ignored the scene before
-    # mode = scene["start"]["mode"] if scene_index > 0 else "fresh"
-    # first_overlap = _overlap_frames(scene["start"]["overlap_frames"]) if mode == "tail" else 0
-    # if mode == "tail":
-    #     first_overlap = min(first_overlap, spec.align_frames_down(total))
-    # [/OLD]
     # how the scene really starts (model.effective_start): a re-anchored tail is planned as a last_frame start
     declared = scene["start"]["mode"] if scene_index > 0 else "fresh"
     mode, first_overlap = _start_info(p, scene_index, scene)  # first_overlap = model.tail_overlap_frames
@@ -138,7 +125,6 @@ def plan_scene(p, scene, scene_index):
                              spec.frames_of(float(lg["cut_snap_seconds"])), first_overlap)
         kind = "single" if len(segments) == 1 else "long"
 
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] shot_ranges = _shot_ranges(scene, total)
     shot_ranges = _shot_ranges(scene, total, duration)
     refs = scene["refs"]
     passes = []
@@ -149,24 +135,18 @@ def plan_scene(p, scene, scene_index):
         for number, sh, a, b in shot_ranges:
             if b <= s or a >= end:
                 continue
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] pass_shots.append({"id": sh["id"], "number": number, "continuing": a < s,
-            #                                                   "t": (max(a, s) - s + keep_in_frames) / spec.FPS,
-            #                                                   "camera": sh["camera"], "text": sh["text"]})
-            # added 2026-11-05 v0.8.0: + the camera's amplitude and speed and the framing (prompt.shot_parts writes them)
             pass_shots.append({"id": sh["id"], "number": number, "continuing": a < s,
                                "t": (max(a, s) - s + keep_in_frames) / spec.FPS,
                                "camera": sh["camera"], "text": sh["text"], "camera_amp": sh.get("camera_amp", ""),
                                "camera_speed": sh.get("camera_speed", ""), "framing": sh.get("framing", "")})
         lines = []
         for d in scene["dialogue"]:
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] f = spec.frames_of(float(d["t"]))  (a line before 0 s or in the last half frame vanished)
             f = _clamp_frame(d["t"], duration, total)
             if f is not None and fresh_from <= f < end:
                 lines.append(dict(d, t=(f - s + keep_in_frames) / spec.FPS))
         keyframes, firsts, lasts = [], [], []
         for r in refs:
             if r["role"] == "keyframe":
-                # [OLD 2026-11-03 v0.5.1->v0.6.0] f = spec.frames_of(float(r["time"]))
                 f = _clamp_frame(r["time"], duration, total)
                 if f is not None and fresh_from <= f < end:
                     keyframes.append({"ref": r["id"], "frame_idx": f - s + keep_in_frames})
@@ -192,23 +172,11 @@ def plan_scene(p, scene, scene_index):
             "first_frame": firsts,
             "last_frame": lasts,
         })
-    # start_mode: the effective start (v0.6.0); declared_start_mode: what the scene asks for (they differ for a
+    # start_mode: the effective start; declared_start_mode: what the scene asks for (they differ for a
     # re-anchored tail, or a tail next to a scene shorter than 5 frames)
     return {"scene_id": scene["id"], "kind": kind, "duration": duration, "frames": total,
             "start_mode": mode, "declared_start_mode": declared, "seed": seed, "passes": passes,
             "generated_frames": sum(x["gen_frames"] for x in passes)}
-
-
-# [OLD 2026-11-03 v0.5.1->v0.6.0] moved to model.py (imported above, so planner.continuation_depth still works)
-# def continuation_depth(p):
-#     """How many continuation links lead into each scene (0 for a fresh start)."""
-#     depth, prev = {}, 0
-#     for i, s in enumerate(p["scenes"]):
-#         cont = i > 0 and s["start"]["mode"] in ("last_frame", "tail")
-#         prev = prev + 1 if cont else 0
-#         depth[s["id"]] = prev
-#     return depth
-# [/OLD]
 
 
 def plan_project(p):

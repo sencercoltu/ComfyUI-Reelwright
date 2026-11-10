@@ -1,4 +1,7 @@
-.rw-host { width: 100%; height: 100%; }
+.rw-host { width: 100%; height: 100%; min-height: 640px; }
+/* In ComfyUI's Nodes 2.0 the node grows to fit its content: the editor takes the node's height and does not grow it
+   (each tab scrolls inside) */
+.lg-node .rw-host { contain: size; }
 
 .rw-root {
   --bg: #0b0c0f; --node: #15171c; --panel: #1a1d23; --panel2: #121419; --raise: #22262e; --raise2: #2a2e37;
@@ -71,7 +74,6 @@
 .rw-input.grow { flex: 1 1 120px; }
 .rw-select { padding-right: 24px; max-width: 100%; cursor: pointer; }
 .rw-select option { background: #1a1d23; color: var(--text); }
-/* added 2026-11-02 v0.2.0: type-to-filter combobox (ui.js select) */
 .rw-combo { position: relative; display: inline-flex; align-items: stretch; padding: 0; width: 200px; cursor: text; vertical-align: middle; }
 .rw-field-ctl > .rw-combo, .rw-model .rw-combo { width: 100%; }
 .rw-combo:focus-within { border-color: #5a6170; }
@@ -81,7 +83,7 @@
 .rw-combo-input::placeholder { color: #6b7280; }
 .rw-combo-btn { flex: none; width: 22px; border: 0; background: transparent; color: var(--dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 .rw-combo-btn:hover { color: var(--text); }
-.rw-combo-list { scrollbar-width: thin; scrollbar-color: #5a6170 transparent; /* added 2026-11-02 v0.2.2: visible, draggable scrollbar */ position: absolute; z-index: 85; overflow: auto; padding: 4px; border-radius: 8px; background: #1f2229; border: 1px solid #3a3f4b; box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55); }
+.rw-combo-list { scrollbar-width: thin; scrollbar-color: #5a6170 transparent; position: absolute; z-index: 85; overflow: auto; padding: 4px; border-radius: 8px; background: #1f2229; border: 1px solid #3a3f4b; box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55); }
 .rw-combo-opt { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 5px 8px; border-radius: 5px; cursor: pointer; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text2); }
 .rw-combo-opt.cur { color: var(--accent-text); }
 .rw-combo-opt.none { color: var(--dim); font-style: italic; }
@@ -144,17 +146,9 @@
 .rw-led.ok { background: var(--ok); } .rw-led.warn { background: var(--warn); } .rw-led.error { background: var(--err); }
 
 /* ---- Frame ---- */
-/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
-.rw-tabbar { display: flex; align-items: center; gap: 3px; height: 46px; padding: 0 10px; border-bottom: 1px solid var(--line2); flex: none; background: #181a20; }
-[/OLD] */
 .rw-brand { display: flex; align-items: center; gap: 6px; padding: 0 10px 0 4px; color: var(--accent); }
 .rw-brand b { color: var(--text); font-size: 13px; }
 .rw-brand .mono { font-size: 10px; }
-/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
-.rw-tab { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 8px; border: 0; background: transparent; color: var(--text3); cursor: pointer; white-space: nowrap; }
-.rw-tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.03); }
-.rw-tab.on { background: #262a33; color: var(--text); font-weight: 600; }
-[/OLD] */
 .rw-tab-count { color: var(--dim); font-size: 11px; font-weight: 500; }
 .rw-tab-count.warn { color: var(--warn); }
 .rw-tab-count.accent { color: var(--accent-text); }
@@ -182,13 +176,6 @@
 .rw-toast { padding: 8px 14px; border-radius: 8px; background: #2a2e37; border: 1px solid var(--line3); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); font-size: 12px; max-width: 560px; }
 .rw-toast.ok { border-color: rgba(52, 211, 153, 0.5); } .rw-toast.warn { border-color: rgba(251, 191, 36, 0.55); } .rw-toast.error { border-color: rgba(248, 113, 113, 0.6); color: #fecaca; }
 
-/* [OLD 2026-11-02 v0.1.0->v0.2.0] tips/popovers could be wider than a small node; popover had no drag handle
-.rw-tip { position: absolute; z-index: 80; max-width: 320px; padding: 8px 10px; border-radius: 8px; background: #eceef2; color: #14161b; font-size: 11.5px; line-height: 1.45; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5); pointer-events: none; opacity: 0; transition: opacity 0.1s; }
-.rw-tip.on { opacity: 1; }
-.rw-pop { position: absolute; z-index: 90; width: 420px; max-width: calc(100% - 16px); max-height: 70%; overflow: auto; padding: 12px 14px; border-radius: 10px; background: #1f2229; border: 1px solid #3a3f4b; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6); display: none; }
-.rw-pop.on { display: block; }
-.rw-pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 13px; }
-[/OLD] */
 .rw-tip { position: absolute; z-index: 80; max-width: min(320px, calc(100% - 16px)); padding: 8px 10px; border-radius: 8px; background: #eceef2; color: #14161b; font-size: 11.5px; line-height: 1.45; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5); pointer-events: none; opacity: 0; transition: opacity 0.1s; }
 .rw-tip.on { opacity: 1; }
 .rw-pop { position: absolute; z-index: 90; width: 420px; max-width: calc(100% - 16px); max-height: min(70%, calc(100% - 16px)); overflow: hidden; padding: 0; border-radius: 10px; background: #1f2229; border: 1px solid #3a3f4b; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6); display: none; flex-direction: column; }
@@ -225,7 +212,6 @@
 .rw-note svg { flex: none; margin-top: 2px; }
 .rw-note.warn { background: rgba(251, 191, 36, 0.07); border-color: rgba(251, 191, 36, 0.35); color: #fde68a; }
 .rw-note.err { background: rgba(248, 113, 113, 0.08); border-color: rgba(248, 113, 113, 0.4); color: #fecaca; }
-/* added 2026-11-02 v0.3.0: success note (LLM connection test) */
 .rw-note.ok { background: rgba(52, 211, 153, 0.08); border-color: rgba(52, 211, 153, 0.38); color: #a7f3d0; }
 .rw-note.vid { background: rgba(167, 139, 250, 0.08); border-color: rgba(167, 139, 250, 0.38); color: #ddd6fe; }
 .rw-note .rw-btn { margin-left: auto; }
@@ -261,7 +247,7 @@
 .hl-dlg { color: var(--dlg-t); } .hl-at { color: var(--pic-t); background: rgba(96, 165, 250, 0.12); border-radius: 3px; }
 .hl-shot { color: var(--dim); font-weight: 600; } .hl-time { color: var(--cam); } .hl-task { color: #ff8a6e; }
 .hl-spk { color: var(--dlg-t); } .hl-ret { color: var(--text); font-weight: 600; }
-.hl-sec { color: var(--accent-text); } /* added 2026-11-02 v0.2.0: Ref2VA section labels */
+.hl-sec { color: var(--accent-text); }
 .rw-prompt-preview { margin: 0; background: #111317; border: 1px solid #262a33; border-radius: 8px; padding: 9px 11px; font-size: 11px; line-height: 1.6; color: var(--text2); white-space: pre-wrap; word-break: break-word; overflow: auto; max-height: 150px; min-height: 60px; }
 .rw-prompt-preview.tall { max-height: 320px; }
 .rw-code { position: relative; border: 1px solid #262a33; border-radius: 8px; background: #111317; overflow: hidden; }
@@ -274,17 +260,11 @@
 .rw-ac.on { display: flex; }
 .rw-ac-item { display: flex; gap: 10px; padding: 4px 8px; border-radius: 5px; cursor: pointer; font-size: 11.5px; }
 .rw-ac-item.on, .rw-ac-item:hover { background: #2f343e; }
-/* added 2026-11-10 v0.18.0: the @ list floats in the editor's root (the editor's box clipped it), and scrolls */
 .rw-ac.floating { left: auto; bottom: auto; max-height: 264px; overflow-y: auto; max-width: 440px; z-index: 90; }
 .rw-ac.floating.on { display: flex; }
 .rw-ac.floating .rw-ac-item { flex: none; }
 
 /* ---- Timeline tab ---- */
-/* [OLD 2026-11-06 v0.8.0->v0.9.0] fixed sizes; the bars between the panels are the gaps now
-.rw-tl { display: flex; flex-direction: column; gap: 10px; padding: 12px; height: 100%; }
-.rw-tl-top { display: flex; gap: 10px; height: 340px; flex: none; min-height: 0; }
-[/OLD] */
-/* added 2026-11-06 v0.9.0: three panels with bars to resize (the height comes from ui.tl_top) */
 .rw-tl { display: flex; flex-direction: column; gap: 0; padding: 12px; height: 100%; box-sizing: border-box; min-height: 0; }
 .rw-tl > .rw-profile-banner { margin-bottom: 10px; }
 .rw-tl-top { display: flex; gap: 0; height: 340px; flex: none; min-height: 170px; max-height: calc(100% - 180px); }
@@ -299,11 +279,6 @@
 .rw-bin-thumb { width: 24px; height: 24px; border-radius: 5px; object-fit: cover; flex: none; display: inline-flex; align-items: center; justify-content: center; }
 .rw-bin-drop { margin: 6px 10px 10px; height: 34px; border: 1.5px dashed var(--line3); border-radius: 8px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--dim); font-size: 11px; }
 .rw-bin-drop.over, .rw-dropzone.over { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
-/* [OLD 2026-11-06 v0.8.0->v0.9.0] a 292 px high 16:9 monitor beside the bin
-.rw-mon-col { display: flex; flex-direction: column; gap: 8px; flex: 0 1 auto; min-width: 0; }
-.rw-mon { position: relative; height: 292px; aspect-ratio: 16 / 9; max-width: 100%; border-radius: 10px; overflow: hidden; background: #0e0f13; border: 1px solid var(--line); }
-[/OLD] */
-/* added 2026-11-06 v0.9.0: the monitor fills its panel (the picture keeps its shape inside), the transport under it */
 .rw-mon-col { display: flex; flex-direction: column; gap: 6px; flex: none; min-width: 180px; min-height: 0; padding: 6px; box-sizing: border-box; }
 .rw-mon { position: relative; flex: 1 1 auto; min-height: 60px; width: 100%; border-radius: 8px; overflow: hidden; background: #0e0f13; border: 1px solid var(--line); }
 .rw-mon-col > .rw-transport { border: 0; background: transparent; padding: 0 2px; height: auto; min-height: 34px; flex-wrap: wrap; row-gap: 2px; }
@@ -345,12 +320,6 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-transport { display: flex; align-items: center; gap: 4px; height: 40px; padding: 0 6px; flex: none; }
 .rw-tc { font-size: 13px; margin-left: 6px; }
 .rw-loop-label { font-size: 10.5px; color: var(--accent-text); margin-left: 6px; }
-/* [OLD 2026-11-06 v0.8.0->v0.9.0]
-.rw-insp { flex: 1 1 auto; min-width: 0; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; overflow: hidden; }
-.rw-insp .rw-chips { flex: none; max-height: 50px; overflow: hidden; }
-.rw-insp .rw-prompt-preview { flex: 1 1 auto; max-height: none; min-height: 0; }
-[/OLD] */
-/* added 2026-11-06 v0.9.0: the inspector scrolls inside its panel; the prompt preview gets what is left, at least 80 px */
 .rw-insp { flex: 1 1 0; min-width: 200px; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; overflow: auto; box-sizing: border-box; }
 .rw-insp .rw-chips { flex: none; max-height: 50px; overflow: hidden; }
 .rw-insp .rw-prompt-preview { flex: 1 1 auto; max-height: none; min-height: 80px; }
@@ -367,8 +336,7 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-tl-main { flex: 1 1 auto; min-height: 140px; display: flex; flex-direction: column; overflow: hidden; background: #14161b; }
 .rw-tl-toolbar { display: flex; align-items: center; gap: 6px; height: 42px; padding: 0 10px; border-bottom: 1px solid var(--line2); background: #181b21; flex: none; flex-wrap: nowrap; overflow: hidden; }
 .rw-tl-toolbar > b { margin-right: 2px; }
-/* [OLD 2026-11-02 v0.3.2->v0.3.3] .rw-lanes { flex: 1 1 auto; overflow: auto; position: relative; } */
-.rw-lanes { flex: 1 1 auto; overflow: auto; position: relative; user-select: none; cursor: grab; } /* v0.3.3: drag pans */
+.rw-lanes { flex: 1 1 auto; overflow: auto; position: relative; user-select: none; cursor: grab; }
 .rw-root.rw-panning, .rw-root.rw-panning * { cursor: grabbing !important; }
 .rw-lanes-inner { position: relative; min-width: 100%; }
 .rw-lane { display: flex; height: 36px; border-bottom: 1px solid var(--line2); }
@@ -378,7 +346,7 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-lane-head { position: sticky; left: 0; z-index: 5; width: 150px; flex: none; display: flex; align-items: center; gap: 7px; padding: 0 10px; background: #181b21; border-right: 1px solid var(--line2); font-size: 10.5px; }
 .rw-lane-name { font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 .rw-lane-body { position: relative; flex: none; }
-.rw-ruler-lane { position: relative; flex: none; cursor: pointer; /* [OLD 2026-11-02 v0.3.2->v0.3.3] cursor: ew-resize (it scrubbed) */ background-image: repeating-linear-gradient(to right, #343944 0 1px, transparent 1px 100%); background-repeat: repeat-x; background-position: 0 100%; }
+.rw-ruler-lane { position: relative; flex: none; cursor: pointer; background-image: repeating-linear-gradient(to right, #343944 0 1px, transparent 1px 100%); background-repeat: repeat-x; background-position: 0 100%; }
 .rw-tick { position: absolute; top: 0; height: 26px; border-left: 1px solid #4b5260; }
 .rw-tick-label { position: absolute; top: 5px; font-size: 10px; color: var(--dim); pointer-events: none; }
 .rw-loop-range { position: absolute; top: 0; height: 100%; background: rgba(255, 107, 74, 0.14); border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); pointer-events: none; }
@@ -436,7 +404,7 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-cam { position: absolute; top: 7px; height: 20px; display: block; line-height: 18px; padding: 0 6px; border-radius: 4px; background: rgba(251, 191, 36, 0.12); border: 1px solid rgba(251, 191, 36, 0.4); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .rw-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; z-index: 7; }
 .rw-playhead-label { position: absolute; top: 3px; left: 50%; transform: translateX(-50%); padding: 1px 5px; border-radius: 4px; background: var(--accent); color: #1a0d08; font-size: 9.5px; font-weight: 600; white-space: nowrap; }
-.rw-playhead-label { pointer-events: auto; cursor: ew-resize; touch-action: none; } /* added 2026-11-02 v0.3.3: drag to scrub */
+.rw-playhead-label { pointer-events: auto; cursor: ew-resize; touch-action: none; }
 
 /* ---- Scene tab ---- */
 .rw-scene-tab, .rw-render-tab { display: flex; flex-direction: column; height: 100%; }
@@ -473,16 +441,11 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-opt.on.o-tail { border-color: var(--vid); background: rgba(167, 139, 250, 0.07); } .rw-opt.on.o-tail .rw-radio { border-color: var(--vid); }
 .rw-tasks { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .rw-psec { display: flex; flex-direction: column; gap: 4px; }
-/* [OLD 2026-11-08 v0.13.0->v0.13.1] .rw-psec-head { display: flex; align-items: center; gap: 10px; font-size: 10.5px; } */
-.rw-psec-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 10.5px; } /* added 2026-11-08 v0.13.1: more labels (which passes use it, shot lines) wrap */
+.rw-psec-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 10.5px; }
 .rw-psec-head .rw-toggle-row { font-size: 10.5px; }
 .rw-psec-head .rw-toggle { transform: scale(0.85); }
 .rw-list-row.shot .rw-input, .rw-list-row.dlg .rw-input { height: 28px; }
 .rw-pass-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
-/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
-.rw-pass-tab { height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); cursor: pointer; font-size: 11px; color: var(--text3); }
-.rw-pass-tab.on { border-color: var(--vid); color: var(--text); background: rgba(167, 139, 250, 0.1); }
-[/OLD] */
 .rw-diff { display: flex; flex-direction: column; gap: 6px; background: #111317; border: 1px solid #262a33; border-radius: 8px; padding: 8px 10px; }
 .rw-diff-sec { display: flex; flex-direction: column; gap: 2px; }
 .rw-diff-line { font: 11px/1.6 var(--mono); padding: 0 6px; border-radius: 3px; white-space: pre-wrap; word-break: break-word; }
@@ -545,7 +508,6 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-sheet img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
 .rw-outfit { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--panel2); }
 .rw-outfit .rw-input { flex: 1 1 auto; }
-/* added 2026-11-08 v0.11.0: an outfit's own pictures (Cast tab) */
 .rw-outfit-pics { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
 .rw-anchor.sm { width: 64px; }
 .rw-anchor.sm img { border-radius: 6px; }
@@ -563,9 +525,6 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 
 /* ---- Render tab ---- */
 .rw-scope { padding: 10px 12px; border-bottom: 1px solid var(--line2); background: #13151a; flex: none; }
-/* [OLD 2026-11-02 v0.1.0->v0.2.0] File column added
-.rw-trow { display: grid; grid-template-columns: 30px minmax(0, 1.6fr) minmax(0, 1.4fr) 86px 86px 70px 70px; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--line2); font-size: 11.5px; }
-[/OLD] */
 .rw-trow { display: grid; grid-template-columns: 30px minmax(0, 1.3fr) minmax(0, 1.1fr) 82px minmax(0, 1.6fr) 66px 62px 62px; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--line2); font-size: 11.5px; }
 .rw-tfile { color: var(--text2); text-decoration: none; font-size: 11px; display: block; }
 .rw-tfile:hover { color: var(--accent-text); text-decoration: underline; }
@@ -632,7 +591,6 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-matrix .rw-dim.small { text-align: left; }
 .rw-field-ctl > input[type="text"].rw-input:not([style*="width"]), .rw-field-ctl > input[type="password"].rw-input, .rw-field-ctl > .rw-row.grow > input.rw-input { flex: 1 1 auto; }
 
-/* added 2026-11-02 v0.2.0: ComfyUI input/output browser (Assets tab) */
 .rw-browse .rw-row.wrap { flex-wrap: wrap; }
 .rw-browse-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; max-height: 320px; overflow: auto; padding: 2px; }
 .rw-browse-tile { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); cursor: pointer; text-align: left; min-width: 0; }
@@ -644,13 +602,11 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-browse-badge { position: absolute; top: 6px; right: 6px; padding: 1px 5px; border-radius: 5px; font-size: 10px; background: rgba(0, 0, 0, 0.65); color: var(--text2); display: inline-flex; align-items: center; }
 .rw-browse-badge.on { background: var(--accent); color: #1a0d08; }
 
-/* added 2026-11-02 v0.2.0: describe with a vision LLM */
 .rw-describe { display: flex; flex-direction: column; gap: 6px; width: 100%; min-width: 0; }
 .rw-describe .rw-row { min-width: 0; }
 .rw-suggest { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 8px; border: 1px dashed rgba(244, 114, 182, 0.5); background: rgba(244, 114, 182, 0.06); }
 .rw-suggest-text { color: var(--text); font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
 
-/* added 2026-11-02 v0.2.2: the editor's own right-click menu */
 .rw-ctx { position: absolute; z-index: 95; min-width: 200px; padding: 4px; border-radius: 8px; background: #1f2229; border: 1px solid #3a3f4b; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6); display: flex; flex-direction: column; }
 .rw-ctx-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--text2); font-size: 12px; text-align: left; cursor: pointer; }
 .rw-ctx-item:hover:not(:disabled) { background: var(--raise2); color: var(--text); }
@@ -662,7 +618,6 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-ctx-hint { color: var(--dim); font-size: 10.5px; }
 .rw-ctx-sep { height: 1px; margin: 4px 2px; background: var(--line); }
 
-/* added 2026-11-02 v0.3.0: confirmation dialog, profile banner, run progress */
 .rw-modal { position: absolute; inset: 0; z-index: 120; background: rgba(8, 9, 12, 0.55); display: flex; align-items: center; justify-content: center; }
 .rw-modal-box { width: 440px; max-width: calc(100% - 32px); padding: 16px 18px; border-radius: 12px; background: #1f2229; border: 1px solid #3a3f4b; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6); display: flex; flex-direction: column; gap: 10px; }
 .rw-modal-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--text); }
@@ -674,21 +629,14 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-progress .rw-meter-bar { height: 6px; }
 .rw-run { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; }
 .rw-qtag { font-size: 10px; padding: 0 5px; border-radius: 4px; background: rgba(251, 191, 36, 0.15); color: var(--warn); margin-left: 4px; font-family: var(--mono); }
-/* added 2026-11-02 v0.3.4: where an asset's description is used, and the description on a scene's reference */
 .rw-desc-uses { display: flex; flex-direction: column; gap: 3px; padding: 7px 10px; border-radius: 7px; background: var(--panel2); border: 1px solid var(--line); color: var(--text2); line-height: 1.45; }
 .rw-desc-uses b { font-weight: 500; color: var(--text3); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; }
 .rw-ref-desc { text-align: left; font-size: 11px; color: var(--text2); max-width: 100%; display: block; }
 .rw-ref-desc.empty { color: var(--warn); }
-/* added 2026-11-02 v0.3.5: latent preview in the Render tab's run banner */
 .rw-run-preview { flex: none; margin: 0; width: 200px; display: flex; flex-direction: column; gap: 3px; }
-/* [OLD 2026-11-02 v0.3.7->v0.3.8] the frame was drawn by the <img>; now a wrapper draws it so it stays when the picture is hidden
-.rw-run-preview img { width: 200px; aspect-ratio: 16 / 9; object-fit: contain; border-radius: 6px; background: #0c0d10; border: 1px solid var(--line); }
-[/OLD] */
-/* added 2026-11-02 v0.3.8 */
 .rw-run-preview-frame { width: 200px; aspect-ratio: 16 / 9; border-radius: 6px; background: #0c0d10; border: 1px solid var(--line); overflow: hidden; }
 .rw-run-preview-frame img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .rw-run-preview figcaption { font-size: 10px; color: var(--text3); text-align: right; }
-/* added 2026-11-03 v0.4.0: Files tab (a tree of everything Reelwright wrote to disk) */
 .rw-files-tab { height: 100%; display: flex; flex-direction: column; padding: 12px; box-sizing: border-box; min-height: 0; }
 .rw-files-tab > .rw-card { flex: 1 1 auto; min-height: 0; }
 .rw-files-tab .rw-banner { margin: 0; }
@@ -725,27 +673,20 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-ftree-actions { flex: none; width: 58px; display: inline-flex; justify-content: flex-end; gap: 2px; }
 .rw-modal-msg { white-space: pre-line; }
 
-/* added 2026-11-02 v0.3.8: nothing decodable yet: an empty dark frame with the reason underneath, never a broken-image icon */
 .rw-run-preview.failed img { display: none; }
 .rw-run-preview.failed figcaption { color: var(--warn); }
-/* added 2026-11-02 v0.3.6: autosaved versions on one line each */
 .rw-version { gap: 8px; }
 .rw-version-when { white-space: nowrap; font-size: 11.5px; color: var(--text2); }
 .rw-version-when b { font-weight: 500; color: var(--text); }
 
-/* added 2026-11-03 v0.4.1: anchor sheet as the renderer builds it, packing choice */
 .rw-col-tight { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .rw-sheet-img { width: 150px; max-height: 150px; object-fit: contain; border-radius: 6px; border: 1px solid var(--line); background: #0c0d10; cursor: zoom-in; flex: none; }
 .rw-avatar.sheet { object-fit: contain; background: #0c0d10; }
-/* added 2026-11-03 v0.4.1: Files tab preview pane */
-/* [OLD 2026-11-06 v0.8.0->v0.9.0] .rw-files-main { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; } */
-.rw-files-main { flex: 1 1 auto; min-height: 0; display: flex; gap: 0; } /* added 2026-11-06 v0.9.0: the bar is the gap */
+.rw-files-main { flex: 1 1 auto; min-height: 0; display: flex; gap: 0; }
 .rw-files-main > .rw-ftree { flex: 1 1 0; }
 .rw-files-main > .rw-ftree { min-width: 0; }
-/* [OLD 2026-11-06 v0.8.0->v0.9.0] .rw-fprev { flex: 0 0 380px; ... }  (the width comes from ui.files_prev now, set by the bar) */
 .rw-fprev { flex: 0 0 auto; width: 380px; min-width: 220px; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); overflow: auto; }
 .rw-fprev-head { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
-/* [OLD 2026-11-06 v0.8.0->v0.9.0] .rw-fprev-media { ... max-height: 420px; ... } */
 .rw-fprev-media { display: block; width: 100%; max-height: 70vh; object-fit: contain; border-radius: 6px; background: #0c0d10; }
 .rw-fprev-audio { width: 100%; }
 .rw-fprev-text { margin: 0; padding: 8px; font-size: 11px; line-height: 1.45; max-height: 460px; overflow: auto; white-space: pre-wrap; word-break: break-word; background: #0c0d10; border-radius: 6px; color: var(--text2); }
@@ -755,7 +696,6 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-ftree-label.clickable:hover { color: var(--accent-text); text-decoration: underline; }
 .rw-ftree-row.previewed { box-shadow: inset 2px 0 0 var(--accent); background: var(--accent-soft); }
 
-/* added 2026-11-03 v0.4.2: script import in parts, LLM progress lines */
 .rw-script-parts { display: flex; flex-direction: column; gap: 3px; }
 .rw-script-part { display: grid; grid-template-columns: 52px minmax(0, 0.9fr) minmax(0, 1.4fr); gap: 8px; align-items: baseline; padding: 3px 8px; border-radius: 6px; background: var(--panel2); }
 .rw-script-part.run { box-shadow: inset 2px 0 0 var(--accent); }
@@ -763,12 +703,10 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-script-part > span:last-child { overflow-wrap: anywhere; }
 .rw-llm-busy { padding: 2px 0; }
 
-/* added 2026-11-03 v0.4.3: shot length beside its start, and the fix for shots after the end */
 .rw-shot-len { flex: none; width: 116px; white-space: nowrap; }
 .rw-overrun { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rw-drawer-fix { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line); }
 
-/* added 2026-11-03 v0.5.0: soundtrack lanes (one per track), waveform clips, track inspector */
 .rw-lane.track { height: 40px; }
 .rw-lane.track.on .rw-lane-head { box-shadow: inset 2px 0 0 var(--aud); }
 .rw-lane.track.add { height: 30px; }
@@ -782,9 +720,7 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-track-clip.muted { opacity: 0.4; }
 .rw-track-clip.ghost { cursor: pointer; border-style: dashed; opacity: 0.55; }
 .rw-track-clip.ghost.muted { opacity: 0.25; }
-/* [OLD 2026-11-06 v0.8.0->v0.9.0] .rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: none; }  (also hit the Assets
-   tab's audio thumbnails, which are .rw-wave too: they were pulled out of their cards to the top of the tab) */
-canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: none; } /* added 2026-11-06 v0.9.0: the soundtrack lane's canvas only */
+canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: none; }
 .rw-track-label { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; margin: 2px 4px; padding: 0 5px; border-radius: 3px; background: rgba(11, 12, 15, 0.72); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; position: relative; z-index: 1; }
 .rw-track-label b { color: var(--aud-t); font-weight: 500; }
 .rw-track-flags { color: var(--text3); font-size: 9px; margin-left: 4px; }
@@ -807,14 +743,11 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-track-insp { gap: 6px; }
 .rw-track-insp .rw-toggle-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px 10px; }
 
-/* added 2026-11-03 v0.5.1: Global → LLM Limits / Script import fold away */
 .rw-fold { display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0; padding: 3px 0; border: 0; background: none; cursor: pointer; text-align: left; font-family: inherit; }
 .rw-fold:hover { color: var(--text); }
 .rw-fold > svg, .rw-fold-label { flex: none; white-space: nowrap; }
 .rw-fold-sum { margin-left: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text3); font-family: var(--mono); font-size: 10.5px; }
-/* added 2026-11-03 v0.5.1: hidden read-only field that holds keyboard focus in the editor (see editor.js) */
 .rw-keys { position: absolute; left: 0; top: 0; width: 1px; height: 1px; padding: 0; border: 0; margin: 0; opacity: 0; pointer-events: none; caret-color: transparent; }
-/* added 2026-11-03 v0.6.0 (F1): History menu, dialog with three buttons, footer folder-conflict button, @@ escape */
 .rw-ctx.rw-history { max-height: 360px; overflow-y: auto; min-width: 260px; }
 .rw-ctx-head { padding: 5px 8px 6px; font-size: 10.5px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
 .rw-ctx-item.current { color: var(--text); background: var(--raise2); }
@@ -827,8 +760,6 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .save-conflict:hover { text-decoration: underline; }
 .hl-esc { color: var(--text3); }
 
-/* added 2026-11-03 v0.6.0 (F2b): Render tab (status cell with run result / estimate / "why?", upstream note, prompt
-   diff, pass retake, last-run banner, merge options and loudness report, version diff), Files notes, script warnings */
 .rw-trow { grid-template-columns: 30px minmax(0, 1.2fr) minmax(0, 1.5fr) 86px minmax(0, 1.4fr) 62px 82px 62px; }
 .rw-tstatus { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .rw-tstatus > .rw-status { flex: 0 1 auto; min-width: 0; overflow: hidden; }
@@ -870,8 +801,6 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-vdiff > .rw-dim:last-child { margin-top: 6px; }
 .rw-import-warn > .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 
-/* added 2026-11-03 v0.6.0 (F2a): loop repeats as one pattern, waveform retry, "what goes stale" preview, shot times on
-   the beat, the pass's song excerpt, per-pass budget */
 .rw-track-clip.ghost.pattern { background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(var(--rep) - 1px), rgba(52, 211, 153, 0.6) calc(var(--rep) - 1px), rgba(52, 211, 153, 0.6) var(--rep)); }
 .rw-wave-retry { position: absolute; left: 6px; bottom: 2px; z-index: 2; display: inline-flex; align-items: center; gap: 3px; height: 15px; padding: 0 5px; border-radius: 3px; border: 1px solid var(--line3); background: rgba(11, 12, 15, 0.85); color: var(--text2); font-size: 9.5px; cursor: pointer; }
 .rw-wave-retry:hover { color: var(--aud-t); border-color: var(--aud); }
@@ -886,8 +815,6 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-budget-pass > b { min-width: 48px; font-weight: 500; color: var(--text); }
 .rw-budget-pass.over { color: var(--warn); }
 
-/* added 2026-11-05 v0.7.0: Scene tab "In the cut" (scene.merge), the Merge card's pointer to it, the timeline's
-   filmstrip cells and the marks for a transition into a scene and its fades */
 .rw-cut .rw-field-label { width: 96px; }
 .rw-frames { display: inline-flex; align-items: center; gap: 5px; flex-wrap: nowrap; white-space: nowrap; }
 .rw-frames-s { min-width: 38px; }
@@ -910,18 +837,8 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-cut-fade.in { left: 0; background: linear-gradient(to top left, transparent calc(50% - 0.75px), rgba(255, 255, 255, 0.8) 50%, transparent calc(50% + 0.75px)), linear-gradient(to right, var(--fc, #000), transparent); }
 .rw-cut-fade.out { right: 0; background: linear-gradient(to top right, transparent calc(50% - 0.75px), rgba(255, 255, 255, 0.8) 50%, transparent calc(50% + 0.75px)), linear-gradient(to left, var(--fc, #000), transparent); }
 
-/* added 2026-11-05 v0.8.0: Scene tab Prompt card with a tab per pass, shot and dialogue rows (start, end, length,
-   camera picker, growing text), pass-seam notes, "Write prompts" progress; Global long-scene continuity; Render drift */
-/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
-.rw-ptabs { display: flex; gap: 4px; flex-wrap: wrap; padding-bottom: 2px; border-bottom: 1px solid var(--line2); }
-.rw-ptab { position: relative; display: inline-flex; align-items: center; gap: 0; height: 28px; padding: 0 10px; border-radius: 7px 7px 0 0; border: 1px solid transparent; border-bottom: 0; background: transparent; color: var(--text3); cursor: pointer; font-size: 11.5px; margin-bottom: -3px; }
-[/OLD] */
 .rw-ptab b { font-weight: 600; }
 .rw-ptab .mono { font-size: 10.5px; color: var(--dim); }
-/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
-.rw-ptab:hover { color: var(--text); background: var(--panel2); }
-.rw-ptab.on { color: var(--text); background: var(--panel2); border-color: var(--line); box-shadow: inset 0 2px 0 var(--vid); }
-[/OLD] */
 .rw-ptab.on .mono { color: var(--text3); }
 .rw-ptab.moved .mono { color: var(--warn); }
 .rw-ptab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vid); margin-left: 6px; flex: none; }
@@ -958,15 +875,11 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-drift-pass { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--text3); }
 .rw-drift-pass b { font-weight: 600; color: var(--text2); }
 .rw-follow { height: 24px; }
-/* [OLD 2026-11-06 v0.9.0->v0.10.0] tab headers looked like the rest of the editor; replaced at the end of this file
-.rw-seam-note { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #fde68a; }
-[/OLD] */
 .rw-dlg-row.seam { border-color: rgba(251, 191, 36, 0.35); }
 .rw-take-long { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rw-take .rw-take-file { flex: 0 1 auto; min-width: 60px; }
 .rw-ptab > .mono { margin-left: 3px; }
 
-/* added 2026-11-06 v0.9.0: Scene tab shot and dialogue lists scroll in a box whose height the grip under it sets */
 .rw-rlist-wrap { display: flex; flex-direction: column; min-height: 0; }
 .rw-rlist { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .rw-rlist-grip { height: 12px; margin-top: 2px; }
@@ -974,10 +887,11 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-rlist-grip:hover::after { background: var(--text3); }
 /* What H3 receives: one block per pass shown */
 .rw-h3-pass { display: flex; flex-direction: column; gap: 6px; }
+.rw-h3-passes { max-height: 560px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px; margin-right: -6px; }
+.rw-contents { display: contents; }
 .rw-h3-pass + .rw-h3-pass { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--line2); }
 .rw-h3-pass-head { font-size: 12px; display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
 
-/* added 2026-11-06 v0.9.0: Assets tab groups and tags */
 .rw-agroup { transition: border-color 0.12s, background 0.12s; }
 .rw-agroup.over { border-color: var(--accent); background: var(--accent-soft); }
 .rw-agroup.loose .rw-card-title { color: var(--text2); }
@@ -995,8 +909,6 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-asset-grp { font-weight: 500; }
 .rw-combo-pre { color: var(--text3); }
 
-/* added 2026-11-06 v0.10.0: tab headers that stand out (the top bar, the Prompt card's pass tabs), foldable cards,
-   copy menus and buttons, the tooltip's detail line, seam quick fixes, the project import/export row, the Passes dot */
 .rw-tabbar { display: flex; align-items: center; gap: 4px; height: 48px; padding: 0 10px; flex: none;
   background: linear-gradient(#23262f, #1a1c22); border-bottom: 2px solid #343946; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45); }
 .rw-tab { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #323743;
@@ -1011,14 +923,6 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-ptab.on { color: #fff; background: rgba(167, 139, 250, 0.2); border-color: rgba(167, 139, 250, 0.7); box-shadow: inset 0 2px 0 var(--vid); }
 .rw-pass-tab { height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid #323743; background: #1c1f26; cursor: pointer; font-size: 11px; color: #c3c8d3; }
 .rw-pass-tab.on { border-color: var(--vid); color: #fff; background: rgba(167, 139, 250, 0.2); }
-/* [OLD 2026-11-06 v0.10.0->v0.10.1] these reused .rw-fold / .rw-fold-sum, the Global tab's Limits / Script import rows,
-   and squeezed them into 20 px (their labels drifted out of the card); renamed .rw-card-fold / .rw-card-fold-sum below
-.rw-fold { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin: 0 -2px 0 -4px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text3); cursor: pointer; flex: none; }
-.rw-fold:hover { background: var(--raise); color: var(--text); }
-.rw-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.rw-fold-sum { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
-[/OLD] */
-/* added 2026-11-06 v0.10.1: the card fold chevron and its summary, with names of their own */
 .rw-card-fold { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin: 0 -2px 0 -4px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text3); cursor: pointer; flex: none; }
 .rw-card-fold:hover { background: var(--raise); color: var(--text); }
 .rw-card-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -1040,7 +944,6 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-io-panel { display: flex; flex-direction: column; gap: 6px; }
 .rw-hidden-file { display: none; }
 
-/* added 2026-11-08 v0.13.0: Chat tab */
 .rw-chat { display: flex; flex-direction: column; gap: 10px; height: 100%; max-width: 980px; margin: 0 auto; padding: 12px; box-sizing: border-box; }
 .rw-chat-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .rw-chat-head .rw-ellipsis { min-width: 0; }
@@ -1065,7 +968,6 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-chat-send { display: flex; gap: 8px; align-items: flex-end; }
 .rw-chat-input { flex: 1 1 auto; resize: vertical; min-height: 56px; max-height: 240px; }
 
-/* added 2026-11-08 v0.13.0: the monitor full screen (timeline.js enterFull) */
 .rw-mon-fs { display: none; }
 .rw-mon-fs:fullscreen { display: flex; flex-direction: column; width: 100%; height: 100%; background: #000; outline: none; }
 .rw-mon-fs:-webkit-full-screen { display: flex; flex-direction: column; width: 100%; height: 100%; background: #000; outline: none; } /* a rule of its own: browsers that do not know it drop only this one */
@@ -1078,7 +980,6 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-mon-fstitle { min-width: 0; color: var(--text3); }
 .rw-mon-away { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--dim); cursor: pointer; }
 
-/* added 2026-11-08 v0.13.1: drag a scene to move it in the order (timeline.js sceneDrag) */
 .rw-root.rw-scene-moving, .rw-root.rw-scene-moving * { cursor: grabbing !important; user-select: none; }
 .rw-scene.dragging { z-index: 5; opacity: 0.8; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5); pointer-events: none; }
 .rw-scene-drop { position: absolute; top: 2px; height: 80px; width: 0; margin-left: -1px; border-left: 3px solid var(--accent); border-radius: 2px; z-index: 6; pointer-events: none; }
@@ -1086,7 +987,6 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-scene-drop-label { position: absolute; left: 6px; top: 26px; padding: 3px 7px; border-radius: 5px; background: #eceef2; color: #14161b; font-size: 10.5px; white-space: nowrap; }
 .rw-scene-drop.same .rw-scene-drop-label { background: #3a3f4b; color: #d6d9e0; }
 
-/* added 2026-11-08 v0.14.0: clips of video and audio references (scene.js clipEditor) */
 .rw-clip { display: flex; flex-direction: column; gap: 7px; padding: 7px 8px 8px; border: 1px solid var(--line2); border-radius: 7px; background: rgba(255, 255, 255, 0.015); }
 .rw-clip-row { gap: 6px; align-items: center; }
 .rw-clip-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
@@ -1104,7 +1004,6 @@ canvas.rw-wave { position: absolute; top: 1px; height: 30px; pointer-events: non
 .rw-clip-prev { display: flex; flex-direction: column; gap: 6px; }
 .rw-clip-media { width: 100%; max-height: 220px; border-radius: 6px; background: #000; }
 audio.rw-clip-media { height: 34px; background: transparent; }
-/* added 2026-11-09 v0.14.1: foldable blocks (the Timeline inspector's parts) */
 .rw-fblock { display: flex; flex-direction: column; gap: 4px; flex: none; min-width: 0; }
 .rw-fblock-head { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 18px; }
 .rw-fblock-head .rw-card-fold { width: 18px; height: 18px; }
@@ -1116,7 +1015,6 @@ audio.rw-clip-media { height: 34px; background: transparent; }
 .rw-insp > .rw-fblock.grow .rw-prompt-preview { flex: 1 1 auto; min-height: 80px; }
 .rw-insp > .rw-fblock > .rw-kv-grid + .rw-field { margin-top: 5px; }
 
-/* added 2026-11-09 v0.15.0: lists put in order by dragging (ui.js sortable / dragGrip) */
 .rw-sortable { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 .rw-drag-grip { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 24px; padding: 0; margin: 0 -2px; border: 0; border-radius: 4px; background: transparent; color: var(--dim); cursor: grab; touch-action: none; align-self: center; }
 .rw-drag-grip:hover, .rw-drag-grip:focus-visible { color: var(--text); background: var(--raise); outline: none; }
@@ -1124,10 +1022,8 @@ audio.rw-clip-media { height: 34px; background: transparent; }
 .rw-sort-item.drop-before { box-shadow: 0 -2px 0 0 var(--accent); }
 .rw-sort-item.drop-after { box-shadow: 0 2px 0 0 var(--accent); }
 body.rw-sorting, body.rw-sorting * { cursor: grabbing !important; user-select: none !important; }
-/* added 2026-11-09 v0.15.0: the Write prompts brief and its button's dot */
 .rw-brief { padding: 8px; border-radius: 8px; border: 1px dashed rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.04); }
 .rw-btn .rw-brief-dot { margin-left: 4px; background: var(--cam-t); }
-/* added 2026-11-09 v0.15.0: the LLM output popup (llmjob.js outputPopup) and the import row's Output button */
 .rw-script-part.run { grid-template-columns: 52px minmax(0, 0.9fr) minmax(0, 1.4fr) auto; align-items: center; }
 .rw-llm-out { position: absolute; right: 14px; bottom: 44px; z-index: 50; width: 600px; height: 460px; max-width: calc(100% - 28px); max-height: calc(100% - 70px); min-width: 280px; min-height: 160px; resize: both; overflow: hidden; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line2); border-radius: 10px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); }
 .rw-llm-out-head { display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 12px; border-bottom: 1px solid var(--line); min-width: 0; }
@@ -1142,15 +1038,12 @@ body.rw-sorting, body.rw-sorting * { cursor: grabbing !important; user-select: n
 .rw-llm-ans-head { color: var(--dim); }
 .rw-llm-ans-text { color: var(--text); }
 .rw-llm-notes:empty { display: none; }
-/* added 2026-11-09 v0.15.1: a dialog opens next to what opened it (ui.js placeNear); without .anchored it is centred */
 .rw-modal.anchored { display: block; }
 .rw-modal.anchored > .rw-modal-box { position: absolute; margin: 0; }
-/* added 2026-11-09 v0.16.0: Cast → Video anchors */
 .rw-vanchor { display: flex; gap: 10px; padding: 8px; border-radius: 8px; background: var(--panel2); border: 1px solid #262a33; align-items: flex-start; min-width: 0; }
 .rw-vanchor-thumb { width: 44px; height: 44px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .rw-vanchor-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .rw-vanchor .rw-drag-grip { align-self: center; }
-/* added 2026-11-10 v0.18.0: Reset scene asks what goes (scene.js resetDialog) */
 .rw-reset { display: flex; flex-direction: column; gap: 10px; white-space: normal; }
 .rw-reset-scope { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .rw-reset-parts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
@@ -1159,7 +1052,6 @@ body.rw-sorting, body.rw-sorting * { cursor: grabbing !important; user-select: n
 .rw-reset-sub { grid-column: 1 / -1; margin: 6px 0 2px; font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--dim); }
 .rw-reset-sub:first-child { margin-top: 0; }
 .rw-reset-quick { display: flex; gap: 6px; }
-/* added 2026-11-10 v0.18.0: the anchors a scene uses for a cast member (scene.js sceneAnchors) */
 .rw-cast-item { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .rw-sa-toggle { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; padding: 1px 4px 1px 0; border: 0; background: transparent; color: var(--dim); cursor: pointer; font-size: 11.5px; max-width: 100%; text-align: left; }
 .rw-sa-toggle:hover { color: var(--text2); }
@@ -1175,13 +1067,11 @@ body.rw-sorting, body.rw-sorting * { cursor: grabbing !important; user-select: n
 .rw-sa-vids { display: flex; flex-direction: column; gap: 2px; }
 .rw-sa-vid { min-width: 0; font-size: 12px; }
 .rw-sa-vid.off > :not(input) { opacity: 0.5; }
-/* added 2026-11-10 v0.18.0: a video anchor's frame picture: its mark on the clip bar and its row */
 .rw-clip-frame { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--pic, #60a5fa); border-radius: 1px; pointer-events: auto; }
 .rw-vanchor-frame { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .rw-vanchor-frame img { width: 54px; height: 54px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line2); flex: none; }
 .rw-anchor-ready { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rw-c-ok { color: var(--ok); } /* added 2026-11-10 v0.18.0 */
-/* added 2026-11-10 v0.19.0: pass names on the Prompt card's tabs; Write prompts' pass list; the Hires note */
+.rw-c-ok { color: var(--ok); }
 .rw-ptab-name { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .rw-write-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
 .rw-write-pass { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 8px; align-items: center; }

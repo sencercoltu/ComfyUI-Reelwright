@@ -1,5 +1,4 @@
-"""Spoken lines at their time and place in the shot (added 2026-11-09 v0.17.0; Sencer: "The dialogues are not added to
-shots at the given time index. the dialogue should have it's proper place and time index in the shot").
+"""Spoken lines at their time and place in the shot.
 
 - prompt.py: every line opens with its time in the pass ("At 00:02.000, <Subject 1> (S1) says, <d>…</d>"); a sentence
   of the shot's text that opens with "At MM:SS.mmm," is a timing cue, and a line goes after the cues at or before its
@@ -136,8 +135,6 @@ def test_write_prompts_reads_the_lines_times_and_places(tmp_path, harbor):
     assert text.endswith(", the lamps flicker."), text
 
 
-# ---- added 2026-11-09 v0.17.1: fixes from the third review ---------------------------------------------------------
-
 def test_a_cue_that_opens_a_shot(harbor):
     """Review 3: a shot text that opens with "At MM:SS.mmm," (as Write prompts writes a shot that opens with a spoken
     line) follows the shot's opening as sentences of their own; its cue places the lines (it was not seen, and a later
@@ -245,8 +242,6 @@ def test_write_prompts_on_a_scene_of_several_passes_keeps_scene_times(tmp_path, 
     shot = next(s for s in res["shots"] if s["id"] == first["id"])
     assert "At {}, she stops.".format(prompt.spec.fmt_time(first["t"] + x["start"] + 1.0)) in shot["text"], (shot, x["start"])
 
-
-# ---- added 2026-11-09 v0.17.2: the review's second pass ------------------------------------------------------------
 
 def test_a_timed_line_that_opens_a_shot_is_not_its_cut():
     """Review 11: "At 00:01.500, @Mara (S1) says, <d>…</d>" opening a shot is that line's time; the cut lead regexes

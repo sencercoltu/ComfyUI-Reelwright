@@ -10,14 +10,14 @@ import hashlib
 import json
 import os
 
-from . import soundtrack  # added 2026-11-03 v0.5.0
+from . import soundtrack
 
 _memo = {}
-MEMO_MAX = 4096  # added 2026-11-04 v0.6.1: digests kept (one per file version hashed since ComfyUI started)
+MEMO_MAX = 4096
 
 
 def created_of(take):
-    """added 2026-11-04 v0.6.1: a take's "created" time as whole seconds, 0 when it is missing or not a number (a
+    """A take's "created" time as whole seconds, 0 when it is missing or not a number (a
     hand-edited meta.json: int("yesterday") answered /plan with 500)."""
     try:
         v = float((take or {}).get("created") or 0)
@@ -33,7 +33,7 @@ def file_digest(path):
         return "missing:" + os.path.basename(path)
     k = (path, st.st_size, st.st_mtime_ns)
     if k not in _memo:
-        if len(_memo) > MEMO_MAX:  # added 2026-11-04 v0.6.1: bounded, like analysis._meta_memo
+        if len(_memo) > MEMO_MAX:
             _memo.clear()
         h = hashlib.sha1()
         with open(path, "rb") as f:
@@ -59,13 +59,10 @@ def settings_fingerprint(settings, wired):
     return s
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] the take a scene continues from was not part of its key (fix #11)
-# def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pass_key):
-# [OLD 2026-11-05 v0.7.0->v0.8.0] def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pass_key, upstream_take=None):
 def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pass_key, upstream_take=None, extra=None):
-    """The key of one pass. `upstream_take` (added 2026-11-03 v0.6.0) is the id of the take the scene continues from;
+    """The key of one pass. `upstream_take` is the id of the take the scene continues from;
     with None the key is the one v0.5.1 computed, so older takes can still be matched (see resolve).
-    added 2026-11-05 v0.8.0: `extra` (a dict, see long_pass_extra) holds the Global -> Long scenes choices that change
+    `extra` (a dict, see long_pass_extra) holds the Global -> Long scenes choices that change
     how this pass is encoded or guided; empty or None leaves the key as v0.7.0 computed it."""
     guides = []
     for g in build["guides"]:
@@ -74,40 +71,31 @@ def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pas
             x["asset"] = asset_digest(g["asset"])
         if g["source"].startswith("prev_scene"):
             x["upstream"] = upstream_key
-            if upstream_take is not None:  # added 2026-11-03 v0.6.0: "New take" upstream makes this scene stale
+            if upstream_take is not None:
                 x["upstream_take"] = upstream_take
         if g["source"] == "prev_pass_tail":
             x["upstream"] = previous_pass_key
         guides.append(x)
-    # [OLD 2026-11-05 v0.7.0->v0.8.0] return _hash({   (the entries below are unchanged; the closing "})" became "}")
     data = {
         "settings": settings_fp,
         "frames": pass_["gen_frames"],
         "seed": pass_["seed"],
         "prompt": build["prompt"],
         "images": [[asset_digest(a) for a in img["assets"]] for img in build["images"]],
-        # [OLD 2026-11-08 v0.13.1->v0.14.0] "videos": [[asset_digest(v["asset"]), v["soundtrack"]] for v in build["videos"]],
-        # added 2026-11-08 v0.14.0: a trimmed clip adds its range (an untrimmed one keeps its v0.13 key)
         "videos": [[asset_digest(v["asset"]), v["soundtrack"]] + ([v["in"], v["out"]] if "in" in v else [])
                    for v in build["videos"]],
-        # [OLD 2026-11-03 v0.4.3->v0.5.0] "audios": [asset_digest(a["asset"]) for a in build["audios"]],
-        # added 2026-11-03 v0.5.0: the soundtrack segment is keyed by what it plays, so moving or trimming a track
-        # re-renders only the passes it covers
-        # [OLD 2026-11-08 v0.13.1->v0.14.0] "audios": [soundtrack.digest(a["song"], asset_digest) if a.get("song") else asset_digest(a["asset"])
-        # [OLD 2026-11-08 v0.13.1->v0.14.0]            for a in build["audios"]],
         "audios": [soundtrack.digest(a["song"], asset_digest) if a.get("song") else
                    [asset_digest(a["asset"]), a["in"], a["out"]] if "in" in a else asset_digest(a["asset"])
-                   for a in build["audios"]],  # added 2026-11-08 v0.14.0: a trimmed clip with its range
+                   for a in build["audios"]],
         "guides": guides,
-    # [OLD 2026-11-05 v0.7.0->v0.8.0] })
     }
-    if extra:  # added 2026-11-05 v0.8.0: only a non-default long-scene choice adds it
+    if extra:
         data["long"] = extra
     return _hash(data)
 
 
 def long_pass_extra(long_settings, settings, build):
-    """added 2026-11-05 v0.8.0: the Global -> Long scenes choices that change this pass, for pass_key's `extra`
+    """The Global -> Long scenes choices that change this pass, for pass_key's `extra`
     ({} at the defaults, so no key changes):
     - guide_vae: a guide VAE other than the scene's video VAE, for a pass that encodes anything (reference pictures or
       videos, guides);
@@ -126,27 +114,21 @@ def long_pass_extra(long_settings, settings, build):
     return out
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] Global -> Long scenes -> crossfade changed the stitched take but not its key
-# def scene_key(plan, pass_keys):
-#     return _hash({"kind": plan["kind"], "frames": plan["frames"], "passes": pass_keys,
-#                   "keep": [[x["keep_in_frames"], x["keep_out_frames"]] for x in plan["passes"]]})
-# [/OLD]
-# [OLD 2026-11-05 v0.7.0->v0.8.0] def scene_key(plan, pass_keys, crossfade_frames=None):
 def scene_key(plan, pass_keys, crossfade_frames=None, carry_audio=True):
-    """The take's key. `crossfade_frames` (added 2026-11-03 v0.6.0) counts only when passes are joined with overlap
+    """The take's key. `crossfade_frames` counts only when passes are joined with overlap
     seams (that is where the crossfade is used); None gives the v0.5.1 key.
-    added 2026-11-05 v0.8.0: carry_audio False (Global -> Long scenes) changes how overlap seams are stitched (the
+    carry_audio False (Global -> Long scenes) changes how overlap seams are stitched (the
     sound crossfades over the whole overlap), so it counts for scenes with overlap seams; True leaves the key as is."""
     data = {"kind": plan["kind"], "frames": plan["frames"], "passes": pass_keys,
             "keep": [[x["keep_in_frames"], x["keep_out_frames"]] for x in plan["passes"]]}
     if crossfade_frames is not None and any(x.get("seam_before") == "overlap" for x in plan["passes"]):
         data["crossfade"] = int(crossfade_frames)
-    if not carry_audio and any(x.get("seam_before") == "overlap" for x in plan["passes"]):  # added 2026-11-05 v0.8.0
+    if not carry_audio and any(x.get("seam_before") == "overlap" for x in plan["passes"]):
         data["carry_audio"] = False
     return _hash(data)
 
 
-# ---- pass cache (added 2026-11-03 v0.6.0) ------------------------------------------------------------------------
+# ---- pass cache --------------------------------------------------------------------------------------------------
 # Finished passes are kept under <scene_dir>/passes/<file key>.mp4 (+ .json), shared by the scene's takes. A file key
 # is the pass key plus the seed the pass was sampled with, plus the file key of the pass it continues from (an overlap
 # seam), so a take with other seeds never picks up another take's passes.
@@ -175,7 +157,7 @@ def upstream_dependent(builds, continuing):
     return out
 
 
-# ---- status (added 2026-11-03 v0.6.0) ----------------------------------------------------------------------------
+# ---- status ------------------------------------------------------------------------------------------------------
 
 def manual_star(index):
     """True when the starred take was picked by hand. Renders record the take they star in index["auto_star"];
@@ -195,7 +177,7 @@ def resolve(scene, index, key, has_errors, legacy_key=None, upstream=None):
     {status, match, starred, manual, provided}. `provided` is the take the next scene continues from (None when this
     scene is going to be rendered). `legacy_key` is the key v0.5.1 computed: a take made before v0.6.0 (no "upstream"
     field) with that key still counts, unless the take it would continue from (`upstream`) is newer than it.
-    A scene with lint errors (added 2026-11-03 v0.6.0 review) is never rendered or re-starred by a run, so it provides
+    A scene with lint errors is never rendered or re-starred by a run, so it provides
     its starred take: that is the take a render of the next scene and a merge use."""
     takes = index.get("takes") or []
     starred = next((t for t in takes if t.get("id") == index.get("starred")), None)
@@ -204,9 +186,7 @@ def resolve(scene, index, key, has_errors, legacy_key=None, upstream=None):
         if t.get("key") == key:
             return True
         if legacy_key and "upstream" not in t and t.get("key") == legacy_key:
-            # [OLD 2026-11-04 v0.6.0->v0.6.1] a "created" that is not a number raised ValueError (500 on /plan)
-            # return upstream is None or int(t.get("created") or 0) >= int(upstream.get("created") or 0)
-            return upstream is None or created_of(t) >= created_of(upstream)  # added 2026-11-04 v0.6.1
+            return upstream is None or created_of(t) >= created_of(upstream)
         return False
 
     match = starred if starred and fits(starred) else next((t for t in reversed(takes) if fits(t)), None)
@@ -221,9 +201,6 @@ def resolve(scene, index, key, has_errors, legacy_key=None, upstream=None):
         status, provided = "stale", None
     if has_errors:
         status = "error"
-        # added 2026-11-03 v0.6.0 review: `provided` stayed the matching take (None when stale), but no run renders or
-        # re-stars an error scene, so the next scene was keyed against one take and rendered from another (the
-        # starred one): stale after every run, and reuse() could star a take made from a different upstream take
         provided = starred
     return {"status": status, "match": match, "starred": starred, "manual": manual, "provided": provided}
 

@@ -1,4 +1,4 @@
-"""Storage under concurrency and damage (added 2026-11-03 v0.6.0): unique temp files, locks, damaged JSON, take ids,
+"""Storage under concurrency and damage: unique temp files, locks, damaged JSON, take ids,
 repair, project identity (slug conflicts), cut numbers."""
 
 import json
@@ -226,8 +226,6 @@ def test_storage_methods_hold_the_project_lock(store):
     assert done.is_set()
 
 
-# ---- added 2026-11-03 v0.6.0 review --------------------------------------------------------------------------------
-
 def test_delete_take_removes_its_folder_after_letting_go_of_the_lock(roots, monkeypatch):
     """Bug 6: a big take folder was removed while holding the project lock."""
     store = ProjectStore(roots, "film")
@@ -253,8 +251,6 @@ def test_delete_take_removes_its_folder_after_letting_go_of_the_lock(roots, monk
     assert not os.path.exists(os.path.join(store.scene_dir("s_a"), "takes", "v1"))
     assert store.read_index("s_a")["takes"] == []
 
-
-# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) --------------------------------------------------------------------
 
 def test_two_versions_in_one_second_are_two_files(store, harbor, monkeypatch):
     """Review 5: the version name had only seconds, so a second snapshot in the same second overwrote the first."""
@@ -322,7 +318,7 @@ def test_job_ids_are_never_shared(store):
 
 
 def test_deleting_the_starred_take_stars_the_newest(store):
-    """added 2026-11-09 v0.17.1 (third review 9): the star goes to the newest take by created time (as repair()), not
+    """The star goes to the newest take by created time (as repair()), not
     to the last one in the list (a take added again moves to the end)."""
     store.add_take("s_one", {"id": "v3", "created": 200.0})
     store.add_take("s_one", {"id": "v1", "created": 100.0}, star=False)

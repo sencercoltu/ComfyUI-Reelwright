@@ -1,6 +1,3 @@
-// added 2026-11-03 v0.4.0: a mock of /reelwright/storage and /reelwright/storage/delete for the harness.
-// It builds the same node shape as reelwright/files.py from the mock's takes, versions and assets, plus a few
-// leftovers (an orphan scene, an unlisted take, pass videos, cuts, a stray asset) and a second project.
 
 const MB = 1048576;
 
@@ -14,8 +11,6 @@ export function createMockStorage({ slug, takes, titles, versions, setVersions, 
     strayAssets: new Set(["old_test.png", "from_output/render_0007.png"]),
     goneAssets: new Set(),
     other: true,
-    // added 2026-11-03 v0.6.0 (S): a scene's pass cache, a scene folder of another project that shared the folder,
-    // a draft cut with stems, the cut counter
     passCache: new Set(["s_05"]),
     foreignScene: { id: "s_lk1", takes: ["v1"], name: "Lighthouse Keeper" },
     draftCut: 6,
@@ -64,7 +59,7 @@ export function createMockStorage({ slug, takes, titles, versions, setVersions, 
       const sn = node(`${base(slug)}/scenes/${sid}`, `${String(i + 1).padStart(2, "0")} · ${titles[sid] || sid}`, "scene", { sid });
       for (const id of extra) add(sn, takeNode(slug, sid, { id, created: ts + 9500 }, false, true));
       for (const t of [...entry.takes].sort((a, b) => b.created - a.created)) add(sn, takeNode(slug, sid, t, entry.starred === t.id, false));
-      if (state.passCache.has(sid)) { // added 2026-11-03 v0.6.0 (S): <scene>/passes, the pass cache
+      if (state.passCache.has(sid)) {
         const pc = node(`${base(slug)}/scenes/${sid}/passes`, "Pass cache", "passes", { flags: ["cache"], note: "finished passes kept for re-use (after Stop, a retake of one pass, a moved keep window); made again when needed" });
         for (const k of ["3f9a1c0d2b", "77e01a9c4f"]) { add(pc, file(`${base(slug)}/scenes/${sid}/passes/${k}.mp4`, `${k}.mp4`, 14 * MB, ts + 9000)); add(pc, file(`${base(slug)}/scenes/${sid}/passes/${k}.json`, `${k}.json`, 900, ts + 9000)); }
         add(sn, pc);
@@ -78,7 +73,7 @@ export function createMockStorage({ slug, takes, titles, versions, setVersions, 
       for (const id of o.takes) add(sn, takeNode(slug, o.id, { id, created: ts - 86400 }, id === o.takes[o.takes.length - 1], false));
       add(scenes, sn);
     }
-    if (state.foreignScene) { // added 2026-11-03 v0.6.0 (S): not an orphan: it belongs to another project
+    if (state.foreignScene) {
       const o = state.foreignScene;
       const sn = node(`${base(slug)}/scenes/${o.id}`, o.id, "scene", { sid: o.id, flags: ["other_project"], note: `belongs to another project that used this folder (${o.name})` });
       for (const id of o.takes) add(sn, takeNode(slug, o.id, { id, created: ts - 172800 }, true, false));
@@ -101,7 +96,7 @@ export function createMockStorage({ slug, takes, titles, versions, setVersions, 
         add(g, file(stem + ".otio", `${slug}_cut_v${n}.otio`, 14200, ts + n * 1000));
         add(cuts, g);
       }
-      if (state.draftCut) { // added 2026-11-03 v0.6.0 (S): a draft cut with stems and its loudness report
+      if (state.draftCut) {
         const n = state.draftCut, stem = `${slug}_cut_v${n}_draft`;
         const g = node(`cut:${slug}:${stem}`, `cut v${n} draft`, "cut", { stem, flags: ["draft"], note: "" });
         add(g, file(`${base(slug)}/cuts/${stem}.mp4`, `${stem}.mp4`, 31 * MB, ts + 9950));
@@ -192,18 +187,18 @@ export function createMockStorage({ slug, takes, titles, versions, setVersions, 
         state.passes.delete(`${sid}/${tid}`);
       } else if ((m = /\/takes\/([^/]+)\/passes$/.exec(id))) {
         state.passes.delete(`${id.split("/")[3]}/${m[1]}`);
-      } else if ((m = /^o:reelwright\/[^/]+\/scenes\/([^/]+)\/passes(\/.*)?$/.exec(id))) { // added 2026-11-03 v0.6.0 (S)
+      } else if ((m = /^o:reelwright\/[^/]+\/scenes\/([^/]+)\/passes(\/.*)?$/.exec(id))) {
         if (!m[2]) state.passCache.delete(m[1]);
-      } else if ((m = /^cut:[^:]+:.+_cut_v(\d+)_draft$/.exec(id))) { // added 2026-11-03 v0.6.0 (S)
+      } else if ((m = /^cut:[^:]+:.+_cut_v(\d+)_draft$/.exec(id))) {
         state.draftCut = 0;
       } else if ((m = /^o:reelwright\/[^/]+\/scenes\/([^/]+)$/.exec(id))) {
-        if (m[1] === state.foreignScene?.id) state.foreignScene = null; // added 2026-11-03 v0.6.0 (S)
+        if (m[1] === state.foreignScene?.id) state.foreignScene = null;
         if (m[1] === state.orphanScene?.id) state.orphanScene = null;
         else if (takes[m[1]]) { takes[m[1]] = { starred: null, takes: [] }; for (const k of [...state.unlisted]) if (k.startsWith(m[1] + "/")) state.unlisted.delete(k); }
       } else if (id.endsWith("/scenes")) {
         for (const k of Object.keys(takes)) takes[k] = { starred: null, takes: [] };
         state.orphanScene = null; state.unlisted.clear();
-        state.foreignScene = null; state.passCache.clear(); // added 2026-11-03 v0.6.0 (S)
+        state.foreignScene = null; state.passCache.clear();
       } else if ((m = /^cut:[^:]+:.+_cut_v(\d+)$/.exec(id))) {
         if (+m[1] === state.partialCut) state.partialCut = 0;
         state.cuts = state.cuts.filter(x => x !== +m[1]);

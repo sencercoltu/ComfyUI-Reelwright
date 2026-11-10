@@ -1,27 +1,11 @@
 // Reelwright: shots and spoken lines taken from a written description.
-// added 2026-11-09 v0.14.2 (Sencer: "when creating a single shot scene, the shot section (and dialogues) are not
-// populated. They should be populated. currently everything shows only in detailed_description section.")
-//
-// A scene with no shots on the timeline is written by the LLM (Write prompts, the Prompt rewriter) as [Shot N] lines
-// in its detailed_description, with the spoken lines in <d>…</d>. readWritten() takes that text apart:
-// - the text before [Shot 1] (the style sentences) stays the description;
-// - each [Shot N] becomes a shot: its "At MM:SS.mmm, the shot cuts to" is its start, the rest its text, without the
-//   spoken lines;
-// - each spoken line becomes a dialogue line: the speaker is the @name, cast name or (S1) before it, the language its
-//   [Language], the delivery the verb ("mutters"), with the clause around it ("as the rain starts", ", her voice
-//   breaking"); a line is timed after the one before it inside its shot (dialogueSeconds).
-// fillScene() puts them in the scene. With automatic shots + dialogue on, the editor writes them back into the prompt
-// ("[Shot 1] … <Subject 1> (S1) mutters, <d>[English] Almost home.</d>"), so H3 gets the same scene and every list
-// (timeline lanes, captions, subtitles, voices) has it.
 
-// [OLD 2026-11-09 v0.14.2->v0.14.3] import { FPS, newId, planScene, sceneIndex, dialogueSeconds, snapFrame } from "./model.js";
-// [OLD 2026-11-09 v0.16.1->v0.17.0] import { FPS, newId, planScene, sceneIndex, dialogueSeconds, snapFrame, DEFAULT_CAMERA, FRAMINGS } from "./model.js"; // v0.14.3: DEFAULT_CAMERA, FRAMINGS
-import { FPS, newId, planScene, sceneIndex, dialogueSeconds, snapFrame, DEFAULT_CAMERA, FRAMINGS, fmtTime } from "./model.js"; // v0.17.0: fmtTime
+import { FPS, newId, planScene, sceneIndex, dialogueSeconds, snapFrame, DEFAULT_CAMERA, FRAMINGS, fmtTime } from "./model.js";
 
 const LABEL = /\[\s*shot\s*(\d+)\s*\]/gi;
 const SPAN = /<d>([\s\S]*?)<\/d>/gi;
 const CUT = /^At\s+(\d{1,2}):(\d{2}(?:\.\d{1,3})?)\s*,\s*(?:the\s+shot\s+cuts\s+to\s*)?/i;
-// added 2026-11-09 v0.17.2 (third review, second pass 11): a leading time is a cut with the cut's words (prompt.py CUT_STRICT),
+// A leading time is a cut with the cut's words (prompt.py CUT_STRICT),
 // or when no spoken line follows in its sentence; "At 00:01.500, @Mara (S1) says, <d>…</d>" is that line's time
 const CUT_STRICT = /^At\s+(\d{1,2}):(\d{2}(?:\.\d{1,3})?)\s*,\s*the\s+(?:shot|camera)\s+(?:cuts|transitions|changes|switches|dissolves|fades)\s+to\s*/i;
 function leadKind(body) {
@@ -45,11 +29,9 @@ const STOP = /[.!?…](?=\s)|\n/g;
 const TAIL = /^\s*[.!?…]|^(?:\s*[,;:—–-]|\s+(?=[a-z]))[^<.!?\n]{0,120}[.!?…]/;
 const VOICE = /,?\s*\b(?:with|in)\s+(?:(?:a|an|the|his|her|their|its)\s+)?[^,<:]*?\bvoice\b(?![\w-])[^,<:]*/gi;
 const LEADS = /^(?:(?:as|while|when)\s+(?:he|she|they|it|we|i|you)\s+|who\s+|and\s+|then\s+)/i;
-// added 2026-11-09 v0.17.0: the time that opens a spoken line's sentence ("At 00:03.200, @Mara (S1) mutters, <d>…")
+// The time that opens a spoken line's sentence ("At 00:03.200, @Mara (S1) mutters, <d>…")
 // or an action's, and the "At MM:SS.mmm," cues of a text (prompt.py CUE_TIME)
-// [OLD 2026-11-09 v0.17.0->v0.17.1] const LINE_CUE = /^\s*At\s+(\d{1,2}):(\d{2}(?:\.\d{1,3})?)\s*,\s*/i;
-// [OLD 2026-11-09 v0.17.0->v0.17.1] const CUES = /(^\s*|[.!?…]\s+)(At\s+)(\d{1,2}):(\d{2}(?:\.\d{1,3})?)(?=\s*,)/g;
-// added 2026-11-09 v0.17.1 (third review): the same as prompt.py CUE_TIME ("At" only; also after a colon)
+// The same as prompt.py CUE_TIME ("At" only; also after a colon)
 const LINE_CUE = /^\s*At\s+(\d{1,2}):(\d{2}(?:\.\d{1,3})?)\s*,\s*/;
 const CUES = /(^\s*|[.!?…]\s+|:\s+)(At\s+)(\d{1,2}):(\d{2}(?:\.\d{1,3})?)(?=\s*,)/g;
 // a word that reads in lower case after "At 00:04.600, " (names keep their capital)
@@ -62,8 +44,7 @@ const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const lowerFirst = s => (s && /^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s);
 const edges = s => squash(s).replace(/^[,;:—–\-\s]+/, "").replace(/[,;:—–\-\s]+$/, "").trim();
 
-// ---- camera move and framing of a written shot (added 2026-11-09 v0.14.3; Sencer: "camera movements are not
-// reflected to shots when using Write prompts") ----
+// ---- camera move and framing of a written shot ----------------------------------------------------------------
 // The move of H3's guide (model.DEFAULT_CAMERA names) a sentence describes, first match wins; the sentence has to be
 // about the camera ("camera" or "lens" in it) unless it is a short phrase such as "Slow push-in."
 const MOVES = [
@@ -131,24 +112,6 @@ export function cameraOf(p, text) {
     const amp = still ? "" : (AMP.find(([, re]) => re.test(low))?.[0] || "");
     const speed = still ? "" : (SPEED.find(([, re]) => re.test(low))?.[0] || "");
     const rest = wordCount(sen.replace(MOVE_WORDS, " "));
-    /* [OLD 2026-11-09 v0.14.4->v0.15.0] a sentence that said more than the move became the camera text as written, so
-       the Shots card showed the LLM's wording instead of a preset (Sencer: "the camera action generated by LLM shows
-       exact wording text instead of our camera presets name")
-    if (rest <= 2) {
-      const preset = (p?.camera_presets || []).find(c => key(c.name) === key(name));
-      out.camera = preset?.text || DEFAULT_CAMERA.find(([n]) => n === name)?.[1] || "";
-      out.camera_amp = amp;
-      out.camera_speed = speed;
-      parts.splice(i, 1);
-    } else {
-      // a sentence that says more than the move ("The camera tracks her along the seawall.") is the shot's camera
-      // text as written, so nothing of it is lost
-      out.camera = lowerFirst(edges(sen.replace(/[.!?…]+$/, "")));
-      parts.splice(i, 1);
-    }
-    [/OLD] */
-    // added 2026-11-09 v0.15.0: a recognised move is always the preset (with its amplitude and speed); a sentence that
-    // says more than the move ("The camera tracks her along the seawall.") stays in the text, so nothing is lost
     const preset = (p?.camera_presets || []).find(c => key(c.name) === key(name));
     out.camera = preset?.text || DEFAULT_CAMERA.find(([n]) => n === name)?.[1] || "";
     out.camera_amp = amp;
@@ -226,8 +189,6 @@ function takeLines(body, cf, sMap) {
     const at = m.index, end0 = at + m[0].length;
     let start = floor;
     for (const s of body.slice(floor, at).matchAll(STOP)) start = floor + s.index + s[0].length;
-    // [OLD 2026-11-09 v0.16.1->v0.17.0] const lead = body.slice(start, at);  (a time before the speaker went into the delivery: "says at 00:03.200")
-    // added 2026-11-09 v0.17.0: "At 00:03.200," opening the line's sentence is the line's time (pass time)
     let lead = body.slice(start, at);
     const lc = LINE_CUE.exec(lead);
     const cueAt = lc ? Number(lc[1]) * 60 + Number(lc[2]) : null;
@@ -270,25 +231,10 @@ function takeLines(body, cf, sMap) {
       const more = [extra, after].filter(Boolean).join(", ");
       if (more && (delivery + " " + more).length <= 80) delivery = extra && !after ? `${delivery} ${extra}` : after && !extra ? `${delivery}, ${after}` : `${delivery} ${extra}, ${after}`;
     }
-    // [OLD 2026-11-09 v0.16.1->v0.17.0] if (words) lines.push({ speaker, sid: men?.sid || null, who: named, language: lang ? lang[1].trim() : "", delivery, text: words });
-    // [OLD 2026-11-09 v0.16.1->v0.17.0] cuts.push([start, end, kept ? sentence(kept) : ""]);
-    // added 2026-11-09 v0.17.0: the line's written time (at), and which line each cut took out; an action kept from
-    // the line's sentence keeps the time ("At 00:03.200, she turns.")
     if (words) lines.push({ speaker, sid: men?.sid || null, who: named, language: lang ? lang[1].trim() : "", delivery, text: words, at: cueAt });
     cuts.push([start, end, kept ? sentence(cueText ? cueText + cueLower(edges(kept)) : kept) : "", words ? lines.length - 1 : -1]);
     floor = end;
   }
-  /* [OLD 2026-11-09 v0.16.1->v0.17.0] the text only (where each line was is lost)
-  let out = "", pos = 0;
-  for (const [a, z, kept] of cuts) {
-    out += body.slice(pos, a) + (kept ? " " + kept + " " : " ");
-    pos = z;
-  }
-  out += body.slice(pos);
-  return { text: squash(out), lines };
-  [/OLD] */
-  // added 2026-11-09 v0.17.0: also the text between the lines (pieces[k] before cut k, the last one after them) and the
-  // line each cut took out (cutLines[k], -1 for an empty <d></d>), so readWritten can keep each line's place
   let out = "", pos = 0;
   const pieces = [], cutLines = [];
   for (const [a, z, kept, li] of cuts) {
@@ -303,27 +249,24 @@ function takeLines(body, cf, sMap) {
   return { text: squash(out), lines, pieces, cutLines };
 }
 
-// added 2026-11-09 v0.17.0: "she pockets the key" after "At 00:04.600, " (a name keeps its capital)
+// "she pockets the key" after "At 00:04.600, " (a name keeps its capital)
 function cueLower(s) {
   return CUE_LOWER.test(s) ? s[0].toLowerCase() + s.slice(1) : s;
 }
 
-// added 2026-11-09 v0.17.0: the "At MM:SS.mmm," cues of a text moved by `offset` seconds (pass time -> scene time)
+// The "At MM:SS.mmm," cues of a text moved by `offset` seconds (pass time -> scene time)
 function shiftCues(text, offset) {
   if (!text || Math.abs(offset) < 1e-9) return text;
   return text.replace(CUES, (m, pre, at, mm, ss) => pre + at + fmtTime(Math.max(0, snapFrame(Number(mm) * 60 + Number(ss) + offset))));
 }
 
-// added 2026-11-09 v0.17.0: a shot's text with each spoken line's place kept: an action written after a line (with no
+// A shot's text with each spoken line's place kept: an action written after a line (with no
 // time of its own) opens with the time between that line and the next one, at the line's end when there is room
 // ("At 00:04.600, she pockets the key."), so the prompt puts the line before it (prompt.py _place_lines). Its own
 // "At MM:SS.mmm," cues move from pass time to scene time.
-// [OLD 2026-11-09 v0.17.0->v0.17.1] function placedText(got, times, end, offset) {
-function placedText(got, times, end, offset, cut = false) { // cut: added 2026-11-09 v0.17.1, a shot after the first
+function placedText(got, times, end, offset, cut = false) {
   if (!got.pieces) return shiftCues(got.text, offset); // no spoken line
   const parts = [];
-  // added 2026-11-09 v0.17.1 (third review): a later shot that opens with a spoken line opens with its speaker
-  // ("@Keeper."), so the prompt's cut has an object ("the shot cuts to <Subject 2>.") instead of a time
   if (cut && !got.pieces[0] && got.cutLines[0] >= 0 && got.lines[got.cutLines[0]]?.who && got.pieces.slice(1).some(Boolean)) parts.push(sentence(got.lines[got.cutLines[0]].who));
   got.pieces.forEach((piece, k) => {
     let s = shiftCues(piece, offset);
@@ -352,7 +295,7 @@ function spread(n, start, end, lengths) {
   return out;
 }
 
-// added 2026-11-09 v0.17.1 (third review): the times of a shot's spoken lines in scene time: the time written before a line
+// The times of a shot's spoken lines in scene time: the time written before a line
 // ("At MM:SS.mmm," in pass time, + offset), or the time the scene's own line has (known, takePassShots), when it lies
 // inside the shot and after the line before it (an earlier one put the lines out of order); a line without one
 // follows the line before it; with no time at all, they are spread over the shot as before
@@ -366,9 +309,6 @@ function lineTimes(lines, start, end, offset, duration, known = []) {
     at = [];
     let cur = start + Math.min(0.5, Math.max(0, end - start) * 0.1), prev = -Infinity;
     given.forEach((g, k) => {
-      // [OLD 2026-11-09 v0.17.1->v0.17.2] const v = g !== null && g >= start - 1e-6 && g < end - 1e-6 && g > prev + 1e-6 ? g : Math.max(cur, prev + 1 / FPS);
-      // added 2026-11-09 v0.17.2 (third review, second pass 12): a line without a time stays inside its shot (it could spill
-      // into the next one): past the end it goes halfway between the line before and the shot's end
       let v = g !== null && g >= start - 1e-6 && g < end - 1e-6 && g > prev + 1e-6 ? g : Math.max(cur, prev + 1 / FPS);
       if (v > end - 1 / FPS) v = Math.max(start, prev) + (end - Math.max(start, prev)) / 2;
       at.push(v);
@@ -392,36 +332,20 @@ export function readWritten(p, sc, desc, x = null) {
     : [text];
   const duration = Math.max(1 / FPS, Number(sc.duration) || 0);
   // times written in a pass of a short scene are times in what H3 makes: the cut starts at keep_in
-  // [OLD 2026-11-09 v0.17.0->v0.17.1] const offset = x ? (Number(x.start) || 0) - (Number(x.keep_in) || 0) : 0;  (x.start already
-  // has keep_in in it, planScene: (s - keepIn) / FPS, so a short scene's times read 2 x keep_in early)
-  const offset = x ? Number(x.start) || 0 : 0; // added 2026-11-09 v0.17.1 (third review): scene time = pass time + start
+  const offset = x ? Number(x.start) || 0 : 0;
   const cf = castFinder(p);
   const sMap = new Map();
   const shots = chunks.map((c, i) => {
     let body = c.trim();
     let t = i === 0 ? 0 : null;
     const cut = CUT.exec(body);
-    /* [OLD 2026-11-09 v0.17.1->v0.17.2] any leading time was the cut and left the text (a spoken line's time was lost)
-    if (cut) {
-      if (i > 0) t = Number(cut[1]) * 60 + Number(cut[2]) + offset;
-      body = body.slice(cut[0].length);
-    }
-    [/OLD] */
-    // added 2026-11-09 v0.17.2: a later shot starts at its leading time; the time leaves the text when it is the cut (not a
-    // spoken line's time, and in [Shot 1] only with the cut's words: the first shot has no cut)
     if (cut) {
       const kind = leadKind(body);
       if (i > 0) t = Number(cut[1]) * 60 + Number(cut[2]) + offset;
       if (kind === "cut" || (kind === "time" && i > 0)) body = body.slice((CUT_STRICT.exec(body) || cut)[0].length);
     }
     const got = takeLines(body, cf, sMap);
-    // [OLD 2026-11-09 v0.16.1->v0.17.0] the text and its camera were read here, before the lines had their times
-    // // a shot that was only its speaker's line ("the shot cuts to @Bob (S2), who replies, <d>…</d>") shows the speaker
-    // const text = got.text || (got.lines[0]?.who || "");
-    // // [OLD 2026-11-09 v0.14.2->v0.14.3] return { t, text: sentence(text), lines: got.lines };
-    // return { t, ...cameraOf(p, sentence(text)), lines: got.lines }; // added 2026-11-09 v0.14.3: framing and camera move
-    // [/OLD]
-    return { t, got, lines: got.lines }; // added 2026-11-09 v0.17.0: text and camera after the lines' times (below)
+    return { t, got, lines: got.lines };
   });
   // a start that is missing, outside the scene or not after the one before is spread between its neighbours
   const minGap = Math.min(0.5, duration / (shots.length + 1));
@@ -441,43 +365,14 @@ export function readWritten(p, sc, desc, x = null) {
   }
   for (const sh of shots) sh.t = Math.max(0, Math.min(snapFrame(sh.t), duration - 1 / FPS));
   const lines = [];
-  /* [OLD 2026-11-09 v0.16.1->v0.17.0] every line spread over its shot, whatever time was written before it
   shots.forEach((sh, i) => {
     const end = i + 1 < shots.length ? shots[i + 1].t : duration;
-    const at = spread(sh.lines.length, sh.t, end, sh.lines.map(d => dialogueSeconds({ text: d.text })));
-    sh.lines.forEach((d, k) => lines.push({ ...d, t: Math.max(0, Math.min(snapFrame(at[k]), duration - 1 / FPS)) }));
-  });
-  [/OLD] */
-  // added 2026-11-09 v0.17.0 (Sencer: "The dialogues are not added to shots at the given time index. the dialogue
-  // should have it's proper place and time index in the shot"): a line whose sentence opens with "At MM:SS.mmm," is
-  // at that time (inside its shot); a line without one follows the line before it (spread over the shot as before
-  // when no line of the shot has a time). The shot's text keeps each line's place (placedText).
-  shots.forEach((sh, i) => {
-    const end = i + 1 < shots.length ? shots[i + 1].t : duration;
-    /* [OLD 2026-11-09 v0.17.0->v0.17.1] the times here (lineTimes now; a written time before the line before it was taken)
-    const lengths = sh.lines.map(d => dialogueSeconds({ text: d.text }));
-    const given = sh.lines.map(d => (d.at === null || d.at === undefined ? null : d.at + offset));
-    let at;
-    if (given.every(g => g === null)) at = spread(sh.lines.length, sh.t, end, lengths);
-    else {
-      at = [];
-      let cur = sh.t + Math.min(0.5, Math.max(0, end - sh.t) * 0.1);
-      given.forEach((g, k) => {
-        const v = g !== null && g >= sh.t - 1e-6 && g < end - 1e-6 ? g : cur;
-        at.push(v);
-        cur = v + (lengths[k] || 1) + 0.3;
-      });
-    }
-    const times = at.map(v => Math.max(0, Math.min(snapFrame(v), duration - 1 / FPS)));
-    [/OLD] */
-    const times = lineTimes(sh.lines, sh.t, end, offset, duration); // added 2026-11-09 v0.17.1
+    const times = lineTimes(sh.lines, sh.t, end, offset, duration);
     sh.lines.forEach((d, k) => { const { at: _at, ...line } = d; lines.push({ ...line, t: times[k] }); });
     // a shot that was only its speaker's line ("the shot cuts to @Bob (S2), who replies, <d>…</d>") shows the speaker
-    // [OLD 2026-11-09 v0.17.0->v0.17.1] const text = placedText(sh.got, times, end, offset) || (sh.got.lines[0]?.who || "");
-    const text = placedText(sh.got, times, end, offset, i > 0) || (sh.got.lines[0]?.who || ""); // v0.17.1: i > 0
+    const text = placedText(sh.got, times, end, offset, i > 0) || (sh.got.lines[0]?.who || "");
     Object.assign(sh, cameraOf(p, sentence(text)));
   });
-  // [OLD 2026-11-09 v0.14.2->v0.14.3] return { pre, shots: shots.map(sh => ({ t: sh.t, text: sh.text })), lines };
   return { pre, shots: shots.map(sh => ({ t: sh.t, text: sh.text, camera: sh.camera, camera_amp: sh.camera_amp, camera_speed: sh.camera_speed, framing: sh.framing })), lines };
 }
 
@@ -500,8 +395,7 @@ export function fillable(p, sc) {
 export function fillScene(p, sc) {
   const got = fillable(p, sc);
   if (!got) return null;
-  // [OLD 2026-11-09 v0.14.2->v0.14.3] sc.shots = got.shots.map(s => ({ id: newId("h"), t: s.t, camera: "", text: s.text }));
-  sc.shots = got.shots.map(s => ({ id: newId("h"), t: s.t, camera: s.camera, camera_amp: s.camera_amp, camera_speed: s.camera_speed, framing: s.framing, text: s.text })); // v0.14.3
+  sc.shots = got.shots.map(s => ({ id: newId("h"), t: s.t, camera: s.camera, camera_amp: s.camera_amp, camera_speed: s.camera_speed, framing: s.framing, text: s.text }));
   let lines = 0;
   if (!(sc.dialogue || []).length && got.lines.length) {
     const lang = id => (p.cast || []).find(c => c.id === id)?.language || p.global?.defaults?.language || "English";
@@ -517,42 +411,7 @@ export function fillScene(p, sc) {
   return { shots: sc.shots.length, lines };
 }
 
-/* [OLD 2026-11-09 v0.14.3->v0.14.4] a [Shot N] count other than the scene's left the written shots in the description,
-   and a scene of several passes was not handled
-// added 2026-11-09 v0.14.3: after Write prompts on a scene made in one pass. No shots yet: fillScene. Shots already
-// on the timeline, and the answer has one [Shot N] per shot: each shot takes its written text, framing and camera
-// move (a shot whose line names none keeps its own), the times stay the timeline's, and the description keeps the
-// text before [Shot 1]; spoken lines the scene does not have yet are added (with their timing). Only with automatic
-// shots + dialogue on (else the written lines are what H3 gets). Returns {shots, lines, updated} or null.
-export function writeShots(p, sc) {
-  if (!sc || sc.prompt?.mode === "raw") return null;
-  if (!(sc.shots || []).length) return fillScene(p, sc);
-  if (!sc.prompt.auto?.shots) return null;
-  const i = sceneIndex(p, sc.id);
-  const plan = planScene(p, sc, i < 0 ? undefined : i);
-  if (plan.passes.length !== 1) return null;
-  const got = readWritten(p, sc, sc.prompt.sections.detailed_description, plan.passes[0]);
-  if (!got || got.shots.length !== sc.shots.length) return null;
-  const order = [...sc.shots].sort((a, b) => a.t - b.t);
-  order.forEach((sh, k) => {
-    const w = got.shots[k];
-    if (w.text) sh.text = w.text;
-    if (w.framing) sh.framing = w.framing;
-    if (w.camera) Object.assign(sh, { camera: w.camera, camera_amp: w.camera_amp, camera_speed: w.camera_speed });
-  });
-  let lines = 0;
-  if (!(sc.dialogue || []).length && got.lines.length) {
-    const lang = id => (p.cast || []).find(c => c.id === id)?.language || p.global?.defaults?.language || "English";
-    sc.dialogue = got.lines.map(d => ({ id: newId("d"), speaker: d.speaker, t: d.t, language: d.language || lang(d.speaker), delivery: d.delivery || "says", text: d.text }));
-    lines = sc.dialogue.length;
-    for (const d of sc.dialogue) if (d.speaker && !sc.cast.some(c => c.id === d.speaker)) sc.cast.push({ id: d.speaker, outfit: "" });
-  }
-  sc.prompt.sections.detailed_description = got.pre;
-  return { shots: sc.shots.length, lines, updated: true };
-}
-[/OLD] */
-// added 2026-11-09 v0.14.4 (Sencer: "when using Write prompt and a Shot section exists, the new text goes into
-// detailed_description instead of replacing the shot"): after Write prompts on a scene made in one pass. No shots
+// The written shots replace the scene's shots after Write prompts on a scene made in one pass. No shots
 // yet: fillScene. Shots on the timeline: the written [Shot N] lines replace them in order, whatever their count:
 // each shot takes its written text, framing and camera move (a shot whose line names none keeps its own) and keeps
 // its time; written shots past the scene's last one join the timeline at their written start (or spread over the
@@ -602,7 +461,7 @@ export function writeShots(p, sc) {
   return { shots: n + extra.length, lines, updated: true, added: extra.length, kept: order.length - n };
 }
 
-// added 2026-11-09 v0.14.4: Write prompts on a scene made in several passes. items: the written passes of the current
+// Write prompts on a scene made in several passes. items: the written passes of the current
 // layout [{index (1-based), sections}], changed in place before they are stored. In each pass whose [Shot N] lines
 // match its shots one to one, a shot that starts in that pass takes its written text, framing and camera move, and
 // its line leaves the pass's description; a shot that continues from the pass before keeps its written line there
@@ -628,13 +487,8 @@ export function takePassShots(p, sc, plan, items) {
       if (ps.continuing || !sh) { keep.push(whole); return; }
       let body = whole.slice(m[0].length).trim();
       const cut = CUT.exec(body);
-      // [OLD 2026-11-09 v0.17.1->v0.17.2] if (cut) body = body.slice(cut[0].length);
-      if (cut && leadKind(body) !== "line") body = body.slice((CUT_STRICT.exec(body) || cut)[0].length); // v0.17.2: a line's time stays
+      if (cut && leadKind(body) !== "line") body = body.slice((CUT_STRICT.exec(body) || cut)[0].length);
       const got = takeLines(body, cf, new Map());
-      // [OLD 2026-11-09 v0.17.0->v0.17.1] takeShot(sh, cameraOf(p, sentence(got.text || got.lines[0]?.who || "")));  (its
-      // "At MM:SS," cues stayed in pass time, and the actions after a line lost their place)
-      // added 2026-11-09 v0.17.1 (third review): as readWritten: cues in scene time (+ the pass's start), an action after a
-      // line timed by that line (its written time, else the scene line with the same words in this shot)
       const offset = Number(x.start) || 0;
       const next = (sc.shots || []).filter(o => o.t > sh.t + 1e-6).reduce((m, o) => Math.min(m, o.t), Infinity);
       const end = Math.min(Number.isFinite(next) ? next : Infinity, Number(sc.duration) || Infinity);

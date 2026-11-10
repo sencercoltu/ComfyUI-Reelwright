@@ -1,4 +1,4 @@
-"""Beat markers for the soundtrack: tempo and beat times of an audio file (added 2026-11-03 v0.6.0).
+"""Beat markers for the soundtrack: tempo and beat times of an audio file.
 
 numpy only (imported when needed); ffmpeg decodes the file to mono 22 050 Hz float samples.
 
@@ -60,18 +60,11 @@ def _spectral_flux(y):
         frames = y[idx]
         rms[a:b] = np.sqrt(np.mean(frames * frames, axis=1))
         spec = np.log1p(100.0 * np.abs(np.fft.rfft(frames * window, axis=1))).astype(np.float32)
-        # [OLD 2026-11-03 v0.6.0 review] frame 0 was measured against itself (flux 0), so a beat at t=0 was lost
-        # before = np.vstack([spec[:1] if prev is None else prev[None, :], spec[:-1]])
-        # [/OLD]
-        # added 2026-11-03 v0.6.0 review: frame 0 is measured against silence (a zero spectrum)
         before = np.vstack([np.zeros_like(spec[:1]) if prev is None else prev[None, :], spec[:-1]])
         d = np.maximum(0.0, spec - before)
         flux[a:b] = d[:, full].sum(axis=1)
         lflux[a:b] = d[:, low].sum(axis=1)
         prev = spec[-1]
-    # added 2026-11-03 v0.6.0 review: against silence, frame 0 of a song that starts with sound (a pad, a song cut
-    # mid-way) holds its whole spectrum and swamped the tempo (120 BPM read as 60). It counts as an onset no stronger
-    # than the strongest one after it.
     if n > 1:
         flux[0] = min(flux[0], flux[1:].max())
         lflux[0] = min(lflux[0], lflux[1:].max())

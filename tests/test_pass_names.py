@@ -1,4 +1,4 @@
-"""added 2026-11-10 v0.19.0: scene.pass_names (Sencer: "we should be able to rename passes. pass number is always in
+"""scene.pass_names (Sencer: "we should be able to rename passes. pass number is always in
 front."). The editor shows "Pass 2 · Storm"; nothing sent to H3 or the LLM, and no cache key, reads a name."""
 
 import copy

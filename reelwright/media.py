@@ -6,18 +6,15 @@ from fractions import Fraction
 
 import numpy as np
 import torch
-from PIL import Image, ImageOps
-
 from comfy_api.latest import InputImpl, Types
-# [OLD 2026-11-03 v0.5.1->v0.6.0] from comfy_extras.nodes_audio import load as load_audio_file  (imported when used, so
-# an older ComfyUI without it can still load the extension and show what is missing)
+from PIL import Image, ImageOps
 
 from . import merge, spec
 
-# added 2026-11-03 v0.6.0: passes in the pass cache and tail clips are written almost losslessly, so the encode of the
+# Passes in the pass cache and tail clips are written almost losslessly, so the encode of the
 # take (and of the cut) is the only one that loses detail
 PASS_CRF = 4
-# added 2026-11-05 v0.8.0: Global -> Long scenes -> pass cache "lossless": RGB H.264 at qp 0 (libx264rgb) with FLAC
+# Global -> Long scenes -> pass cache "lossless": RGB H.264 at qp 0 (libx264rgb) with FLAC
 # sound in the same .mp4 name, so the pass cache keeps its file names. Read back with load_video(exact=True) the
 # frames are the 8-bit frames that were written, bit for bit (ComfyUI's own reader converts RGB streams through
 # swscale's float path, which is off by up to about one level). About 4x the size of CRF 4 and much faster to write.
@@ -58,23 +55,6 @@ def load_image(path):
     return torch.from_numpy(arr)[None]
 
 
-# [OLD 2026-11-03 v0.4.0->v0.4.1] square cells, so portrait anchors were letterboxed (about a fifth of each
-# cell was background); the grid itself is unchanged (columns = ceil(sqrt(n)), any number of pictures)
-# def make_sheet(paths, cell=768):
-#     """Pack several anchor pictures into one grid image (one reference slot)."""
-#     n = len(paths)
-#     cols = math.ceil(math.sqrt(n))
-#     rows = math.ceil(n / cols)
-#     sheet = Image.new("RGB", (cols * cell, rows * cell), (21, 23, 28))
-#     for i, path in enumerate(paths):
-#         with Image.open(path) as im:
-#             im = ImageOps.exif_transpose(im).convert("RGB")
-#             im = ImageOps.contain(im, (cell, cell), Image.LANCZOS)
-#             x = (i % cols) * cell + (cell - im.width) // 2
-#             y = (i // cols) * cell + (cell - im.height) // 2
-#             sheet.paste(im, (x, y))
-#     return torch.from_numpy(np.asarray(sheet, dtype=np.float32) / 255.0)[None]
-# [/OLD]
 def sheet_grid(n):
     """Columns and rows of an anchor sheet: ceil(sqrt(n)) columns, as many rows as needed. No upper limit."""
     cols = max(1, math.ceil(math.sqrt(n)))
@@ -108,26 +88,8 @@ def frame_to_png(frame, path):
     Image.fromarray(arr).save(path)
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] decoded the whole file before cutting 15 s out of it, and float frame positions
-# could repeat a frame (int(2.9999) == 2)
-# def load_video(path, last_seconds=None, max_seconds=None):
-#     """Frames at 24 fps [N,H,W,3] and the matching audio dict (or None)."""
-#     comp = InputImpl.VideoFromFile(path).get_components()
-#     images = comp.images
-#     rate = float(comp.frame_rate)
-#     duration = images.shape[0] / rate
-#     start = max(0.0, duration - last_seconds) if last_seconds else 0.0
-#     end = min(duration, start + max_seconds) if max_seconds else duration
-#     n_out = max(1, int(round((end - start) * spec.FPS)))
-#     idx = [min(images.shape[0] - 1, int((start + i / spec.FPS) * rate)) for i in range(n_out)]
-#     frames = images[idx].contiguous()
-#     audio = None
-#     if comp.audio is not None:
-#         audio = slice_audio(comp.audio, start, end)
-#     return frames, audio
-# [/OLD]
 def frame_positions(n_src, rate, n_out, first=0):
-    """added 2026-11-03 v0.6.0: source frame index of each 24 fps output frame, in exact integer arithmetic
+    """Source frame index of each 24 fps output frame, in exact integer arithmetic
     (floor(i * rate / 24)), starting at source frame `first` and never past the last source frame."""
     rate = Fraction(rate).limit_denominator(1001000) if rate else Fraction(spec.FPS)
     if rate <= 0:
@@ -137,7 +99,7 @@ def frame_positions(n_src, rate, n_out, first=0):
 
 
 def _window(path, start, duration):
-    """added 2026-11-03 v0.6.0: (components, start actually used) decoding only [start, start + duration) when this
+    """(components, start actually used) decoding only [start, start + duration) when this
     ComfyUI's VideoFromFile can trim (duration 0 = to the end), else the whole file with start 0."""
     if start > 0 or duration > 0:
         try:
@@ -154,21 +116,19 @@ def _duration(path):
         return None
 
 
-# [OLD 2026-11-05 v0.7.0->v0.8.0] def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_frames=None):
-# [OLD 2026-11-08 v0.13.1->v0.14.0] def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_frames=None, exact=False):
 def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_frames=None, exact=False, start=0.0):
     """Frames at 24 fps [N,H,W,3] and the matching audio dict (or None).
 
-    added 2026-11-03 v0.6.0: only the part that is needed is decoded. `last_frames` = the last N frames (tails);
+    Only the part that is needed is decoded. `last_frames` = the last N frames (tails);
     `max_seconds` / `max_frames` = at most that much from the start (references). Frame positions are integers.
-    added 2026-11-05 v0.8.0: exact=True (files Reelwright wrote itself: pass cache, tail.mp4) reads an RGB stream (a
+    exact=True (files Reelwright wrote itself: pass cache, tail.mp4) reads an RGB stream (a
     lossless pass cache file) with PyAV straight to 8-bit RGB, so the frames are exactly the ones written; other
     streams are read as before.
-    added 2026-11-08 v0.14.0: start = where the part read from the start of the file begins (a reference's From), in
+    Start = where the part read from the start of the file begins (a reference's From), in
     seconds; max_seconds / max_frames then count from there."""
     if last_frames is None and last_seconds:
         last_frames = int(round(float(last_seconds) * spec.FPS))
-    if exact and not max_seconds and not max_frames and is_rgb_video(path):  # added 2026-11-05 v0.8.0
+    if exact and not max_seconds and not max_frames and is_rgb_video(path):
         return load_video_exact(path, last_frames=last_frames)
     if last_frames:
         n = max(1, int(last_frames))
@@ -192,21 +152,15 @@ def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_
     limit = float(max_seconds) if max_seconds else None
     if max_frames:
         limit = min(limit or float("inf"), int(max_frames) / spec.FPS)
-    # [OLD 2026-11-08 v0.13.1->v0.14.0] comp, _ = _window(path, 0.0, limit or 0.0)
-    # [OLD 2026-11-08 v0.13.1->v0.14.0] images = comp.images
-    # added 2026-11-08 v0.14.0: from `start`; a ComfyUI that cannot trim decodes from 0 and the frames before it are
-    # dropped here (the sound is cut the same way below)
     start = max(0.0, float(start or 0.0))
     comp, used = _window(path, start, limit or 0.0)
     images = comp.images
     skip = max(0.0, start - used)  # seconds decoded before `start`
     if skip > 0 and images.shape[0]:
         images = images[min(images.shape[0], int(round(skip * float(comp.frame_rate or spec.FPS)))):]
-    # added 2026-11-04 v0.6.1: no picture decoded (an audio-only or broken file) used to raise IndexError below
     if not images.shape[0]:
-        # [OLD 2026-11-08 v0.13.1->v0.14.0] raise ValueError("no video frames could be decoded from {}".format(os.path.basename(path)))
         raise ValueError("no video frames could be decoded from {}{}".format(
-            os.path.basename(path), " after {:.3f} s".format(start) if start else ""))  # added 2026-11-08 v0.14.0
+            os.path.basename(path), " after {:.3f} s".format(start) if start else ""))
     rate = Fraction(comp.frame_rate or spec.FPS)
     src_seconds = images.shape[0] / float(rate) if images.shape[0] else 0.0
     seconds = min(src_seconds, limit) if limit else src_seconds
@@ -218,25 +172,16 @@ def load_video(path, last_seconds=None, max_seconds=None, last_frames=None, max_
     frames = images[frame_positions(images.shape[0], rate, n_out)].contiguous()
     audio = None
     if comp.audio is not None:
-        # [OLD 2026-11-08 v0.13.1->v0.14.0] audio = slice_audio(comp.audio, 0.0, n_out / spec.FPS)
-        audio = slice_audio(comp.audio, skip, skip + n_out / spec.FPS)  # added 2026-11-08 v0.14.0: from `start`
+        audio = slice_audio(comp.audio, skip, skip + n_out / spec.FPS)
     return frames, audio
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] audio references were sent whole (H3 takes at most 15 s)
-# def load_audio(path):
-#     waveform, sr = load_audio_file(path)
-#     return {"waveform": waveform[None], "sample_rate": sr}
-# [/OLD]
-# [OLD 2026-11-08 v0.13.1->v0.14.0] def load_audio(path, max_seconds=None):
 def load_audio(path, max_seconds=None, start=0.0):
     """The audio file as {waveform [1,C,S], sample_rate}; with `max_seconds` only its start.
-    added 2026-11-08 v0.14.0: start = where to begin (a reference's From), in seconds; max_seconds counts from there."""
-    from comfy_extras.nodes_audio import load as load_audio_file  # added 2026-11-03 v0.6.0: imported when used
+    Start = where to begin (a reference's From), in seconds; max_seconds counts from there."""
+    from comfy_extras.nodes_audio import load as load_audio_file
     waveform, sr = load_audio_file(path)
-    a = max(0, int(round(float(start or 0.0) * sr)))  # added 2026-11-08 v0.14.0
-    # [OLD 2026-11-08 v0.13.1->v0.14.0] if max_seconds:
-    # [OLD 2026-11-08 v0.13.1->v0.14.0]     waveform = waveform[..., :int(round(float(max_seconds) * sr))]
+    a = max(0, int(round(float(start or 0.0) * sr)))
     waveform = waveform[..., a:a + int(round(float(max_seconds) * sr))] if max_seconds else waveform[..., a:]
     return {"waveform": waveform[None], "sample_rate": sr}
 
@@ -249,17 +194,16 @@ def slice_audio(audio, start, end):
     return {"waveform": w[..., a:b].contiguous(), "sample_rate": sr}
 
 
-# [OLD 2026-11-05 v0.7.0->v0.8.0] def save_video(frames, audio, path, crf=16):
 def save_video(frames, audio, path, crf=16, lossless=False):
-    """lossless (added 2026-11-05 v0.8.0): see save_video_lossless."""
-    if lossless:  # added 2026-11-05 v0.8.0
+    """lossless: see save_video_lossless."""
+    if lossless:
         return save_video_lossless(frames, audio, path)
     comp = Types.VideoComponents(images=frames, audio=audio, frame_rate=Fraction(spec.FPS))
     InputImpl.VideoFromComponents(comp).save_to(path, format=Types.VideoContainer.MP4,
                                                 codec=Types.VideoCodec.H264, crf=crf)
 
 
-# ---- lossless pass cache (added 2026-11-05 v0.8.0) -------------------------------------------------------------------
+# ---- lossless pass cache ---------------------------------------------------------------------------------------------
 
 def to_u8(frames):
     """Float frames [N,H,W,3] in 0..1 as uint8, rounded (the lossless writer's 8-bit frames)."""
@@ -317,6 +261,7 @@ def load_video_exact(path, last_frames=None):
     """(frames [N,H,W,3] float32 = 8-bit / 255, audio dict or None) of a file Reelwright wrote at 24 fps, decoded
     with PyAV to rgb24 (no float conversion in swscale); last_frames = only the last N frames and their sound."""
     import collections
+
     import av
     keep = collections.deque(maxlen=int(last_frames)) if last_frames else []
     chunks, sr = [], None
@@ -354,13 +299,11 @@ def load_video_exact(path, last_frames=None):
     return frames, audio
 
 
-# [OLD 2026-11-05 v0.7.0->v0.8.0] def save_video_atomic(frames, audio, path, crf=16):
 def save_video_atomic(frames, audio, path, crf=16, lossless=False):
-    """added 2026-11-03 v0.6.0: write to a temporary name next to `path`, then move it into place, so a stopped or
-    failed write never leaves a half-written file under the final name. lossless: added 2026-11-05 v0.8.0."""
+    """Write to a temporary name next to `path`, then move it into place, so a stopped or
+    failed write never leaves a half-written file under the final name. lossless: see save_video_lossless."""
     tmp = "{}.{}.partial.mp4".format(os.path.splitext(path)[0], os.getpid())
     try:
-        # [OLD 2026-11-05 v0.7.0->v0.8.0] save_video(frames, audio, tmp, crf=crf)
         save_video(frames, audio, tmp, crf=crf, lossless=lossless)
         os.replace(tmp, path)
     finally:
@@ -377,7 +320,7 @@ def trim(frames, audio, keep_in_frames, keep_out_frames):
     return f, a
 
 
-# ---- stills for the vision describer (added 2026-11-02 v0.2.0) -------------------------------
+# ---- stills for the vision describer ---------------------------------------------------------
 
 def jpeg_bytes(im, max_side=1024):
     import io

@@ -1,11 +1,11 @@
-"""Cache keys, take status and plan extras (added 2026-11-03 v0.6.0). Pure: no ComfyUI needed."""
+"""Cache keys, take status and plan extras. Pure: no ComfyUI needed."""
 
 import copy
 
 import pytest
 
 from reelwright import cache
-from reelwright.analysis import analyze, plan_response, rekey, seconds_per_frame, _rate_samples
+from reelwright.analysis import _rate_samples, analyze, plan_response, rekey, seconds_per_frame
 
 
 def _take(r, sid, tid, **kw):
@@ -132,8 +132,6 @@ def test_pass_file_keys_follow_seeds_and_chains():
     assert cache.upstream_dependent([{"guides": [{"source": "prev_scene_tail"}]}] + builds[1:], True) == [True, True, False]
     assert cache.upstream_dependent(builds, False) == [False, False, False]
 
-
-# ---- v0.6.0 review (added 2026-11-03) -----------------------------------------------------------------------------
 
 def test_error_scene_provides_its_starred_take(harbor, store):
     """No run renders or re-stars a scene with lint errors, so the scene after it is keyed against its starred take

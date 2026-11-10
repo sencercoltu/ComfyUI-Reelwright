@@ -1,14 +1,14 @@
 """Saved Global settings ("profiles"), shared by every Reelwright node on this ComfyUI.
 
-Added 2026-11-02 v0.3.0. Stored in ComfyUI's user folder next to llm.json, so API keys never
-go into a profile (they are not part of Global anyway).
+Stored in ComfyUI's user folder next to llm.json, so API keys never go into a profile (they are not part of Global
+anyway).
 """
 
 import json
 import os
 import time
 
-from . import soundtrack  # added 2026-11-03 v0.6.0
+from . import soundtrack
 from .model import new_id
 from .storage import read_json, write_json
 
@@ -21,7 +21,7 @@ def profiles_path(user_root):
 
 
 def migrate_global(glob):
-    """added 2026-11-03 v0.6.0: a profile saved before v0.5 still has the old merge score (one looping music bed).
+    """A profile saved before v0.5 still has the old merge score (one looping music bed).
     The score belongs to a project's soundtrack now, so applying such a profile brought it back silently: it is
     dropped here the way soundtrack.migrate_score moves it out of a project (the scenes' sound stays on top).
     Returns True when the profile changed."""
@@ -35,10 +35,10 @@ def migrate_global(glob):
 
 def load(user_root):
     data = read_json(profiles_path(user_root), None) or {}
-    if not isinstance(data, dict):  # added 2026-11-03 v0.6.0: a file that is not an object reads as empty
+    if not isinstance(data, dict):
         data = {}
     profiles = [x for x in data.get("profiles") or [] if isinstance(x, dict) and x.get("id") and isinstance(x.get("global"), dict)]
-    for x in profiles:  # added 2026-11-03 v0.6.0
+    for x in profiles:
         migrate_global(x["global"])
     default = data.get("default") or ""
     if default not in {x["id"] for x in profiles}:
@@ -60,12 +60,10 @@ def save(user_root, name, glob, pid=None, make_default=None):
         raise ValueError("A profile needs the Global settings")
     if len(json.dumps(glob)) > MAX_BYTES:
         raise ValueError("These settings are too large for a profile")
-    migrate_global(glob)  # added 2026-11-03 v0.6.0
+    migrate_global(glob)
     data = load(user_root)
     now = int(time.time())
     hit = next((x for x in data["profiles"] if x["id"] == pid), None) if pid else None
-    # added 2026-11-04 v0.6.1: an id that is not saved (deleted meanwhile, e.g. in another tab) is refused like delete()
-    # and set_default() do; it used to add a second profile of that name. "Save as new" sends no id.
     if pid and hit is None:
         raise ValueError("unknown profile (it may have been deleted in another tab); use Save as new")
     if hit is None:

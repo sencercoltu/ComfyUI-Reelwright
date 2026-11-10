@@ -12,46 +12,22 @@ document.head.appendChild(css);
 
 const IDLE_REQUEST = JSON.stringify({ action: "pending" });
 
-// added 2026-11-02 v0.3.7: ComfyUI paints a sampler's latent preview under the node that is running. For a
+// ComfyUI paints a sampler's latent preview under the node that is running. For a
 // Reelwright node that image is moved into the editor's Render tab instead. This covers previews from any
 // source (an older Reelwright backend, or anything else that reports previews for this node).
 const editors = new Set(); // {node, editor}
-// added 2026-11-03 v0.5.1: with Nodes 2.0, ComfyUI's own undo (Ctrl+Z on the canvas) rebuilds the graph, and Vue
+// With Nodes 2.0, ComfyUI's own undo (Ctrl+Z on the canvas) rebuilds the graph, and Vue
 // keeps showing the DOM element of the node it replaced (same id) instead of the new node's. That element was
 // emptied when the old node was removed, so the node went blank. The old element is remembered here for a moment,
 // and the new editor moves into it while its own element is not on the page.
 const orphans = new Map(); // node id -> container of a removed Reelwright node
-let editorSeq = 0; // added 2026-11-03 v0.6.0: creation order of the editors (the newer of two copies is the copy)
+let editorSeq = 0;
 
-// added 2026-11-03 v0.6.0: a node pasted or duplicated from another Reelwright node carries the same project id, folder
+// A node pasted or duplicated from another Reelwright node carries the same project id, folder
 // and scene ids, so both would write into one folder. The newer node becomes a separate project (editor.forkProject).
-/* [OLD 2026-11-03 v0.6.0 live check] counted the clone ComfyUI makes of a node to copy it (never added to a graph, same
-   node id, and its widget writes reach the original node's value): the clone forked and the ORIGINAL node's project
-   was replaced by the fork
-function checkCopy(entry) {
-  if (!editors.has(entry) || entry.editor.destroyed) return;
-  const id = entry.editor.project?.project_id;
-  if (!id) return;
-  const older = [...editors].some(x => x !== entry && x.seq < entry.seq && !x.editor.destroyed && x.editor.project?.project_id === id);
-  if (!older) return;
-  entry.editor.forkProject?.([...editors].filter(x => x !== entry).map(x => x.editor.project?.slug).filter(Boolean));
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0: only nodes that are in a graph count, on both sides
+// Only nodes that are in a graph count, on both sides
 const inGraph = x => !!x.node.graph && !x.editor.destroyed && !x.detached;
-/* [OLD 2026-11-03 v0.6.0 review] forked every node that shared a project id with an older one, also a copy renamed
-   before v0.6.0 that has its own folder ("beta" became "beta-2" with new scene ids and lost its renders); a node
-   pasted into another workflow kept the original's id and folder
-function checkCopy(entry) {
-  if (!editors.has(entry) || !inGraph(entry)) return;
-  const id = entry.editor.project?.project_id;
-  if (!id) return;
-  const live = [...editors].filter(x => x !== entry && inGraph(x));
-  if (!live.some(x => x.seq < entry.seq && x.editor.project?.project_id === id)) return;
-  entry.editor.forkProject?.(live.map(x => x.editor.project?.slug).filter(Boolean));
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0 review: a node pasted onto the canvas (Ctrl+V, Paste, Clone, Alt-drag, an inserted workflow
+// A node pasted onto the canvas (Ctrl+V, Paste, Clone, Alt-drag, an inserted workflow
 // or blueprint: everything that goes through LGraphCanvas._deserializeItems) is always a separate project: new
 // project id, folder and scene ids. Otherwise, when an older node in the graph has the same project id, only a shared
 // folder makes the newer one a full copy; with a folder of its own it only gets its own project id and keeps its
@@ -71,7 +47,7 @@ function checkCopy(entry) {
   if (older.some(x => x.editor.project?.slug === pj.slug)) entry.editor.forkProject?.(slugs);
   else entry.editor.separateProjectId?.();
 }
-// added 2026-11-03 v0.6.0 review: nodes configured while the canvas pastes are copies (checkCopy). ComfyUI's clone of a
+// Nodes configured while the canvas pastes are copies (checkCopy). ComfyUI's clone of a
 // node for the clipboard is made before the paste starts (and never joins a graph), so it is not counted.
 let pasteDepth = 0;
 function installPasteHook() {
@@ -87,15 +63,7 @@ function installPasteHook() {
 }
 let executingId = null;
 let swallowedBlob = null;
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] matched the last segment of an execution id, so a sampler "12:5" inside a subgraph was taken for the Reelwright node 5
-function editorFor(id) {
-  if (id === null || id === undefined) return null;
-  const s = String(id), last = s.split(":").pop();
-  for (const x of editors) if (String(x.node.id) === s || String(x.node.id) === last) return x.editor;
-  return null;
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0: the execution ids of a node: its id in the root graph, or "<instance path>:<id>" for every
+// The execution ids of a node: its id in the root graph, or "<instance path>:<id>" for every
 // subgraph instance that holds it (ComfyUI's ids for nodes inside subgraphs)
 function executionIds(node) {
   const own = String(node.id);
@@ -150,13 +118,12 @@ function installPreviewRedirect() {
 app.registerExtension({
   name: "reelwright.editor",
 
-  // added 2026-11-03 v0.6.0 review: the paste hook is in place before the first paste
   setup() { installPasteHook(); },
 
   nodeCreated(node) {
     if (node.constructor?.comfyClass !== "Reelwright") return;
-    installPreviewRedirect(); // added 2026-11-02 v0.3.7
-    installPasteHook(); // added 2026-11-03 v0.6.0 review
+    installPreviewRedirect();
+    installPasteHook();
     const projectW = node.widgets?.find(w => w.name === "project");
     const runW = node.widgets?.find(w => w.name === "run_request");
     if (!projectW || !runW) return;
@@ -165,38 +132,24 @@ app.registerExtension({
 
     const container = document.createElement("div");
     container.className = "rw-host";
-    // added 2026-11-03 v0.6.0: queue requests one after another (a double click reset the first request's widget while
-    // ComfyUI was still reading it); `serializing`/`removing` keep the ChangeTracker notice from re-entering
     let queueChain = Promise.resolve();
     let serializing = 0, removing = false;
-    let entry = null; // added 2026-11-03 v0.6.0: this node's {node, editor, seq, detached}, set once the editor exists
+    let entry = null;
     const host = {
       getProject: () => projectW.value || "",
       setProject(json) {
-        if (entry?.detached) return; // added 2026-11-03 v0.6.0: a copy clone never writes (it would reach the original)
+        if (entry?.detached) return;
         projectW.value = json;
         node.graph?.setDirtyCanvas?.(true, false);
       },
       fetchApi: (route, opts) => api.fetchApi(route, opts),
       apiURL: route => api.apiURL(route),
-      // [OLD 2026-11-03 v0.5.1->v0.6.0] on: (type, cb) => api.addEventListener(type, e => cb(e.detail)),
-      // added 2026-11-03 v0.6.0: returns a function that removes the listener (editor.destroy() calls it)
+      // Returns a function that removes the listener (editor.destroy() calls it)
       on(type, cb) {
         const fn = e => cb(e.detail);
         api.addEventListener(type, fn);
         return () => api.removeEventListener(type, fn);
       },
-      /* [OLD 2026-11-03 v0.5.1->v0.6.0] two calls at once overwrote each other's request
-      async queue(request) {
-        runW.value = JSON.stringify(request);
-        try {
-          const ok = await app.queuePrompt(0, 1, [String(node.id)]);
-          if (ok === false) throw new Error("ComfyUI refused the queue request");
-        } finally {
-          runW.value = IDLE_REQUEST;
-        }
-      },
-      [/OLD] */
       queue(request) {
         const run = queueChain.then(async () => {
           runW.value = JSON.stringify(request);
@@ -210,23 +163,20 @@ app.registerExtension({
         queueChain = run.catch(() => {});
         return run;
       },
-      // added 2026-11-03 v0.6.0: the editor wrote the widget; ComfyUI's ChangeTracker records it now (marks the
+      // The editor wrote the widget; ComfyUI's ChangeTracker records it now (marks the
       // workflow modified, keeps it in workflow undo and in the state a workflow switch restores)
       changed() {
-        // [OLD 2026-11-03 v0.6.0 live check] if (serializing || removing) return;  (an edit flushed by a serialize never reached the tracker)
         if (removing) return;
-        if (serializing) { setTimeout(() => host.changed(), 0); return; } // added 2026-11-03 v0.6.0: after the serialize
+        if (serializing) { setTimeout(() => host.changed(), 0); return; }
         const ct = app.extensionManager?.workflow?.activeWorkflow?.changeTracker;
         const fn = ct?.captureCanvasState ?? ct?.checkState;
         if (typeof fn === "function") fn.call(ct);
       },
-      // added 2026-11-03 v0.6.0: whether a ComfyUI node id (an execution id, subgraph paths included) is this node
       isOwnNode: id => isNode(node, id),
-      // added 2026-11-03 v0.6.0: folders of the other Reelwright nodes in the graph
       otherSlugs: () => [...editors].filter(x => x.node !== node).map(x => x.editor.project?.slug).filter(Boolean),
       interrupt: () => api.interrupt(),
       isInputLinked: name => (node.inputs || []).some(i => i.name === name && i.link != null),
-      // added 2026-11-02 v0.3.0: Ctrl + wheel over the editor zooms the canvas like it does over empty space
+      // Ctrl + wheel over the editor zooms the canvas like it does over empty space
       forwardWheel(e) {
         const canvas = app.canvas?.canvas;
         if (!canvas) return;
@@ -236,7 +186,7 @@ app.registerExtension({
           ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey, bubbles: true, cancelable: true,
         }));
       },
-      // added 2026-11-02 v0.3.0: render progress in the node title ("Reelwright · rendering 2/5 · 43%")
+      // Render progress in the node title ("Reelwright · rendering 2/5 · 43%")
       setTitle(status) {
         if (baseTitle === null) baseTitle = node.title;
         node.title = status ? `${baseTitle} · ${status}` : baseTitle;
@@ -255,11 +205,8 @@ app.registerExtension({
     widget.serialize = false;
 
     const editor = mountEditor(container, host);
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] const entry = { node, editor }; // added 2026-11-02 v0.3.7: for the preview redirect
-    // [OLD 2026-11-03 v0.6.0 live check] const entry = { node, editor, seq: ++editorSeq };  (entry is declared above now)
-    entry = { node, editor, seq: ++editorSeq, detached: false }; // added 2026-11-02 v0.3.7: for the preview redirect; seq: v0.6.0
+    entry = { node, editor, seq: ++editorSeq, detached: false };
     editors.add(entry);
-    // added 2026-11-03 v0.5.1: keep the editor on the page (see orphans above)
     const editorRoot = container.firstElementChild;
     const keepShown = setInterval(() => {
       if (!editorRoot || editorRoot.isConnected) return;
@@ -269,8 +216,6 @@ app.registerExtension({
         old.replaceChildren(editorRoot);
       }
     }, 250);
-    // added 2026-11-03 v0.6.0 (live check): ComfyUI clones a node to copy it; the clone never joins a graph and was
-    // never removed, so its editor lived on (listeners, timers). Stop it without letting it write anything.
     setTimeout(() => {
       if (node.graph || editor.destroyed) return;
       entry.detached = true;
@@ -280,8 +225,6 @@ app.registerExtension({
       editor.destroy();
     }, 5000);
     if (!projectW.value) host.setProject(JSON.stringify(editor.project));
-    // added 2026-11-02 v0.3.0: a workflow load configures the node right after creating it; a node that is
-    // still unconfigured a moment later was just added, so offer the saved Global profiles
     let configured = false;
     setTimeout(() => { if (!configured) editor.startNew?.().catch(() => {}); }, 0);
     if (!runW.value) runW.value = IDLE_REQUEST;
@@ -289,17 +232,14 @@ app.registerExtension({
 
     const onConfigure = node.onConfigure;
     node.onConfigure = function () {
-      configured = true; // added 2026-11-02 v0.3.0
+      configured = true;
       const r = onConfigure?.apply(this, arguments);
-      // added 2026-11-02 v0.3.0: a workflow saved mid-render carries the progress suffix in its title
       if (typeof node.title === "string") node.title = node.title.replace(/ · rendering \d+\/\d+ · \d+%$/, "");
       editor.load(projectW.value);
-      if (pasteDepth > 0 && entry) entry.pasted = true; // added 2026-11-03 v0.6.0 review: configured by a paste
-      setTimeout(() => checkCopy(entry), 0); // added 2026-11-03 v0.6.0: a pasted copy (after every node is configured)
+      if (pasteDepth > 0 && entry) entry.pasted = true;
+      setTimeout(() => checkCopy(entry), 0);
       return r;
     };
-    // added 2026-11-03 v0.6.0: whatever ComfyUI serializes (save, workflow switch, its undo snapshots) carries the
-    // editor's latest edit, also one made less than the 200 ms widget delay ago
     const onSerialize = node.onSerialize;
     node.onSerialize = function (o) {
       const r = onSerialize?.apply(this, arguments);
@@ -319,11 +259,10 @@ app.registerExtension({
     };
     const onRemoved = node.onRemoved;
     node.onRemoved = function () {
-      editors.delete(entry); // added 2026-11-02 v0.3.7
-      clearInterval(keepShown); // added 2026-11-03 v0.5.1
-      // added 2026-11-03 v0.5.1: the element Vue may go on showing for the node that replaces this one
+      editors.delete(entry);
+      clearInterval(keepShown);
       const id = String(node.id), shown = editorRoot?.parentElement || container;
-      removing = true; // added 2026-11-03 v0.6.0: the last flush must not record a workflow change mid-removal
+      removing = true;
       editor.destroy();
       orphans.set(id, shown);
       setTimeout(() => { if (orphans.get(id) === shown) orphans.delete(id); }, 10000);

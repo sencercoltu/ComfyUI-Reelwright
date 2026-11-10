@@ -96,7 +96,6 @@ def test_short_scene_shifts_content_into_the_window(harbor):
     assert abs(x["shots"][0]["t"] - (x["keep_in"] + 0.5)) < 0.05
 
 
-# ---- added 2026-11-03 v0.6.0 ----
 from reelwright import model  # noqa: E402
 from reelwright.planner import continuation_depth  # noqa: E402,F401  (still importable from the planner)
 

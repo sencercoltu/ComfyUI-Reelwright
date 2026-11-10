@@ -7,35 +7,31 @@ feedback; this module is what the renderer trusts.
 import copy
 import hashlib
 import json
-import math  # added 2026-11-08 v0.14.0: snap_frame
+import math
 import re
 import secrets
-import unicodedata  # added 2026-11-03 v0.6.0: slugify transliterates accents (NFKD)
+import unicodedata
 
+from . import soundtrack as _soundtrack
 from . import spec
-from . import soundtrack as _soundtrack  # added 2026-11-03 v0.5.0
 
 SECTION_KEYS = ("subject_definitions", "summary", "retention_analysis",
                 "detailed_description", "overall_soundscape", "non_diegetic_music")
-# [OLD 2026-11-02 v0.2.2->v0.3.0] OVERRIDE_KEYS = ("seed", "steps", "sampler", "scheduler", "width", "height",
-#                  "diffusion", "text_encoder", "video_vae", "audio_vae")
-# [OLD 2026-11-10 v0.18.0->v0.19.0] OVERRIDE_KEYS = ("seed", "steps", "sampler", "scheduler", "width", "height",
-# [OLD 2026-11-10 v0.18.0->v0.19.0]                  "diffusion", "text_encoder", "video_vae", "audio_vae", "quality")
-# added 2026-11-10 v0.19.0: hires ("off": this scene skips the latent upscaler), refine_steps, refine_denoise
+# hires ("off": this scene skips the latent upscaler), refine_steps, refine_denoise
 OVERRIDE_KEYS = ("seed", "steps", "sampler", "scheduler", "width", "height",
                  "diffusion", "text_encoder", "video_vae", "audio_vae", "quality",
                  "hires", "refine_steps", "refine_denoise")
-TRANSITIONS = ("cut", "crossfade", "dip")  # added 2026-11-02 v0.3.0: per-scene hard-cut transition
-# added 2026-11-05 v0.7.0: scene.merge, how a scene sits in the cut (model.js has the same values). TRANSITIONS stays
+TRANSITIONS = ("cut", "crossfade", "dip")
+# scene.merge, how a scene sits in the cut (model.js has the same values). TRANSITIONS stays
 # for the deprecated scene.transition (read once, by the migration in _norm_merge)
 MERGE_TRANSITIONS = ("cut", "crossfade", "dip", "wipe", "slide", "circle", "dissolve", "pixelize", "radial", "zoom")
 MERGE_DIRECTIONS = ("left", "right", "up", "down")
-SUBTITLE_TIMING = ("speech", "planned")  # added 2026-11-06 v0.10.0: global.merge.subtitle_timing
+SUBTITLE_TIMING = ("speech", "planned")
 COLOR_MATCH_MODES = ("off", "previous", "scene")
 MERGE_MAX_FRAMES = 14400  # frame counts in scene.merge: 0 .. 600 s
 COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")  # "#rrggbb" (fullmatch)
 CODE_PREFIX = {"image": "P", "video": "V", "audio": "A"}
-# added 2026-11-03 v0.6.0: what normalize_project enforces (model.js has the same values)
+# What normalize_project enforces (model.js has the same values)
 MIN_SCENE_SECONDS = 1.0 / spec.FPS
 MAX_SCENE_SECONDS = 600.0
 ASSET_KINDS = ("image", "video", "audio")
@@ -46,15 +42,7 @@ SLUG_MAX = 64
 SLUG_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,63}$")  # same as storage.SLUG_RE
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # same as storage.ID_RE: scene ids are folder names
 SEED_N_LIMIT = 2 ** 31
-# [OLD 2026-11-05 v0.7.0->v0.8.0] six presets of our own; new projects now start with H3's 20 official moves
-# DEFAULT_CAMERA = (("Slow push-in", "slow push-in toward the subject"),
-#                   ("Locked-off", "static locked-off camera"),
-#                   ("Crane up", "slow crane up revealing the scene"),
-#                   ("Handheld pan \u2192", "handheld camera panning right"),
-#                   ("Rack focus", "rack focus from foreground to background"),
-#                   ("Macro", "macro close-up, shallow depth of field"))
-# [/OLD]
-# added 2026-11-05 v0.8.0: the camera moves MiniMax's H3 guide lists (base-en.txt 4.3), name = the guide's label,
+# The camera moves MiniMax's H3 guide lists (base-en.txt 4.3), name = the guide's label,
 # text = the natural phrase written into the shot line ("The camera pushes in with small amplitude at slow speed.").
 # Projects saved before get the missing ones appended once (camera_version 2); their own presets stay. model.js has
 # the same list.
@@ -71,8 +59,8 @@ DEFAULT_CAMERA = (("Zoom In", "the camera zooms in"), ("Zoom Out", "the camera z
                   ("POV", "the camera takes the subject's point of view"),
                   ("Roll Clockwise", "the camera rolls clockwise"),
                   ("Roll Counterclockwise", "the camera rolls counterclockwise"))
-CAMERA_VERSION = 2  # added 2026-11-05 v0.8.0: p["camera_version"]; below 2 the official moves are appended once
-# added 2026-11-05 v0.8.0: shot fields camera_amp / camera_speed / framing ("" = not said), and how they are written
+CAMERA_VERSION = 2
+# Shot fields camera_amp / camera_speed / framing ("" = not said), and how they are written
 CAMERA_AMPS = ("", "small", "large")
 CAMERA_SPEEDS = ("", "slow", "fast")
 FRAMINGS = ("", "extreme wide", "wide", "medium wide", "medium", "medium close-up", "close-up", "extreme close-up",
@@ -83,20 +71,13 @@ FRAMING_PHRASE = {"extreme wide": "an extreme wide shot", "wide": "a wide shot",
                   "two-shot": "a two-shot", "insert": "an insert shot", "low angle": "a low-angle shot",
                   "high angle": "a high-angle shot", "overhead": "an overhead shot",
                   "dutch angle": "a Dutch-angle shot"}
-DIALOGUE_MAX_SECONDS = 600.0  # added 2026-11-05 v0.8.0: dialogue duration is at most a scene's length
+DIALOGUE_MAX_SECONDS = 600.0
 
 
 def new_id(prefix):
     return prefix + "_" + secrets.token_hex(4)
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] no length cap (a long name broke every path), accents dropped whole ("Ömer" -> "mer"),
-# names without ASCII letters gave odd folders, and model.js slugified differently
-# def slugify(name):
-#     s = re.sub(r"[^\w\s-]", "", str(name or "").lower(), flags=re.ASCII).strip()
-#     s = re.sub(r"[\s-]+", "_", s).strip("_")
-#     return s or "untitled"
-# [/OLD]
 def slugify(name):
     """Folder name for a project name: lower-case ASCII letters, digits and _, at most 64 characters (storage.SLUG_RE).
     Accents are transliterated ("Ömer" -> "omer"); a name without any ASCII letter gives "untitled". Same as
@@ -109,13 +90,13 @@ def slugify(name):
 
 
 def project_slug(p):
-    """The project's folder (added 2026-11-03 v0.6.0): its slug when that is a valid folder name (kept as typed, so
+    """The project's folder: its slug when that is a valid folder name (kept as typed, so
     "untitled-x7k2" stays), else slugify(slug or name)."""
     s = spec.text(p.get("slug"))
     return s if SLUG_RE.fullmatch(s) else slugify(s or p.get("name"))  # fullmatch: re's $ allows a trailing \n
 
 
-# added 2026-11-05 v0.8.0: Global -> Long scenes -> hand-off and pass cache (model.js LONG_HANDOFF / LONG_PASS_CACHE)
+# Global -> Long scenes -> hand-off and pass cache (model.js LONG_HANDOFF / LONG_PASS_CACHE)
 LONG_HANDOFF = ("pixels", "latent")
 LONG_PASS_CACHE = ("near_lossless", "lossless")
 
@@ -136,79 +117,29 @@ def default_global():
         "sampling": {"steps": 20, "sampler": "res_multistep", "scheduler": "simple", "seed": 104729,
                      "seed_mode": "increment", "sigma_shift": False, "shift_video": 12.0, "shift_audio": 3.0},
         "quality": "final",
-        # [OLD 2026-11-10 v0.18.0->v0.19.0] "draft": {"scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0},
-        # added 2026-11-10 v0.19.0: hires: drafts go through the latent upscaler too (Global -> Hires on)
         "draft": {"scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0, "hires": False},
-        # added 2026-11-10 v0.19.0: Global -> Hires (Sencer: "implement it, but the whole project should be upscaled to
-        # same resolution. maybe only override the other parameters in scenes?"). enabled: every pass is sampled at
-        # Global -> Output and its latent enlarged by the latent upscaler (models.latent_upscaler) to Output x scale
-        # (hires_size), the same for every scene; refine_steps > 0: then sampled again at the big size for that many
-        # steps from refine_denoise (0..1) of the noise. Scenes override refine_steps / refine_denoise or turn it
-        # off (overrides.hires = "off"; the merge enlarges that scene). Off keeps every render and cache key as before.
         "hires": {"enabled": False, "scale": 2.0, "refine_steps": 0, "refine_denoise": 0.35},
         "defaults": {"duration": 8.0, "start_mode": "last_frame", "overlap_frames": 39, "language": "English"},
-        # [OLD 2026-11-05 v0.7.0->v0.8.0] no long-scene continuity switches
-        # "long": {"max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
-        #          "seam_mode": "auto", "cut_snap_seconds": 2.0},
-        # [/OLD]
-        # added 2026-11-05 v0.8.0: long-scene continuity (later passes degraded through decode -> re-encode round
-        # trips at overlap seams). The defaults keep v0.7.0's behaviour and every cache key. guide_vae: a VAE file
-        # (a variant of the H3 video VAE, same latent space) that encodes references, guides and continuation clips,
-        # "" = the video VAE; carry_audio: anchor the pass before's sound at an overlap seam (False: picture only,
-        # the pass stitch crossfades the sound over the whole overlap); seam_video_ref: send the end of the pass
-        # before as <Video 1> at overlap seams (with Continuity -> name_continuation on); handoff: "pixels" |
-        # "latent" (experimental: the overlap guide is the pass before's sampled latents, no decode -> encode);
-        # pass_cache: "near_lossless" (H.264 CRF 4, 4:2:0) | "lossless" (RGB H.264 qp 0 + FLAC; tail.mp4 too)
         "long": {"max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
                  "seam_mode": "auto", "cut_snap_seconds": 2.0,
                  "guide_vae": "", "carry_audio": True, "seam_video_ref": True, "handoff": "pixels",
                  "pass_cache": "near_lossless"},
         "memory": {"policy": "free_cache", "encode_first": True, "group_by_lora": True},
-        # [OLD 2026-11-05 v0.6.1->v0.7.0] no name_continuation switch
-        # "continuity": {"reanchor_after": 2, "face_check": False, "face_threshold": 0.8, "on_drift": "flag"},
-        # [/OLD]
-        # added 2026-11-05 v0.7.0: name_continuation: the frame or clip a continuing scene (or a pass after an overlap
-        # seam) starts from is also sent as reference <Picture 1> / <Video 1> and named in the prompt; False: it is
-        # only anchored (MiniMaxH3AddGuide), as in v0.6.1 (see pass_continuation)
-        # [OLD 2026-11-06 v0.9.0->v0.10.0] "continuity": {"reanchor_after": 2, "face_check": False, "face_threshold": 0.8, "on_drift": "flag",
-        # [OLD 2026-11-06 v0.9.0->v0.10.0]                "name_continuation": True},
-        # added 2026-11-06 v0.10.0: describe_voices: a speaker's voice description (cast voice_desc) is written at
-        # their first line in every pass (prompt._dialogue_sentence), so H3 keeps the voice from pass to pass
         "continuity": {"reanchor_after": 2, "face_check": False, "face_threshold": 0.8, "on_drift": "flag",
                        "name_continuation": True, "describe_voices": True},
-        # [OLD 2026-11-02 v0.1.0->v0.2.0] no switch for sending MiniMax's prompt guides
-        # "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va"},
-        # [/OLD]
-        # [OLD 2026-11-02 v0.3.1->v0.3.2] no thinking switch
-        # "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
-        #         "include_guides": True},
-        # [/OLD]
-        # [OLD 2026-11-03 v0.4.1->v0.4.2] no limits: a fixed 180 s timeout, Import used max(Max tokens, 6000) for the whole script
-        # "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
-        #         "include_guides": True, "thinking": "auto"},  # thinking: auto (model default) | off
-        # [/OLD]
         "llm": {"base_url": "", "model": "", "temperature": 0.4, "max_tokens": 2048, "preset": "h3_ref2va",
                 "include_guides": True, "thinking": "auto",  # thinking: auto (model default) | off
-                # added 2026-11-03 v0.4.2: limits. timeout_s: no data from the server for this long ends a request;
-                # max_wait_s: longest a request may take; retries: extra attempts after a timeout, a cut-off or
-                # unreadable reply or a server error; context_tokens: the model's context window, 0 = ask the server
                 "timeout_s": 120, "max_wait_s": 900, "retries": 2, "context_tokens": 0,
                 # script import: the script is sent in parts of about this many characters (0 = all at once),
                 # each part may answer with up to import_max_tokens; import_thinking: same | off;
                 # import_guides: also send MiniMax's H3 guides (about 10k tokens) with every part
-                # [OLD 2026-11-05 v0.7.0->v0.8.0] "import_part_chars": 3000, "import_max_tokens": 16384, "import_thinking": "same",
-                # added 2026-11-05 v0.8.0: import_max_tokens 24576 (llm.IMPORT_MAX_TOKENS): shots are 2-4 sentences now
                 "import_part_chars": 3000, "import_max_tokens": 24576, "import_thinking": "same",
                 "import_guides": False},
         "merge": {"use": "starred", "missing": "skip", "hard_cut": "cut", "transition_frames": 12,
                   "audio_fade_frames": 6, "loudness": -16.0, "normalize": True,
-                  "score": {"asset": "", "volume_db": -12.0, "duck": True},  # v0.5.0: moved to p["soundtrack"] on load
-                  # added 2026-11-03 v0.5.0: the scenes' own sound under a soundtrack (off: only the soundtrack plays)
+                  "score": {"asset": "", "volume_db": -12.0, "duck": True},
                   "scene_audio": {"mix": False, "volume_db": -12.0},
                   "color_match": False, "color_ref_scene": "", "codec": "h264", "crf": 16,
-                  # [OLD 2026-11-06 v0.9.0->v0.10.0] "subtitles": True, "chapters": True, "otio": True, "fcpxml": True, "bundle": False,
-                  # added 2026-11-06 v0.10.0: subtitle_timing "speech" (lines timed to the speech found in each take,
-                  # speech.py) or "planned" (the timeline's times, as before)
                   "subtitles": True, "subtitle_timing": "speech", "chapters": True, "otio": True, "fcpxml": True,
                   "bundle": False,
                   "auto_after_render": True},
@@ -216,21 +147,12 @@ def default_global():
 
 
 def default_prompt():
-    # [OLD 2026-11-05 v0.7.0->v0.8.0] return {"mode": "structured", "auto": {"subjects": True, "retention": True, "shots": True},
-    #                                          "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}}
-    # passes: added 2026-11-05 v0.8.0, each pass's own six sections (see pass_texts)
-    # [OLD 2026-11-09 v0.14.4->v0.15.0] no brief field
-    # return {"mode": "structured", "auto": {"subjects": True, "retention": True, "shots": True},
-    #         "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}, "passes": []}
-    # [/OLD]
-    # brief: added 2026-11-09 v0.15.0, the author's own words for Write prompts (llm.pass_request / rewrite read it);
-    # it is never overwritten by what the LLM writes, so it stays the same from one Write prompts to the next
     return {"mode": "structured", "auto": {"subjects": True, "retention": True, "shots": True},
             "sections": {k: "" for k in SECTION_KEYS}, "raw": "", "pass_prompts": {}, "passes": [], "brief": ""}
 
 
 def default_merge():
-    """added 2026-11-05 v0.7.0: scene.merge of a new scene, how it sits in the cut (assemble.cut_plan reads it).
+    """scene.merge of a new scene, how it sits in the cut (assemble.cut_plan reads it).
     transition: how a fresh start joins the scene before (MERGE_TRANSITIONS), direction for wipe / slide, frames its
     length, color the dip colour; audio_frames: the sound's fade out / in at a cut; fade_in / fade_out: the picture
     from / to a colour at the scene's first / last frame; audio_fade_in / _out (frames); volume_db and mute: the
@@ -242,11 +164,6 @@ def default_merge():
             "color_match": "off", "color_ref": "", "brightness": 0.0, "contrast": 1.0, "saturation": 1.0}
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] no seed_n; a malformed project (global not a dict) crashed here
-# def default_scene(project=None, **patch):
-#     d = (project or {}).get("global", {}).get("defaults") or default_global()["defaults"]
-#     first = not project or not project.get("scenes")
-# [/OLD]
 def default_scene(project=None, **patch):
     project = project if isinstance(project, dict) else {}
     g = project.get("global")
@@ -260,38 +177,21 @@ def default_scene(project=None, **patch):
         "trim": {"keep": "start", "in": 0.0},
         "refs": [], "cast": [], "shots": [], "dialogue": [],
         "prompt": default_prompt(), "overrides": {}, "lock": False, "notes": "",
-        # added 2026-11-02 v0.3.0: how the cut into this scene looks; empty/None follow Global -> Merge
         "transition": {"mode": "", "frames": None, "audio_fade_frames": None},
-        # added 2026-11-03 v0.6.0: the scene's number in "+1 per scene" seed mode, fixed at creation
         "seed_n": next_seed_n(project),
-        # added 2026-11-05 v0.7.0: how the scene sits in the cut (replaces "transition" and Global -> Merge's
-        # transition and colour-match settings)
         "merge": default_merge(),
-        "pass_names": {},  # added 2026-11-10 v0.19.0: names of the scene's passes (pass_names)
+        "pass_names": {},
     }
     scene.update(patch)
     return scene
 
 
 def default_project(name="Untitled"):
-    # [OLD 2026-11-03 v0.4.3->v0.5.0] no soundtrack
-    # p = {"schema": 1, "id": new_id("p"), "name": name, "slug": slugify(name),
-    #      "global": default_global(), "assets": [], "cast": [], "camera_presets": [],
-    #      "scenes": [], "markers": [],
-    #      "ui": {"tab": "timeline", "selected": "", "zoom": 22, "playhead": 0, "snap": True, "ripple": True}}
-    # [/OLD]
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] no project_id, no camera presets (model.js had them)
-    # p = {"schema": 1, "id": new_id("p"), "name": name, "slug": slugify(name),
-    #      "global": default_global(), "assets": [], "cast": [], "camera_presets": [],
-    #      "scenes": [], "markers": [], "soundtrack": [],  # soundtrack: added 2026-11-03 v0.5.0 (see soundtrack.py)
-    #      "ui": {"tab": "timeline", "selected": "", "zoom": 22, "playhead": 0, "snap": True, "ripple": True}}
-    # [/OLD]
-    # project_id: added 2026-11-03 v0.6.0. Only the editor creates one (newId), so the backend leaves it ""
     p = {"schema": 1, "id": new_id("p"), "project_id": "", "name": name, "slug": slugify(name),
          "global": default_global(), "assets": [], "cast": [], "camera_presets": default_camera_presets(),
-         "asset_groups": [],  # added 2026-11-06 v0.9.0: groups of assets (Assets tab)
-         "camera_version": CAMERA_VERSION,  # added 2026-11-05 v0.8.0: the presets are H3's official moves
-         "scenes": [], "markers": [], "soundtrack": [],  # soundtrack: added 2026-11-03 v0.5.0 (see soundtrack.py)
+         "asset_groups": [],
+         "camera_version": CAMERA_VERSION,
+         "scenes": [], "markers": [], "soundtrack": [],
          "ui": {"tab": "timeline", "selected": "", "zoom": 22, "playhead": 0, "snap": True, "ripple": True}}
     p["scenes"].append(default_scene(p, title="Scene 1"))
     p["ui"]["selected"] = p["scenes"][0]["id"]
@@ -299,17 +199,17 @@ def default_project(name="Untitled"):
 
 
 def default_camera_presets():
-    """Camera moves every new project starts with (added 2026-11-03 v0.6.0, as model.js always had)."""
+    """Camera moves every new project starts with (as model.js always had)."""
     return [{"id": new_id("k"), "name": n, "text": t} for n, t in DEFAULT_CAMERA]
 
 
 def _camera_key(name):
-    """added 2026-11-05 v0.8.0: a preset name compared without case and surrounding ASCII spaces (model.js the same)."""
+    """A preset name compared without case and surrounding ASCII spaces (model.js the same)."""
     return spec.text(name).strip(" \t\n\r").lower()
 
 
 def _migrate_camera(p):
-    """added 2026-11-05 v0.8.0: a project saved before v0.8.0 (camera_version below 2) gets H3's official camera moves
+    """A project saved before v0.8.0 (camera_version below 2) gets H3's official camera moves
     it does not have yet (compared by name) appended to its presets, once; its own presets stay as they are. Then
     camera_version is 2 (a higher whole number is kept). model.js migrateCamera is the same."""
     cv = spec.num(p.get("camera_version"), 0)
@@ -332,22 +232,6 @@ def _fill(target, defaults):
     return target
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] codes were unique per kind only, but tags look codes up across every kind, ignoring case
-# def assign_codes(assets):
-#     used = {k: set() for k in CODE_PREFIX}
-#     for a in assets:
-#         if a.get("code") and a.get("kind") in used:
-#             used[a["kind"]].add(a["code"])
-#     for a in assets:
-#         if a.get("code") or a.get("kind") not in used:
-#             continue
-#         n = 1
-#         while CODE_PREFIX[a["kind"]] + str(n) in used[a["kind"]]:
-#             n += 1
-#         a["code"] = CODE_PREFIX[a["kind"]] + str(n)
-#         used[a["kind"]].add(a["code"])
-#     return assets
-# [/OLD]
 def assign_codes(assets):
     """Give every asset without a code the next free P/V/A number. Codes are unique across kinds, ignoring case."""
     used = {spec.text(a.get("code")).upper() for a in assets if a.get("code")}
@@ -362,69 +246,7 @@ def assign_codes(assets):
     return assets
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] crashed on malformed JSON (scenes:[null], global:"x", refs:{}, prompt:"text",
-# soundtrack:5), let cast.name:5 / start:"tail" / NaN durations through to crash analyze, kept duplicate ids and codes,
-# and differed from model.js (no sorting there, other slug and defaults)
-# def normalize_project(raw):
-#     """Parse (if needed) and fill every missing key. Returns a new dict."""
-#     p = raw
-#     if isinstance(p, str):
-#         try:
-#             p = json.loads(p) if p.strip() else None
-#         except json.JSONDecodeError:
-#             p = None
-#     if not isinstance(p, dict) or not isinstance(p.get("scenes"), list):
-#         return default_project()
-#     p = copy.deepcopy(p)
-#     base = default_project(p.get("name") or "Untitled")
-#     base["scenes"] = []
-#     _fill(p, base)
-#     p["slug"] = slugify(p.get("slug") or p["name"])
-#     p["schema"] = 1
-#     lang = p["global"]["defaults"]["language"]
-#     for s in p["scenes"]:
-#         _fill(s, default_scene(p, id=s.get("id") or new_id("s")))
-#         _fill(s["prompt"], default_prompt())
-#         for r in s["refs"]:
-#             _fill(r, {"id": new_id("r"), "asset": "", "role": "reference", "time": 0.0,
-#                       "retention": "", "keep": [], "soundtrack": False})
-#         for x in s["shots"]:
-#             _fill(x, {"id": new_id("h"), "t": 0.0, "camera": "", "text": ""})
-#         for x in s["dialogue"]:
-#             _fill(x, {"id": new_id("d"), "speaker": "", "t": 0.0, "language": lang, "delivery": "", "text": ""})
-#         for c in s["cast"]:
-#             _fill(c, {"id": "", "outfit": ""})
-#         s["shots"].sort(key=lambda x: float(x["t"]))
-#         s["dialogue"].sort(key=lambda x: float(x["t"]))
-#     for a in p["assets"]:
-#         _fill(a, {"id": new_id("a"), "code": "", "kind": "image", "name": "", "file": "", "duration": 0,
-#                   "width": 0, "height": 0, "category": "",
-#                   "defaults": {"role": "reference",
-#                                "retention": "reference" if a.get("kind") == "audio" else "fully_preserved",
-#                                "keep": [], "soundtrack": False},
-#                   "notes": "", "description": ""})  # added 2026-11-02 v0.2.0: description feeds subject_definitions
-#     assign_codes(p["assets"])
-#     for c in p["cast"]:
-#         _fill(c, {"id": new_id("c"), "kind": "character", "name": "", "speaker": "", "description": "",
-#                   "anchors": [], "pack_sheet": True, "outfits": [], "default_outfit": "", "voice": "",
-#                   "language": lang, "lora": {"name": "", "strength": 0.8}})
-#         for o in c["outfits"]:
-#             _fill(o, {"id": new_id("o"), "name": "", "retention": "fully_preserved", "keep": [], "assets": []})
-#         # added 2026-11-03 v0.4.1: True (one sheet), False (separate pictures) or "auto" (a sheet only when the
-#         # pass would not fit H3's 9 pictures otherwise)
-#         if c["pack_sheet"] not in (True, False, "auto"):
-#             c["pack_sheet"] = True
-#     if not p["scenes"]:
-#         p["scenes"].append(default_scene(p, title="Scene 1"))
-#     # added 2026-11-03 v0.5.0: soundtrack tracks; the old merge score becomes one
-#     p["soundtrack"] = [t for t in p["soundtrack"] if isinstance(t, dict)]
-#     for t in p["soundtrack"]:
-#         _soundtrack.normalize_track(t)
-#         t["id"] = t["id"] or new_id("t")
-#     _soundtrack.migrate_score(p)
-#     return p
-# [/OLD]
-# added 2026-11-03 v0.6.0: the hardened normaliser. model.js normalizeProject does exactly the same (tests/
+# The hardened normaliser. model.js normalizeProject does exactly the same (tests/
 # test_model_parity.py runs both on the same JSON); the one difference is project_id, which only the editor creates.
 def normalize_project(raw):
     """Parse (if needed), repair and fill every missing key. Returns a new dict; never raises on bad input.
@@ -461,7 +283,7 @@ def normalize_project(raw):
         elif code:
             seen_codes.add(code)
     assign_codes(assets)
-    _norm_asset_groups(p, assets)  # added 2026-11-06 v0.9.0
+    _norm_asset_groups(p, assets)
 
     p["cast"] = _objects(p.get("cast"))
     for c in p["cast"]:
@@ -474,7 +296,6 @@ def normalize_project(raw):
     if not p["scenes"]:
         p["scenes"].append(default_scene(p, title="Scene 1"))
     _repair_seed_ns(p["scenes"])
-    # added 2026-11-05 v0.7.0: scene.merge; a scene without one gets it from its v0.6 transition and Global -> Merge
     scene_ids = {s["id"] for s in p["scenes"]}
     for s in p["scenes"]:
         _norm_merge(s, g["merge"], p["scenes"][0]["id"], scene_ids)
@@ -491,9 +312,8 @@ def normalize_project(raw):
         k["id"] = spec.text(k.get("id")) or new_id("k")
         _text_field(k, "name", "")
         _text_field(k, "text", "")
-    _migrate_camera(p)  # added 2026-11-05 v0.8.0: H3's official camera moves, appended once (camera_version 2)
+    _migrate_camera(p)
 
-    # v0.5.0 soundtrack tracks; the old merge score becomes one
     p["soundtrack"] = _objects(p.get("soundtrack"))
     for t in p["soundtrack"]:
         _soundtrack.normalize_track(t)
@@ -572,7 +392,7 @@ def _like(v, d):
 
 def normalize_global(g):
     """Global settings (a project's or a profile's) completed with today's defaults and coerced to their types
-    (added 2026-11-03 v0.6.0; model.js normalizeGlobal does the same)."""
+    (model.js normalizeGlobal does the same)."""
     g = _like(copy.deepcopy(g) if isinstance(g, dict) else {}, default_global())
     d = g["defaults"]
     if d["start_mode"] not in spec.START_MODES:
@@ -580,16 +400,13 @@ def normalize_global(g):
     d["duration"] = min(MAX_SCENE_SECONDS, max(MIN_SCENE_SECONDS, d["duration"]))
     d["overlap_frames"] = max(0, int(d["overlap_frames"]))
     g["continuity"]["reanchor_after"] = max(0, int(g["continuity"]["reanchor_after"]))
-    # added 2026-11-05 v0.8.0: the long-scene continuity choices (model.js normalizeGlobal the same)
     lg = g["long"]
     if lg["handoff"] not in LONG_HANDOFF:
         lg["handoff"] = "pixels"
     if lg["pass_cache"] not in LONG_PASS_CACHE:
         lg["pass_cache"] = "near_lossless"
-    # added 2026-11-06 v0.10.0 (model.js the same)
     if g["merge"]["subtitle_timing"] not in SUBTITLE_TIMING:
         g["merge"]["subtitle_timing"] = "speech"
-    # added 2026-11-10 v0.19.0: Global -> Hires (model.js the same)
     hi = g["hires"]
     hi["scale"] = min(HIRES_MAX_SCALE, max(1.0, float(hi["scale"])))
     hi["refine_steps"] = min(100, max(0, int(hi["refine_steps"])))
@@ -610,7 +427,7 @@ def _norm_lora(l):
 def _norm_asset(a):
     a["kind"] = a["kind"] if a.get("kind") in ASSET_KINDS else "image"
     a["id"] = spec.text(a.get("id")) or new_id("a")
-    for k in ("code", "name", "file", "category", "notes", "description"):  # description: v0.2.0, feeds subject lines
+    for k in ("code", "name", "file", "category", "notes", "description"):
         _text_field(a, k, "")
     for k in ("duration", "width", "height"):
         a[k] = max(0, spec.num(a.get(k), 0))
@@ -622,7 +439,7 @@ def _norm_asset(a):
 
 
 def _norm_asset_groups(p, assets):
-    """added 2026-11-06 v0.9.0 (model.js normAssetGroups): the asset groups, in their order: {id, name, description}
+    """The asset groups, in their order: {id, name, description}
     with unique ids; each asset's group is one of their ids or "" (no group), and its tags are cleaned by asset_tags.
     Groups and tags only sort the Assets tab: no prompt, plan or cache key reads them."""
     groups = p["asset_groups"] = _objects(p.get("asset_groups"))
@@ -638,12 +455,12 @@ def _norm_asset_groups(p, assets):
         a["tags"] = asset_tags(a.get("tags"))
 
 
-TAG_MAX = 60  # added 2026-11-06 v0.9.0
-PASS_NAME_MAX = 60  # added 2026-11-10 v0.19.0
+TAG_MAX = 60
+PASS_NAME_MAX = 60
 
 
 def pass_names(v):
-    """added 2026-11-10 v0.19.0 (Sencer: "we should be able to rename passes. pass number is always in front."):
+    """
     scene.pass_names, {"<pass number>": name}: numbers 1-999 as text, names with runs of spaces, tabs and line breaks
     made one space, cut to 60 characters and trimmed; empty names are dropped. A name belongs to the pass number, so
     it stays when the pass layout changes. Only the editor shows it ("Pass 2 · Harbour"); nothing sent to H3 or the
@@ -663,7 +480,7 @@ def pass_names(v):
 
 
 def asset_tags(v):
-    """added 2026-11-06 v0.9.0 (model.js assetTags): the strings (and numbers) of a list with runs of spaces, tabs and
+    """The strings (and numbers) of a list with runs of spaces, tabs and
     line breaks made one space, cut to 60 characters and trimmed; empty and repeated tags (same spelling) are dropped."""
     out = []
     for x in _texts(v):
@@ -676,15 +493,11 @@ def asset_tags(v):
 def _norm_cast(c, lang):
     c["id"] = spec.text(c.get("id")) or new_id("c")
     c["kind"] = c["kind"] if c.get("kind") in CAST_KINDS else "character"
-    # [OLD 2026-11-06 v0.9.0->v0.10.0] for k in ("name", "speaker", "description", "default_outfit", "voice"):
-    # added 2026-11-06 v0.10.0: voice_desc: how the voice sounds ("a deep, warm male voice, slow and measured")
     for k in ("name", "speaker", "description", "default_outfit", "voice", "voice_desc"):
         _text_field(c, k, "")
-    _text_field(c, "part_of", "")  # added 2026-11-08 v0.11.0: a prop that is part of this character (see part_owner)
+    _text_field(c, "part_of", "")
     _text_field(c, "language", lang)
     c["anchors"] = _texts(c.get("anchors"))
-    # v0.4.1: True (one sheet), False (separate pictures) or "auto" (a sheet only when the pass would not fit H3's 9
-    # pictures otherwise)
     if not (isinstance(c.get("pack_sheet"), bool) or c.get("pack_sheet") == "auto"):
         c["pack_sheet"] = True
     c["outfits"] = _objects(c.get("outfits"))
@@ -697,9 +510,6 @@ def _norm_cast(c, lang):
     lora = c["lora"] = c["lora"] if isinstance(c.get("lora"), dict) else {}
     _text_field(lora, "name", "")
     lora["strength"] = spec.num(lora.get("strength"), 0.8)
-    # added 2026-11-09 v0.16.0: video anchors (Sencer: "why didn't we add video anchors? if possible, lets add them as
-    # well"): [{"id", "asset" (a video asset), "in", "out" (the clip sent, as a scene reference's From / To: whole
-    # frames, out None = the asset's end), "soundtrack" (send its sound too, default off)}]; see pick_video_anchors
     c["video_anchors"] = _objects(c.get("video_anchors"))
     used = set()
     for va in c["video_anchors"]:
@@ -709,9 +519,6 @@ def _norm_cast(c, lang):
         o = spec.num(va.get("out"), None)
         va["out"] = None if o is None or o <= 0 else snap_frame(o)
         va["soundtrack"] = spec.flag(va.get("soundtrack"), False)
-        # added 2026-11-10 v0.18.0: a frame of the clip as a picture (Cast -> Video anchors -> Preview -> Use this frame
-        # as a picture): "frame" its time in the file (whole frames, None = none), "frame_asset" the image asset made
-        # from it (it is offered under Anchors -> + Add anchor; the cast member uses it only once added there)
         fr = spec.num(va.get("frame"), None)
         va["frame"] = None if fr is None or fr < 0 else snap_frame(fr)
         _text_field(va, "frame_asset", "")
@@ -722,7 +529,7 @@ def _blank(s):
 
 
 def _norm_pass_text(x):
-    """added 2026-11-05 v0.8.0: one entry of scene.prompt.passes: {"start", "end" (scene seconds of the pass when its
+    """One entry of scene.prompt.passes: {"start", "end" (scene seconds of the pass when its
     text was written), "sections": the six sections as text}; anything else becomes an empty entry (0, 0)."""
     x = x if isinstance(x, dict) else {}
     x["start"] = float(spec.num(x.get("start"), 0.0))
@@ -755,12 +562,10 @@ def _norm_scene(s, d, lang, used_ids):
         _text_field(r, "asset", "")
         r["role"] = r["role"] if r.get("role") in spec.ROLES else "reference"
         r["time"] = spec.num(r.get("time"), 0.0)
-        _text_field(r, "cast", "")  # added 2026-11-08 v0.12.0: the character a pose reference is for
+        _text_field(r, "cast", "")
         _text_field(r, "retention", "")
         r["keep"] = _texts(r.get("keep"))
         r["soundtrack"] = spec.flag(r.get("soundtrack"), False)
-        # added 2026-11-08 v0.14.0: the part of a video or audio asset the reference sends (ref_clip): "in" where it
-        # starts in the asset, "out" where it ends (None = the asset's end), both on whole frames
         r["in"] = snap_frame(max(0.0, spec.num(r.get("in"), 0.0)))
         o = spec.num(r.get("out"), None)
         r["out"] = None if o is None or o <= 0 else snap_frame(o)
@@ -770,8 +575,6 @@ def _norm_scene(s, d, lang, used_ids):
         if isinstance(e, dict):
             _text_field(e, "id", "")
             _text_field(e, "outfit", "")
-            # added 2026-11-10 v0.18.0: the anchors this scene leaves out (Scene -> Cast in this scene -> Anchors):
-            # picture asset ids and video anchor ids; empty = every anchor (an anchor added later is used too)
             e["skip"] = list(dict.fromkeys(_texts(e.get("skip"))))
             cast.append(e)
     s["cast"] = cast
@@ -782,7 +585,6 @@ def _norm_scene(s, d, lang, used_ids):
         x["t"] = spec.num(x.get("t"), 0.0)
         _text_field(x, "camera", "")
         _text_field(x, "text", "")
-        # added 2026-11-05 v0.8.0: H3's camera amplitude and speed (base-en.txt 4.3) and the shot size / angle
         for k, allowed in (("camera_amp", CAMERA_AMPS), ("camera_speed", CAMERA_SPEEDS), ("framing", FRAMINGS)):
             x[k] = x[k] if x.get(k) in allowed else ""
     s["shots"].sort(key=lambda x: x["t"])
@@ -794,7 +596,6 @@ def _norm_scene(s, d, lang, used_ids):
         for k in ("speaker", "delivery", "text"):
             _text_field(x, k, "")
         _text_field(x, "language", lang)
-        # added 2026-11-05 v0.8.0: how long the line is spoken (seconds > 0), None = estimated (dialogue_seconds)
         dur = spec.num(x.get("duration"), None)
         x["duration"] = float(min(dur, DIALOGUE_MAX_SECONDS)) if dur is not None and dur > 0 else None
     s["dialogue"].sort(key=lambda x: x["t"])
@@ -811,16 +612,13 @@ def _norm_scene(s, d, lang, used_ids):
     for k in SECTION_KEYS:
         _text_field(sec, k, "")
     _text_field(pr, "raw", "")
-    _text_field(pr, "brief", "")  # added 2026-11-09 v0.15.0: the Write prompts brief (default_prompt)
+    _text_field(pr, "brief", "")
     pp = pr.get("pass_prompts") if isinstance(pr.get("pass_prompts"), dict) else {}
     pr["pass_prompts"] = {k: spec.text(v) for k, v in pp.items() if spec.text(v, None) is not None}
-    # added 2026-11-05 v0.8.0: each pass's own six sections (see pass_texts); an item that is not an object becomes an
-    # empty entry, so the pass numbers of the others stay
     pr["passes"] = [_norm_pass_text(x) for x in pr["passes"]] if isinstance(pr.get("passes"), list) else []
 
     o = s["overrides"] = s["overrides"] if isinstance(s.get("overrides"), dict) else {}
-    # [OLD 2026-11-10 v0.18.0->v0.19.0] for k in ("seed", "steps", "width", "height"):
-    for k in ("seed", "steps", "width", "height", "refine_steps"):  # refine_steps: added 2026-11-10 v0.19.0
+    for k in ("seed", "steps", "width", "height", "refine_steps"):
         if k in o:
             v = spec.num(o[k], None)
             if v is None:
@@ -830,7 +628,6 @@ def _norm_scene(s, d, lang, used_ids):
     for k in ("sampler", "scheduler", "diffusion", "text_encoder", "video_vae", "audio_vae", "quality"):
         if k in o and not isinstance(o[k], str):
             del o[k]
-    # added 2026-11-10 v0.19.0: the hires overrides (model.js the same)
     if "refine_steps" in o:
         o["refine_steps"] = min(100, max(0, o["refine_steps"]))
     if "refine_denoise" in o:
@@ -854,14 +651,14 @@ def _norm_scene(s, d, lang, used_ids):
             lo["strengths"] = {k: spec.num(v) for k, v in sts.items() if spec.num(v, None) is not None}
     s["lock"] = spec.flag(s.get("lock"), False)
     _text_field(s, "notes", "")
-    s["pass_names"] = pass_names(s.get("pass_names"))  # added 2026-11-10 v0.19.0
+    s["pass_names"] = pass_names(s.get("pass_names"))
     tn = s["transition"] = s["transition"] if isinstance(s.get("transition"), dict) else {}
     tn["mode"] = tn["mode"] if tn.get("mode") in ("",) + TRANSITIONS else ""
     for k in ("frames", "audio_fade_frames"):
         tn[k] = spec.num(tn.get(k), None)
 
 
-# ---- scene.merge (added 2026-11-05 v0.7.0; model.js normMerge / migratedMerge are the same) ----
+# ---- scene.merge (model.js normMerge / migratedMerge are the same) -----------------------------
 
 def _merge_frames(v, default):
     """A frame count of scene.merge: a whole number 0 .. MERGE_MAX_FRAMES (fractions are cut off)."""
@@ -922,7 +719,7 @@ def _norm_merge(s, gm, first_id, scene_ids):
     s["merge"] = m
 
 
-# ---- stable seeds (added 2026-11-03 v0.6.0) ----
+# ---- stable seeds ------------------------------
 # "+1 per scene" seeds used the scene's position, so inserting or moving a scene changed every later seed. Each scene
 # now keeps the number it got when it was made: seed = Global seed + seed_n.
 def _seed_n_value(v):
@@ -979,7 +776,7 @@ def project_index(p):
     }
 
 
-# added 2026-11-02 v0.3.4: a cast member without its own description is described by its anchor pictures,
+# A cast member without its own description is described by its anchor pictures,
 # so an asset's description reaches every scene the character is in
 def cast_description(c, assets):
     """(text, asset_id) used for a cast member's subject line. The cast member's own description wins; otherwise
@@ -995,9 +792,9 @@ def cast_description(c, assets):
     return "", None
 
 
-# added 2026-11-08 v0.11.0: a prop can be part of a character (Cast -> Prop -> Part of): a beer belly, a tattoo, a
+# A prop can be part of a character (Cast -> Prop -> Part of): a beer belly, a tattoo, a
 # prosthetic arm. Every cast member in a scene used to be a <Subject N> of its own, and H3 puts each subject in the
-# shot as a separate thing (Sencer: a picture of a beer belly became a second person). A part's pictures and
+# shot as a separate thing. A part's pictures and
 # description now go into its character's subject. It counts in a scene only when the prop is in the scene's cast
 # and so is its character (in the cast list or speaking); without the character it is left out (validate warns).
 def part_owner(c, cast):
@@ -1012,7 +809,7 @@ def part_owner(c, cast):
 
 
 def entry_skip(entry):
-    """added 2026-11-10 v0.18.0: the anchors a scene's cast entry leaves out (scene.cast[].skip: picture asset ids and
+    """The anchors a scene's cast entry leaves out (scene.cast[].skip: picture asset ids and
     video anchor ids), as a set; model.js entrySkip is the same."""
     return set((entry or {}).get("skip") or [])
 
@@ -1021,15 +818,14 @@ def cast_pictures(c, entry, assets):
     """(outfit, picture ids) a cast member sends in a scene: its anchor pictures, then the pictures of the outfit the
     scene entry gives it (else its default outfit) that are not anchors already. Images only."""
     outfit = next((o for o in c["outfits"] if o["id"] == ((entry or {}).get("outfit") or c["default_outfit"])), None)
-    # [OLD 2026-11-10 v0.17.3->v0.18.0] ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image"]  (every anchor in every scene)
-    skip = entry_skip(entry)  # added 2026-11-10 v0.18.0: the anchors the scene unticked stay out
+    skip = entry_skip(entry)
     ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image" and a not in skip]
     if outfit:
         ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in ids]
     return outfit, ids
 
 
-# ---- added 2026-11-09 v0.16.0: video anchors of a cast member (cast.video_anchors). H3 can define a subject by a video
+# ---- video anchors of a cast member (cast.video_anchors). H3 can define a subject by a video
 # as well as by pictures (ref-en.txt 2.1: "<Subject 1> is the man in <Video 1>"), so a character's clips show how it
 # moves, talks and looks from every side. They go to every pass of a scene the character is in, after everything else
 # the pass sends, while H3's budget has room: 3 videos, 15 s of video in all, 12 files; a clip is shortened to the
@@ -1048,11 +844,11 @@ def pick_video_anchors(recs, assets, n):
     picked: [{"cast", "anchor", "asset", "in", "seconds", "sound", "cut", "mute"}] (cut: shortened to the seconds
     left; mute: its sound was asked for but no audio slot was free); left: [{"cast", "anchor", "asset", "why"}], why
     "videos" | "files" | "seconds" (under 2 s left) | "clip" (the clip has no length) | "short" (a clip under 2 s,
-    added 2026-11-09 v0.17.1)."""
+    )."""
     picked, left = [], []
     for x in recs:
         c = x["cast"]
-        skip = entry_skip(x.get("entry"))  # added 2026-11-10 v0.18.0: unticked in this scene: not sent, not counted
+        skip = entry_skip(x.get("entry"))
         for va, a in video_anchors_of(c, assets):
             if va["id"] in skip:
                 continue
@@ -1062,12 +858,6 @@ def pick_video_anchors(recs, assets, n):
             room = spec.REF_MEDIA_TOTAL_SECONDS - n["video_seconds"]
             secs = full if full <= room + 1e-6 else math.floor(room * spec.FPS + 1e-6) / spec.FPS
             cut = secs < full - 1e-6
-            # [OLD 2026-11-09 v0.17.0->v0.17.1] a clip under 2 s was sent (only a clip cut to the seconds left was refused)
-            # why = ("clip" if full <= 0 else "videos" if n["videos"] >= spec.MAX_REF_VIDEOS else
-            #        "files" if n["files"] >= spec.MAX_REF_FILES else
-            #        "seconds" if secs <= 0 or (cut and secs < spec.REF_MEDIA_MIN_SECONDS - 1e-6) else "")
-            # [/OLD]
-            # added 2026-11-09 v0.17.1 (third review): a clip under 2 s is not sent ("short"), as the Cast tab says
             why = ("clip" if full <= 0 else "short" if full < spec.REF_MEDIA_MIN_SECONDS - 1e-6 else
                    "videos" if n["videos"] >= spec.MAX_REF_VIDEOS else
                    "files" if n["files"] >= spec.MAX_REF_FILES else
@@ -1088,7 +878,7 @@ def pick_video_anchors(recs, assets, n):
     return picked, left
 
 
-# ---- added 2026-11-09 v0.16.0: how big one picture of a packed anchor sheet reaches H3 (model.js tilePixels gives the
+# ---- how big one picture of a packed anchor sheet reaches H3 (model.js tilePixels gives the
 # same number). The sheet is ceil(sqrt(n)) columns of 768-pixel cells shaped like the median picture (media.sheet_image);
 # the H3 node scales the whole sheet down to the output's pixel area ("match") or to a 2048 px short edge ("max").
 SHEET_CELL = 768
@@ -1151,15 +941,9 @@ def scene_people(p, scene, idx=None):
     return people, left_out
 
 
-# added 2026-11-08 v0.12.0: a pose reference (scene reference, role "pose"): a picture whose body pose one character of
-# the scene takes, in the shot at its time. It is cited in that character's subject line ("whose pose in [Shot 2]
-# comes from <Picture 4>") and analysed as attribute_transfer, as MiniMax's Ref2VA guide does for a characteristic
-# transferred from one reference to another subject; it is never a subject of its own (H3 would put the person in it
-# in the shot). It goes to the pass whose time span holds its time, like a keyframe.
-# ---- added 2026-11-08 v0.14.0: clips of video and audio references (Sencer: "allow to select from-to timestamps/frames
-# of source video. we should be able to use the same video/audio asset in a single scene multiple times, with different
-# start/end timestamps/durations, with or without audio"). model.js has the same functions (snapFrame, refClip,
-# refTrimmed, refTokens; tests/test_model_parity.py compares them).
+# ---- clips of video and audio references: the same asset can be a reference of a scene several times, each with
+# its own From / To and with or without its sound. model.js has the same functions (snapFrame, refClip, refTrimmed,
+# refTokens; tests/test_model_parity.py compares them).
 
 def snap_frame(t):
     """t seconds on the nearest whole frame (half a frame rounds up, as Math.round in the editor)."""
@@ -1259,7 +1043,6 @@ def scene_seed(p, scene, scene_index, take_number=0):
             h = hashlib.sha256((str(sm["seed"]) + scene["id"]).encode()).hexdigest()
             base = int(h[:12], 16)
         else:
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] base = int(sm["seed"]) + scene_index  (inserting a scene changed later seeds)
             base = int(sm["seed"]) + scene_seed_n(scene, scene_index)
     return (base + take_number * 1000003) % (2 ** 63)
 
@@ -1284,7 +1067,6 @@ def effective_loras(p, scene):
         c = cast.get(sc["id"])
         if c and c["lora"].get("name"):
             out.append((c["lora"]["name"], float(c["lora"]["strength"])))
-    # [OLD 2026-11-02 v0.2.2->v0.3.0] if g["quality"] == "draft" and g["draft"].get("lora"):
     if scene_quality(p, scene) == "draft" and g["draft"].get("lora"):
         out.append((g["draft"]["lora"], float(g["draft"]["lora_strength"])))
     seen = {}
@@ -1294,12 +1076,12 @@ def effective_loras(p, scene):
 
 
 def scene_quality(p, scene):
-    """"draft" or "final": the scene's own choice, else Global (added 2026-11-02 v0.3.0)."""
+    """"draft" or "final": the scene's own choice, else Global."""
     q = (scene.get("overrides") or {}).get("quality")
     return q if q in ("draft", "final") else p["global"]["quality"]
 
 
-# ---- added 2026-11-10 v0.19.0: Global -> Hires (the latent upscaler). model.js hiresSize / sceneHires are the same.
+# ---- Global -> Hires (the latent upscaler). model.js hiresSize / sceneHires are the same.
 HIRES_MAX_SCALE = 4.0
 
 
@@ -1357,12 +1139,11 @@ def resolve_settings(p, scene, scene_index):
     width = int(o.get("width") or g["output"]["width"])
     height = int(o.get("height") or g["output"]["height"])
     steps = int(o.get("steps") or s["steps"])
-    quality = scene_quality(p, scene)  # [OLD 2026-11-02 v0.2.2->v0.3.0] was g["quality"] for every scene
+    quality = scene_quality(p, scene)
     if quality == "draft":
         width, height = spec.snap_canvas(width * g["draft"]["scale"], height * g["draft"]["scale"])
         steps = int(g["draft"]["steps"])
-    # [OLD 2026-11-10 v0.18.0->v0.19.0] return {
-    out = {  # added 2026-11-10 v0.19.0: hires is added below
+    out = {
         "diffusion": o.get("diffusion") or m["diffusion"],
         "weight_dtype": m["weight_dtype"],
         "text_encoder": o.get("text_encoder") or m["text_encoder"],
@@ -1378,33 +1159,20 @@ def resolve_settings(p, scene, scene_index):
         "shift_video": float(s["shift_video"]), "shift_audio": float(s["shift_audio"]),
         "seed": scene_seed(p, scene, scene_index),
         "loras": effective_loras(p, scene),
-        # [OLD 2026-11-02 v0.2.2->v0.3.0] "quality": g["quality"],
         "quality": quality,
     }
-    # [OLD 2026-11-10 v0.18.0->v0.19.0] return {...}  (the dict above was returned as it is)
-    # added 2026-11-10 v0.19.0: the latent upscaler, only while it runs, so every other scene keeps its cache key
     hires = scene_hires(p, scene, width, height, quality)
     if hires:
         out["hires"] = hires
     return out
 
 
-# [OLD 2026-11-03 v0.4.3->v0.5.0] scenes end to end: a tail continuation repeats the end of the scene before, and a last-frame start repeats
-# its last frame, so the finished cut was shorter than this and a soundtrack would drift against it
-# def scene_starts(p):
-#     """Timeline start of every scene (the editor lays scenes end to end)."""
-#     starts, t = {}, 0.0
-#     for s in p["scenes"]:
-#         starts[s["id"]] = t
-#         t += float(s["duration"])
-#     return starts, t
-# [/OLD]
 def scene_overlap(scene, index):
-    """DEPRECATED (2026-11-03 v0.6.0): use scene_overlap_at(p, i), which knows the scene before (a tail is capped by
+    """DEPRECATED: use scene_overlap_at(p, i), which knows the scene before (a tail is capped by
     its length) and the re-anchor rule (a re-anchored tail overlaps one frame). Kept unchanged for callers that have
     not switched yet.
 
-    Seconds at the start of a scene that repeat the end of the scene before (added 2026-11-03 v0.5.0): the tail
+    Seconds at the start of a scene that repeat the end of the scene before: the tail
     clip it continues from (the same 17k+5 frames the planner uses), or the one last frame it starts from."""
     if index == 0:
         return 0.0
@@ -1418,7 +1186,7 @@ def scene_overlap(scene, index):
     return 0.0
 
 
-# ---- how scenes join (added 2026-11-03 v0.6.0; model.js has the same functions, tests/test_model_parity.py) ----
+# ---- how scenes join (model.js has the same functions, tests/test_model_parity.py) -----------------------------
 def continuation_depth(p):
     """How many continuation links lead into each scene (0 for a fresh start). Moved here from planner.py (which
     re-exports it) in v0.6.0."""
@@ -1501,17 +1269,6 @@ def _timing(p):
     return out, t
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] used scene_overlap (no cap by the scene before, no re-anchor rule)
-# def scene_starts(p):
-#     """Start of every scene in the finished cut, and its length (added 2026-11-03 v0.5.0, same as model.js
-#     sceneStarts). A scene's time t plays at starts[id] + t."""
-#     starts, t = {}, 0.0
-#     for i, s in enumerate(p["scenes"]):
-#         t = max(0.0, t - scene_overlap(s, i))
-#         starts[s["id"]] = t
-#         t += float(s["duration"])
-#     return starts, t
-# [/OLD]
 def scene_starts(p):
     """Start of every scene in the finished cut, and the cut's length (same as model.js sceneStarts). A scene's time
     t plays at starts[id] + t; a scene that continues the one before starts inside it by scene_overlap_at."""
@@ -1530,12 +1287,12 @@ def visible_start(p, sid):
     return visible_starts(p).get(sid)
 
 
-# ---- reference budget (added 2026-11-03 v0.6.0; model.js sceneBudget gives the same numbers) ----
+# ---- reference budget (model.js sceneBudget gives the same numbers) -----------------------------
 COUNT_KEYS = ("pictures", "videos", "video_seconds", "audio", "audio_seconds", "files")
 
 
-# ---- the continuation as a named reference (added 2026-11-05 v0.7.0; model.js passContinuation / continuationFrames
-# are the same, tests/test_model_parity.py) ----
+# ---- the continuation as a named reference (model.js passContinuation / continuationFrames are the same,
+# tests/test_model_parity.py) ----
 def pass_continuation(p, i, pass_, mode=None):
     """What pass_ (a planner pass) of scene i sends as reference 1 for the footage it continues from, when Global ->
     Continuity -> name_continuation is on: "picture" (pass 1 of a last-frame start, a re-anchored tail too: the last
@@ -1545,9 +1302,6 @@ def pass_continuation(p, i, pass_, mode=None):
     if not spec.flag(((p.get("global") or {}).get("continuity") or {}).get("name_continuation", True), True):
         return ""
     if int(spec.num(pass_.get("index"), 1)) > 1:
-        # [OLD 2026-11-05 v0.7.0->v0.8.0] return "video" if pass_.get("seam_before") == "overlap" else ""
-        # added 2026-11-05 v0.8.0: Global -> Long scenes -> seam_video_ref off: the pass after an overlap seam is
-        # anchored only (no <Video 1>); prompt, budget, lint and render all ask here
         seam_ref = spec.flag(((p.get("global") or {}).get("long") or {}).get("seam_video_ref", True), True)
         return "video" if pass_.get("seam_before") == "overlap" and seam_ref else ""
     if i is None or i <= 0:
@@ -1569,9 +1323,7 @@ def continuation_frames(p, i, pass_, mode=None):
     return min(spec.MIN_PASS_FRAMES, scene_frames(p["scenes"][i - 1]))
 
 
-# [OLD 2026-11-05 v0.6.1->v0.7.0] def scene_media_counts(p, scene, pass_=None, starts=None):
-# [OLD 2026-11-09 v0.15.1->v0.16.0] def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True):  # mode, continuation: v0.7.0
-def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True, video_anchors=True):  # video_anchors: v0.16.0
+def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True, video_anchors=True):
     """What one pass of `scene` sends H3, counted the way prompt.collect_refs presents references:
 
     pictures       cast anchors (+ outfit pictures; a packed sheet is 1) and reference pictures, each asset once
@@ -1586,7 +1338,7 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
     count, the most any of its passes uses (song: any pass). starts: scene_starts(p)[0] if you have it already.
     Guide pictures (first/last frame, keyframes) that the prompt text names are not counted.
 
-    added 2026-11-05 v0.7.0: the continuation reference (pass_continuation) counts too, as one picture or one video
+    The continuation reference (pass_continuation) counts too, as one picture or one video
     (plus an audio slot for its sound when one is free); continuation: "picture" | "video" | "video_audio" (with its
     sound) | "" says which (pass_=None: the first pass that has one). A continuation picture counts for "auto"
     packing; one that still does not fit (pictures <= 9, videos <= 3, files <= 12) is left out, and the pass counts as
@@ -1594,46 +1346,22 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
     if pass_ is None:
         from .planner import plan_scene  # planner imports model
         i = next((k for k, s in enumerate(p["scenes"]) if s["id"] == scene["id"]), 0)
-        # [OLD 2026-11-05 v0.6.1->v0.7.0] outs = [scene_media_counts(p, scene, x, starts) for x in plan_scene(p, scene, i)["passes"]]
-        # [OLD 2026-11-09 v0.15.1->v0.16.0] outs = [scene_media_counts(p, scene, x, starts, mode, continuation) for x in plan_scene(p, scene, i)["passes"]]
         outs = [scene_media_counts(p, scene, x, starts, mode, continuation, video_anchors)
                 for x in plan_scene(p, scene, i)["passes"]]
         out = {k: max(o[k] for o in outs) for k in COUNT_KEYS}
         out["song"] = any(o["song"] for o in outs)
-        out["continuation"] = next((o["continuation"] for o in outs if o["continuation"]), "")  # added 2026-11-05 v0.7.0
+        out["continuation"] = next((o["continuation"] for o in outs if o["continuation"]), "")
         return out
     idx = project_index(p)
-    assets, cast = idx["assets"], idx["cast"]
-    # [OLD 2026-11-08 v0.10.3->v0.11.0] every cast member counted on its own (scene_people now folds a prop that is
-    # part of a character into that character)
-    # entries = list(scene["cast"])
-    # for d in scene["dialogue"]:  # a speaker who is not in the scene's cast list still gets anchors
-    #     if d.get("speaker") in cast and not any(e["id"] == d["speaker"] for e in entries):
-    #         entries.append({"id": d["speaker"], "outfit": ""})
-    # people = []
-    # for e in entries:
-    #     c = cast.get(e["id"])
-    #     if not c:
-    #         continue
-    #     outfit = next((o for o in c["outfits"] if o["id"] == (e.get("outfit") or c["default_outfit"])), None)
-    #     ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image"]
-    #     if outfit:
-    #         ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in ids]
-    #     people.append((c, ids))
-    # [/OLD]
-    # [OLD 2026-11-08 v0.11.0->v0.12.0] people = [(x["cast"], x["ids"]) for x in scene_people(p, scene, idx)[0]]  # added 2026-11-08 v0.11.0
-    recs = scene_people(p, scene, idx)[0]  # added 2026-11-08 v0.12.0: the records, for pose_refs
+    assets = idx["assets"]
+    recs = scene_people(p, scene, idx)[0]
     people = [(x["cast"], x["ids"]) for x in recs]
     anchors = {a for _, ids in people for a in ids}
     ref_pics = {r["asset"] for r in scene["refs"]
                 if r["role"] == "reference" and r["asset"] in assets and assets[r["asset"]]["kind"] == "image"}
-    # added 2026-11-08 v0.12.0: the pose pictures of this pass, after the cast's pictures (prompt.collect_refs)
     pose_pics = list(dict.fromkeys(a["id"] for _, a, _ in pose_refs(p, scene, pass_, recs, idx)))
-    # added 2026-11-05 v0.7.0: the continuation reference of this pass; a picture counts for "auto" packing
     i = next((k for k, s in enumerate(p["scenes"]) if s["id"] == scene["id"]), None)
     cont = pass_continuation(p, i, pass_, mode) if continuation else ""
-    # [OLD 2026-11-05 v0.6.1->v0.7.0] auto_pack = len(anchors) + len(ref_pics - anchors) > spec.MAX_REF_IMAGES
-    # [OLD 2026-11-08 v0.11.0->v0.12.0] auto_pack = len(anchors) + len(ref_pics - anchors) + (1 if cont == "picture" else 0) > spec.MAX_REF_IMAGES
     auto_pack = len(anchors) + len((ref_pics | set(pose_pics)) - anchors) + (1 if cont == "picture" else 0) > \
         spec.MAX_REF_IMAGES
     if starts is None:
@@ -1650,35 +1378,10 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
         v = assets.get(c.get("voice"))
         if v and v["kind"] == "audio" and not song and c["id"] in speaking:
             sounds.append(v)
-    for aid in pose_pics:  # added 2026-11-08 v0.12.0
+    for aid in pose_pics:
         if aid not in sent:
             sent.add(aid)
             out["pictures"] += 1
-    # [OLD 2026-11-08 v0.13.1->v0.14.0] every video reference counted its asset's whole length, and an audio asset
-    # counted once however often it was used
-    # for r in scene["refs"]:
-    #     a = assets.get(r["asset"])
-    #     if not a or r["role"] != "reference":
-    #         continue
-    #     dur = float(a.get("duration") or 0)
-    #     if a["kind"] == "image":
-    #         if a["id"] not in sent:
-    #             sent.add(a["id"])
-    #             out["pictures"] += 1
-    #     elif a["kind"] == "video":
-    #         out["videos"] += 1
-    #         out["video_seconds"] += dur
-    #         if r.get("soundtrack"):  # the video's sound takes an <Audio j> slot of its own
-    #             out["audio"] += 1
-    #             out["audio_seconds"] += dur
-    #     elif a["kind"] == "audio" and not any(x["id"] == a["id"] for x in sounds):
-    #         sounds.append(a)
-    # out["audio"] += len(sounds) + (1 if song else 0)
-    # for a in sounds:
-    #     out["audio_seconds"] += float(a.get("duration") or 0)
-    # [/OLD]
-    # added 2026-11-08 v0.14.0: each reference sends its clip (ref_clip): every video reference as before, an audio
-    # clip once (prompt.collect_refs; a voice sample is the whole file)
     sounds = [((a["id"], 0.0, None), float(a.get("duration") or 0)) for a in sounds]
     for r in scene["refs"]:
         a = assets.get(r["asset"])
@@ -1705,11 +1408,9 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
     if song:
         out["audio_seconds"] += song["length"]
     out["files"] = out["pictures"] + out["videos"] + len(sounds) + (1 if song else 0)
-    # added 2026-11-05 v0.7.0: the continuation reference, when it fits (else the pass counts as in v0.6.1)
     out["continuation"] = ""
     if cont == "picture":
         if out["pictures"] + 1 > spec.MAX_REF_IMAGES or out["files"] + 1 > spec.MAX_REF_FILES:
-            # [OLD 2026-11-09 v0.15.1->v0.16.0] return scene_media_counts(p, scene, pass_, starts, mode, continuation=False)
             return scene_media_counts(p, scene, pass_, starts, mode, continuation=False, video_anchors=video_anchors)
         out["pictures"] += 1
         out["files"] += 1
@@ -1724,21 +1425,21 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
             out["audio"] += 1
             out["audio_seconds"] += secs
             out["continuation"] = "video_audio"
-    if video_anchors:  # added 2026-11-09 v0.16.0: the cast's video anchors, after everything else (pick_video_anchors)
+    if video_anchors:
         pick_video_anchors(recs, assets, out)
     return out
 
 
-# ---- v0.8.0: camera wording, dialogue length, per-pass prompt sections (added 2026-11-05 v0.8.0; model.js has the
-# same functions: cameraSentence, framingPhrase, dialogueSeconds, dialogueSpans, passTexts, relayoutPassTexts,
-# passSections; tests/test_model_parity.py compares them) ----
+# ---- camera wording, dialogue length, per-pass prompt sections (model.js has the same functions: cameraSentence,
+# framingPhrase, dialogueSeconds, dialogueSpans, passTexts, relayoutPassTexts, passSections;
+# tests/test_model_parity.py compares them) ----
 
 def framing_phrase(framing):
     """"close-up" -> "a close-up", "low angle" -> "a low-angle shot"; "" for no framing (FRAMINGS)."""
     return FRAMING_PHRASE.get(framing, "") if isinstance(framing, str) else ""
 
 
-# added 2026-11-06 v0.8.0 (lead review): a shot whose camera is just an official move's name ("Push In", "tracking
+# A shot whose camera is just an official move's name ("Push In", "tracking
 # shot", "POV") is written with that move's phrase ("the camera pushes in"), not as the name
 _MOVE_BY_NAME = {n.lower(): t for n, t in DEFAULT_CAMERA}
 
@@ -1754,7 +1455,6 @@ def camera_sentence(camera, amp="", speed=""):
     """A shot's camera text as one sentence in the form of H3's guide (base-en.txt 4.3): "the camera pushes in" with
     amp "small" and speed "slow" -> "The camera pushes in with small amplitude at slow speed." Medium amplitude and
     normal speed ("") are not written; hand-written text works the same way. "" when there is no camera text."""
-    # [OLD 2026-11-06 v0.8.0 lead review] t = spec.text(camera).strip(" \t\n\r")  (an official name was written as the name)
     t = official_camera(camera).strip(" \t\n\r")
     extra = (" with {} amplitude".format(amp) if amp in ("small", "large") else "") + \
             (" at {} speed".format(speed) if speed in ("slow", "fast") else "")

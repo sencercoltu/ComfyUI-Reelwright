@@ -1,13 +1,11 @@
 """Lint rules. Problems are reported, never fixed silently; only errors block a render."""
 
-from . import spec
-from . import model as _model  # added 2026-11-03 v0.6.0: feature-detects scene_media_counts / tail_overlap_frames
-# [OLD 2026-11-02 v0.3.3->v0.3.4] from .model import project_index
-from .model import cast_description, project_index
-from .planner import continuation_depth
-from . import prompt as _prompt  # added 2026-11-03 v0.6.0: prompt.prepare (shared context)
-from . import soundtrack  # added 2026-11-03 v0.5.0
-import inspect  # added 2026-11-09 v0.16.0: scene_media_counts(anchors=) when the model has it
+import inspect
+
+from . import model as _model
+from . import prompt as _prompt
+from . import soundtrack, spec
+from .model import cast_description
 
 
 def _issue(level, message, scene_id=None):
@@ -17,7 +15,7 @@ def _issue(level, message, scene_id=None):
     return x
 
 
-# ---- helpers (added 2026-11-03 v0.6.0) ---------------------------------------------------------------------------
+# ---- helpers -----------------------------------------------------------------------------------------------------
 
 GUIDE_ROLES = (("first_frame", "first frame"), ("keyframes", "keyframe"), ("last_frame", "last frame"))
 # A video guide longer than the room in its pass: the renderer shortens it (render.fit_clip), so it is a warning.
@@ -37,8 +35,7 @@ def _sent_assets(b):
     out = set()
     for img in b["images"]:
         out.update(img["assets"])
-    # [OLD 2026-11-05 v0.6.1->v0.7.0] out.update(v["asset"] for v in b["videos"])
-    out.update(v["asset"] for v in b["videos"] if v.get("asset"))  # v0.7.0: the continuation clip is no asset
+    out.update(v["asset"] for v in b["videos"] if v.get("asset"))
     for au in b["audios"]:
         if au.get("song"):
             out.update(x["asset"] for x in au["song"].get("pieces") or [])
@@ -54,19 +51,12 @@ def _media_counts(p, scene, pass_, b, ctx):
     assets = ctx["index"]["assets"]
     counts = getattr(_model, "scene_media_counts", None)
     if counts is not None:
-        # [OLD 2026-11-05 v0.6.1->v0.7.0] c = dict(counts(p, scene, pass_, starts=ctx["starts"]))
-        # added 2026-11-05 v0.7.0: the continuation reference as the build sends it. The model counts it by the same
-        # rule, but a pass whose text uses fixed reference numbers, or whose guide pictures named in the text take the
-        # room, leaves it out (prompt.build_pass); then the pass counts as in v0.6.1.
         mode = ctx["start_mode"].get(scene["id"])
-        # [OLD 2026-11-09 v0.15.1->v0.16.0] c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode))
-        # added 2026-11-09 v0.16.0: the video anchors as the build sends them (added below), not as the model picks them
         kw = {"video_anchors": False} if "video_anchors" in inspect.signature(counts).parameters else {}
         c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, **kw))
         sent = next((x for x in b["images"] + b["videos"] if x.get("continuation")), None)
         kind = "" if not sent else "picture" if sent in b["images"] else "video_audio" if sent["soundtrack"] else "video"
         if c.get("continuation", "") != kind:
-            # [OLD 2026-11-09 v0.15.1->v0.16.0] c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, continuation=False))
             c = dict(counts(p, scene, pass_, starts=ctx["starts"], mode=mode, continuation=False, **kw))
             c["continuation"] = kind
             c["pictures" if kind == "picture" else "videos"] += 1 if kind else 0
@@ -86,7 +76,7 @@ def _media_counts(p, scene, pass_, b, ctx):
                 c["videos"] += 1
                 c["video_seconds"] += float(assets[v["asset"]].get("duration") or 0)
                 c["files"] += 1
-            if v.get("anchor") and kw:  # added 2026-11-09 v0.16.0: a video anchor (model.pick_video_anchors)
+            if v.get("anchor") and kw:
                 c["videos"] += 1
                 c["files"] += 1
                 c["video_seconds"] += float(v.get("seconds") or 0)
@@ -118,12 +108,11 @@ def _tail_overlap(p, i, plan):
 
 
 def _colour_name(c):
-    """added 2026-11-05 v0.7.0"""
     return {"#000000": "black", "#ffffff": "white"}.get(str(c or "").lower(), str(c or "black"))
 
 
 def _merge_issues(p, i, s, name, ctx, locked, scene_ids):
-    """added 2026-11-05 v0.7.0: problems with how scene i sits in the cut (scene.merge): a fade out on a scene the
+    """Problems with how scene i sits in the cut (scene.merge): a fade out on a scene the
     next one continues from, a fade in on a continuing scene, a colour reference scene that is not in the project,
     and (info) a transition that a soundtrack setting the timing turns into a dip inside both scenes."""
     out = []
@@ -158,7 +147,7 @@ def _merge_issues(p, i, s, name, ctx, locked, scene_ids):
 
 
 def _cut_seam_hint(p, s, plan, name):
-    """added 2026-11-05 v0.8.0 (Agent V): an info line for a long scene with overlap seams and no shot cuts: each
+    """An info line for a long scene with overlap seams and no shot cuts: each
     overlap seam re-encodes the end of the pass before (decode -> encode), so later passes can drift; a shot cut near
     a seam makes it a plain cut (Seams: Auto or Cuts). None when it does not apply."""
     seams = [x for x in plan["passes"] if x.get("seam_before") == "overlap"]
@@ -181,7 +170,7 @@ def _passes_label(name, indexes, n_passes):
     return "{} pass{} {}".format(name, "es" if len(indexes) > 1 else "", ", ".join(str(i) for i in indexes))
 
 
-# ---- added 2026-11-05 v0.8.0 (Agent P, contract P1): dialogue length, per-pass sections ----------------------------
+# ---- dialogue length, per-pass sections ----------------------------------------------------------------------------
 
 def _numbers(xs):
     """[1, 2, 3] -> "1, 2 and 3"."""
@@ -249,19 +238,8 @@ def _pass_text_issues(p, s, plan, name):
     return out
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] def lint_project(p, plans, builds, asset_exists):
-#     idx = project_index(p)
-#     assets, cast = idx["assets"], idx["cast"]
-#     issues = []
-#     depth = continuation_depth(p)
-#     reanchor = int(p["global"]["continuity"]["reanchor_after"])
-#
-#     for a in p["assets"]:
-#         if not a.get("file") or not asset_exists(a):
-#             issues.append(_issue("error", "{} ({}) file is missing".format(a["code"], a["name"] or a["file"])))
-# [/OLD]
 def lint_project(p, plans, builds, asset_exists, ctx=None):
-    """ctx: prompt.prepare(p), shared with build_pass (added 2026-11-03 v0.6.0)."""
+    """ctx: prompt.prepare(p), shared with build_pass."""
     ctx = ctx if ctx is not None and ctx.get("project") is p else _prompt.prepare(p)
     idx = ctx["index"]
     assets, cast = idx["assets"], idx["cast"]
@@ -269,8 +247,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
     depth = ctx["depth"]
     reanchor = int(p["global"]["continuity"]["reanchor_after"])
 
-    # added 2026-11-03 v0.6.0: a missing file is an error on every scene that sends it (so pre-flight stops that
-    # scene before any GPU work); the project-wide line is left for files no scene uses
     known = {}
 
     def exists(a):
@@ -285,13 +261,11 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                                  "{} ({}) file is missing{}".format(a["code"], a["name"] or a["file"],
                                                                     "" if a["id"] in tracks else " (no scene uses it)")))
 
-    # added 2026-11-10 v0.19.0: Global -> Hires needs a latent upscaler (the render's pre-flight refuses without one)
     hi = p["global"].get("hires") or {}
     if hi.get("enabled") and not (p["global"]["models"].get("latent_upscaler") or ""):
         issues.append(_issue("error", "Global -> Hires is on but no latent upscaler is chosen: pick one under Global -> "
                                       "Models, or turn Hires off"))
 
-    # added 2026-11-09 v0.16.0: a video anchor that cannot be sent (deleted or not a video, or no clip left by From / To)
     for c in p["cast"]:
         for va in c.get("video_anchors") or []:
             a = assets.get(va.get("asset"))
@@ -306,9 +280,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                                                                           spec.fmt_time(clip["start"]),
                                                                           spec.fmt_time(float(a.get("duration") or 0)))))
             elif clip["seconds"] is not None and clip["seconds"] < spec.REF_MEDIA_MIN_SECONDS - 1e-6:
-                # [OLD 2026-11-09 v0.17.0->v0.17.1] issues.append(_issue("info", "{}: video anchor {} is a {:.2f} s clip (H3 video references are 2-15 s)"
-                # [OLD 2026-11-09 v0.17.0->v0.17.1]                      .format(c["name"], a["code"], clip["seconds"])))
-                # added 2026-11-09 v0.17.1 (third review): such a clip is not sent (model.pick_video_anchors "short")
                 issues.append(_issue("warn", "{}: video anchor {} is a {:.2f} s clip, so it is not sent (H3 video "
                                              "references are 2-15 s)".format(c["name"], a["code"], clip["seconds"])))
             elif clip["seconds"] is not None and clip["seconds"] > spec.REF_MEDIA_MAX_SECONDS + 1e-6:
@@ -317,10 +288,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                                                  c["name"], a["code"], clip["seconds"], spec.REF_MEDIA_MAX_SECONDS,
                                                  c["name"])))
 
-    # [OLD 2026-11-03 v0.4.3->v0.5.0] score = p["global"]["merge"]["score"].get("asset")
-    # [OLD 2026-11-03 v0.4.3->v0.5.0] if score and score not in assets:
-    # [OLD 2026-11-03 v0.4.3->v0.5.0]     issues.append(_issue("warn", "Merge score track asset no longer exists"))
-    # added 2026-11-03 v0.5.0: soundtrack tracks replace the merge score
     for n, t in enumerate(p.get("soundtrack") or []):
         a = assets.get(t.get("asset"))
         label = "Soundtrack track {}".format(n + 1) + (" ({})".format(a["code"]) if a else "")
@@ -340,18 +307,8 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
         if t["start"] < 0:
             issues.append(_issue("info", "{}: it starts {:.2f} s before the film, so that part is not heard".format(
                 label, -t["start"])))
-    # [OLD 2026-11-05 v0.6.1->v0.7.0] one line for the project, from scene.transition / Global -> Merge (now per scene,
-    # from scene.merge, in _merge_issues)
-    # if soundtrack.locked(p):
-    #     hard = [(s.get("transition") or {}).get("mode") or p["global"]["merge"]["hard_cut"]
-    #             for i, s in enumerate(p["scenes"]) if i > 0 and s["start"]["mode"] == "fresh"]
-    #     if any(h in ("crossfade", "dip") for h in hard):
-    #         issues.append(_issue("info", "Crossfades and dips play as a dip through black inside the scenes, so the "
-    #                                      "soundtrack keeps its timing"))
-    #     # the Merge card says that scenes not rendered yet become slates; as an issue it showed on every project
-    # [/OLD]
-    locked = soundtrack.locked(p)  # added 2026-11-05 v0.7.0
-    scene_ids = {s["id"] for s in p["scenes"]}  # added 2026-11-05 v0.7.0
+    locked = soundtrack.locked(p)
+    scene_ids = {s["id"] for s in p["scenes"]}
 
     for i, s in enumerate(p["scenes"]):
         sid = s["id"]
@@ -362,7 +319,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             issues.append(_issue("error", "{}: duration must be above 0".format(name), sid))
         if i == 0 and s["start"]["mode"] != "fresh":
             issues.append(_issue("info", "{}: the first scene always starts fresh".format(name), sid))
-        # added 2026-11-08 v0.12.0: a pose reference goes out only with a picture and a character of this scene
         if hasattr(_model, "pose_refs"):
             sent = {r["id"] for r, _, _ in _model.pose_refs(p, s, None, None, idx)}
             for r in s["refs"]:
@@ -375,7 +331,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                        "{} is not in this scene".format(c["name"]))
                 issues.append(_issue("warn", "{}: {} is a pose reference but {}, so it is not sent".format(
                     name, a["code"], why), sid))
-        # added 2026-11-08 v0.14.0: the clip of a video or audio reference (From / To) must lie inside its asset
         if hasattr(_model, "ref_clip"):
             tokens = _model.ref_tokens(p, s, idx)
             for r in s["refs"]:
@@ -395,7 +350,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                     issues.append(_issue("info", "{}: {} ends at {}, after the end of {} ({}): it is sent up to its "
                                                  "end".format(name, tok, spec.fmt_time(float(r["out"])), a["code"],
                                                               spec.fmt_time(dur)), sid))
-        # added 2026-11-08 v0.11.0: a prop that is part of a character is left out of a scene its character is not in
         if hasattr(_model, "scene_people"):
             for part, owner in _model.scene_people(p, s, idx)[1]:
                 issues.append(_issue("warn", "{}: {} is part of {}, who is not in this scene, so it is left out (add {} "
@@ -403,7 +357,7 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                                                                                        owner["name"]), sid))
         if plan["kind"] == "long":
             issues.append(_issue("info", "{}: split into {} passes".format(name, len(plan["passes"])), sid))
-            seam_hint = _cut_seam_hint(p, s, plan, name)  # added 2026-11-05 v0.8.0 (Agent V)
+            seam_hint = _cut_seam_hint(p, s, plan, name)
             if seam_hint:
                 issues.append(_issue("info", seam_hint, sid))
         if plan["kind"] == "short":
@@ -412,16 +366,14 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
         if depth.get(sid, 0) > reanchor and s["start"]["mode"] == "tail":
             issues.append(_issue("info", "{}: {} chained continuations, so it continues from the last frame only (re-anchor rule)".format(
                 name, depth[sid]), sid))
-        # added 2026-11-03 v0.6.0: a tail next to a scene shorter than 5 frames starts from the last frame too
         elif i > 0 and s["start"]["mode"] == "tail" and ctx["start_mode"].get(sid) == "last_frame":
             issues.append(_issue("info", "{}: it or the scene before is shorter than 5 frames, so it continues from the "
                                          "last frame only".format(name), sid))
-        overlap = _tail_overlap(p, i, plan) if i > 0 else 0.0  # added 2026-11-03 v0.6.0
+        overlap = _tail_overlap(p, i, plan) if i > 0 else 0.0
 
         for sh in s["shots"]:
             if float(sh["t"]) >= d:
                 issues.append(_issue("error", "{}: a shot starts at {:.2f} s, after the scene ends".format(name, float(sh["t"])), sid))
-            # added 2026-11-03 v0.6.0
             elif float(sh["t"]) < 0:
                 issues.append(_issue("warn", "{}: a shot starts at {:.2f} s, before the scene, so it starts at 0 s".format(
                     name, float(sh["t"])), sid))
@@ -429,12 +381,11 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                 issues.append(_issue("warn", "{}: a shot starts at {:.2f} s, inside the {:.2f} s tail overlap that the "
                                              "cut trims away; move it to {:.2f} s or later".format(
                                                  name, float(sh["t"]), overlap, overlap), sid))
-        spoken = {x["id"] for pass_ in plan["passes"] for x in pass_["dialogue"]}  # added 2026-11-03 v0.6.0
+        spoken = {x["id"] for pass_ in plan["passes"] for x in pass_["dialogue"]}
         for line in s["dialogue"]:
             t = float(line["t"])
             if t >= d:
                 issues.append(_issue("error", "{}: a dialogue line at {:.2f} s is after the scene ends".format(name, t), sid))
-            # added 2026-11-03 v0.6.0: lines before the scene, inside the trimmed tail overlap, or left out of every pass
             elif t < 0:
                 issues.append(_issue("warn", "{}: a dialogue line at {:.2f} s starts before the scene, so it is spoken "
                                              "at 0 s".format(name, t), sid))
@@ -455,8 +406,8 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                 issues.append(_issue("warn", "{}: a dialogue line has no language tag".format(name), sid))
             elif line["language"] not in spec.STABLE_LANGUAGES:
                 issues.append(_issue("info", "{}: {} is outside H3's 11 stable dialogue languages".format(name, line["language"]), sid))
-        issues += _dialogue_span_issues(s, plan, name)  # added 2026-11-05 v0.8.0: past a pass seam or the scene's end
-        issues += _pass_text_issues(p, s, plan, name)  # added 2026-11-05 v0.8.0: per-pass sections (P1)
+        issues += _dialogue_span_issues(s, plan, name)
+        issues += _pass_text_issues(p, s, plan, name)
 
         has_first = False
         for r in s["refs"]:
@@ -472,7 +423,7 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                 has_first = True
         if has_first and i > 0 and s["start"]["mode"] != "fresh":
             issues.append(_issue("warn", "{}: a first-frame reference and a continuation both anchor frame 0".format(name), sid))
-        issues += _merge_issues(p, i, s, name, ctx, locked, scene_ids)  # added 2026-11-05 v0.7.0: scene.merge
+        issues += _merge_issues(p, i, s, name, ctx, locked, scene_ids)
 
         for entry in s["cast"]:
             c = cast.get(entry["id"])
@@ -480,13 +431,10 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                 issues.append(_issue("error", "{}: a cast member was deleted".format(name), sid))
             elif c["kind"] == "character" and not c["anchors"]:
                 issues.append(_issue("warn", "{}: {} has no anchor pictures, so identity is not locked".format(name, c["name"]), sid))
-            # added 2026-11-10 v0.18.0: every anchor picture unticked for this scene (Scene -> Cast in this scene -> Anchors)
             elif c["kind"] == "character" and set(c["anchors"]) <= set(entry.get("skip") or []):
                 issues.append(_issue("warn", "{}: every anchor picture of {} is unticked in this scene (Cast in this "
                                              "scene -> Anchors), so identity is not locked".format(name, c["name"]), sid))
 
-        # added 2026-11-09 v0.16.0: a packed anchor sheet whose pictures reach H3 too small for a reliable identity
-        # (model.tile_pixels at the size the scene renders, with Global -> Output -> Reference images)
         if hasattr(_model, "tile_pixels"):
             st = _model.resolve_settings(p, s, i)
             small = {}
@@ -506,7 +454,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                                                  "" if st["ref_image_size"] == "max" else
                                                  ", or set Global -> Output -> Reference images to max"), sid))
 
-        # added 2026-11-03 v0.6.0: files this scene sends that are missing (an error here stops the scene before rendering)
         sent = set()
         for b in builds[sid]:
             sent |= _sent_assets(b)
@@ -514,13 +461,11 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             a = assets.get(aid)
             if a and not exists(a):
                 issues.append(_issue("error", "{}: {} ({}) file is missing".format(name, a["code"], a["name"] or a["file"]), sid))
-        # added 2026-11-03 v0.6.0: a prompt written for a pass the scene no longer has
         n_passes = len(plan["passes"])
         for k, text in sorted((s["prompt"].get("pass_prompts") or {}).items()):
             if isinstance(text, str) and text.strip() and (not str(k).isdigit() or not 1 <= int(k) <= n_passes):
                 issues.append(_issue("warn", "{}: the prompt written for pass {} is not used, because the scene has {} "
                                              "pass{} now".format(name, k, n_passes, "es" if n_passes > 1 else ""), sid))
-        # added 2026-11-03 v0.6.0: what the prompt builder says about tags and written shot lines, once per scene
         said = {}
         for b, pass_ in zip(builds[sid], plan["passes"]):
             for x in b.get("issues") or []:
@@ -530,21 +475,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
 
         for b, pass_ in zip(builds[sid], plan["passes"]):
             where = name if len(plan["passes"]) == 1 else "{} pass {}".format(name, pass_["index"])
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] every unresolved tag was an error here; build_pass's issues say why each one did not resolve
-            # for tag in b["unknown"]:
-            #     issues.append(_issue("error", "{}: {} does not match an asset or cast member in this scene".format(where, tag), sid))
-            # [/OLD]
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] counted from the build: a video's own sound took no audio slot (see _media_counts)
-            # n_img, n_vid, n_aud = len(b["images"]), len(b["videos"]), len(b["audios"])
-            # if n_img > spec.MAX_REF_IMAGES:
-            #     issues.append(_issue("warn", "{}: {} pictures (H3 is trained on up to 9)".format(where, n_img), sid))
-            # if n_vid > spec.MAX_REF_VIDEOS:
-            #     issues.append(_issue("warn", "{}: {} reference videos (up to 3)".format(where, n_vid), sid))
-            # if n_aud > spec.MAX_REF_AUDIOS:
-            #     issues.append(_issue("warn", "{}: {} reference audio clips (up to 3)".format(where, n_aud), sid))
-            # if n_img + n_vid + n_aud > spec.MAX_REF_FILES:
-            #     issues.append(_issue("warn", "{}: {} reference files (up to 12)".format(where, n_img + n_vid + n_aud), sid))
-            # [/OLD]
             n = _media_counts(p, s, pass_, b, ctx)
             if n["pictures"] > spec.MAX_REF_IMAGES:
                 issues.append(_issue("warn", "{}: {} pictures (H3 is trained on up to 9)".format(where, n["pictures"]), sid))
@@ -560,9 +490,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             if n["audio_seconds"] > spec.REF_MEDIA_TOTAL_SECONDS + 1e-4:
                 issues.append(_issue("warn", "{}: audio refs total {:.1f} s, counting a video's own sound and the "
                                              "soundtrack (max 15 s)".format(where, n["audio_seconds"]), sid))
-            # added 2026-11-03 v0.6.0: a guide clip has to fit its pass. MiniMaxH3AddGuide refused one mid-run; the
-            # renderer now fits it (render.fit_clip: a last-frame clip ends on the last frame, any other is shortened
-            # to the frames left), so this says how much of the clip is used and how to keep all of it
             for key, label in GUIDE_ROLES:
                 for g in pass_.get(key) or []:
                     r = next((x for x in s["refs"] if x["id"] == g["ref"]), None)
@@ -590,22 +517,13 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                                                              pass_["gen_frames"], room,
                                                              "last" if key == "last_frame" else "first", used,
                                                              "s" if used > 1 else "", "are" if used > 1 else "is", fix), sid))
-            # [OLD 2026-11-03 v0.4.3->v0.5.0] for kind, items in (("video", [assets[v["asset"]] for v in b["videos"]]),
-            # [OLD 2026-11-03 v0.4.3->v0.5.0]                     ("audio", [assets[x["asset"]] for x in b["audios"]])):
-            # added 2026-11-03 v0.5.0: the soundtrack segment counts as an audio ref of its own length
-            # [OLD 2026-11-08 v0.13.1->v0.14.0] audio_items = [{"code": "soundtrack", "duration": x["song"]["length"]} if x.get("song") else assets[x["asset"]]
-            # [OLD 2026-11-08 v0.13.1->v0.14.0]                for x in b["audios"]]
-            # added 2026-11-08 v0.14.0: a trimmed clip by its own length
             audio_items = [{"code": "soundtrack", "duration": x["song"]["length"]} if x.get("song") else
                            {"code": assets[x["asset"]]["code"] + " (clip)", "duration": x["seconds"] or 0} if "seconds" in x
                            else assets[x["asset"]] for x in b["audios"]]
-            # added 2026-11-05 v0.7.0: the continuation clip (no asset) by its length
             video_items = [{"code": _prompt.CONT_WHAT.get(v.get("source"), "the continuation clip"),
                             "duration": float(v.get("frames") or 0) / spec.FPS} if v.get("continuation")
-                           # [OLD 2026-11-08 v0.13.1->v0.14.0] else assets[v["asset"]] for v in b["videos"]]
                            else {"code": assets[v["asset"]]["code"] + " (clip)", "duration": v["seconds"] or 0}
-                           if "seconds" in v else assets[v["asset"]] for v in b["videos"]]  # added 2026-11-08 v0.14.0
-            # [OLD 2026-11-05 v0.6.1->v0.7.0] for kind, items in (("video", [assets[v["asset"]] for v in b["videos"]]),
+                           if "seconds" in v else assets[v["asset"]] for v in b["videos"]]
             for kind, items in (("video", video_items),
                                 ("audio", audio_items)):
                 total = 0.0
@@ -614,10 +532,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                     total += dur
                     if dur and not (spec.REF_MEDIA_MIN_SECONDS <= dur <= spec.REF_MEDIA_MAX_SECONDS):
                         issues.append(_issue("warn", "{}: {} is {:.1f} s (H3 {} refs are 2-15 s)".format(where, a["code"], dur, kind), sid))
-                # [OLD 2026-11-03 v0.5.1->v0.6.0] totals moved up (_media_counts: a video's own sound counts as audio)
-                # if total > spec.REF_MEDIA_TOTAL_SECONDS:
-                #     issues.append(_issue("warn", "{}: {} refs total {:.1f} s (max 15 s)".format(where, kind, total), sid))
-                # [/OLD]
             if s["prompt"]["mode"] == "raw":
                 text = (s["prompt"]["pass_prompts"] or {}).get(str(pass_["index"])) or s["prompt"]["raw"]
                 for img in b["images"]:
@@ -625,7 +539,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                         code = "@" + assets[aid]["code"]
                         if not img["cast"] and code.lower() not in text.lower():
                             issues.append(_issue("info", "{}: {} is attached but never named in the prompt".format(where, code), sid))
-            # added 2026-11-02 v0.2.0: hints from MiniMax's Ref2VA prompt guide (ref-en.txt)
             elif not (s["prompt"]["pass_prompts"] or {}).get(str(pass_["index"]), "").strip():
                 desc = b["prompt"].split("detailed_description:\n", 1)[-1].split("\n\noverall_soundscape:", 1)[0]
                 words = len(desc.split())
@@ -633,11 +546,6 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                     issues.append(_issue("info", "{}: detailed_description has {} words; H3's guide aims for 350-500 "
                                                  "(Rewrite can expand it)".format(where, words), sid))
         if s["prompt"]["mode"] != "raw":
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] the scene's soundscape only (a pass may have its own now)
-            # if not s["prompt"]["sections"]["overall_soundscape"].strip():
-            #     issues.append(_issue("info", "{}: overall_soundscape is empty, so H3 gets N/A, which its guide "
-            #                                  "reserves for complete silence".format(name), sid))
-            # [/OLD]
             if not s["prompt"]["sections"]["overall_soundscape"].strip():
                 silent = [k + 1 for k, t in enumerate(_model.pass_texts(p, s, plan)["texts"])
                           if not t["overall_soundscape"].strip()]
@@ -653,18 +561,17 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                         described.add(a["id"])
                         issues.append(_issue("info", "{}: {} has no description, so its subject line is generic "
                                                      "(Assets tab: Describe with LLM)".format(name, a["code"]), sid))
-                    # added 2026-11-02 v0.3.4: a character with no description and no described anchor
                     c = idx["cast"].get(subj.get("cast") or "")
                     if c and c["id"] not in described and not cast_description(c, assets)[0]:
                         described.add(c["id"])
                         issues.append(_issue("info", "{}: {} has no description and none of its anchor pictures has "
                                                      "one, so its subject line is only the name (Cast tab or Assets "
                                                      "tab: Describe with LLM)".format(name, c["name"]), sid))
-    issues += _voice_issues(p, plans, assets)  # added 2026-11-06 v0.10.0
+    issues += _voice_issues(p, plans, assets)
     return issues
 
 
-# added 2026-11-06 v0.10.0: H3 picks a voice for every generation; a character heard in more than one pass needs a
+# H3 picks a voice for every generation; a character heard in more than one pass needs a
 # voice reference or a voice description that every pass gets, or the voice can change (a narrator from male to female)
 def _voice_issues(p, plans, assets):
     describe = p["global"]["continuity"].get("describe_voices", True)

@@ -1,4 +1,4 @@
-"""added 2026-11-10 v0.18.0: the anchors a scene uses for each cast member, and a frame of a video anchor as a picture.
+"""The anchors a scene uses for each cast member, and a frame of a video anchor as a picture.
 
 Sencer: "In scene tab, let me toggle select which anchors to use for the cast character. default all are selected, but I
 should be able to deselect video, or specific picture. ... Also let me select a specific frame of a video for character
@@ -18,7 +18,6 @@ import subprocess
 
 import pytest
 
-from reelwright import model
 from reelwright.model import cast_pictures, normalize_project, pick_video_anchors, scene_media_counts, scene_people
 from reelwright.planner import plan_scene
 from reelwright.prompt import build_pass

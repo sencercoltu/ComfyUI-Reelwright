@@ -1,4 +1,4 @@
-"""Script import in parts (added 2026-11-03 v0.4.2)."""
+"""Script import in parts."""
 
 from reelwright.scriptparts import split_script
 
@@ -64,7 +64,7 @@ def test_a_long_premise_is_script_not_notes():
     assert out["notes"] == "" and out["parts"][0][0].startswith("Backstory paragraph 0")
 
 
-# ---- added 2026-11-03 v0.4.3: imported scene length vs its shots ----
+# ---- imported scene length vs its shots -----------------------------
 from reelwright.scriptparts import fit_scene, typical_shot  # noqa: E402
 
 
@@ -96,7 +96,7 @@ def test_dialogue_and_missing_values():
     assert fit_scene(s) == "" and s["duration"] == 10
 
 
-# ---- added 2026-11-03 v0.6.0: an opening scene before the first heading is not lost ----
+# ---- an opening scene before the first heading is not lost -----------------------------
 def test_opening_scene_without_a_heading_is_the_first_block():
     scenes = ["INT. ROOM {} - NIGHT\n\nMara walks in.\n\nMARA\nHello there, number {}.".format(i, i) for i in range(12)]
     opening = "FADE IN:\n\nA dark harbor. Gulls cry over the water."
@@ -117,7 +117,6 @@ def test_premise_and_title_page_stay_notes():
     assert out["notes"] == premise
 
 
-# ---- added 2026-11-03 v0.6.0 review ----
 def test_a_title_in_capitals_over_the_premise_stays_notes():
     """Bug 9: "HARBOR LIGHTS" over a line of premise counted as a character cue, so the premise became an opening
     scene the LLM was asked to make scenes from, and no part got it as notes."""
@@ -132,7 +131,6 @@ def test_a_title_in_capitals_over_the_premise_stays_notes():
         assert out["parts"][0][0] == opening and out["notes"] == ""
 
 
-# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) ----
 def test_rules_between_table_rows_keep_the_rows():
     """Review 7a: every row over a rule counted as a table heading, so in a table with a rule between its rows each
     shot row went to the notes ("Table columns") and no part made a scene of it."""

@@ -37,8 +37,7 @@ AUDIT = """async () => {
   const missing = [...new Set(ids.filter(i => !HELP[i]))];
   const noMore = [...new Set(more.filter(i => !HELP[i] || !HELP[i].more))];
   const bare = [...root.querySelectorAll('button, input, select, textarea')]
-    // [OLD 2026-11-03 v0.5.0->v0.5.1] .filter(e => !e.closest('[data-help]') && e.offsetParent !== null)
-    // added 2026-11-03 v0.5.1: the editor's hidden key field (rw-keys) is not a control
+    // the editor's hidden key field (rw-keys) is not a control
     .filter(e => !e.closest('[data-help]') && e.offsetParent !== null && !e.classList.contains('rw-keys'))
     .map(e => e.outerHTML.slice(0, 120));
   return { missing, noMore, bare };
@@ -65,8 +64,7 @@ def main():
                 for item in r[k]:
                     problems.append(f"{name}: {k}: {item}")
 
-        # [OLD 2026-11-03 v0.3.9->v0.4.0] for tab in ["Timeline", "Scene", "Assets", "Cast", "Render", "Global"]:
-        for tab in ["Timeline", "Scene", "Assets", "Cast", "Render", "Files", "Global"]:  # Files added 2026-11-03 v0.4.0
+        for tab in ["Timeline", "Scene", "Assets", "Cast", "Render", "Files", "Global"]:
             page.click(f".rw-tab:has-text('{tab}')")
             page.mouse.move(1590, 990)
             page.wait_for_timeout(500)
@@ -80,14 +78,11 @@ def main():
         page.wait_for_timeout(500)
         page.screenshot(path=str(SHOTS / "scene_long.png"))
         audit("Scene long")
-        # added 2026-11-05 v0.8.0: a pass tab of the Prompt card, and the shot and dialogue rows
         page.click("[data-key='ptab-s_07-2']")
         page.mouse.move(1590, 990)
         page.wait_for_timeout(400)
         page.screenshot(path=str(SHOTS / "scene_pass.png"))
         audit("Scene pass tab")
-        # [OLD 2026-11-06 v0.8.0->v0.9.0] scrolled to the whole scene's Shots card, which a pass tab hides now
-        # page.evaluate("() => { const c = document.querySelector('.rw-scene-tab .rw-cols'); const card = [...document.querySelectorAll('.rw-card')].find(x => x.querySelector('.rw-card-title')?.textContent === 'Shots'); c.scrollTop += card.getBoundingClientRect().top - c.getBoundingClientRect().top - 8; }")
         page.evaluate("() => { const c = document.querySelector('.rw-scene-tab .rw-cols'); const sub = [...document.querySelectorAll('.rw-subhead')].find(x => x.textContent.startsWith('Shots in this pass')); c.scrollTop += sub.getBoundingClientRect().top - c.getBoundingClientRect().top - 8; }")
         page.wait_for_timeout(300)
         page.screenshot(path=str(SHOTS / "scene_rows.png"))

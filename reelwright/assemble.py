@@ -1,34 +1,28 @@
 """Build ffmpeg segment lists for long-scene stitching and the final merge.
 
-added 2026-11-03 v0.6.0: merge_project registers a "merge" job (one per project; a second raises merge.MergeBusy),
+merge_project registers a "merge" job (one per project; a second raises merge.MergeBusy),
 can be cancelled (merge.MergeCancelled, partial files removed), makes draft and range cuts, audio stems with an
 EBU R128 report, and puts the soundtrack and markers into the OTIO and FCPXML files. cut_plan trims and times each
 scene by how it really starts (the plan's start_mode and first-pass overlap, see model.effective_start).
 """
 
-import json  # added 2026-11-03 v0.6.0
-import logging  # added 2026-11-05 v0.7.0: merge warnings
+import json
+import logging
 import os
-import re  # added 2026-11-03 v0.6.0
-import shutil  # added 2026-11-03 v0.6.0
-import sys  # added 2026-11-03 v0.6.0
+import re
+import shutil
+import sys
 import time
 
-from . import cache, jobs  # added 2026-11-03 v0.6.0
-from . import merge, spec
-from . import model as _model  # added 2026-11-10 v0.19.0: project_output_size (Global -> Hires)
-# [OLD 2026-11-03 v0.4.3->v0.5.0] from .model import project_index
-from . import soundtrack  # added 2026-11-03 v0.5.0
-from . import model  # added 2026-11-06 v0.10.0: dialogue_seconds (speech_timed)
+from . import cache, jobs, merge, model, soundtrack, spec
 from .model import project_index, scene_starts
 
-log = logging.getLogger("reelwright")  # added 2026-11-05 v0.7.0
+log = logging.getLogger("reelwright")
 
 
-# [OLD 2026-11-05 v0.7.0->v0.8.0] def pass_segments(plan, pass_files, crossfade_frames):
 def pass_segments(plan, pass_files, crossfade_frames, carry_audio=True):
     """Segments that stitch a scene's pass files into the scene video.
-    added 2026-11-05 v0.8.0: carry_audio False (Global -> Long scenes): the pass after an overlap seam got no sound
+    carry_audio False (Global -> Long scenes): the pass after an overlap seam got no sound
     guide, so its sound is not the same as the pass before's inside the overlap; its sound starts at the overlap's
     first frame (merge's audio_lead_frames) and crossfades with the pass before's over the whole overlap. The picture
     is stitched as before."""
@@ -44,7 +38,7 @@ def pass_segments(plan, pass_files, crossfade_frames, carry_audio=True):
             seg["dur"] = cf / spec.FPS
             if not cf:
                 seg["in"] = x["overlap_frames"] / spec.FPS
-            if not carry_audio:  # added 2026-11-05 v0.8.0
+            if not carry_audio:
                 seg["audio_lead_frames"] = int(x["overlap_frames"]) - cf
         segs.append(seg)
     return segs
@@ -57,110 +51,8 @@ def pick_take(entry, use):
     return next((t for t in takes if t["id"] == entry.get("starred")), None) or (takes[-1] if takes else None)
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] trimmed and timed scenes by the declared start mode and the take's overlap: a
-# re-anchored tail (guided by the last frame only) was still trimmed as a tail; no range
-# def cut_plan(result, store):
-#     """Segments + side-file entries for the merge, from the analysis result."""
-#     p = result["project"]
-#     m = p["global"]["merge"]
-#     cf_cont = int(p["global"]["long"]["crossfade_frames"])
-#     names = {c["id"]: c["name"] for c in p["cast"]}
-#     segments, entries, skipped = [], [], []
-#     prev_included = None
-#     # added 2026-11-03 v0.5.0: with a soundtrack every scene must end where the timeline says (scene_starts), so
-#     # missing scenes become slates, crossfades and dips stop overlapping the scenes, and takes are fitted
-#     locked = soundtrack.locked(p)
-#     cut_start = scene_starts(p)[0] if locked else {}
-#
-#     def cut_end(sc):
-#         return cut_start[sc["id"]] + float(sc["duration"])
-#
-#     for i, s in enumerate(p["scenes"]):
-#         sr = result["scenes"][s["id"]]
-#         take = pick_take(sr, m["use"])
-#         path = store.output_path(take["files"]["video"]) if take and take.get("files", {}).get("video") else None
-#         if not path or not os.path.isfile(path):
-#             if m["missing"] == "block":
-#                 raise merge.MergeError("{:02d} {} has no finished take".format(i + 1, s["title"]))
-#             if locked:  # added 2026-11-03 v0.5.0
-#                 gap = cut_end(s) - merge.plan_timeline(segments)[1]
-#                 if gap > 0.5 / spec.FPS:
-#                     segments.append({"path": None, "in": 0.0, "out": gap, "join": "first" if not segments else "cut",
-#                                      "dur": 0.0})
-#                     entries.append(None)
-#                 skipped.append(s["id"])
-#                 prev_included = i
-#                 continue
-#             if m["missing"] == "slate":
-#                 segments.append({"path": None, "in": 0.0, "out": float(s["duration"]), "join": "cut", "dur": 0.0})
-#                 entries.append(None)
-#             skipped.append(s["id"])
-#             prev_included = None if m["missing"] != "slate" else i
-#             continue
-#         info = merge.probe(path)
-#         length = float(take.get("seconds") or info["duration"])
-#         seg = {"path": path, "in": 0.0, "out": length, "has_audio": info["has_audio"], "join": "cut", "dur": 0.0,
-#                "scene_id": s["id"]}
-#         mode = s["start"]["mode"] if i > 0 else "fresh"
-#         overlap = int(take.get("overlap_frames") or 0)
-#         adjacent = prev_included == i - 1 and i > 0
-#         if not segments:
-#             seg["join"] = "first"
-#             if mode == "tail" and overlap:
-#                 seg["in"] = overlap / spec.FPS
-#         elif mode == "tail" and overlap:
-#             if adjacent:
-#                 cf = min(cf_cont, overlap)
-#                 seg["in"] = (overlap - cf) / spec.FPS
-#                 seg["join"] = "xfade" if cf else "cut"
-#                 seg["dur"] = cf / spec.FPS
-#             else:
-#                 seg["in"] = overlap / spec.FPS
-#         elif mode == "last_frame" and adjacent:
-#             seg["in"] = 1 / spec.FPS
-#         else:
-#             # [OLD 2026-11-02 v0.2.2->v0.3.0] every hard cut used Global -> Merge; now each scene can choose its own
-#             # hard = m["hard_cut"]
-#             # if hard in ("crossfade", "dip"):
-#             #     prev_len = segments[-1]["out"] - segments[-1]["in"]
-#             #     d = min(int(m["transition_frames"]) / spec.FPS, prev_len / 2, (length - seg["in"]) / 2)
-#             # [/OLD]
-#             tr = s.get("transition") or {}
-#             hard = tr.get("mode") or m["hard_cut"]
-#             frames = tr.get("frames") if tr.get("frames") is not None else m["transition_frames"]
-#             if hard in ("crossfade", "dip"):
-#                 prev_len = segments[-1]["out"] - segments[-1]["in"]
-#                 d = min(int(frames) / spec.FPS, prev_len / 2, (length - seg["in"]) / 2)
-#                 # [OLD 2026-11-03 v0.4.3->v0.5.0] if d > 0:
-#                 if d > 0 and locked:  # added 2026-11-03 v0.5.0: a dip through black that keeps the timing
-#                     segments[-1]["vfade_out"] = d / 2
-#                     seg["vfade_in"] = d / 2
-#                 elif d > 0:
-#                     seg["join"] = "xfade" if hard == "crossfade" else "dip"
-#                     seg["dur"] = d
-#         afade = (s.get("transition") or {}).get("audio_fade_frames")
-#         if afade is not None:
-#             seg["fade"] = int(afade) / spec.FPS  # added 2026-11-02 v0.3.0: per-scene audio fade at its cut
-#         gap = 0.0
-#         if locked:  # added 2026-11-03 v0.5.0: a take of another length (rendered before the scene changed) is fitted
-#             at = merge.plan_timeline(segments + [seg])[0][-1]
-#             need = cut_end(s) - at
-#             if need < seg["out"] - seg["in"] - 0.5 / spec.FPS:
-#                 seg["out"] = seg["in"] + max(1.0 / spec.FPS, need)
-#             elif need > seg["out"] - seg["in"] + 0.5 / spec.FPS:
-#                 gap = need - (seg["out"] - seg["in"])
-#         segments.append(seg)
-#         lines = [{"t": float(d["t"]), "speaker": names.get(d["speaker"], ""), "text": d["text"]} for d in s["dialogue"]]
-#         entries.append({"scene_id": s["id"], "title": "{:02d} {}".format(i + 1, s["title"]), "path": path,
-#                         "src_in": seg["in"], "src_out": seg["out"], "src_len": length, "dialogue": lines})
-#         if gap:  # added 2026-11-03 v0.5.0: a take shorter than its scene is followed by a slate
-#             segments.append({"path": None, "in": 0.0, "out": gap, "join": "cut", "dur": 0.0})
-#             entries.append(None)
-#         prev_included = i
-#     return segments, entries, skipped
-# [/OLD]
 def scene_range(p, rng):
-    """added 2026-11-03 v0.6.0: (first, last) scene indexes of a range merge; the whole film for None/empty."""
+    """(first, last) scene indexes of a range merge; the whole film for None/empty."""
     n = len(p["scenes"])
     if not rng:
         return 0, n - 1
@@ -173,7 +65,7 @@ def scene_range(p, rng):
 
 
 def scene_join(result, p, i):
-    """added 2026-11-03 v0.6.0: (start mode, overlap frames) scene i is cut with: how it really starts (the plan's
+    """(start mode, overlap frames) scene i is cut with: how it really starts (the plan's
     start_mode = model.effective_start: a re-anchored tail, or one under 5 frames, is a last_frame start) and the
     plan's first-pass overlap (capped by the scene's own length and the one before)."""
     s = p["scenes"][i]
@@ -190,7 +82,7 @@ def scene_join(result, p, i):
     return mode, overlap
 
 
-# ---- scene.merge: how each scene sits in the cut (added 2026-11-05 v0.7.0) -----------------------------------------
+# ---- scene.merge: how each scene sits in the cut -------------------------------------------------------------------
 
 def scene_merge(s, p=None):
     """The scene's merge settings (model.default_merge's keys); a scene that was not normalised gets them the way
@@ -224,13 +116,13 @@ def _scene_look(seg, mg):
 
 def cut_plan(result, store, options=None, info=None):
     """Segments + side-file entries for the merge, from the analysis result.
-    added 2026-11-03 v0.6.0: options {range: [from_sid, to_sid]} merges only those scenes. `info` (a dict) receives
+    Options {range: [from_sid, to_sid]} merges only those scenes. `info` (a dict) receives
     {offset: film time of the cut's first frame (with a soundtrack), first, last: scene indexes}.
-    added 2026-11-03 v0.6.0 review: offset is set with or without a soundtrack (scene_starts of the first scene in
+    Offset is set with or without a soundtrack (scene_starts of the first scene in
     the cut + what is trimmed off its start), on the frame grid. With a soundtrack every scene ends on the film frame
     round((start + duration) * 24); a take one frame short holds its last frame, a slate is two frames or more. A
     scene with no frame of its own (all of it repeats the scene before) is left out.
-    added 2026-11-05 v0.7.0: each scene's scene.merge sets how it joins the scene before (any transition type, its
+    Each scene's scene.merge sets how it joins the scene before (any transition type, its
     direction, length and dip colour; only where it does not continue that scene) and its own fades, sound level,
     mute and eq (_scene_look). With a soundtrack setting the timing an overlapping transition becomes a dip through
     the scene's colour inside both scenes, so nothing moves. Colour match is set later (color_match)."""
@@ -241,60 +133,36 @@ def cut_plan(result, store, options=None, info=None):
     lo, hi = scene_range(p, (options or {}).get("range"))
     segments, entries, skipped = [], [], []
     prev_included = None
-    # added 2026-11-03 v0.5.0: with a soundtrack every scene must end where the timeline says (scene_starts), so
-    # missing scenes become slates, crossfades and dips stop overlapping the scenes, and takes are fitted
     locked = soundtrack.locked(p)
-    # [OLD 2026-11-03 v0.6.0 review] the film times were only known with a soundtrack, so a range merge without one
-    # kept offset 0 and its markers stayed at film time
-    # cut_start = scene_starts(p)[0] if locked else {}
-    # [/OLD]
-    film_start = scene_starts(p)[0]  # added 2026-11-03 v0.6.0 review: for the cut's offset with or without a soundtrack
+    film_start = scene_starts(p)[0]
     cut_start = film_start if locked else {}
     offset = [None]  # film time where the cut starts (later than 0 for a range)
-    # added 2026-11-03 v0.6.0 review: the cut is planned on the film's frame grid: its first frame is film frame
-    # round(offset * 24) and a scene ends at film frame round((start + duration) * 24), counted from there
     offset_f = [0]
     F = spec.FPS
 
-    def set_offset(t):  # added 2026-11-03 v0.6.0 review
+    def set_offset(t):
         if offset[0] is None:
             offset_f[0] = merge.frame_index(t)
             offset[0] = offset_f[0] / F
 
-    # [OLD 2026-11-03 v0.6.0 review] exact seconds: sub-frame slates and fitting
-    # def cut_end(sc):
-    #     return cut_start[sc["id"]] + float(sc["duration"]) - (offset[0] or 0.0)
-    # [/OLD]
     def cut_end_f(sc):
-        """added 2026-11-03 v0.6.0 review: the cut's frame where scene sc must end (soundtrack-locked)."""
+        """The cut's frame where scene sc must end (soundtrack-locked)."""
         return merge.frame_index(cut_start[sc["id"]] + float(sc["duration"])) - offset_f[0]
 
     for i, s in enumerate(p["scenes"]):
         if i < lo or i > hi:
             continue
         sr = result["scenes"][s["id"]]
-        mg = scene_merge(s, p)  # added 2026-11-05 v0.7.0
+        mg = scene_merge(s, p)
         take = pick_take(sr, m["use"])
         path = store.output_path(take["files"]["video"]) if take and take.get("files", {}).get("video") else None
         if not path or not os.path.isfile(path):
             if m["missing"] == "block":
                 raise merge.MergeError("{:02d} {} has no finished take".format(i + 1, s["title"]))
             if locked:
-                # [OLD 2026-11-03 v0.6.0 review] a gap of 0.6 frames became a slate, drawn as a whole dark frame
-                # if offset[0] is None:
-                #     offset[0] = cut_start[s["id"]]
-                # gap = cut_end(s) - merge.plan_timeline(segments)[1]
-                # if gap > 0.5 / spec.FPS:
-                #     segments.append({"path": None, "in": 0.0, "out": gap, "join": "first" if not segments else "cut",
-                #                      "dur": 0.0})
-                # [/OLD]
-                # added 2026-11-03 v0.6.0 review: a slate of whole frames, only when at least one frame is missing
                 set_offset(cut_start[s["id"]])
                 gap_f = cut_end_f(s) - merge.frame_timeline(segments)[1]
                 if gap_f >= 1:
-                    # [OLD 2026-11-05 v0.6.1->v0.7.0] segments.append({"path": None, "in": 0.0, "out": gap_f / F,
-                    # [OLD 2026-11-05 v0.6.1->v0.7.0]                  "join": "first" if not segments else "cut", "dur": 0.0})
-                    # added 2026-11-05 v0.7.0: the slate's sound fade at its cut is the missing scene's (scene.merge)
                     segments.append({"path": None, "in": 0.0, "out": gap_f / F,
                                      "join": "first" if not segments else "cut", "dur": 0.0,
                                      "fade": int(mg["audio_frames"]) / F})
@@ -303,11 +171,8 @@ def cut_plan(result, store, options=None, info=None):
                 prev_included = i
                 continue
             if m["missing"] == "slate":
-                if not segments:  # added 2026-11-03 v0.6.0 review: the cut starts with this scene's slate
+                if not segments:
                     set_offset(film_start[s["id"]])
-                # [OLD 2026-11-05 v0.6.1->v0.7.0] segments.append({"path": None, "in": 0.0, "out": float(s["duration"]),
-                # [OLD 2026-11-05 v0.6.1->v0.7.0]                  "join": "first" if not segments else "cut", "dur": 0.0})
-                # added 2026-11-05 v0.7.0: the slate's sound fade at its cut is the missing scene's (scene.merge)
                 segments.append({"path": None, "in": 0.0, "out": float(s["duration"]),
                                  "join": "first" if not segments else "cut", "dur": 0.0,
                                  "fade": int(mg["audio_frames"]) / F})
@@ -336,26 +201,6 @@ def cut_plan(result, store, options=None, info=None):
         elif mode == "last_frame" and adjacent:
             seg["in"] = 1 / spec.FPS
         else:
-            # [OLD 2026-11-05 v0.6.1->v0.7.0] the transition came from scene.transition or Global -> Merge (crossfade or
-            # dip only), and the dip that keeps the timing was always through black
-            # tr = s.get("transition") or {}
-            # hard = tr.get("mode") or m["hard_cut"]
-            # frames = tr.get("frames") if tr.get("frames") is not None else m["transition_frames"]
-            # if hard in ("crossfade", "dip"):
-            #     prev_len = segments[-1]["out"] - segments[-1]["in"]
-            #     # [OLD 2026-11-03 v0.6.0 review] half of a scene's length could be half a frame
-            #     # d = min(int(frames) / spec.FPS, prev_len / 2, (length - seg["in"]) / 2)
-            #     # added 2026-11-03 v0.6.0 review: whole frames, at most half of either scene
-            #     d = min(int(frames), merge.frame_index(prev_len) // 2, merge.frame_index(length - seg["in"]) // 2) / F
-            #     if d > 0 and locked:  # a dip through black that keeps the timing
-            #         segments[-1]["vfade_out"] = d / 2
-            #         seg["vfade_in"] = d / 2
-            #     elif d > 0:
-            #         seg["join"] = "xfade" if hard == "crossfade" else "dip"
-            #         seg["dur"] = d
-            # [/OLD]
-            # added 2026-11-05 v0.7.0: the scene's own transition (scene.merge), any xfade type. Whole frames, at most
-            # half of either scene; with a soundtrack setting the timing, a dip through the scene's colour inside both
             hard, frames = mg["transition"], mg["frames"]
             if hard != "cut":
                 prev_len = segments[-1]["out"] - segments[-1]["in"]
@@ -371,41 +216,14 @@ def cut_plan(result, store, options=None, info=None):
                     if expr:
                         seg["transition_expr"] = expr
                     seg["dur"] = d
-        # [OLD 2026-11-05 v0.6.1->v0.7.0] the sound's fade at a cut came from scene.transition or Global -> Merge
-        # afade = (s.get("transition") or {}).get("audio_fade_frames")
-        # if afade is not None:
-        #     seg["fade"] = int(afade) / spec.FPS
-        # [/OLD]
-        seg["fade"] = int(mg["audio_frames"]) / F  # added 2026-11-05 v0.7.0: scene.merge, on every segment
-        _scene_look(seg, mg)  # added 2026-11-05 v0.7.0
-        # [OLD 2026-11-03 v0.6.0 review] a scene whose kept frames all repeat the scene before (a 1-frame scene with a
-        # last-frame start) failed the whole merge
-        # if seg["out"] - seg["in"] < 0.5 / spec.FPS:  # a take shorter than what is trimmed off it
-        #     raise merge.MergeError("{:02d} {}: its take is shorter than the part that repeats the scene before".format(
-        #         i + 1, s["title"]))
-        # if locked and offset[0] is None:
-        #     offset[0] = cut_start[s["id"]] + (seg["in"] if not segments else 0.0)
-        # [/OLD]
-        # added 2026-11-03 v0.6.0 review: no new frame to show -> the scene is left out (no slate, no error). Its frames
-        # are the scene before's, so a scene continuing from it still joins that scene (when it was in the cut).
+        seg["fade"] = int(mg["audio_frames"]) / F
+        _scene_look(seg, mg)
         if merge.frame_index(seg["out"] - seg["in"]) < 1:
             if adjacent:
                 prev_included = i
             continue
-        if not segments:  # added 2026-11-03 v0.6.0 review: with or without a soundtrack, film time of the first frame
+        if not segments:
             set_offset(film_start[s["id"]] + seg["in"])
-        # [OLD 2026-11-03 v0.6.0 review] exact seconds: a take 0.2 frames short got a 0.2-frame slate (a dark frame)
-        # gap = 0.0
-        # if locked:  # a take of another length (rendered before the scene changed) is fitted
-        #     at = merge.plan_timeline(segments + [seg])[0][-1]
-        #     need = cut_end(s) - at
-        #     if need < seg["out"] - seg["in"] - 0.5 / spec.FPS:
-        #         seg["out"] = seg["in"] + max(1.0 / spec.FPS, need)
-        #     elif need > seg["out"] - seg["in"] + 0.5 / spec.FPS:
-        #         gap = need - (seg["out"] - seg["in"])
-        # [/OLD]
-        # added 2026-11-03 v0.6.0 review: fitted in whole frames. A take one frame short (the 0.2 frames a 7.3 s
-        # scene's slot rounds up by) holds its last frame; a slate only fills two frames or more.
         gap_f = 0
         if locked:  # a take of another length (rendered before the scene changed) is fitted
             at_f = merge.frame_timeline(segments + [seg])[0][-1][0]
@@ -423,25 +241,12 @@ def cut_plan(result, store, options=None, info=None):
                 seg["out"] = seg["in"] + have_f / F
                 gap_f = need_f - have_f
         segments.append(seg)
-        # [OLD 2026-11-06 v0.8.0] lines = [{"t": float(d["t"]), "speaker": names.get(d["speaker"], ""), "text": d["text"]} for d in s["dialogue"]]
-        # added 2026-11-06 v0.8.0: a line's own duration goes to the subtitles too
         lines = [{"t": float(d["t"]), "speaker": names.get(d["speaker"], ""), "text": d["text"], "duration": d.get("duration")}
                  for d in s["dialogue"]]
-        # [OLD 2026-11-03 v0.6.0 review] src_out could be a held frame past the end of the file
-        # entries.append({"scene_id": s["id"], "title": "{:02d} {}".format(i + 1, s["title"]), "path": path,
-        #                 "src_in": seg["in"], "src_out": seg["out"], "src_len": length, "dialogue": lines})
-        # [/OLD]
-        # added 2026-11-03 v0.6.0 review: a held last frame is not in the file, so the side files end the clip there
         entries.append({"scene_id": s["id"], "title": "{:02d} {}".format(i + 1, s["title"]), "path": path,
                         "src_in": seg["in"], "src_out": min(seg["out"], max(seg["in"], length)), "src_len": length,
                         "dialogue": lines})
-        # [OLD 2026-11-03 v0.6.0 review] slates of any fraction of a frame
-        # if gap:  # a take shorter than its scene is followed by a slate
-        #     segments.append({"path": None, "in": 0.0, "out": gap, "join": "cut", "dur": 0.0})
-        # [/OLD]
-        if gap_f:  # a take shorter than its scene is followed by a slate (added 2026-11-03 v0.6.0 review: whole frames)
-            # [OLD 2026-11-05 v0.6.1->v0.7.0] segments.append({"path": None, "in": 0.0, "out": gap_f / F, "join": "cut", "dur": 0.0})
-            # added 2026-11-05 v0.7.0: the sound fade into the slate is the scene's own (scene.merge)
+        if gap_f:  # a take shorter than its scene is followed by a slate (whole frames)
             segments.append({"path": None, "in": 0.0, "out": gap_f / F, "join": "cut", "dur": 0.0,
                              "fade": int(mg["audio_frames"]) / F})
             entries.append(None)
@@ -454,7 +259,7 @@ def cut_plan(result, store, options=None, info=None):
 
 
 def color_match(result, store, segments, cancel=None):
-    """added 2026-11-05 v0.7.0: each scene's colour match (scene.merge.color_match) as its segment's "gain":
+    """Each scene's colour match (scene.merge.color_match) as its segment's "gain":
     previous = the mean colour of the scene before it in the cut, after that scene's own match (slates are passed
     over); scene = the mean colour of the chosen scene's take as rendered (its own match and eq not applied): its part
     in this cut, or, when a range merge leaves it out, its whole take. Gains follow merge.color_gains (0.8 .. 1.25 per
@@ -521,79 +326,8 @@ def color_match(result, store, segments, cancel=None):
     return warnings
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] two merges of a project at once wrote the same cut; no cancel; a failed merge left
-# its .chapters.txt behind; no draft, range, stems, soundtrack or markers in the side files
-# def merge_project(result, store, progress=None):
-#     p = result["project"]
-#     m = p["global"]["merge"]
-#     segments, entries, skipped = cut_plan(result, store)
-#     if not any(s.get("path") for s in segments):
-#         raise merge.MergeError("no scene has a finished take yet")
-#     starts, total = merge.plan_timeline(segments)
-#     real = []
-#     for seg, e, st in zip(segments, entries, starts):
-#         if e:
-#             e["start"] = st
-#             real.append(e)
-#     if m["color_match"]:
-#         ref_sid = m.get("color_ref_scene")
-#         ref_index = next((k for k, s in enumerate(segments) if s.get("scene_id") == ref_sid), 0)
-#         for seg, gain in zip(segments, merge.color_gains(segments, ref_index)):
-#             seg["gain"] = gain
-#     base = store.next_cut_path()
-#     files = {"video": base + ".mp4"}
-#     chapters = None
-#     if m["chapters"]:
-#         chapters = base + ".chapters.txt"
-#         merge.write_chapters(real, total, chapters)
-#         files["chapters"] = chapters
-#     # [OLD 2026-11-03 v0.4.3->v0.5.0] score = None
-#     # [OLD 2026-11-03 v0.4.3->v0.5.0] if m["score"].get("asset"):
-#     # [OLD 2026-11-03 v0.4.3->v0.5.0]     a = project_index(p)["assets"].get(m["score"]["asset"])
-#     # [OLD 2026-11-03 v0.4.3->v0.5.0]     if a and a.get("file"):
-#     # [OLD 2026-11-03 v0.4.3->v0.5.0]         score = {"path": store.input_path(a["file"]), "volume_db": float(m["score"]["volume_db"]),
-#     # [OLD 2026-11-03 v0.4.3->v0.5.0]                  "duck": bool(m["score"]["duck"])}
-#     # added 2026-11-03 v0.5.0: the score is a soundtrack track now (model.normalize_project moves it)
-#     tracks = []
-#     for t in soundtrack.resolved(p):
-#         if not t["mix"]:
-#             continue
-#         path = store.input_path(t["file"])
-#         if not os.path.isfile(path):
-#             raise merge.MergeError("soundtrack {} is missing: {}".format(t["code"], t["file"]))
-#         tracks.append({"path": path, "start": t["start"], "in": t["in"], "length": t["length"],
-#                        "volume_db": t["volume_db"], "fade_in": t["fade_in"], "fade_out": t["fade_out"],
-#                        "duck": t["duck"], "loop": t["loop"]})
-#     sa = m.get("scene_audio") or {"mix": False, "volume_db": -12.0}
-#     w, h = p["global"]["output"]["width"], p["global"]["output"]["height"]
-#     # [OLD 2026-11-03 v0.4.3->v0.5.0] merge.join(segments, files["video"], w, h, progress=progress, codec=m["codec"], crf=m["crf"],
-#     # [OLD 2026-11-03 v0.4.3->v0.5.0]            audio_fade_frames=int(m["audio_fade_frames"]),
-#     # [OLD 2026-11-03 v0.4.3->v0.5.0]            loudness=float(m["loudness"]) if m["normalize"] else None,
-#     # [OLD 2026-11-03 v0.4.3->v0.5.0]            score=score, chapters_file=chapters)
-#     merge.join(segments, files["video"], w, h, progress=progress, codec=m["codec"], crf=m["crf"],
-#                audio_fade_frames=int(m["audio_fade_frames"]),
-#                loudness=float(m["loudness"]) if m["normalize"] else None,
-#                chapters_file=chapters, tracks=tracks,
-#                scene_audio={"mix": bool(sa.get("mix")), "volume_db": float(sa.get("volume_db", -12.0))})
-#     if m["subtitles"]:
-#         files["srt"] = base + ".srt"
-#         merge.write_srt(real, files["srt"])
-#     if m["otio"]:
-#         files["otio"] = base + ".otio"
-#         merge.write_otio(p["name"], real, files["otio"])
-#     if m["fcpxml"]:
-#         files["fcpxml"] = base + ".fcpxml"
-#         merge.write_fcpxml(p["name"], real, total, w, h, files["fcpxml"])
-#     if m["bundle"]:
-#         files["bundle"] = base + ".zip"
-#         project_json = os.path.join(store.dir, "project.json")
-#         merge.write_bundle(files["bundle"], {os.path.basename(v): v for k, v in files.items() if k != "bundle"} |
-#                            {"project.json": project_json})
-#     return {"files": {k: store.rel_output(v) for k, v in files.items()}, "duration": total,
-#             "skipped": skipped, "created": int(time.time()), "soundtrack": len(tracks)}
-# [/OLD]
 def _comfy_interrupt():
-    """added 2026-11-03 v0.6.0: ComfyUI's Stop, for merges that run inside the node (never imports ComfyUI)."""
+    """ComfyUI's Stop, for merges that run inside the node (never imports ComfyUI)."""
     mm = sys.modules.get("comfy.model_management")
     if mm is not None and hasattr(mm, "throw_exception_if_processing_interrupted"):
         mm.throw_exception_if_processing_interrupted()
@@ -614,7 +348,7 @@ def _remove(path):
 
 
 def merge_project(result, store, progress=None, options=None, job_id=None):
-    """Merge the project's takes into one cut (added 2026-11-03 v0.6.0: rewritten).
+    """Merge the project's takes into one cut.
 
     Only one merge per project runs at a time: another raises merge.MergeBusy. The merge registers a "merge" job
     (jobs.exclusive) under `job_id` (or a new id); jobs.cancel(job id) stops ffmpeg and raises merge.MergeCancelled
@@ -634,7 +368,7 @@ def merge_project(result, store, progress=None, options=None, job_id=None):
         raise merge.MergeBusy("another merge of this project is running; wait for it or cancel it") from e
 
 
-# added 2026-11-06 v0.10.0: subtitles that follow the speech of the takes
+# Subtitles that follow the speech of the takes
 def speech_timed(entries):
     """Copies of the merge entries whose dialogue lines are timed to the speech found in their take (speech.align):
     t = where the line's speech starts, duration = how long it lasts, in the take's time (= the scene's). A take whose
@@ -693,14 +427,7 @@ def merge_with_job(result, store, job, progress=None, options=None):
         if e:
             e["start"] = st
             real.append(e)
-    # [OLD 2026-11-05 v0.6.1->v0.7.0] one colour reference for the whole cut (Global -> Merge)
-    # if m["color_match"]:
-    #     ref_sid = m.get("color_ref_scene")
-    #     ref_index = next((k for k, s in enumerate(segments) if s.get("scene_id") == ref_sid), 0)
-    #     for seg, gain in zip(segments, merge.color_gains(segments, ref_index)):
-    #         seg["gain"] = gain
-    # [/OLD]
-    warnings = color_match(result, store, segments, cancel=check)  # added 2026-11-05 v0.7.0: per scene
+    warnings = color_match(result, store, segments, cancel=check)
     for w_ in warnings:
         log.warning("Reelwright merge of %s: %s", store.slug, w_)
     check()
@@ -730,10 +457,7 @@ def merge_with_job(result, store, job, progress=None, options=None):
                            "duck": t["duck"], "loop": t["loop"]})
             export.append(dict(tracks[-1], id=t["id"], code=t["code"]))
         sa = m.get("scene_audio") or {"mix": False, "volume_db": -12.0}
-        # [OLD 2026-11-10 v0.18.0->v0.19.0] w, h = p["global"]["output"]["width"], p["global"]["output"]["height"]
-        # added 2026-11-10 v0.19.0: the film is the latent upscaler's size while Global -> Hires is on (every scene the
-        # same; a scene made without it is enlarged here); a draft merge stays half of Global -> Output
-        w, h = _model.project_output_size(p) if not draft else (p["global"]["output"]["width"],
+        w, h = model.project_output_size(p) if not draft else (p["global"]["output"]["width"],
                                                                    p["global"]["output"]["height"])
         if draft:
             w, h = max(2, int(w) // 4 * 2), max(2, int(h) // 4 * 2)
@@ -746,12 +470,6 @@ def merge_with_job(result, store, job, progress=None, options=None):
             stem_paths = {"scenes": os.path.join(tmp_dir, "scenes.wav"), "mix": os.path.join(tmp_dir, "mix.wav"),
                           "tracks": [os.path.join(tmp_dir, "track_{}.wav".format(_safe_name(t["id"]))) for t in export]}
         made.append(files["video"])
-        # [OLD 2026-11-05 v0.6.1->v0.7.0] the sound's fade at a cut defaulted to Global -> Merge -> audio fade
-        # merge.join(segments, files["video"], w, h, progress=progress, cancel=cancel, codec=m["codec"],
-        #            crf=28 if draft else m["crf"], preset="veryfast" if draft else "medium",
-        #            audio_fade_frames=int(m["audio_fade_frames"]),
-        # [/OLD]
-        # added 2026-11-05 v0.7.0: every segment carries its scene's own fade (scene.merge.audio_frames)
         merge.join(segments, files["video"], w, h, progress=progress, cancel=cancel, codec=m["codec"],
                    crf=28 if draft else m["crf"], preset="veryfast" if draft else "medium",
                    audio_fade_frames=0,
@@ -791,9 +509,6 @@ def merge_with_job(result, store, job, progress=None, options=None):
         if m["subtitles"]:
             files["srt"] = base + ".srt"
             made.append(files["srt"])
-            # [OLD 2026-11-06 v0.9.0->v0.10.0] merge.write_srt(real, files["srt"])
-            # added 2026-11-06 v0.10.0: lines timed to the speech in each take (H3 decides when inside a shot a line
-            # is spoken); "planned" keeps the timeline's times
             merge.write_srt(speech_timed(real) if m.get("subtitle_timing", "speech") == "speech" else real, files["srt"])
         if m["otio"]:
             files["otio"] = base + ".otio"
@@ -822,13 +537,13 @@ def merge_with_job(result, store, job, progress=None, options=None):
            "skipped": skipped, "created": int(time.time()), "soundtrack": len(tracks), "job": job.id,
            "draft": draft, "range": [p["scenes"][info["first"]]["id"], p["scenes"][info["last"]]["id"]]
            if o.get("range") else None}
-    out["warnings"] = warnings  # added 2026-11-05 v0.7.0: e.g. a colour reference scene without a take
+    out["warnings"] = warnings
     if stems:
         out["loudness"] = loudness
     return out
 
 
-# ---- the soundtrack excerpt a pass is sent (added 2026-11-03 v0.6.0) ----------------------------------------------
+# ---- the soundtrack excerpt a pass is sent ------------------------------------------------------------------------
 
 def pass_song(result, store, scene_id, pass_number):
     """(song, wav path) of what H3 hears as the soundtrack for pass `pass_number` (1-based) of a scene: the song

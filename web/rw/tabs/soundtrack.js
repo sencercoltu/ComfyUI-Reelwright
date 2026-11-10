@@ -1,4 +1,4 @@
-// Soundtrack on the timeline (added 2026-11-03 v0.5.0).
+// Soundtrack on the timeline.
 // Audio files laid on the finished cut: a song a music video is cut to, a score, a sound bed. Each track has its own
 // lane with its waveform: drag the clip to move it, drag its edges to trim it, click it to edit the rest in the
 // inspector. Tracks marked "Send to H3" give every pass the part of the song it covers (soundtrack.py); tracks
@@ -6,22 +6,13 @@
 
 import { h, icon, button, toggle, segmented, select, number, contextMenu } from "../ui.js";
 import { rw, viewURL } from "../api.js";
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] overlapSeconds is deprecated (sceneStarts().visible holds the cut points)
 import {
-  FPS, fmtTime, findAsset, newId, normalizeTrack, trackLength, playingTracks, sceneStarts, overlapSeconds,
-  AUDIO_RETENTION, sceneHasSong,
+  FPS, fmtTime, findAsset, newId, normalizeTrack, trackLength, playingTracks, sceneStarts, AUDIO_RETENTION,
+  sceneHasSong, planScene, passSoundtrack, assetGroupName,
 } from "../model.js";
-[/OLD] */
-import {
-  FPS, fmtTime, findAsset, newId, normalizeTrack, trackLength, playingTracks, sceneStarts,
-  AUDIO_RETENTION, sceneHasSong,
-  planScene, passSoundtrack, // added 2026-11-03 v0.6.0: the "what goes stale" preview while a synced track is dragged
-} from "../model.js";
-import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
 
 const WAVE_H = 30;
-// [OLD 2026-11-03 v0.5.1->v0.6.0] const TILE = 4096; // canvas tiles: browsers refuse very wide canvases
-const TILE = 1024; // canvas tiles (browsers refuse very wide canvases); v0.6.0: smaller, so only what is seen is painted
+const TILE = 1024; // canvas tiles (browsers refuse very wide canvases), small so only what is seen is painted
 
 export function dbGain(db) {
   return Math.pow(10, (Number(db) || 0) / 20);
@@ -33,56 +24,7 @@ function lengthOf(p, t) {
 
 // ---- waveforms -------------------------------------------------------------------------------------------------------
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] a failed fetch was cached forever; only the first editor that asked was redrawn; every
-   render painted every tile of every clip and of up to 200 loop repeats
-const waves = new Map(); // input file -> { state, peaks, perSecond, duration }
-
-function waveOf(ctx, file) {
-  let w = waves.get(file);
-  if (!w) {
-    w = { state: "loading" };
-    waves.set(file, w);
-    rw.waveform(file)
-      // the loudest moment fills the lane, so a quiet file still shows its shape
-      .then(r => {
-        let top = 16;
-        for (const v of r.peaks) if (v > top) top = v;
-        Object.assign(w, r, { state: "ok", top });
-        ctx.render();
-      })
-      .catch(() => { w.state = "error"; });
-  }
-  return w;
-}
-
-// Canvases (one per 4096 px) drawing `seconds` of the file from `srcIn` at z px/s.
-function waveTiles(ctx, a, srcIn, seconds, z) {
-  const w = waveOf(ctx, a.file);
-  const width = Math.max(1, Math.round(seconds * z));
-  if (w.state !== "ok") return [];
-  const out = [];
-  const mid = WAVE_H / 2;
-  for (let x0 = 0; x0 < width; x0 += TILE) {
-    const tw = Math.min(TILE, width - x0);
-    const c = h("canvas", { class: "rw-wave", width: tw, height: WAVE_H, style: { left: x0 + "px", width: tw + "px" } });
-    const g = c.getContext("2d");
-    if (!g) break;
-    g.fillStyle = "rgba(110, 231, 183, 0.8)";
-    for (let x = 0; x < tw; x++) {
-      const t0 = srcIn + (x0 + x) / z, t1 = srcIn + (x0 + x + 1) / z;
-      const i0 = Math.floor(t0 * w.perSecond), i1 = Math.max(i0 + 1, Math.ceil(t1 * w.perSecond));
-      let m = 0;
-      for (let i = i0; i < i1 && i < w.peaks.length; i++) if (w.peaks[i] > m) m = w.peaks[i];
-      const hh = Math.max(0.5, Math.min(1, m / w.top) * (mid - 1));
-      g.fillRect(x, mid - hh, 1, hh * 2);
-    }
-    out.push(c);
-  }
-  return out;
-}
-[/OLD] */
-
-// added 2026-11-03 v0.6.0: per-file data (waveform peaks, beat grid) fetched once and shared by every editor (it is the
+// per-file data (waveform peaks, beat grid) fetched once and shared by every editor (it is the
 // file's data, not a player). Every editor that waits for a file is redrawn when it arrives. A failed fetch is tried
 // again after RETRY_MS, or at once with the Retry button on the clip.
 const RETRY_MS = 20000;
@@ -267,9 +209,7 @@ function paintTile(c, w, srcIn, z, x0, tw, period, beats) {
 
 // ---- editing --------------------------------------------------------------------------------------------------------
 
-// [OLD 2026-11-03 v0.5.1->v0.6.0] function editTrack(ctx, id, fn) {
-// [OLD 2026-11-03 v0.5.1->v0.6.0]   ctx.actions.edit(q => { const t = q.soundtrack.find(x => x.id === id); if (t) fn(t, q); });
-// label: added 2026-11-03 v0.6.0, the step's name in the History menu
+// label: the step's name in the History menu
 function editTrack(ctx, id, fn, label = "Edit track") {
   ctx.actions.edit(q => { const t = q.soundtrack.find(x => x.id === id); if (t) fn(t, q); }, { label });
 }
@@ -278,7 +218,6 @@ export function addTrack(ctx, assetId, start = 0) {
   const a = findAsset(ctx.p, assetId);
   if (!a || a.kind !== "audio") { ctx.actions.toast("Only audio files can go on the soundtrack.", "warn"); return; }
   const id = newId("t");
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] ctx.actions.edit(q => { q.soundtrack.push(normalizeTrack({ id, asset: assetId, start: Math.round(start * FPS) / FPS })); });
   ctx.actions.edit(q => { q.soundtrack.push(normalizeTrack({ id, asset: assetId, start: Math.round(start * FPS) / FPS })); }, { label: `Add ${a.code} to the soundtrack` });
   ctx.store.setEph({ selectedTrack: id, selectedMarker: null });
   ctx.actions.toast(`${a.code} is on the soundtrack at ${fmtTime(start)}.`, "ok");
@@ -287,33 +226,12 @@ export function addTrack(ctx, assetId, start = 0) {
 function addMenu(ctx, e, start) {
   const audio = ctx.p.assets.filter(a => a.kind === "audio");
   const items = audio.length
-    // [OLD 2026-11-06 v0.8.0->v0.9.0] ? audio.map(a => ({ label: `${a.code} · ${a.name || a.file.split("/").pop()}${a.duration ? " · " + fmtTime(a.duration, false) : ""}`, icon: "audio",
-    ? audio.map(a => ({ label: `${assetGroupName(ctx.p, a) ? assetGroupName(ctx.p, a) + " · " : ""}${a.code} · ${a.name || a.file.split("/").pop()}${a.duration ? " · " + fmtTime(a.duration, false) : ""}`, icon: "audio", // added 2026-11-06 v0.9.0: group first
+    ? audio.map(a => ({ label: `${assetGroupName(ctx.p, a) ? assetGroupName(ctx.p, a) + " · " : ""}${a.code} · ${a.name || a.file.split("/").pop()}${a.duration ? " · " + fmtTime(a.duration, false) : ""}`, icon: "audio",
       help: "timeline.track.add", onClick: () => addTrack(ctx, a.id, start) }))
-    // [OLD 2026-11-06 v0.8.0->v0.9.0] : [{ label: "Upload an audio file to the Asset bin first", icon: "upload", help: "timeline.track.add", disabled: true }];
-    : [{ label: "Upload an audio file in the Assets tab first", icon: "upload", help: "timeline.track.add", disabled: true }];  // added 2026-11-06 v0.9.0: no asset bin
+    : [{ label: "Upload an audio file in the Assets tab first", icon: "upload", help: "timeline.track.add", disabled: true }];
   contextMenu(ctx.root, e.clientX, e.clientY, items);
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] used the deprecated overlapSeconds; no beats
-// Edges a dragged clip edge sticks to: film start, playhead, scene cuts, markers (within 8 screen pixels).
-function snapPoints(ctx) {
-  const p = ctx.p;
-  const { starts, total } = sceneStarts(p);
-  const pts = [0, total, p.ui.playhead, ...p.markers.map(m => m.t)];
-  p.scenes.forEach((s, i) => pts.push(starts[s.id] + (i > 0 ? overlapSeconds(s) : 0)));
-  return pts;
-}
-
-function snap(ctx, t, z, sc, free) {
-  if (free) return Math.round(t * FPS) / FPS;
-  const lim = 8 / z;
-  let best = null;
-  for (const x of snapPoints(ctx)) if (Math.abs(x - t) <= lim && (best === null || Math.abs(x - t) < Math.abs(best - t))) best = x;
-  return Math.round((best ?? t) * FPS) / FPS;
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0
 // Edges a dragged clip edge sticks to: film start and end, playhead, markers, and every cut (where a scene first shows
 // new content: sceneStarts().visible), within 8 screen pixels.
 function snapPoints(ctx) {
@@ -349,7 +267,7 @@ function snap(ctx, t, z, sc, free, { offsets = null, extra = null } = {}) {
   return Math.round((best ?? t) * FPS) / FPS;
 }
 
-// added 2026-11-03 v0.6.0: "what goes stale" while a synced track is dragged. Before the drop, the scenes and passes
+// "what goes stale" while a synced track is dragged. Before the drop, the scenes and passes
 // whose part of the song would change (so they render again) are outlined on the Scenes lane, and the drag tip counts
 // them. Worked out in the browser with the backend's rules (model.passSoundtrack) from the passes' song parts before
 // and after the move.
@@ -404,55 +322,7 @@ function stalePreview(ctx, t, tip, z) {
   };
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] no beats, no stale preview, no history label
-// Drag a clip (mode "move") or one of its edges ("in", "out").
-function clipDrag(ctx, e, t, mode, clip, tip, helpers) {
-  if (e.button !== 0) return;
-  e.stopPropagation();
-  e.preventDefault();
-  const p = ctx.p;
-  const a = findAsset(p, t.asset);
-  const z = helpers.zoom(), sc = helpers.scaleOf();
-  const x0 = e.clientX;
-  const start0 = t.start, in0 = t.in, len0 = trackLength(t, a);
-  const fileLen = Number(a?.duration) || 0;
-  let next = null;
-  ctx.store.setEph({ selectedTrack: t.id, selectedMarker: null }, false);
-  clip.classList.add("drag");
-  helpers.trackDrag(ev => {
-    const d = (ev.clientX - x0) / sc / z;
-    if (mode === "move") {
-      const s = snap(ctx, start0 + d, z, sc, ev.altKey);
-      next = { start: s };
-      clip.style.left = s * z + "px";
-      tip.textContent = `starts ${fmtTime(s)}`;
-    } else if (mode === "in") {
-      // the left edge: the audio stays where it is in the film, the clip starts later or earlier in the file
-      let s = snap(ctx, start0 + d, z, sc, ev.altKey);
-      let inn = in0 + (s - start0);
-      if (inn < 0) { s -= inn; inn = 0; }
-      if (inn > in0 + len0 - 0.1) { inn = in0 + len0 - 0.1; s = start0 + (inn - in0); }
-      next = { start: s, in: Math.round(inn * 1000) / 1000 };
-      clip.style.left = s * z + "px";
-      clip.style.width = Math.max(4, (len0 - (inn - in0)) * z) + "px";
-      tip.textContent = `from ${fmtTime(inn)} of ${a?.code || "the file"} · at ${fmtTime(s)}`;
-    } else {
-      let end = snap(ctx, start0 + len0 + d, z, sc, ev.altKey) - start0;
-      end = Math.max(0.1, fileLen ? Math.min(fileLen - in0, end) : end);
-      next = { out: Math.round((in0 + end) * 1000) / 1000 };
-      clip.style.width = Math.max(4, end * z) + "px";
-      tip.textContent = `to ${fmtTime(in0 + end)} of ${a?.code || "the file"} · ${end.toFixed(2)} s`;
-    }
-    tip.style.display = "";
-  }, () => {
-    clip.classList.remove("drag");
-    tip.style.display = "none";
-    if (!next) { ctx.render(); return; } // a click: show it in the inspector
-    editTrack(ctx, t.id, x => Object.assign(x, next));
-  });
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0: Drag a clip (mode "move") or one of its edges ("in", "out"). Snap to beats adds the file's
+// Drag a clip (mode "move") or one of its edges ("in", "out"). Snap to beats adds the file's
 // beats; a synced track shows what would render again before the drop.
 function clipDrag(ctx, e, t, mode, clip, tip, helpers) {
   if (e.button !== 0) return;
@@ -522,19 +392,16 @@ export function trackLanes(ctx, z, width, helpers) {
     const on = ctx.eph.selectedTrack === t.id;
     const body = h("div", { class: "rw-lane-body track", style: { width: width + "px" } });
     const tip = h("div", { class: "rw-drag-tip mono", style: { display: "none" } });
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] const flags = [t.sync && "H3", t.mix && "cut", t.loop && "loop", t.duck && "duck"].filter(Boolean).join(" · ");
-    // added 2026-11-03 v0.6.0: the tempo, once the beat grid is known
     const bt = a?.file && (showBeats(p) || beatSnapOn(p)) ? beatsOf(ctx, a.file) : null;
     const flags = [t.sync && "H3", t.mix && "cut", t.loop && "loop", t.duck && "duck", bt?.state === "ok" && bt.bpm > 0 && `${Math.round(bt.bpm)} BPM`].filter(Boolean).join(" · ");
     const clip = h("div", {
       class: ["rw-track-clip", on && "on", (t.mute || !a) && "muted", !t.mix && !t.sync && "muted"],
       style: { left: t.start * z + "px", width: Math.max(4, len * z) + "px" },
       help: "timeline.track.clip",
-      dataset: { tid: t.id }, // added 2026-11-03 v0.6.0
+      dataset: { tid: t.id },
       menu: () => trackMenu(ctx, t),
       onPointerdown: e => clipDrag(ctx, e, t, "move", clip, tip, helpers),
     },
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] a ? waveTiles(ctx, a, t.in, len, z) : null,
     a ? waveTiles(ctx, a, t, t.in, len, z, helpers, { originX: t.start * z }) : null,
     h("span", { class: "rw-track-label" }, h("b", { class: "mono" }, a?.code || "?"), " ", a ? (a.name || a.file.split("/").pop()) : "missing asset",
       flags && h("span", { class: "rw-track-flags mono" }, flags)),
@@ -544,18 +411,6 @@ export function trackLanes(ctx, z, width, helpers) {
     h("span", { class: "rw-track-trim r", help: "timeline.track.trimOut", onPointerdown: e => clipDrag(ctx, e, t, "out", clip, tip, helpers) }),
     tip);
     body.append(clip);
-    /* [OLD 2026-11-03 v0.5.1->v0.6.0] one element (and its painted tiles) per repeat, up to 200; the last one ran past
-       the end of the film
-    if (t.loop && len > 0.1) { // the repeats, up to the end of the film
-      for (let s = t.start + len, n = 0; s < total && n < 200; s += len, n++) {
-        body.append(h("div", { class: ["rw-track-clip", "ghost", t.mute && "muted"], style: { left: s * z + "px", width: Math.max(4, Math.min(len, total - s + len) * z) + "px" },
-          help: "timeline.track.loop", onClick: () => ctx.store.setEph({ selectedTrack: t.id, selectedMarker: null }) },
-        a ? waveTiles(ctx, a, t.in, Math.min(len, Math.max(0.1, total - s)), z) : null));
-      }
-    }
-    [/OLD] */
-    // added 2026-11-03 v0.6.0: the repeats are one element that ends with the film; its tiles map every repeat to the
-    // same part of the file, and a dashed line marks where each repeat starts
     if (t.loop && len > 0.1 && t.start + len < total) {
       const from = t.start + len;
       body.append(h("div", {
@@ -567,7 +422,6 @@ export function trackLanes(ctx, z, width, helpers) {
     }
     const mute = h("button", {
       type: "button", class: ["rw-track-mute", t.mute && "on"], help: "timeline.track.mute", "aria-label": t.mute ? "Unmute track" : "Mute track",
-      // [OLD 2026-11-03 v0.5.1->v0.6.0] onClick: e => { e.stopPropagation(); editTrack(ctx, t.id, x => { x.mute = !x.mute; }); },
       onClick: e => { e.stopPropagation(); editTrack(ctx, t.id, x => { x.mute = !x.mute; }, t.mute ? "Unmute track" : "Mute track"); },
     }, icon(t.mute ? "mute" : "speaker", 12));
     lanes.push({
@@ -594,37 +448,7 @@ export function trackLanes(ctx, z, width, helpers) {
   return lanes;
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] no history labels; Delete had no key hint
-function trackMenu(ctx, t) {
-  const p = ctx.p;
-  return [
-    { label: "Start at playhead", icon: "pointer", help: "timeline.track.toPlayhead", onClick: () => editTrack(ctx, t.id, x => { x.start = Math.round(p.ui.playhead * FPS) / FPS; }) },
-    { label: "Trim start to playhead", icon: "cut", help: "timeline.track.trimHere", onClick: () => trimAt(ctx, t, "in") },
-    { label: "Trim end to playhead", icon: "cut", help: "timeline.track.trimHere", onClick: () => trimAt(ctx, t, "out") },
-    { sep: true },
-    { label: t.mute ? "Unmute" : "Mute", icon: t.mute ? "speaker" : "mute", help: "timeline.track.mute", onClick: () => editTrack(ctx, t.id, x => { x.mute = !x.mute; }) },
-    { label: "Delete track", icon: "trash", danger: true, help: "timeline.track.delete", onClick: () => deleteTrack(ctx, t) },
-  ];
-}
-
-function trimAt(ctx, t, edge) {
-  const p = ctx.p;
-  const len = lengthOf(p, t);
-  const local = p.ui.playhead - t.start;
-  if (local <= 0.05 || local >= len - 0.05) { ctx.actions.toast("Put the playhead over the track first.", "warn"); return; }
-  editTrack(ctx, t.id, x => {
-    if (edge === "in") { x.in = Math.round((x.in + local) * 1000) / 1000; x.start = Math.round(p.ui.playhead * FPS) / FPS; }
-    else x.out = Math.round((x.in + local) * 1000) / 1000;
-  });
-}
-
-function deleteTrack(ctx, t) {
-  ctx.actions.edit(q => { q.soundtrack = q.soundtrack.filter(x => x.id !== t.id); });
-  ctx.store.setEph({ selectedTrack: null });
-  ctx.actions.toast("Track removed. Ctrl+Z brings it back.", "info");
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0: every edit has a name in the History menu; Delete (the key) removes the selected track
+// Every edit has a name in the History menu; Delete (the key) removes the selected track
 function trackMenu(ctx, t) {
   const p = ctx.p;
   return [
@@ -661,12 +485,9 @@ export function trackInspector(ctx, t, helpers) {
   const p = ctx.p;
   const a = findAsset(p, t.asset);
   const len = trackLength(t, a);
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const set = fn => editTrack(ctx, t.id, fn);
   const set = (fn, label = "Edit track") => editTrack(ctx, t.id, fn, label);
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] const audio = p.assets.filter(x => x.kind === "audio").map(x => ({ value: x.id, label: `${x.code} · ${x.name || x.file.split("/").pop()}` }));
-  const audio = p.assets.filter(x => x.kind === "audio").map(x => ({ value: x.id, label: `${x.code} · ${x.name || x.file.split("/").pop()}`, pre: assetGroupName(p, x) })); // added 2026-11-06 v0.9.0: group first
+  const audio = p.assets.filter(x => x.kind === "audio").map(x => ({ value: x.id, label: `${x.code} · ${x.name || x.file.split("/").pop()}`, pre: assetGroupName(p, x) }));
   const scenes = t.sync ? p.scenes.filter(s => sceneHasSong(p, s)).length : 0;
-  // added 2026-11-03 v0.6.0: the tempo and the beat grid of the file
   const bt = a?.file ? beatsOf(ctx, a.file) : null;
   const beatLine = !bt ? null : h("div", { class: "rw-dim small rw-row", help: "timeline.track.beats" },
     bt.state === "ok" ? (bt.bpm > 0 ? `Tempo ${Math.round(bt.bpm)} BPM · ${bt.beats.length} beats, ${bt.downbeats.length} bars` : "No steady beat found in this file.")
@@ -692,7 +513,7 @@ export function trackInspector(ctx, t, helpers) {
         num("Fade out", "fade_out", { min: 0, max: 30, step: 0.1, unit: "s" }, "timeline.track.fades")),
       h("div", { class: "rw-dim small", help: "timeline.track.length" },
         a ? `${len.toFixed(2)} s of ${a.code}${a.duration ? ` (${fmtTime(a.duration, false)} long)` : ""}${t.loop ? ", looping" : ""}` : "The audio asset was deleted."),
-      beatLine, // added 2026-11-03 v0.6.0
+      beatLine,
       h("div", { class: "rw-toggle-grid" },
         toggle({ value: t.mix, label: "In the cut", help: "timeline.track.mix", onChange: v => set(x => { x.mix = v; }) }),
         toggle({ value: t.sync, label: "Send to H3", help: "timeline.track.sync", onChange: v => set(x => { x.sync = v; }) }),
@@ -718,17 +539,15 @@ export function trackInspector(ctx, t, helpers) {
 // The monitor plays the tracks marked "In the cut" with <audio> elements kept in step with the playhead. Browsers cap
 // an element's volume at 1, so levels above 0 dB play at 0 dB here (the merge applies them).
 
-// [OLD 2026-11-03 v0.5.1->v0.6.0] const players = new Map(); // track id -> { el, seekAt }  (shared by every editor on the page)
-// added 2026-11-03 v0.6.0: each editor has its own players (ctx.audioPlayers: track id -> { el, seekAt, src })
+// Each editor has its own players (ctx.audioPlayers: track id -> { el, seekAt, src })
 function playersOf(ctx) {
   return ctx.audioPlayers || (ctx.audioPlayers = new Map());
 }
 
-// [OLD 2026-11-03 v0.5.1->v0.6.0] export function syncAudio(ctx, time, playing) {
-// jump: added 2026-11-03 v0.6.0, the playhead jumped (a loop wrapped): seek at once
+// jump: the playhead jumped (a loop wrapped): seek at once
 export function syncAudio(ctx, time, playing, jump = false) {
   const p = ctx.p;
-  const players = playersOf(ctx); // added 2026-11-03 v0.6.0
+  const players = playersOf(ctx);
   const live = new Set();
   if (playing) {
     const total = sceneStarts(p).total;
@@ -749,11 +568,9 @@ export function syncAudio(ctx, time, playing, jump = false) {
       let gain = dbGain(t.volume_db);
       if (t.fade_in > 0) gain *= Math.min(1, played / t.fade_in);
       if (t.fade_out > 0) gain *= Math.min(1, Math.max(0, end - played) / t.fade_out);
-      // [OLD 2026-11-06 v0.8.0->v0.9.0] pl.el.volume = Math.max(0, Math.min(1, gain));
-      pl.el.volume = Math.max(0, Math.min(1, gain * monitorGain(p))); // added 2026-11-06 v0.9.0: the monitor's volume and mute
+      pl.el.volume = Math.max(0, Math.min(1, gain * monitorGain(p)));
       const want = t.in + local;
       const now = performance.now();
-      // [OLD 2026-11-03 v0.5.1->v0.6.0] if (Math.abs(pl.el.currentTime - want) > 0.2 && now - pl.seekAt > 500) {
       if (Math.abs(pl.el.currentTime - want) > 0.2 && (jump || now - pl.seekAt > 500)) {
         pl.seekAt = now;
         try { pl.el.currentTime = want; } catch { /* not loaded yet */ }
@@ -764,17 +581,7 @@ export function syncAudio(ctx, time, playing, jump = false) {
   for (const [id, pl] of players) if (!live.has(id) && !pl.el.paused) pl.el.pause();
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] one set of players for every editor on the page
-// For the test harness: the tracks the monitor is playing right now.
-export function audioState() {
-  return [...players.entries()].map(([id, pl]) => ({ id, playing: !pl.el.paused, volume: pl.el.volume, src: pl.src }));
-}
-
-export function stopAudio() {
-  for (const pl of players.values()) pl.el.pause();
-}
-[/OLD] */
-// added 2026-11-03 v0.6.0: the players of one editor
+// The players of one editor
 // For the test harness: the tracks this editor's monitor is playing right now.
 export function audioState(ctx) {
   return [...playersOf(ctx).entries()].map(([id, pl]) => ({ id, playing: !pl.el.paused, volume: pl.el.volume, src: pl.src }));
@@ -785,7 +592,7 @@ export function stopAudio(ctx) {
   for (const pl of ctx.audioPlayers.values()) pl.el.pause();
 }
 
-// added 2026-11-06 v0.9.0: the monitor's own volume (Timeline transport): 0 when muted, else ui.mon_volume (0–1, 1 by
+// The monitor's own volume (Timeline transport): 0 when muted, else ui.mon_volume (0–1, 1 by
 // default). It scales the take and every soundtrack track the monitor plays; the merge never reads it.
 export function monitorGain(p) {
   if (p?.ui?.mon_muted === true) return 0;

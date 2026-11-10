@@ -1,4 +1,4 @@
-"""Split a long script into parts for the LLM import (added 2026-11-03 v0.4.2).
+"""Split a long script into parts for the LLM import.
 
 A whole script in one request makes one very long answer: a 46-row shot table came back as roughly 15,000 tokens
 of JSON, which ran past the token budget or the timeout most of the time. The script is cut into blocks (scene
@@ -21,7 +21,7 @@ SCENE_START = re.compile(
 TABLE_ROW = re.compile(r"^\s*\|.*\S")
 TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$")
 NOTES_MAX = 2000  # a longer text before the first block is treated as script, not as notes
-# added 2026-11-03 v0.6.0: text before the first scene heading that is itself a scene (screenplay openings)
+# Text before the first scene heading that is itself a scene (screenplay openings)
 SCREENPLAY_HEADING = re.compile(r"^\s*(?:(?:INT|EXT|EST|INT\.?\s*/\s*EXT|I\s*/\s*E)[.\s]|\.(?!\.)\w)")
 OPENING_LINE = re.compile(r"^\s*(?:FADE IN|COLD OPEN|OPEN ON|OPENING ON|BLACK SCREEN|SUPER:|TITLE CARD)\b", re.I | re.M)
 CHARACTER_CUE = re.compile(r"^[ \t]*[A-Z][A-Z0-9 .'’\-]{1,30}(?:[ \t]*\([^)\n]*\))?[ \t]*\n[ \t]*\S", re.M)
@@ -41,23 +41,19 @@ def opening_scene(preamble, blocks):
     lines = [x for x in preamble.split("\n") if x.strip()]
     if sum(bool(TITLE_PAGE.match(x)) for x in lines) * 2 >= len(lines):
         return False
-    # [OLD 2026-11-03 v0.6.0 review] a title in capitals over the premise ("HARBOR LIGHTS\nA short film about ...")
-    # counted as a character cue, so the premise became an opening scene instead of notes
-    # cues = len(CHARACTER_CUE.findall(preamble)) + len(CAPS_DIALOGUE.findall(preamble))
-    # [/OLD]
     cues = sum(1 for m in CHARACTER_CUE.finditer(preamble) if not _title_line(preamble, m, blocks)) + \
-        len(CAPS_DIALOGUE.findall(preamble))  # added 2026-11-03 v0.6.0 review
+        len(CAPS_DIALOGUE.findall(preamble))
     screenplay = bool(blocks) and SCREENPLAY_HEADING.match(blocks[0]) is not None
     return cues >= 2 or (cues >= 1 and screenplay)
 
 
 def _cue_name(line):
-    """added 2026-11-03 v0.6.0 review: "MARA (V.O.)" -> "MARA"."""
+    """"MARA (V.O.)" -> "MARA"."""
     return re.sub(r"\([^)]*\)", "", line).strip().upper()
 
 
 def _title_line(preamble, m, blocks):
-    """added 2026-11-03 v0.6.0 review: a CHARACTER_CUE match that is the title of the text, not a speaker: the first
+    """A CHARACTER_CUE match that is the title of the text, not a speaker: the first
     line of the preamble, in capitals, without an extension like (V.O.), whose name speaks nowhere else in the
     script (no other cue or "NAME: line" with it)."""
     first = preamble[:m.start()].strip() == ""
@@ -76,7 +72,7 @@ def _rule(line):
 
 
 def _first_row(lines, i):
-    """added 2026-11-04 v0.6.1: is lines[i] the first row of its table (no table row above it, rules skipped)?"""
+    """Is lines[i] the first row of its table (no table row above it, rules skipped)?"""
     j = i - 1
     while j >= 0 and _rule(lines[j]):
         j -= 1
@@ -117,10 +113,6 @@ def split_script(text, part_chars=3000):
     lines = text.split("\n")
     heads, skip = [], set()
     for i in range(len(lines) - 1):
-        # [OLD 2026-11-04 v0.6.0->v0.6.1] any row over a rule was a heading: in a table with a rule between its rows
-        # every shot row went to the notes ("Table columns") and no part made a scene of it
-        # if TABLE_ROW.match(lines[i]) and not _rule(lines[i]) and _rule(lines[i + 1]):
-        # added 2026-11-04 v0.6.1: only the table's first row (rules above it do not count) is its heading
         if TABLE_ROW.match(lines[i]) and not _rule(lines[i]) and _rule(lines[i + 1]) and _first_row(lines, i):
             heads.append(lines[i].strip() + "\n" + lines[i + 1].strip())
             skip.update((i, i + 1))
@@ -142,12 +134,6 @@ def split_script(text, part_chars=3000):
     if not blocks:  # no headings or table rows: paragraphs are the blocks
         blocks, preamble = _paragraphs(text), ""
     notes = []
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] an opening scene before the first heading became notes, which no part makes scenes from
-    # if preamble and len(preamble) <= NOTES_MAX:
-    #     notes.append(preamble)
-    # elif preamble:
-    #     blocks = _paragraphs(preamble) + blocks
-    # [/OLD]
     if preamble and opening_scene(preamble, blocks):
         blocks = [preamble] + blocks  # the first part starts with it, as its own block
     elif preamble and len(preamble) <= NOTES_MAX:
@@ -168,7 +154,7 @@ def split_script(text, part_chars=3000):
     return {"notes": "\n\n".join(notes), "parts": parts, "chars": len(text), "blocks": len(sized)}
 
 
-# ---- scene length vs shots (added 2026-11-03 v0.4.3) -------------------------------------------------------------
+# ---- scene length vs shots ---------------------------------------------------------------------------------------
 # An imported scene could list shots that start after its end: the LLM grouped several table rows into one scene,
 # wrote their start times, and gave the scene a shorter length (a 68 s chorus came back as 30 s with shots up to
 # 61.8 s). Shot durations are easier for a model to copy from a script than running start times, so the import asks

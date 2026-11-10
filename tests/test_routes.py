@@ -1,4 +1,4 @@
-"""HTTP routes (added 2026-11-03 v0.6.0), served by aiohttp's test server with a stand-in PromptServer.
+"""HTTP routes, served by aiohttp's test server with a stand-in PromptServer.
 
 routes.py imports ComfyUI (server, folder_paths, comfy.samplers), so this runs with COMFYUI_PATH pointing at a
 ComfyUI checkout whose requirements are installed, like test_render_flow.py.
@@ -308,8 +308,9 @@ def test_promote_frame_and_repair(api, store, roots):
 
 def test_beats_route(api, roots):
     run, _, _ = api
-    import numpy as np
     import wave
+
+    import numpy as np
     rate = 22050
     y = np.zeros(rate * 12, np.float32)
     for k in range(24):
@@ -359,8 +360,6 @@ def test_soundtrack_excerpt_route(api, store, roots, harbor):
     assert bad[0] == 400
     assert none == (200, {"url": None, "file": None, "reason": none[1]["reason"]})
 
-
-# ---- added 2026-11-03 v0.6.0 review ---------------------------------------------------------------------------------
 
 def test_star_and_delete_wait_for_the_lock_off_the_event_loop(api, store):
     """Bug 6: /takes/star and /takes/delete took the project lock on the event loop; while a worker thread held it
@@ -452,7 +451,7 @@ def test_bad_input_answers_400_not_500(api, harbor):
 
 
 def test_a_script_part_past_the_parts_answers_400(api, harbor):
-    """added 2026-11-09 v0.17.1 (third review 10): part 5 of 3 was accepted."""
+    """Part 5 of 3 was accepted."""
     run, _, _ = api
     harbor = dict(harbor, **{"global": dict(harbor["global"], llm=dict(harbor["global"]["llm"], base_url="http://127.0.0.1:9/v1"))})
 
@@ -462,8 +461,6 @@ def test_a_script_part_past_the_parts_answers_400(api, harbor):
     status, body = run(go)
     assert status == 400 and "part" in body["error"], body
 
-
-# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) --------------------------------------------------------------------
 
 def test_unreadable_input_answers_400_not_500(api, store, roots):
     """Review 11 and minor: an upload that is not multipart (an assert in aiohttp), an anchor sheet of a file that is
@@ -524,7 +521,7 @@ def test_llm_requests_with_one_job_id_keep_their_own_entries(api):
     assert left == {} and marks == set()
 
 
-# ---- added 2026-11-05 v0.7.0: the timeline filmstrip -----------------------------------------------------------------
+# ---- the timeline filmstrip ------------------------------------------------------------------------------------------
 
 def test_filmstrip_route(api, store, roots):
     run, _, _ = api
@@ -563,7 +560,7 @@ def test_filmstrip_route(api, store, roots):
     assert out[-1][0] == 404
 
 
-# ---- added 2026-11-05 v0.8.0: Write prompts (/llm/passes) ----------------------------------------------------------
+# ---- Write prompts (/llm/passes) -----------------------------------------------------------------------------------
 
 async def _stub_llm(handler):
     """An OpenAI-compatible stub on a free port, in the running loop: (base_url, runner)."""
@@ -655,7 +652,7 @@ def test_llm_passes_route(api, harbor):
     assert "not in this scene" in out[5][1]["error"] and "raw text" in out[8][1]["error"]
 
 
-# ---- added 2026-11-06 v0.10.0: speech timing and a voice cut from a take ---------------------------------------------
+# ---- speech timing and a voice cut from a take -----------------------------------------------------------------------
 
 def speech_take(path, seconds, bursts):
     """An mp4 whose sound is syllable-like bursts (4 Hz, speech-band tones) at (start, end) over a quiet floor."""
@@ -714,7 +711,7 @@ def test_speech_and_voice_from_take_routes(api, store, roots):
     assert s7 == 400
 
 
-# added 2026-11-08 v0.13.0: Chat tab route: checks the conversation, answers with the reply, Stop cancels it
+# Chat tab route: checks the conversation, answers with the reply, Stop cancels it
 def test_llm_chat_route(api, monkeypatch):
     run, routes, events = api
     seen = []
@@ -752,7 +749,7 @@ def test_llm_chat_route(api, monkeypatch):
     assert ("reelwright.llm", {"phase": "writing", "tokens": 2, "text": "ok", "job": "chat-1"}) in events
 
 
-# ---- added 2026-11-10 v0.18.0: a frame of a video anchor as a picture ----------------------------------------------
+# ---- a frame of a video anchor as a picture ------------------------------------------------------------------------
 
 def test_anchor_frame_route(api, store, roots):
     run, _, _ = api

@@ -5,7 +5,6 @@ import json
 import sys
 
 from playwright.sync_api import sync_playwright
-
 from shoot import serve
 
 
@@ -13,7 +12,7 @@ def project(page):
     return json.loads(page.evaluate("window.__host.getProject()"))
 
 
-# added 2026-11-10 v0.19.0: Write prompts on a scene of several passes first asks which passes (all ticked); this
+# Write prompts on a scene of several passes first asks which passes (all ticked); this
 # presses it and confirms that list as it is
 def click_write(page, sel):
     page.click(sel)
@@ -29,16 +28,16 @@ def click_write(page, sel):
 def main():
     httpd = serve()
     url = f"http://127.0.0.1:{httpd.server_address[1]}/web-test/harness.html"
-    page_url = url  # added 2026-11-09 v0.17.3: main() reuses the name url below (v0173_scrollbar_checks opens the page)
+    page_url = url
     errors, failures = [], []
 
     def check(cond, msg):
         if not cond:
             failures.append(msg)
-            print("FAIL:", msg, flush=True)  # added 2026-11-03 v0.6.0: shown at once (a later crash hides the summary)
+            print("FAIL:", msg, flush=True)
 
     with sync_playwright() as p:
-        pw = p  # added 2026-11-09 v0.17.3: main() reuses the name p below (v0173_scrollbar_checks needs Playwright)
+        pw = p
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
         page.on("pageerror", lambda e: errors.append(str(e)))
@@ -63,7 +62,6 @@ def main():
         page.keyboard.press("Control+z")
         page.wait_for_timeout(300)
         check(project(page)["scenes"][0]["duration"] == 8.0, "undo did not restore the duration")
-        # v0.6.0: undo keeps the view (the drag selected scene 01); select scene 03 again for the checks below
         check(project(page)["ui"]["selected"] == "s_01", f"undo changed the selection: {project(page)['ui']['selected']}")
         page.evaluate("window.__editor.store.update(p => { p.ui.selected = 's_03'; p.ui.playhead = 21.375; }, { history: false, plan: false })")
         page.wait_for_timeout(200)
@@ -94,9 +92,7 @@ def main():
         check(page.locator(".rw-ac.on .rw-ac-item").count() > 0, "autocomplete list did not open")
         page.keyboard.press("Enter")
         page.wait_for_timeout(300)
-        # [OLD 2026-11-09 v0.14.0->v0.14.1] a click on a card title folds every card now; click beside it to leave the field
-        # page.locator(".rw-card-title:has-text('Duration')").click()
-        page.locator(".rw-card:has(.rw-card-title:has-text('Duration'))").click(position={"x": 4, "y": 4})  # added 2026-11-09 v0.14.1: the card's corner
+        page.locator(".rw-card:has(.rw-card-title:has-text('Duration'))").click(position={"x": 4, "y": 4})
         page.wait_for_timeout(500)
         summary = project(page)["scenes"][2]["prompt"]["sections"]["summary"]
         check("@P1" in summary, f"autocomplete did not insert @P1: {summary!r}")
@@ -118,7 +114,6 @@ def main():
         page.wait_for_timeout(500)
         check(project(page)["global"]["sampling"]["seed"] == 42, "seed edit not persisted")
 
-        # ---- added 2026-11-02 v0.2.0 ----
         shots = __import__("shoot").SHOTS
 
         # LLM model combobox filters as you type and accepts a typed id.
@@ -214,7 +209,6 @@ def main():
         check(page.locator("a[data-help='render.lastCut']").count() == 1, "last cut link missing after merge")
         page.screenshot(path=str(shots / "v020_render.png"))
 
-        # ---- added 2026-11-02 v0.2.2 ----
         # Right-click on a scene opens the editor's own menu; its actions work.
         page.click(".rw-tab:has-text('Timeline')")
         page.wait_for_timeout(300)
@@ -249,7 +243,6 @@ def main():
         check(page.locator(".rw-combo-list").count() == 1 and lang.input_value() == "an", "list closed or filter lost after pressing the list")
         page.keyboard.press("Escape")
 
-        # ---- added 2026-11-02 v0.3.0 ----
         page.click(".rw-tab:has-text('Timeline')")
         page.wait_for_timeout(300)
         # Delete scene asks first; Cancel keeps it, Delete removes it.
@@ -351,7 +344,6 @@ def main():
         page.locator("[data-help='scene.override.quality'] button:has-text('Draft')").first.click()
         page.wait_for_timeout(300)
         check(project(page)["scenes"][fi]["overrides"].get("quality") == "draft", "scene quality override not set")
-        # v0.7.0: the transition is set on the In the cut card (scene.merge) instead of Starts from (scene.transition)
         sid = pj["scenes"][fi]["id"]
         tri = page.locator(f"input[data-key='cut-tr-{sid}']")
         tri.click()
@@ -419,7 +411,6 @@ def main():
         check(page.locator(".rw-note.err").count() >= 1, "LLM test failure not shown")
         page.screenshot(path=str(shots / "v030_llm.png"))
 
-        # ---- added 2026-11-02 v0.3.1 ----
         # Script import: insert after the selected scene, append, or replace every scene.
         def propose(mode_label):
             page.click(".rw-tab:has-text('Global')")
@@ -464,7 +455,6 @@ def main():
         page.wait_for_timeout(300)
         check([s["id"] for s in project(page)["scenes"]] == before, "undo did not restore the replaced scenes")
 
-        # ---- added 2026-11-02 v0.3.2 ----
         # Thinking switch: the test explains a thinking model; Off is saved with the project.
         page.click(".rw-tab:has-text('Global')")
         page.wait_for_timeout(300)
@@ -480,7 +470,6 @@ def main():
         check(project(page)["global"]["llm"]["thinking"] == "off", "thinking switch not saved")
         page.screenshot(path=str(shots / "v032_thinking.png"))
 
-        # ---- added 2026-11-02 v0.3.3 ----
         # Timeline: wheel scrolls sideways, click on the ruler moves the playhead, hovering does not,
         # dragging pans without touching the playhead, the playhead label scrubs.
         page.click(".rw-tab:has-text('Timeline')")
@@ -523,19 +512,6 @@ def main():
         page.mouse.up()
         page.wait_for_timeout(300)
         check(abs((sl() - s0) - 200) < 3 and ph() == t1 and project(page)["ui"]["selected"] == sel, f"pan: scroll {s0}->{sl()}, playhead {ph()} vs {t1}")
-        # [OLD 2026-11-08 v0.13.0->v0.13.1] a sideways drag on a scene block moves the scene now (v0131_checks); Alt + drag pans
-        # # a drag that starts on a scene block pans too and does not select it
-        # bb = box(".rw-scene", 5)
-        # s0 = sl()
-        # page.mouse.move(bb["x"] + 30, bb["y"] + 40)
-        # page.mouse.down()
-        # page.mouse.move(bb["x"] + 130, bb["y"] + 40, steps=6)
-        # page.mouse.up()
-        # page.wait_for_timeout(300)
-        # s1, sel1, ph1 = sl(), project(page)["ui"]["selected"], ph()
-        # check(abs((s0 - s1) - 100) < 3 and sel1 == sel, f"drag on a scene block did not pan or selected it: scroll {s0}->{s1}, selected {sel1} vs {sel}, playhead {ph1}")
-        # [/OLD]
-        # added 2026-11-08 v0.13.1: Alt + drag on a scene block pans and neither selects nor moves it
         bb = box(".rw-scene", 5)
         s0, order0 = sl(), [x["id"] for x in project(page)["scenes"]]
         page.mouse.move(bb["x"] + 30, bb["y"] + 40)
@@ -570,7 +546,6 @@ def main():
         check(ph() == t2 and not page.evaluate("document.querySelector('.rw-root').classList.contains('rw-panning')"), "a lost release left the drag running")
         page.screenshot(path=str(shots / "v033_timeline.png"))
 
-        # ---- added 2026-11-02 v0.3.4 ----
         # An asset's description is shown live wherever it is used, and a character without its own
         # description picks up its first described anchor.
         page.wait_for_timeout(600)
@@ -618,7 +593,6 @@ def main():
         check(any(t.startswith("from P1: ") and "navy pea coat" in t for t in cast_lines), f"scene cast row: {cast_lines}")
         page.screenshot(path=str(shots / "v034_scene.png"))
 
-        # ---- added 2026-11-02 v0.3.5 ----
         # The latent preview shows only in the Render tab, in a small window, and goes away after the run.
         page.evaluate("""() => { const h = window.__host, c = document.createElement('canvas'); c.width = 42; c.height = 24;
           const g = c.getContext('2d'); const gr = g.createLinearGradient(0, 0, 42, 24); gr.addColorStop(0, '#203a5a'); gr.addColorStop(1, '#c8783c'); g.fillStyle = gr; g.fillRect(0, 0, 42, 24);
@@ -636,7 +610,6 @@ def main():
         page.wait_for_timeout(300)
         check(page.locator(".rw-run-preview").count() == 0, "preview stayed after the run ended")
 
-        # ---- added 2026-11-02 v0.3.6 ----
         # Autosaved versions: one line each, delete one, then delete all.
         page.click("button[data-help='render.versions.load']")
         page.wait_for_timeout(400)
@@ -647,7 +620,6 @@ def main():
         check(hts and max(hts) < 22, f"version date wraps: {hts}")
         page.locator(".rw-versions").scroll_into_view_if_needed()
         page.screenshot(path=str(shots / "v036_versions.png"))
-        # v0.6.0 (F2b): deleting a version asks in a dialog (the inline bar vanished on any re-render)
         rows.nth(1).locator("button[data-help='render.versions.delete']").click()
         page.wait_for_timeout(200)
         check(page.locator(".rw-confirm").count() == 0 and page.locator(".rw-modal").count() == 1, "version delete did not open a dialog")
@@ -660,7 +632,6 @@ def main():
         page.wait_for_timeout(400)
         check(page.locator(".rw-version").count() == 0 and page.locator(".rw-versions").count() == 0, "delete all left versions")
 
-        # ---- added 2026-11-02 v0.3.8 ----
         # The preview window is one element that survives re-renders, shows every preview through a blob: URL, keeps
         # the last good picture when one can't be decoded, and never shows a broken image.
         page.evaluate("""() => { const h = window.__host;
@@ -716,7 +687,6 @@ def main():
         page.wait_for_timeout(300)
         check(page.locator(".rw-run-preview").count() == 0, "preview stayed after the run ended (v0.3.8)")
 
-        # ---- added 2026-11-02 v0.3.9 ----
         # A frame from VideoHelperSuite's animated previews (24 header bytes, then the JPEG) is shown, not "could not be decoded".
         st = page.evaluate("""async () => { const h = window.__host;
           h.emit('reelwright.run', { slug: 'harbor_lights', phase: 'start', targets: ['s_02'], reused: [] });
@@ -731,7 +701,6 @@ def main():
         check(st is not None and not st["failed"] and st["w"] == 46 and st["cap"].endswith("3/6"), f"VHS-style preview frame: {st}")
         page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [] })")
 
-        # ---- added 2026-11-03 v0.4.0 ----
         # Files tab: a tree of everything on disk; select, delete, quick selections, guards.
         page.wait_for_timeout(300)
         page.click(".rw-tab:has-text('Files')")
@@ -814,7 +783,6 @@ def main():
         page.wait_for_timeout(300)
         page.screenshot(path=str(shots / "v040_files.png"))
 
-        # ---- added 2026-11-03 v0.4.1 ----
         # Files tab preview: a take previews its video in a pane that survives re-renders; files open on click.
         page.click("button[data-help='files.collapseAll']")
         page.click("button[data-help='files.order.natural']")
@@ -842,14 +810,14 @@ def main():
         check(page.locator(".rw-fprev img.rw-fprev-media").count() == 1, "picture preview missing")
         page.click(row("o:reelwright/harbor_lights/cuts") + " .rw-ftree-caret")
         page.wait_for_timeout(200)
-        cut = [r for r in rows() if r.startswith("cut:") and not r.endswith("_draft")][1]  # v0.6.0: the mock lists a draft cut first
+        cut = [r for r in rows() if r.startswith("cut:") and not r.endswith("_draft")][1]
         page.click(row(cut) + " .rw-ftree-caret")
         page.wait_for_timeout(200)
         srt = [r for r in rows() if r.endswith(".srt")][0]
         page.locator(row(srt) + " .rw-ftree-label").click()
         page.wait_for_timeout(400)
         check(page.locator(".rw-fprev pre.rw-fprev-text").count() == 1, "text preview missing")
-        check("-->" in page.locator(".rw-fprev pre.rw-fprev-text").inner_text(), "srt preview does not show the subtitles")  # added 2026-11-03 v0.4.1
+        check("-->" in page.locator(".rw-fprev pre.rw-fprev-text").inner_text(), "srt preview does not show the subtitles")
         page.screenshot(path=str(shots / "v041_files_preview.png"))
         page.click("button[data-help='files.preview.close']")
         page.wait_for_timeout(200)
@@ -888,13 +856,11 @@ def main():
         check("px" in size, f"anchor size note: {size!r}")
         page.screenshot(path=str(shots / "v041_cast_sheet.png"))
 
-        # ---- added 2026-11-03 v0.4.2 ----
         # LLM limits in Global; a long script imported in parts: progress, Stop/Continue, a cut part split in two,
         # a failed part retried on its own, the premise sent with every part, cast merged across parts.
         page.evaluate("() => clearInterval(window.__tick)")
         page.click(".rw-tab:has-text('Global')")
         page.wait_for_timeout(300)
-        # [OLD 2026-11-03 v0.5.0->v0.5.1] the limit fields were always shown; now both groups fold (closed by default)
         check(page.locator("input[data-help='global.llm.timeout']").count() == 0, "Limits should start folded")
         check("stall 120 s" in page.locator("button.rw-fold[data-help='global.llm.limits']").inner_text(), "folded Limits shows no summary")
         page.click("button.rw-fold[data-help='global.llm.limits']")
@@ -970,7 +936,6 @@ def main():
         page.wait_for_timeout(500)
         check(page.locator(".rw-llm-busy").count() == 0 and page.evaluate("!window.__editor.eph.rewrite"), "rewrite did not stop")
 
-        # ---- added 2026-11-03 v0.4.3 ----
         # Shots after the end of a scene: shot lengths beside the start, Lengthen / Fit into, and the Issues button.
         saved = json.dumps(project(page))
         bad = json.loads(saved)
@@ -984,7 +949,6 @@ def main():
         page.wait_for_timeout(400)
         page.click(".rw-tab:has-text('Scene')")
         page.wait_for_timeout(300)
-        # v0.8.0: the length is a field of the row ("for [8.42] s"), "after the end" a note; read both per row
         shot_lens = lambda: page.evaluate("""() => [...document.querySelectorAll('.rw-shot-row')].filter(r => !r.closest('.rw-pass-pane')).map(r => {
           const past = r.querySelector("[data-help='scene.shots.length']");
           if (past) return past.textContent;
@@ -1023,7 +987,6 @@ def main():
         page.evaluate("j => window.__editor.load(j)", saved)
         page.wait_for_timeout(300)
 
-        # ---- added 2026-11-03 v0.5.0 ----
         # Soundtrack lanes: add a track, move and trim it on its lane, edit it in the inspector, scene sound in the merge.
         live = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
         saved = json.dumps(live())
@@ -1069,7 +1032,6 @@ def main():
         page.wait_for_timeout(300)
         t = live()["soundtrack"][0]
         check(abs(t["start"] - 2.0) < 0.05, f"move: start {t['start']}")
-        # v0.6.0 (F2a): the render after the drop can replace the clip while it is measured (bounding_box() gave None)
         bx = None
         for _ in range(10):
             bx = page.locator(".rw-track-clip").first.bounding_box()
@@ -1098,7 +1060,6 @@ def main():
         page.wait_for_timeout(300)
         t = live()["soundtrack"][0]
         check(t["volume_db"] == -6 and t["loop"], f"inspector edits: {t}")
-        # v0.6.0 (F2a): the repeats are one pattern element that ends with the film
         ghost = page.locator(".rw-track-clip.ghost.pattern")
         check(ghost.count() == 1 and int(ghost.first.get_attribute("data-repeats") or 0) > 3, "loop repeats not drawn")
         gb = ghost.first.bounding_box() if ghost.count() else None
@@ -1168,7 +1129,6 @@ def main():
         page.evaluate("j => window.__editor.load(j)", saved)
         page.wait_for_timeout(300)
 
-        # ---- added 2026-11-03 v0.5.1 ----
         # A click on a button the render rebuilds (Add scene) used to leave focus on the page body, so Ctrl+Z went to
         # ComfyUI instead of the editor. Focus stays in the editor, and Ctrl+Z undoes the edit.
         page.click(".rw-tab:has-text('Timeline')")
@@ -1191,7 +1151,6 @@ def main():
         check(page.locator("input[data-help='global.llm.importPart']").count() == 0 and "parts of" in fold.inner_text(), "Script import did not fold")
         page.screenshot(path=str(shots / "v051_llm_folded.png"))
 
-        # ---- added 2026-11-03 v0.6.0 (F1: editor core) ----
         in_editor_keys = "(() => { const a = document.activeElement; return !!a && a.classList.contains('rw-keys') && !!a.closest('.rw-root'); })()"
         toast_text = lambda: " | ".join(page.locator(".rw-toast").all_inner_texts())
         page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
@@ -1207,7 +1166,8 @@ def main():
         page.keyboard.press("Enter")
         page.wait_for_timeout(300)
         check(live()["global"]["defaults"]["language"] == "French", f"combobox pick: {live()['global']['defaults']['language']}")
-        check(page.evaluate(in_editor_keys), f"focus after combobox Enter: {page.evaluate('document.activeElement.tagName + \".\" + document.activeElement.className')}")
+        focused = page.evaluate("document.activeElement.tagName + '.' + document.activeElement.className")
+        check(page.evaluate(in_editor_keys), f"focus after combobox Enter: {focused}")
         page.keyboard.press("Control+z")
         page.wait_for_timeout(300)
         check(live()["global"]["defaults"]["language"] != "French", "Ctrl+Z after a combobox pick did not undo it")
@@ -1291,7 +1251,7 @@ def main():
         i = cands[0] if cands else len(sp["scenes"]) - 1
         sid = sp["scenes"][i]["id"]
         sc = sp["scenes"][i]
-        start = page.evaluate("import('../web/rw/model.js').then(m => m.sceneStarts(window.__editor.project).starts[%r])" % sid)
+        page.evaluate("import('../web/rw/model.js').then(m => m.sceneStarts(window.__editor.project).starts[%r])" % sid)
         at = round(sc["duration"] / 2 * 24) / 24
         page.evaluate("window.__editor.actions.splitScene(%r, %r)" % (sid, at))
         page.wait_for_timeout(300)
@@ -1434,7 +1394,6 @@ def main():
         page.keyboard.press("Control+s")
         page.wait_for_timeout(300)
         check(page.locator(".rw-modal").count() == 1 and "Lighthouse Keeper" in page.inner_text(".rw-modal"), "slug conflict dialog missing")
-        # v0.6.0 review: the harmless "Decide later" has focus (a Space typed on was "Use a separate project")
         check(page.evaluate("document.activeElement.textContent") == "Decide later", "conflict dialog focus")
         page.screenshot(path=str(shots / "v060_conflict.png"))
         page.locator(".rw-modal button:has-text('Decide later')").click()
@@ -1518,34 +1477,35 @@ def main():
         check(r["flushed"] == "Torn down" and r["empty"] == 0 and r["destroyed"], f"destroy flush/cleanup: {r}")
         page.evaluate("window.__editor.load(%s)" % json.dumps(saved))
         page.wait_for_timeout(300)
-        f2a_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 (F2a): Timeline, soundtrack, Scene tabs
-        f2b_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 (F2b): Render, Files, Global, Assets, Cast tabs
-        review_checks(page, check, saved, shots)  # added 2026-11-03 v0.6.0 review: frontend fixes of the second review
-        v061_checks(page, check, saved, shots)  # added 2026-11-04 v0.6.1: frontend fixes of the third review
-        v070_checks(page, check, saved, shots)  # added 2026-11-05 v0.7.0: In the cut, Merge card, filmstrip, continuity switch
-        v080_checks(page, check, saved, shots)  # added 2026-11-05 v0.8.0: pass tabs, Write prompts, rows, follow, seams, drift
-        v090_checks(page, check, saved, shots)  # added 2026-11-06 v0.9.0: Timeline panels, captions, volume; Scene lists; asset groups
-        v0100_checks(page, check, saved, shots)  # added 2026-11-06 v0.10.0: speech-timed captions, tooltips, folds, seam fixes, rewriter per pass, copy, import/export, voices
-        v0102_checks(page, check, saved, shots)  # added 2026-11-06 v0.10.2: merge and LLM progress without rebuilding the tab; tooltips survive a rebuild
-        v0103_checks(page, check, saved, shots)  # added 2026-11-07 v0.10.3: Global → Project → New project
-        v0110_checks(page, check, saved, shots)  # added 2026-11-08 v0.11.0: Cast → Part of; outfit pictures
-        v0120_checks(page, check, saved, shots)  # added 2026-11-08 v0.12.0: pose references
-        v0130_checks(page, check, saved, shots)  # added 2026-11-08 v0.13.0: Chat tab; a new take keeps playing; full screen
-        v0131_checks(page, check, saved, shots)  # added 2026-11-08 v0.13.1: what a duplicated scene keeps; drag scenes to reorder
-        v0140_checks(page, check, saved, shots)  # added 2026-11-08 v0.14.0: clips of video and audio references
-        v0141_checks(page, check, saved, shots)  # added 2026-11-09 v0.14.1: every card folds; the Timeline inspector's parts too
-        v0142_checks(page, check, saved, shots)  # added 2026-11-09 v0.14.2: shots and lines written for a scene without shots go on the timeline
-        v0143_checks(page, check, saved, shots)  # added 2026-11-09 v0.14.3: framing and camera moves of written shots go into the shots
-        v0144_checks(page, check, saved, shots)  # added 2026-11-09 v0.14.4: written shots replace the shots whatever their count; scenes of several passes too
-        v0150_checks(page, check, saved, shots)  # added 2026-11-09 v0.15.0: drag to reorder, Reset scene, the LLM output popup, the Write prompts brief
-        v0151_checks(page, check, saved, shots)  # added 2026-11-09 v0.15.1: dialogs open next to what opened them
-        v0160_checks(page, check, saved, shots)  # added 2026-11-09 v0.16.0: video anchors; sheets too small; the sheet in the subject line
-        v0161_checks(page, check, saved, shots)  # added 2026-11-09 v0.16.1: a video anchor has the scene reference's clip editor
-        v0173_checks(page, check, saved, shots)  # added 2026-11-09 v0.17.3: prompt editors keep their size through a re-render
-        v0180_checks(page, check, saved, shots)  # added 2026-11-10 v0.18.0: Reset scene options, the @ list, scroll kept, anchors per scene, a frame as a picture
-        v0190_checks(page, check, saved, shots)  # added 2026-11-10 v0.19.0: Hires (latent upscaler), Write prompts asks which passes, pass names
+        f2a_checks(page, check, saved, shots)
+        f2b_checks(page, check, saved, shots)
+        review_checks(page, check, saved, shots)
+        v061_checks(page, check, saved, shots)
+        v070_checks(page, check, saved, shots)
+        v080_checks(page, check, saved, shots)
+        v090_checks(page, check, saved, shots)
+        v0100_checks(page, check, saved, shots)
+        v0102_checks(page, check, saved, shots)
+        v0103_checks(page, check, saved, shots)
+        v0110_checks(page, check, saved, shots)
+        v0120_checks(page, check, saved, shots)
+        v0130_checks(page, check, saved, shots)
+        v0131_checks(page, check, saved, shots)
+        v0140_checks(page, check, saved, shots)
+        v0141_checks(page, check, saved, shots)
+        v0142_checks(page, check, saved, shots)
+        v0143_checks(page, check, saved, shots)
+        v0144_checks(page, check, saved, shots)
+        v0150_checks(page, check, saved, shots)
+        v0151_checks(page, check, saved, shots)
+        v0160_checks(page, check, saved, shots)
+        v0161_checks(page, check, saved, shots)
+        v0173_checks(page, check, saved, shots)
+        v0180_checks(page, check, saved, shots)
+        v0190_checks(page, check, saved, shots)
+        v0191_checks(page, check, saved, shots)
         browser.close()
-        v0173_scrollbar_checks(pw, page_url, check)  # added 2026-11-09 v0.17.3: typing lands where the caret is (real scrollbars)
+        v0173_scrollbar_checks(pw, page_url, check)
     httpd.shutdown()
 
     for e in errors:
@@ -1556,7 +1516,6 @@ def main():
     return 1 if errors or failures else 0
 
 
-# ---- added 2026-11-03 v0.6.0 (F2a: timeline-side tabs) ----
 def f2a_checks(page, check, saved, shots):
     """v0.6.0 tabs (F2a): Next/Prev/Loop over continuing scenes, a loop over a take seeks the video, Delete acts on the
     selection, beats + Snap to beats, Auto-roll keeps later scenes on the song, the "what goes stale" preview, the pass's
@@ -1771,8 +1730,6 @@ def f2a_checks(page, check, saved, shots):
     drag(hb["x"] + hb["width"] / 2, hb["y"] + 20, 2 * z * sc)
     tm1 = timing()
     q = cur()
-    # v0.6.0 review: the sum of the two lengths is no longer the rule (tail overlaps are capped by the lengths around
-    # them); the later scenes keeping their starts is
     check(q["scenes"][3]["duration"] > d3 and q["scenes"][4]["duration"] < d4
           and all(abs(tm1["starts"][k] - tm0["starts"][k]) < 1e-6 for k in range(5, 8)) and abs(tm1["total"] - tm0["total"]) < 1e-6,
           f"auto-roll moved later scenes: {tm0['starts']} -> {tm1['starts']}")
@@ -1800,15 +1757,8 @@ def f2a_checks(page, check, saved, shots):
     page.mouse.down()
     page.mouse.move(bx["x"] + 30 + 3 * z * sc, bx["y"] + bx["height"] / 2, steps=6)
     page.wait_for_timeout(200)
-    # [OLD 2026-11-08 v0.13.0->v0.13.1] read at once: a render that lands during the drag (the autosave's "Saving…") replaces
-    # the clip, and its tip comes back with the next pointer move, so the check failed when the timing fell that way
-    # n_stale = page.locator(".rw-scene.rw-stale-preview").count()
-    # tip = page.locator(".rw-track-clip[data-tid='t_song'] .rw-drag-tip").first.inner_text()
-    # [/OLD]
-    # added 2026-11-08 v0.13.1: a pointer keeps moving while it drags; nudge it until the tip is there (at most ~1 s)
     tip = ""
-    # [OLD 2026-11-09 v0.14.3->v0.14.4] for k in range(5):  (about 1 s was sometimes too short while a render landed)
-    for k in range(15):  # added 2026-11-09 v0.14.4: up to ~3 s
+    for k in range(15):
         page.mouse.move(bx["x"] + 30 + 3 * z * sc + (k % 2), bx["y"] + bx["height"] / 2)
         page.wait_for_timeout(200)
         tl = page.locator(".rw-track-clip[data-tid='t_song'] .rw-drag-tip")
@@ -1951,7 +1901,6 @@ def f2a_checks(page, check, saved, shots):
     tab("Timeline")
 
 
-# ---- added 2026-11-03 v0.6.0 (F2b: project-side tabs) ----
 def f2b_checks(page, check, saved, shots):
     """v0.6.0 tabs (F2b): upstream warning + re-render, pass retake, variants, estimates, prompt diff, merge options /
     Stop / loudness, version diff, Files repair / flags / refused deletes / asset cleanup, dialogs instead of inline bars,
@@ -2343,7 +2292,6 @@ def f2b_checks(page, check, saved, shots):
 
 
 
-# ---- added 2026-11-03 v0.6.0 review (second review, frontend fixes) ----
 def review_checks(page, check, saved, shots):
     """v0.6.0 review: a renamed copy keeps its folder (separateProjectId), no folder dialog from a background autosave,
     the lanes after a big zoom-out, Auto-roll keeps the later scenes with capped tail overlaps, focus and text of a
@@ -2584,7 +2532,6 @@ def review_checks(page, check, saved, shots):
     load()
 
 
-# ---- added 2026-11-04 v0.6.1 (third review, frontend) ----
 # The mock's fetchApi is wrapped: each /autosave waits a chosen delay before the "server" handles it (so requests that
 # overlap would land out of order) and the project name of every handled request is recorded (the disk).
 AUTOSAVE_WRAP = """() => {
@@ -2860,7 +2807,6 @@ def v061_checks(page, check, saved, shots):
     load()
 
 
-# ---- added 2026-11-05 v0.7.0 ----
 def v070_checks(page, check, saved, shots):
     """v0.7.0: the Scene tab's "In the cut" card edits scene.merge (named undo steps, keys), Apply to all (one undo
     step), continuing scenes join by their continuation, transitions play as dips under a soundtrack, the Merge card
@@ -2948,7 +2894,6 @@ def v070_checks(page, check, saved, shots):
     num("cut-frames-s_04", 20)
     focus_key = page.evaluate("document.activeElement?.dataset?.key || ''")
     secs = page.locator("[data-key='cut-frames-s_04']").locator("xpath=ancestor::span[contains(@class,'rw-frames')]").locator(".rw-frames-s").inner_text()
-    # v0.7.0 lead review: on an overlapping transition the sound crossfades over it; the audio fade field is gone there
     check(page.locator("[data-key='cut-afr-s_04']").count() == 0 and page.locator(".rw-cut .rw-note:has-text('crossfades over the whole transition')").count() == 1,
           "an overlapping transition still shows the audio fade field")
     num("cut-fade_in-s_04", 24)
@@ -3212,7 +3157,6 @@ def v070_checks(page, check, saved, shots):
         s.pop("merge", None)
     old["scenes"][4]["transition"] = {"mode": "crossfade", "frames": 20, "audio_fade_frames": 9}
     load(old)
-    # v0.7.0 lead review: a crossfade shows no audio fade field (the sound crossfades over it); the migrated value is in the project
     check(page.locator("input[data-key='cut-tr-s_05']").input_value() == "Crossfade" and page.locator("[data-key='cut-frames-s_05']").input_value() == "20"
           and cur()["scenes"][4]["merge"]["audio_frames"] == 9, "an old project's transition is not shown in In the cut")
 
@@ -3220,7 +3164,6 @@ def v070_checks(page, check, saved, shots):
     tab("Timeline")
 
 
-# ---- added 2026-11-05 v0.8.0 (F: contract P4) ----
 AUDIT_JS = """async () => {
   const { HELP } = await import('/web/rw/help.js');
   const root = document.querySelector('.rw-root');
@@ -3319,8 +3262,6 @@ def v080_checks(page, check, saved, shots):
     check(rows.count() == 1 and rows.first.locator(".rw-shot-label").inner_text() == "[Shot 1]" and "#4" in rows.first.inner_text()
           and pane.locator("input[data-key='p3-shot-t-h_12']").input_value() == "22", "pass 3 shows its one shot, numbered for the pass, at its scene time")
     check(pane.locator(".rw-dlg-row").count() == 0 and pane.locator("[data-key='write-s_07-3']").count() == 1, "pass 3: no lines, Write this pass")
-    # [OLD 2026-11-06 v0.8.0->v0.9.0] What H3 receives had its own pass tabs (.rw-pass-tab); it follows the Prompt tab now
-    # check(page.evaluate("window.__editor.eph.openPasses.s_07") == 2 and page.locator(".rw-pass-tab.on").inner_text().startswith("Pass 3"), "the preview follows the open pass tab")
     heads = page.locator(".rw-h3-pass-head").all_inner_texts()
     check(page.locator(".rw-pass-tab").count() == 0 and len(heads) == 1 and heads[0].startswith("Pass 3 of 3"), f"the preview shows the open pass tab's pass: {heads}")
     page.click("[data-key='ptab-s_07-2']")
@@ -3403,7 +3344,7 @@ def v080_checks(page, check, saved, shots):
     # 5. Write prompts (every pass) can be stopped (nothing applied), then runs through as one undo step
     page.evaluate("window.__mockFlags.passesMs = 2400")
     n0 = len(labels())
-    click_write(page, "[data-key='write-s_07']")  # v0.19.0: confirms the pass list
+    click_write(page, "[data-key='write-s_07']")
     try:
         page.wait_for_function("document.querySelector('.rw-llm-busy')?.textContent.includes('pass 1 of 3')", timeout=4000)
     except Exception:
@@ -3414,7 +3355,7 @@ def v080_checks(page, check, saved, shots):
     check(page.evaluate("window.__mockFlags.passCalls.at(-1).passes") is None, "Write prompts asks for every pass")
     settle()
     page.evaluate("window.__mockFlags.passesMs = 200")
-    click_write(page, "[data-key='write-s_07']")  # v0.19.0: confirms the pass list
+    click_write(page, "[data-key='write-s_07']")
     wait_write()
     pp = scene_of("s_07")["prompt"]["passes"]
     check([x["sections"]["summary"][:6] for x in pp] == ["Pass 1", "Pass 2", "Pass 3"] and len(labels()) == n0 + 1 and labels()[-1] == "Write prompts",
@@ -3433,7 +3374,7 @@ def v080_checks(page, check, saved, shots):
     settle()
 
     # 7. Shot rows: start / end / length in scene time, editable length, camera picker, growing text, seam notes
-    page.evaluate("window.__editor.store.setEph({ promptTabs: {} })")  # added 2026-11-06 v0.9.0: a pass tab hides the scene's Shots card
+    page.evaluate("window.__editor.store.setEph({ promptTabs: {} })")
     load(demo(tab="scene", selected="s_07"))
     row = lambda sid: page.locator(f".rw-shot-row:has(input[data-key='shot-t-{sid}'])")
     check(page.locator("input[data-key='shot-t-h_10']").input_value() == "6" and row("h_10").locator(".rw-shot-end").inner_text().startswith("→ 14.375")
@@ -3610,12 +3551,10 @@ def v080_checks(page, check, saved, shots):
     t7 = page.locator(".rw-takes").nth(1).inner_text()
     check("P3" in t7 and "9.8" in t7 and "picture-only seams · latent hand-off" in t7 and "guide fp16" in page.locator(".rw-takes").first.inner_text(),
           f"drift numbers per pass and the take's seam settings: {t7[:200]!r}")
-    # [OLD 2026-11-06 v0.9.0->v0.10.0] tip = page.locator(".rw-takes").nth(1).locator(".rw-drift-pass").nth(1).get_attribute("title") or ""
-    tip = page.locator(".rw-takes").nth(1).locator(".rw-drift-pass").nth(1).get_attribute("data-detail") or ""  # added 2026-11-06 v0.10.0: the editor's tooltip
+    tip = page.locator(".rw-takes").nth(1).locator(".rw-drift-pass").nth(1).get_attribute("data-detail") or ""
     check("pixels hand-off (the passes differ in size)" in tip and "b -2.5" in tip, f"drift tooltip: {tip}")
     trow_led = page.evaluate("""() => [...document.querySelectorAll('.rw-trow')].map(r => r.querySelector("[data-help='render.table.drift']")?.className || '').filter(Boolean)""")
-    # [OLD 2026-11-06 v0.9.0->v0.10.0] check(trow_led == ["rw-led ok", "rw-led warn"], f"the table shows the starred take's worst drift: {trow_led}")
-    check(trow_led == ["rw-led ok rw-led-hit", "rw-led warn rw-led-hit"], f"the table shows the starred take's worst drift: {trow_led}")  # added 2026-11-06 v0.10.0: a larger hover area
+    check(trow_led == ["rw-led ok rw-led-hit", "rw-led warn rw-led-hit"], f"the table shows the starred take's worst drift: {trow_led}")
     page.screenshot(path=str(shots / "v080_drift.png"))
     audit("Render tab, drift")
     page.evaluate("delete window.__mockTakes.s_07; if (window.__keep03) window.__mockTakes.s_03 = window.__keep03; window.__editor.actions.refreshTakes()")
@@ -3792,14 +3731,13 @@ def v090_checks(page, check, saved, shots):
       for (const s of p.scenes) for (const d of s.dialogue) if (d.text.trim() && d.t >= 2 && d.t < s.duration - 1.5) return { sid: s.id, t: st[s.id] + d.t, text: d.text.trim(), name: (p.cast.find(c => c.id === d.speaker) || {}).name || '' };
       return null; }""")
     check(line is not None, "the demo has a spoken line to caption")
-    # added 2026-11-06 v0.10.0: these checks are about planned times; v0100_checks covers captions timed to the speech
     page.evaluate("window.__editor.store.update(p => { p.global.merge.subtitle_timing = 'planned'; }, { history: false })")
     set_ph = "t => window.__editor.store.update(p => { p.ui.playhead = t; }, { history: false, plan: false })"
     page.evaluate(set_ph, line["t"] - 0.6)
     page.wait_for_timeout(250)
     cap = lambda: page.evaluate("(() => { const c = document.querySelector('.rw-mon-cap'); return c && c.style.display !== 'none' ? c.textContent : ''; })()")
     before = cap()
-    renders = page.evaluate("() => { window.__rwR = 0; window.__rwOff = window.__editor.store.subscribe(() => { window.__rwR++; }); return 0; }")
+    page.evaluate("() => { window.__rwR = 0; window.__rwOff = window.__editor.store.subscribe(() => { window.__rwR++; }); return 0; }")
     bl0 = page.evaluate("document.querySelector('.rw-mon-badge.bl').textContent")
     play = "button[data-help='timeline.transport.play']"
     page.click(play)
@@ -3826,7 +3764,7 @@ def v090_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
     check(cap().startswith(line["text"][:20]), f"a caption without a speaker: {cap()!r}")
     page.screenshot(path=str(shots / "v090_caption.png"))
-    page.evaluate("window.__editor.store.update(p => { p.global.merge.subtitle_timing = 'speech'; }, { history: false })")  # added 2026-11-06 v0.10.0
+    page.evaluate("window.__editor.store.update(p => { p.global.merge.subtitle_timing = 'speech'; }, { history: false })")
 
     # 3. The monitor's volume: mute, and the slider (no undo step, the merge does not read it)
     n0 = len(labels())
@@ -4121,8 +4059,6 @@ def v0100_checks(page, check, saved, shots):
     check(rew.count() == 0, "Whole scene of a 3-pass scene: no rewriter")
     page.click("[data-key='ptab-s_07-2']")
     page.wait_for_timeout(300)
-    # [OLD 2026-11-10 v0.18.0->v0.19.0] the title read "pass 2"; v0.19.0 uses the pass's label ("Pass 2 · name")
-    # check(rew.count() == 1 and rew.inner_text().strip() == "Prompt rewriter · pass 2", f"pass 2: the rewriter for pass 2 ({rew.all_inner_texts()})")
     check(rew.count() == 1 and rew.inner_text().strip() == "Prompt rewriter · Pass 2", f"pass 2: the rewriter for pass 2 ({rew.all_inner_texts()})")
     page.fill("[data-key='rewrite-instr']", "Make the rain heavier.")
     page.evaluate("window.__mockFlags.passesMs = 0")
@@ -4189,8 +4125,6 @@ def v0100_checks(page, check, saved, shots):
 
     # 9. Global → Project: Export (a .json download), Copy JSON, Import (pasted, a file) with a confirmation, undo
     tab("Global")
-    # added 2026-11-06 v0.10.1: the LLM card's Limits / Script import rows stay full width inside their card (v0.10.0's
-    # card-fold style reused their class name and squeezed them into 20 px, so their labels drifted out of the card)
     fr = page.evaluate("""() => [...document.querySelectorAll("button.rw-fold[data-help^='global.llm.']")].map(b => {
       const r = b.getBoundingClientRect(), c = b.closest('.rw-card').getBoundingClientRect(), l = b.querySelector('.rw-fold-label').getBoundingClientRect();
       return { w: r.width, cw: c.width, inside: r.left >= c.left - 1 && l.left >= c.left && l.right <= c.right, label: l.left - r.left }; })""")
@@ -4397,7 +4331,8 @@ def v0103_checks(page, check, saved, shots):
     """v0.10.3: Global → Project → New project… (Sencer: "add a button to project to start a new project"). The node
     gets an empty project in a new untitled-xxxx folder as one undo step, keeping this project's Global settings or
     taking the default profile's; the current project is saved to its folder first; nothing starts while a render runs."""
-    import os, re
+    import os
+    import re
 
     def load(p):
         page.evaluate("j => window.__editor.load(j)", json.dumps(p))
@@ -4879,7 +4814,6 @@ def v0131_checks(page, check, saved, shots):
     page.wait_for_timeout(400)
     check(order() == before, f"Ctrl+Z puts it back: {order()[:4]}")
     # drag s_03 to the front: before the first scene
-    # added 2026-11-09 v0.15.0: under load the blocks were not drawn yet after the undo (box() gave None once)
     page.wait_for_selector(".rw-scene[data-sid='s_03']", timeout=4000)
     page.wait_for_selector(".rw-scene[data-sid='s_01']", timeout=4000)
     page.wait_for_timeout(200)
@@ -5063,7 +4997,6 @@ def v0140_checks(page, check, saved, shots):
     # 7. the timeline shows each clip with its tag
     page.evaluate("window.__editor.actions.setTab('timeline')")
     page.wait_for_timeout(500)
-    codes = page.locator(".rw-lane-body .rw-bar.vid .rw-bar-code, .rw-lane-body .vid .code").all_inner_texts()
     lane = page.evaluate("() => [...document.querySelectorAll('.rw-lane-body')].map(x => x.textContent).join(' | ')")
     check("V1.2" in lane, f"the timeline names the second clip V1.2: {lane[:300]}")
     page.evaluate("""() => { const host = window.__host; if (host.__origApiURL) host.apiURL = host.__origApiURL; }""")
@@ -5248,12 +5181,10 @@ def v0142_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
     check(page.locator(f"[data-key='fill-shots-{sid}']").count() == 0, "a scene with nothing written offers nothing")
     n0 = len(labels())
-    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
-    page.wait_for_function(f"() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
+    click_write(page, f"[data-key='write-{sid}']")
+    page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     sc = scene_of(sid)
-    # [OLD 2026-11-09 v0.14.2->v0.14.3] the framing stayed in the text
-    # check(len(sc["shots"]) == 1 and sc["shots"][0]["t"] == 0 and sc["shots"][0]["text"].startswith("A medium shot of @Mara")
     check(len(sc["shots"]) == 1 and sc["shots"][0]["t"] == 0 and sc["shots"][0]["text"].startswith("@Mara at the harbor wall") and sc["shots"][0]["framing"] == "medium"
           and "Almost home" not in sc["shots"][0]["text"], f"Write prompts put the shot on the timeline: {sc['shots']}")
     check([(d["speaker"], d["delivery"], d["text"]) for d in sc["dialogue"]] == [("c_mara", "mutters", "Almost home."), ("c_keeper", "calls", "You're late again.")],
@@ -5345,7 +5276,7 @@ def v0143_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
 
     # 1. a scene without shots: the shot gets its framing and camera move
-    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
+    click_write(page, f"[data-key='write-{sid}']")
     page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     sh = scene_of(sid)["shots"]
@@ -5360,7 +5291,7 @@ def v0143_checks(page, check, saved, shots):
 
     # 2. Write prompts again on the scene that now has its shot: the shot takes the new framing and move
     page.evaluate("([sid, t]) => { window.__mockFlags.writeText[sid] = t; window.__editor.store.setEph({ toasts: [] }); }", [sid, again])
-    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
+    click_write(page, f"[data-key='write-{sid}']")
     page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     sc = scene_of(sid)
@@ -5395,7 +5326,7 @@ def v0144_checks(page, check, saved, shots):
         page.evaluate("([sid, t]) => { window.__mockFlags.writeText[sid] = t; window.__mockFlags.passesMs = 0; window.__editor.store.setEph({ toasts: [] }); }", [sid, text])
         page.evaluate(f"window.__editor.actions.select('{sid}', 'scene')")
         page.wait_for_timeout(300)
-        click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
+        click_write(page, f"[data-key='write-{sid}']")
         page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
         page.wait_for_timeout(400)
 
@@ -5422,7 +5353,6 @@ def v0144_checks(page, check, saved, shots):
     audit("Shots replaced")
 
     # 2. a scene of several passes: each shot that starts in a pass takes what that pass wrote
-    s7 = scene_of("s_07")
     plan = page.evaluate("""async () => { const m = await import('/web/rw/model.js'); const p = window.__editor.project;
       const i = p.scenes.findIndex(s => s.id === 's_07'); return m.planScene(p, p.scenes[i], i).passes.map(x => x.shots.map(s => [s.id, s.continuing])); }""")
     texts = []
@@ -5467,9 +5397,6 @@ def v0150_checks(page, check, saved, shots):
     undo = lambda: (page.evaluate("window.__editor.store.undo()"), page.wait_for_timeout(300))
 
     def drag(src, dst, below=True):  # press a grip, move over the middle of another row (just below it), release
-        # [OLD 2026-11-09 v0.15.0->v0.15.1] page.locator(dst).scroll_into_view_if_needed()
-        # [OLD 2026-11-09 v0.15.0->v0.15.1] page.locator(src).scroll_into_view_if_needed()
-        # added 2026-11-09 v0.15.1: a redraw (plan refresh) during Playwright's "stable" wait failed it now and then
         page.wait_for_timeout(300)
         page.locator(src).evaluate("e => e.scrollIntoView({ block: 'center' })")
         page.wait_for_timeout(150)
@@ -5542,9 +5469,7 @@ def v0150_checks(page, check, saved, shots):
       { id: 'g_c', name: 'gc.safetensors', strength: 1, enabled: true }]; }, { label: 'v0150 global loras' })""")
     page.click(".rw-tab:has-text('Global')")
     page.wait_for_timeout(400)
-    # [OLD 2026-11-09 v0.15.0->v0.15.1] grip = page.locator("[data-key='glora-grip-g_a']")
-    # [OLD 2026-11-09 v0.15.0->v0.15.1] grip.scroll_into_view_if_needed()
-    page.wait_for_timeout(800)  # added 2026-11-09 v0.15.1: let the plan refresh redraw first (drag scrolls the grip into view)
+    page.wait_for_timeout(800)
     drag("[data-key='glora-grip-g_a']", "[data-key='glora-grip-g_c'] >> xpath=ancestor::div[contains(@class,'rw-sort-item')][1]")
     got = [x["id"] for x in cur()["global"]["loras"]]
     check(got == ["g_b", "g_c", "g_a"] and labels()[-1] == "Reorder global LoRAs", f"Global LoRAs: dragged to the end: {got} {labels()[-1:]}")
@@ -5563,7 +5488,7 @@ def v0150_checks(page, check, saved, shots):
     check(page.locator(f"[data-key='brief-btn-{sid}']").count() == 1 and page.locator(f"textarea[data-key='brief-{sid}']").count() == 0,
           "the Brief button is there, the brief is hidden")
     page.evaluate("([sid]) => { window.__mockFlags.writeText[sid] = 'Dusk.\\n[Shot 1] A wide shot of @Mara at the pier.'; window.__mockFlags.passesMs = 0; window.__mockFlags.passCalls = []; window.__editor.store.setEph({ toasts: [] }); }", [sid])
-    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
+    click_write(page, f"[data-key='write-{sid}']")
     page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     sc = scene_of(sid)
@@ -5580,7 +5505,7 @@ def v0150_checks(page, check, saved, shots):
     page.locator(".rw-root").click(position={"x": 4, "y": 4})
     page.wait_for_timeout(300)
     page.evaluate("() => { window.__mockFlags.passCalls = []; window.__editor.store.setEph({ toasts: [] }); }")
-    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
+    click_write(page, f"[data-key='write-{sid}']")
     page.wait_for_function("() => !window.__editor.store.eph.passWrite?.running", timeout=8000)
     page.wait_for_timeout(400)
     calls = page.evaluate("window.__mockFlags.passCalls")
@@ -5596,10 +5521,8 @@ def v0150_checks(page, check, saved, shots):
     shots_before = len(scene_of(sid)["shots"])
     page.click(f"[data-key='reset-{sid}']")
     page.wait_for_timeout(250)
-    # [OLD 2026-11-09 v0.16.0->v0.16.1] check(page.locator(".rw-modal").count() == 1 and "Write prompts brief" in page.locator(".rw-modal").inner_text(), "Reset scene asks first and says what stays")
     ask = page.locator(".rw-modal").inner_text() if page.locator(".rw-modal").count() == 1 else ""
-    # [OLD 2026-11-10 v0.17.3->v0.18.0] check("Write prompts brief" in ask and f"the {shots_before} shot" in ask, f"Reset scene asks first and says what goes and what stays: {ask!r}")  # added 2026-11-09 v0.16.1
-    check("Write prompts brief" in ask and f"Shots ({shots_before})" in ask, f"Reset scene asks first and says what goes and what stays: {ask!r}")  # added 2026-11-10 v0.18.0: ticks, all on
+    check("Write prompts brief" in ask and f"Shots ({shots_before})" in ask, f"Reset scene asks first and says what goes and what stays: {ask!r}")
     page.screenshot(path=str(shots / "v0150_reset_ask.png"))
     page.locator(".rw-modal button:has-text('Cancel')").click()
     page.wait_for_timeout(250)
@@ -5609,20 +5532,17 @@ def v0150_checks(page, check, saved, shots):
     page.locator(".rw-modal button:has-text('Reset scene')").click()
     page.wait_for_timeout(350)
     sc = scene_of(sid)
-    # [OLD 2026-11-09 v0.16.0->v0.16.1] check(all(v == "" for v in sc["prompt"]["sections"].values()) and sc["prompt"]["passes"] == [] and labels()[-1] == "Reset scene"
-    # [OLD 2026-11-09 v0.16.0->v0.16.1]       and sc["prompt"]["brief"] and len(sc["shots"]) == shots_before, f"Reset scene clears the sections only: {sc['prompt']} {labels()[-1:]}")
-    # added 2026-11-09 v0.16.1: the shots and dialogue go too (Sencer: "reset scene's doesn't remove the shots.")
     check(all(v == "" for v in sc["prompt"]["sections"].values()) and sc["prompt"]["passes"] == [] and labels()[-1] == "Reset scene"
           and sc["prompt"]["brief"] and shots_before > 0 and sc["shots"] == [] and sc["dialogue"] == [],
           f"Reset scene clears the sections, shots and dialogue: {sc['prompt']} shots {len(sc['shots'])}/{shots_before} lines {len(sc['dialogue'])} {labels()[-1:]}")
     check(page.locator(f"[data-key='reset-{sid}']").is_disabled(), "nothing left to clear: the button is off")
     undo()
     check(scene_of(sid)["prompt"]["sections"]["detailed_description"] != "", "Ctrl+Z brings the sections back")
-    check(len(scene_of(sid)["shots"]) == shots_before, "Ctrl+Z brings the shots back")  # added 2026-11-09 v0.16.1
+    check(len(scene_of(sid)["shots"]) == shots_before, "Ctrl+Z brings the shots back")
 
     # 6. the LLM output popup: opened from the progress row, live, stays after the run, opens again from the card
     page.evaluate("() => { window.__mockFlags.passesMs = 2400; window.__editor.store.setEph({ toasts: [] }); }")
-    click_write(page, f"[data-key='write-{sid}']")  # v0.19.0: confirms the pass list
+    click_write(page, f"[data-key='write-{sid}']")
     page.wait_for_selector("[data-key='write-out']", timeout=4000)
     check(page.locator(".rw-llm-out").count() == 0, "the output is not shown until asked for")
     page.click("[data-key='write-out']")
@@ -5801,8 +5721,7 @@ def v0160_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
     va = mara()["video_anchors"]
     check((va[0]["in"], va[0]["out"], va[0]["soundtrack"]) == (1.5, 4.0, True), f"From / To and with sound: {va[0]}")
-    # [OLD 2026-11-09 v0.16.0->v0.16.1] check("2.50 s sent" in page.locator(".rw-vanchor").first.inner_text(), "the clip length shows")
-    check(page.locator(f"input[data-key='va-len-{first}']").input_value() == "00:02.500", "the clip length shows")  # added 2026-11-09 v0.16.1: the Length field
+    check(page.locator(f"input[data-key='va-len-{first}']").input_value() == "00:02.500", "the clip length shows")
     page.locator(f"[data-key='va-grip-{first}']").focus()
     page.keyboard.press("ArrowDown")
     page.wait_for_timeout(350)
@@ -5859,7 +5778,6 @@ def v0160_checks(page, check, saved, shots):
     page.wait_for_timeout(400)
 
 
-# added 2026-11-09 v0.16.1
 def v0161_checks(page, check, saved, shots):
     """v0.16.1 (Sencer: "add the same options to video anchors as in scene tab/reference card/video reference. preview,
     from and to buttons etc."): a video anchor has Preview (From here / To here / Play clip), the bar with draggable
@@ -5955,7 +5873,6 @@ def v0161_checks(page, check, saved, shots):
     page.wait_for_timeout(400)
 
 
-# added 2026-11-09 v0.17.3
 LONG_SHOT = " ".join(["Mara walks slowly along the wet pier while the lamps flicker and the gulls cry overhead."] * 30)
 
 
@@ -5987,8 +5904,6 @@ def v0173_checks(page, check, saved, shots):
     page.wait_for_timeout(200)
     st = page.evaluate("() => { const ta = document.querySelector('.rw-shot-row .rw-code-ta'); const pre = ta.parentElement.querySelector('.rw-code-hl'); return [ta.value.slice(-12), ta.selectionStart === ta.value.length, pre.textContent === ta.value + '\\n', document.activeElement === ta]; }")
     check(st[0].endswith("head. Rain.") or st[0].endswith(" Rain.") and all(st[1:]), f"typing through re-renders: {st}")
-    # Sencer: "the screen flickers whenever I change a setting or type anything ... (something like doublebuffering?)":
-    # pictures and videos shown again after a re-render are the same elements (not loaded and decoded again)
     for tab, sel in (("cast", ".rw-root .rw-body img"), ("assets", ".rw-root .rw-body img, .rw-root .rw-body video")):
         page.evaluate(f"window.__editor.actions.setTab('{tab}')")
         page.wait_for_timeout(500)
@@ -6003,7 +5918,6 @@ def v0173_checks(page, check, saved, shots):
     page.wait_for_timeout(400)
 
 
-# added 2026-11-10 v0.18.0
 def v0180_checks(page, check, saved, shots):
     """v0.18.0 (Sencer): Reset scene asks what goes (the whole scene or one pass, then ticks); the Shots and Dialogue
     cards use the prompt font; the @ list stays open through a re-render and lists everything (cast first); boxes keep
@@ -6243,7 +6157,6 @@ def v0180_checks(page, check, saved, shots):
     page.wait_for_timeout(400)
 
 
-# added 2026-11-10 v0.19.0
 def v0190_checks(page, check, saved, shots):
     """v0.19.0 (Sencer): Global -> Hires (the latent upscaler: a project-wide size, an optional refine, scenes override
     the refine or turn it off, drafts optional); Write prompts asks which passes (all ticked); passes have names, the
@@ -6373,6 +6286,37 @@ def v0190_checks(page, check, saved, shots):
     check(page.locator(".rw-modal .rw-modal-actions button").last.is_disabled(), "nothing ticked: Write is off")
     page.keyboard.press("Escape")
     page.wait_for_timeout(200)
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+def v0191_checks(page, check, saved, shots):
+    """v0.19.1 (Sencer): with several passes, What H3 receives scrolls in a panel of its own height; the editor takes
+    the node's height in ComfyUI's Nodes 2.0 (the Chat log and the tabs scroll inside it instead of growing the node)."""
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(400)
+
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="scene", selected="s_07")
+    q["ui"].setdefault("collapsed", {})["h3"] = False
+    load(q)
+    page.click("[data-key='ptab-s_07-scene']")  # an earlier check may have left a pass tab open
+    page.wait_for_timeout(300)
+    panel = page.locator(".rw-h3-passes")
+    style = page.evaluate("() => { const e = document.querySelector('.rw-h3-passes'); if (!e) return null; const cs = getComputedStyle(e); return [cs.overflowY, cs.maxHeight, e.querySelectorAll('.rw-h3-pass').length]; }")
+    check(panel.count() == 1 and style == ["auto", "560px", 3], f"Whole scene: the passes scroll in one panel: {style}")
+    page.click("[data-key='ptab-s_07-2']")
+    page.wait_for_timeout(300)
+    check(page.locator(".rw-h3-passes").count() == 0 and page.locator(".rw-h3-pass").count() == 1, "a pass tab shows its one pass without the panel")
+    # Nodes 2.0 lays the editor out in a box that grows with its content; the editor's host keeps its own height there
+    grow = page.evaluate("""() => { const root = document.querySelector('.rw-root'), home = root.parentElement;
+      const node = document.createElement('div'), host = document.createElement('div');
+      node.className = 'lg-node'; node.style.cssText = 'display:flex;flex-direction:column;height:auto;width:1400px';
+      host.className = 'rw-host'; node.appendChild(host); document.body.appendChild(node); host.appendChild(root);
+      const r = [Math.round(host.getBoundingClientRect().height), getComputedStyle(host).contain];
+      home.appendChild(root); node.remove(); return r; }""")
+    check(grow[1] == "size" and grow[0] == 640, f"Nodes 2.0: the host does not take its content's height: {grow}")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

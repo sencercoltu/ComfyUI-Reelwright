@@ -1,23 +1,5 @@
 // Project state with undo/redo, debounced persistence to the node widget and
 // the autosave route, and a debounced /plan request for statuses and prompts.
-//
-// added 2026-11-03 v0.6.0, the store contract (docs: notes_F1.md "APIs for F2"):
-// - update(fn, {label, history, coalesce, plan, render, autosave}): `label` names the step in the undo history
-//   (History menu in the top bar). Undo/redo/jumpTo never change the view: `project.ui` (tab, zoom, snap, ripple,
-//   playhead, selection) stays as it is, only the selection falls back when its scene is gone.
-// - history() -> [{k, label, at, done}] oldest first (done=false: undone steps that redo brings back); jumpTo(k)
-//   moves to the state right after step k (-1: before the oldest step kept).
-// - project.__rwv: a non-enumerable number that changes on every update, undo, redo, load and replace. model.js
-//   memoises per version; JSON.stringify and structuredClone leave it out.
-// - flush() writes a pending widget update now; dispose() flushes, sends a pending autosave and stops every timer.
-// - saveNow() -> {ok, error?, conflict?}; an autosave answered with 409 slug_conflict calls onConflict(info) and
-//   pauses autosaving for that folder until autosave({force}) or a new slug.
-//   added 2026-11-03 v0.6.0 review: onConflict(info, {explicit}): explicit is true for saveNow() (Ctrl+S, the folder
-//   dialog) and false for the background autosave.
-//   added 2026-11-04 v0.6.1: one /autosave request at a time; a save asked for meanwhile (debounce, saveNow) follows
-//   it with the latest state, and only the latest request's answer sets saveState.
-// - added 2026-11-04 v0.6.1: update() with a mutator that throws: a step with its own undo snapshot is rolled back
-//   completely (state, undo and redo lists); the error is rethrown.
 
 import { rw } from "./api.js";
 import { normalizeProject } from "./model.js";
@@ -25,164 +7,14 @@ import { normalizeProject } from "./model.js";
 const HISTORY_LIMIT = 150;
 const COALESCE_MS = 1200;
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] rewritten below: named history, undo without view state, version stamp, flush/dispose, honest save, folder conflicts
-export function createStore(project, { persist }) {
-  let state = project;
-  const undoStack = [];
-  const redoStack = [];
-  let lastCoalesce = { key: null, at: 0 };
-  const listeners = new Set();
-  const timers = {};
-  let planSeq = 0;
-
-  const eph = {
-    plan: null, takes: null, models: null, info: null, llm: null, versions: null,
-    backend: "connecting", saveState: "saved", progress: {}, running: false, merge: null,
-    playing: false, toasts: [], rewrite: null, scriptDraft: null, compare: null, seam: null,
-    assetFilter: "all", assetQuery: "", selectedAsset: "", selectedCast: "", openPasses: {},
-    llmJobs: {}, // added 2026-11-03 v0.4.2: latest reelwright.llm progress event per job id
-  };
-
-  function notify() {
-    for (const fn of listeners) fn();
-  }
-
-  function debounce(name, ms, fn) {
-    clearTimeout(timers[name]);
-    timers[name] = setTimeout(fn, ms);
-  }
-
-  function schedulePersist(autosave) {
-    debounce("persist", 200, () => persist(JSON.stringify(state)));
-    if (autosave) {
-      eph.saveState = "pending";
-      debounce("autosave", 4000, async () => {
-        try {
-          await rw.autosave(state);
-          eph.saveState = "saved";
-        } catch {
-          eph.saveState = "offline";
-        }
-        notify();
-      });
-    }
-  }
-
-  async function requestPlan() {
-    const seq = ++planSeq;
-    try {
-      const plan = await rw.plan(state);
-      if (seq !== planSeq) return;
-      eph.plan = plan;
-      eph.backend = "online";
-    } catch (err) {
-      if (seq !== planSeq) return;
-      eph.backend = "offline";
-      eph.planError = String(err.message || err);
-    }
-    notify();
-  }
-
-  function schedulePlan() {
-    debounce("plan", 450, requestPlan);
-  }
-
-  return {
-    get project() { return state; },
-    eph,
-    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    notify,
-
-    // history: record an undo step; coalesce: merge rapid edits with the same key;
-    // plan: re-request /plan; render: re-render the view.
-    update(mutator, { history = true, coalesce = null, plan = true, render = true, autosave = true } = {}) {
-      if (history) {
-        const now = Date.now();
-        const merge = coalesce && lastCoalesce.key === coalesce && now - lastCoalesce.at < COALESCE_MS;
-        if (!merge) {
-          undoStack.push(JSON.stringify(state));
-          if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
-          redoStack.length = 0;
-        }
-        lastCoalesce = { key: coalesce, at: now };
-      }
-      mutator(state);
-      schedulePersist(autosave && history);
-      if (plan) schedulePlan();
-      if (render) notify();
-    },
-
-    setEph(patch, render = true) {
-      Object.assign(eph, patch);
-      if (render) notify();
-    },
-
-    replaceProject(next) {
-      undoStack.push(JSON.stringify(state));
-      redoStack.length = 0;
-      state = normalizeProject(next);
-      schedulePersist(true);
-      schedulePlan();
-      notify();
-    },
-
-    undo() {
-      if (!undoStack.length) return false;
-      redoStack.push(JSON.stringify(state));
-      state = JSON.parse(undoStack.pop());
-      lastCoalesce = { key: null, at: 0 };
-      schedulePersist(true);
-      schedulePlan();
-      notify();
-      return true;
-    },
-
-    redo() {
-      if (!redoStack.length) return false;
-      undoStack.push(JSON.stringify(state));
-      state = JSON.parse(redoStack.pop());
-      schedulePersist(true);
-      schedulePlan();
-      notify();
-      return true;
-    },
-
-    canUndo: () => undoStack.length > 0,
-    canRedo: () => redoStack.length > 0,
-    refreshPlan: requestPlan,
-
-    async saveNow() {
-      clearTimeout(timers.autosave);
-      persist(JSON.stringify(state));
-      try {
-        await rw.autosave(state);
-        eph.saveState = "saved";
-      } catch {
-        eph.saveState = "offline";
-      }
-      notify();
-    },
-
-    // External replacement of the widget value (workflow loaded, paste).
-    load(json) {
-      state = normalizeProject(json);
-      undoStack.length = 0;
-      redoStack.length = 0;
-      schedulePlan();
-      notify();
-    },
-  };
-}
-[/OLD] */
-
-// added 2026-11-03 v0.6.0: version stamp for memoised model helpers (see the contract above)
+// Version stamp for memoised model helpers (see the contract above)
 let VERSION_SEQ = 0;
 export function stampVersion(p) {
   if (p && typeof p === "object") Object.defineProperty(p, "__rwv", { value: ++VERSION_SEQ, enumerable: false, configurable: true, writable: true });
   return p;
 }
 
-// added 2026-11-03 v0.6.0: projects saved before v0.6.0 have no project_id but a stable `id` made once by
+// Projects saved before v0.6.0 have no project_id but a stable `id` made once by
 // defaultProject; using it keeps the identity stable across reloads (a random new id on every load would make the
 // autosave report a folder conflict with the project's own folder)
 export function withProjectId(raw) {
@@ -194,7 +26,7 @@ export function withProjectId(raw) {
   return p ?? raw;
 }
 
-// added 2026-11-03 v0.6.0: rewritten for named history, view state outside undo, version stamps, flush/dispose,
+// Rewritten for named history, view state outside undo, version stamps, flush/dispose,
 // honest saving and the folder-conflict answer of /autosave
 export function createStore(project, { persist, onConflict } = {}) {
   let state = stampVersion(project);
@@ -211,9 +43,7 @@ export function createStore(project, { persist, onConflict } = {}) {
     backend: "connecting", saveState: "saved", progress: {}, running: false, merge: null,
     playing: false, toasts: [], rewrite: null, scriptDraft: null, compare: null, seam: null,
     assetFilter: "all", assetQuery: "", selectedAsset: "", selectedCast: "", openPasses: {},
-    llmJobs: {}, // added 2026-11-03 v0.4.2: latest reelwright.llm progress event per job id
-    // added 2026-11-03 v0.6.0: saveError (last autosave failure), conflict ({slug, other} while /autosave reports
-    // that the folder holds another project), lastRun (the last reelwright.run "end"), takesSlug (folder of `takes`)
+    llmJobs: {},
     saveError: "", conflict: null, lastRun: null, takesSlug: null,
   };
 
@@ -237,45 +67,7 @@ export function createStore(project, { persist, onConflict } = {}) {
 
   const isConflict = err => err?.status === 409 && (err.reason === "slug_conflict" || err.data?.reason === "slug_conflict");
 
-  /* [OLD 2026-11-04 v0.6.0->v0.6.1] requests could overlap (the 4 s debounce or Ctrl+S while one was on its way): the
-     server wrote them in arrival order, so an older snapshot could land last while the footer said "Saved", and a late
-     error of an older request turned a newer success into "Autosave offline"
-  // one autosave request now; {ok} or {ok: false, error, conflict}
-  // [OLD 2026-11-03 v0.6.0 review] async function autosaveNow({ force = false } = {}) {
-  // added 2026-11-03 v0.6.0 review: `explicit` (Ctrl+S, the folder dialog) is passed on to onConflict, so a background
-  // autosave can report a folder conflict quietly instead of opening a dialog under the user's typing
-  async function autosaveNow({ force = false, explicit = false } = {}) {
-    clearTimeout(timers.autosave);
-    autosavePending = false;
-    const sent = state;
-    try {
-      await rw.autosave(sent, force ? { force: true } : undefined);
-      if (disposed) return { ok: true };
-      eph.saveState = "saved";
-      eph.saveError = "";
-      eph.conflict = null;
-      return { ok: true };
-    } catch (err) {
-      if (disposed) return { ok: false, error: String(err?.message || err) };
-      if (isConflict(err)) {
-        const other = err.data?.other || {};
-        eph.saveState = "conflict";
-        eph.conflict = { slug: sent.slug, other };
-        eph.saveError = `the folder “${sent.slug}” holds another project${other.name ? ` (“${other.name}”)` : ""}`;
-        // [OLD 2026-11-03 v0.6.0 review] try { onConflict?.(eph.conflict); } catch (e) { console.warn("Reelwright: conflict handler failed", e); }
-        try { onConflict?.(eph.conflict, { explicit }); } catch (e) { console.warn("Reelwright: conflict handler failed", e); } // added 2026-11-03 v0.6.0 review: {explicit}
-        return { ok: false, conflict: true, error: eph.saveError };
-      }
-      eph.saveState = "offline";
-      eph.saveError = String(err?.message || err);
-      return { ok: false, error: eph.saveError };
-    } finally {
-      notify();
-    }
-  }
-  [/OLD] */
-
-  // added 2026-11-04 v0.6.1: one /autosave request at a time. A save asked for while one is on its way (the debounce,
+  // One /autosave request at a time. A save asked for while one is on its way (the debounce,
   // Ctrl+S) waits for it and then sends the project as it is by then; several waiting saves become one (the latest
   // state), so an older snapshot never reaches the disk after a newer one. The answer of a request that is no longer
   // the latest (a newer save waits, or edits were made since it left) does not change the footer: the newer one's does.
@@ -416,29 +208,7 @@ export function createStore(project, { persist, onConflict } = {}) {
 
     // history: record an undo step; coalesce: merge rapid edits with the same key; label: the step's name in the
     // History menu; plan: re-request /plan; render: re-render the view; autosave: save to disk after a while.
-    /* [OLD 2026-11-04 v0.6.0->v0.6.1] a mutator that threw left its partial change in memory without a version stamp,
-       persist or render, after an undo step had been recorded (e.g. Cast → promote a frame of a cast member deleted
-       while the request ran)
-    update(mutator, { history = true, coalesce = null, plan = true, render = true, autosave = true, label = "" } = {}) {
-      if (disposed) return;
-      if (history) {
-        const now = Date.now();
-        const merge = coalesce && lastCoalesce.key === coalesce && now - lastCoalesce.at < COALESCE_MS;
-        if (!merge) {
-          undoStack.push({ json: JSON.stringify(state), label: label || "Edit", at: now });
-          if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
-          redoStack.length = 0;
-        }
-        lastCoalesce = { key: coalesce, at: now };
-      }
-      mutator(state);
-      stampVersion(state);
-      schedulePersist(autosave && history);
-      if (plan) schedulePlan();
-      if (render) notify();
-    },
-    [/OLD] */
-    // added 2026-11-04 v0.6.1: a mutator that throws changes nothing when the step has its own undo snapshot (the state,
+    // A mutator that throws changes nothing when the step has its own undo snapshot (the state,
     // the undo and redo lists go back to how they were); otherwise (coalesced or history: false) its partial change is
     // stamped, saved and shown like any other, so the editor never shows one state while holding another. The error
     // goes on to the caller.
@@ -541,8 +311,7 @@ export function createStore(project, { persist, onConflict } = {}) {
       persist?.(JSON.stringify(state));
       eph.saveState = "pending";
       notify();
-      // [OLD 2026-11-03 v0.6.0 review] return autosaveNow(opts);
-      return autosaveNow({ ...(opts || {}), explicit: true }); // added 2026-11-03 v0.6.0 review: a save the user asked for
+      return autosaveNow({ ...(opts || {}), explicit: true });
     },
 
     // External replacement of the widget value (workflow loaded, paste). With {persist: true} the widget gets the
@@ -564,16 +333,6 @@ export function createStore(project, { persist, onConflict } = {}) {
     dispose() {
       if (disposed) return;
       flush();
-      /* [OLD 2026-11-04 v0.6.0->v0.6.1] sent at once, even while another autosave was on its way (the older one could land last)
-      const sendAutosave = autosavePending;
-      for (const k of Object.keys(timers)) clearTimeout(timers[k]);
-      planSeq++;
-      disposed = true;
-      listeners.clear();
-      if (sendAutosave) rw.autosave(state).catch(() => {});
-      [/OLD] */
-      // added 2026-11-04 v0.6.1: the last state goes after the request on its way (one at a time, as in autosaveNow);
-      // a save that was waiting for it gets this request's answer
       const waiting = queued;
       queued = null;
       const sendLast = autosavePending || !!waiting;

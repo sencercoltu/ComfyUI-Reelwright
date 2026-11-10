@@ -1,4 +1,4 @@
-"""Per-scene merge settings, scene.merge (added 2026-11-05 v0.7.0).
+"""Per-scene merge settings, scene.merge.
 
 The migration from v0.6.1's scene.transition and Global -> Merge (and that such a project merges exactly as v0.6.1
 did: the v0.6.1 code is loaded by path from REELWRIGHT_BASE_V061 when it is there), every transition type, fades from
@@ -134,7 +134,7 @@ def test_migration_from_v061_settings():
     # the old keys stay (deprecated); normalising again changes nothing
     assert p["scenes"][1]["transition"]["mode"] == "dip" and p["global"]["merge"]["hard_cut"] == "crossfade"
     assert normalize_project(p)["scenes"] == p["scenes"]
-    # a reference scene that is gone means the first scene (v0.6.1 used the first scene of the cut); colour match off
+    # a reference scene that is gone means the first scene; colour match off
     raw = v061_raw()
     raw["global"]["merge"]["color_ref_scene"] = "s_gone"
     q = normalize_project(raw)

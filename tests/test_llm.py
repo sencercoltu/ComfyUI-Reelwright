@@ -1,4 +1,4 @@
-"""LLM client against a stub OpenAI-compatible server (added 2026-11-02 v0.3.2).
+"""LLM client against a stub OpenAI-compatible server.
 
 Thinking models put their reasoning in `reasoning_content` and leave `content` empty when the token
 budget runs out; that used to surface as "The model returned no text. Is it a vision model?".
@@ -117,7 +117,7 @@ def test_connection_test_reports_thinking_model():
     assert json.dumps(out)
 
 
-# added 2026-11-03 v0.4.1: the rewrite proposal no longer repeats what the editor writes automatically
+# The rewrite proposal no longer repeats what the editor writes automatically
 def test_rewrite_is_tidied(harbor):
     from reelwright.model import normalize_project
     p = normalize_project(harbor)
@@ -139,7 +139,7 @@ def test_rewrite_is_tidied(harbor):
     assert sec["detailed_description"] == "Live-action, rain." and sec["overall_soundscape"] == "Rain."
 
 
-# ---- v0.4.2: streaming, limits, retries, script parts (added 2026-11-03 v0.4.2) -------------------------------
+# ---- streaming, limits, retries, script parts -----------------------------------------------------------------
 
 def sse(*chunks, finish="stop", model="stub"):
     """An OpenAI-style event stream: each chunk is (content, reasoning)."""
@@ -196,7 +196,6 @@ def run_app(coro_fn, chat_handler, models=None, **cfg):
 def test_limits_are_clamped():
     got = llm.limits({"timeout_s": 2, "max_wait_s": 5, "retries": 9, "context_tokens": 500, "import_part_chars": 100,
                       "import_max_tokens": "x", "import_thinking": "off", "import_guides": 1})
-    # v0.8.0: the import's default budget is 24576 (was 16384), for the longer shots
     assert got == {"timeout_s": 10, "max_wait_s": 30, "retries": 5, "context_tokens": 0, "import_part_chars": 0,
                    "import_max_tokens": 24576, "import_thinking": "off", "import_guides": True}
     assert llm.limits({})["max_wait_s"] == 900 and llm.limits({"timeout_s": 600, "max_wait_s": 60})["max_wait_s"] == 600
@@ -316,13 +315,11 @@ def test_script_part_prompt_settings_and_cut_answer():
             await llm.script_part(cfg, p, "| 02 | hall |", part=2, parts=2, retry_cut=False)
         return first, e.value
     first, err = run_app(go, handler, retries=2, import_thinking="off", import_max_tokens=12000, include_guides=True)
-    # v0.6.0: the answer comes back in the editor's shapes (coerce_script)
     assert first["scenes"] == [{"title": "One", "cast": [], "shots": [], "dialogue": []}] and first["attempts"] == 1
-    # [OLD 2026-11-06 v0.9.0->v0.10.0] assert first["cast"] == [{"name": "Bren", "kind": "character", "description": "", "speaker": "", "language": ""}]
     assert first["cast"] == [{"name": "Bren", "kind": "character", "description": "", "speaker": "", "language": "",
-                              "voice_desc": ""}]  # added 2026-11-06 v0.10.0: voice_desc
+                              "voice_desc": ""}]
     user = seen[0]["messages"][1]["content"]
-    assert 'Give every character who speaks (a narrator or an off-screen voice too) a "voice"' in user  # v0.10.0
+    assert 'Give every character who speaks (a narrator or an off-screen voice too) a "voice"' in user
     assert "part 1 of 2" in user and "A song video." in user and "Script part:\n| 01 | crypt |" in user
     assert "Ada (character), Valindra (character)" in user and user.count("Ada") == 1
     assert seen[0]["max_tokens"] == 12000 and seen[0]["chat_template_kwargs"] == {"enable_thinking": False}
@@ -330,7 +327,7 @@ def test_script_part_prompt_settings_and_cut_answer():
     assert err.reason == "cut" and "cut off at 12,000 tokens" in str(err) and len(seen) == 2   # a cut part is not retried
 
 
-def test_script_part_asks_for_shot_durations_and_fits_the_scene():  # added 2026-11-03 v0.4.3
+def test_script_part_asks_for_shot_durations_and_fits_the_scene():
     from reelwright.model import default_project
     seen = []
     answer = {"scenes": [{"title": "Chorus", "duration": 30, "shots": [{"t": 0, "duration": 13}, {"t": 13, "duration": 12.96},
@@ -346,8 +343,6 @@ def test_script_part_asks_for_shot_durations_and_fits_the_scene():  # added 2026
     assert "sum of all its shot durations" in seen[0]["messages"][1]["content"]
     assert scene["duration"] == 38.0417 and scene["fit_note"].startswith("length set from its shots (38.04 s")
 
-
-# ---- added 2026-11-03 v0.6.0 --------------------------------------------------------------------------------------
 
 def test_reply_with_only_a_closing_think_tag():
     # Qwen3-style templates open <think> in the prompt, so the reply carries only "</think>"
@@ -477,7 +472,7 @@ def test_tolerant_json():
 
 
 def test_bracketed_number_in_a_preface_is_not_the_answer():
-    """Bug 3 (v0.6.0 review): the first value from the first { or [ won, so "passes [1, 2]:" became the answer and
+    """Bug 3: the first value from the first { or [ won, so "passes [1, 2]:" became the answer and
     Split turned [1, 2] into the pass prompts "1" and "2"."""
     answer = {"1": "summary:\nA wide shot", "2": "summary:\nThe rain"}
     for pre in ("Here are the prompts for passes [1, 2]:\n", "Rewritten per pass [2]:\n", "Note [1]: it continues.\n"):
@@ -541,7 +536,7 @@ def test_tags_in_warnings_and_scene_context_follow_the_editor_rule(harbor):
 
 
 def test_script_part_skips_known_cast_without_a_text_name(harbor, monkeypatch):
-    """Bug 7 (v0.6.0 review): known_cast [{"name": 5}] raised AttributeError (the route answered 500)."""
+    """Bug 7: known_cast [{"name": 5}] raised AttributeError (the route answered 500)."""
     seen = {}
 
     async def fake_ask(cfg, system, user, parse=None, **kw):
@@ -555,7 +550,7 @@ def test_script_part_skips_known_cast_without_a_text_name(harbor, monkeypatch):
     assert "Finn (character)" in seen["user"] and "5 (" not in seen["user"]
 
 
-# ---- added 2026-11-05 v0.8.0: Write prompts (one request per pass) and the longer import ---------------------------
+# ---- Write prompts (one request per pass) and the longer import ----------------------------------------------------
 
 def long_scene(harbor):
     """The harbor's 32 s continuing scene with a second shot in pass 2, normalised. Three passes split at shot cuts:
@@ -634,8 +629,6 @@ def test_write_passes_one_request_per_pass(harbor):
     assert "Not sent with this pass (the editor writes them as words): @P3" in u2
     assert "Instruction: make it rain harder" in u2 and "2 [Shot N] lines (about 212 words per shot, 350-500" in u2
     assert "Leave subject_definitions empty" in u2 and "What H3 receives for this pass now" in u2
-    # [OLD 2026-11-06 v0.9.0->v0.10.0] assert "The pass after" not in u3 and "Its last spoken line: @Mara <d>[English] Almost home.</d>" in u3
-    # added 2026-11-06 v0.10.0: the last line of the pass before is plain words, marked as already spoken
     assert "The pass after" not in u3 and \
         'Its last spoken line (already spoken in pass 2; never write it again): @Mara: "Almost home."' in u3
     assert ("Frame guides of this pass (sent as pictures when the text names them):\n@P3 is the keyframe at 00:03.000 in "
@@ -821,20 +814,13 @@ def test_tidy_pass_checks_the_answer(harbor):
     out, warns = llm.tidy_pass(secs, x, b, {"subjects": False, "retention": True, "shots": True}, 2,
                                llm._scene_tokens(p, scene))
     assert out["summary"] == "" and out["subject_definitions"] == "@Mara is the woman." and out["retention_analysis"] == ""
-    # [OLD 2026-11-06 v0.9.0->v0.10.0] a spoken line that is not the pass's stayed in the text (H3 said it)
-    # assert out["detailed_description"] == desc  # three lines for two shots: kept as written
-    # added 2026-11-06 v0.10.0: three lines for two shots are kept as written, but "Hello there." (not this pass's)
-    # leaves with its sentence
     assert out["detailed_description"] == desc.replace(" @Bob (S1) says, <d>[English] Hello there.</d>", "")
     assert out["overall_soundscape"] == "summary:\nRain on <Audio 7>."  # another section's label: kept as written
     for bit in ("<Audio 7> left as written", "the answer has 3 [Shot N] lines for the pass's 2 shots",
                 'spoken lines missing or changed: "Almost home."',
-                # [OLD 2026-11-06 v0.9.0->v0.10.0] "spoken lines that are not this pass's (H3 would say them): \"Hello there.\"",
-                # [OLD 2026-11-06 v0.9.0->v0.10.0] "references the scene does not have: @Bob",  (@Bob left with the line)
                 "removed spoken lines that are not this pass's (H3 would have said them): \"Hello there.\"",
                 "the detailed description has "):
         assert any(bit in w for w in warns), (bit, warns)
-    # added 2026-11-06 v0.10.0: a line of the pass written twice keeps its first copy
     two = ("[Shot 1] Rain. @Mara (S1) mutters, <d>[English] Almost home.</d> She smiles.\n[Shot 2] At 00:03.625, the "
            "shot cuts to a close-up. @Mara (S1) repeats, <d>[English] Almost home!</d> while her lips tremble.")
     out, warns = llm.tidy_pass({"detailed_description": two}, x, b, {"subjects": True, "retention": True, "shots": True}, 2)
@@ -872,7 +858,7 @@ def test_script_import_asks_for_fuller_shots_and_a_scene_note():
     assert default_project("Demo")["global"]["llm"]["import_max_tokens"] == 24576 == llm.IMPORT_MAX_TOKENS
 
 
-# ---- added 2026-11-08 v0.13.0: Chat tab ---------------------------------------------------------------------------
+# ---- Chat tab -----------------------------------------------------------------------------------------------------
 
 def test_chat_turn_sends_the_conversation_and_streams_the_text():
     seen, events = [], []
@@ -902,7 +888,7 @@ def test_chat_turn_sends_the_conversation_and_streams_the_text():
 
 
 
-# ---- added 2026-11-09 v0.15.0: progress events carry what came since the last one (the editor's LLM output popup) --
+# ---- progress events carry what came since the last one (the editor's LLM output popup) --
 
 def test_progress_events_carry_the_reasoning_and_answer_as_deltas():
     chunks = [("", "Let me "), ("", "think."), ("Hello", ""), (" world", ""), ("!", "")]
@@ -926,7 +912,7 @@ def test_progress_events_carry_the_reasoning_and_answer_as_deltas():
 
 
 def test_progress_offsets_count_utf16_units():
-    """added 2026-11-09 v0.17.1 (third review 5): the offsets are in UTF-16 units, as the editor counts (an emoji is
+    """The offsets are in UTF-16 units, as the editor counts (an emoji is
     two), so the popup does not cut the start of the next piece."""
     chunks = [("Take \U0001F3AC", ""), (" two", ""), ("!", "")]
 

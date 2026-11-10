@@ -1,11 +1,10 @@
-"""Long-scene continuity (added 2026-11-05 v0.8.0, Agent V): Global -> Long scenes guide_vae, carry_audio,
+"""Long-scene continuity: Global -> Long scenes guide_vae, carry_audio,
 seam_video_ref, handoff, pass_cache; their cache keys, the drift meter, the cut-seam hint and the pass stitch. Pure:
 no ComfyUI needed (the render side is in tests/test_render_flow.py)."""
 
 import copy
 
 import numpy as np
-import pytest
 
 from reelwright import assemble, cache, merge, model
 from reelwright.analysis import analyze, apply_long, drift_level, drift_metrics, long_settings, rekey

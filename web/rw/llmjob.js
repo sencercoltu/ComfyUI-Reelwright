@@ -1,16 +1,9 @@
-import { h } from "./ui.js"; // added 2026-11-06 v0.10.2: jobText
-import { button, icon, rootScale } from "./ui.js"; // added 2026-11-09 v0.15.0: the output popup
+import { h, button, icon, rootScale } from "./ui.js";
 
-// Progress of a running LLM request (added 2026-11-03 v0.4.2). The backend sends reelwright.llm events tagged with
+// Progress of a running LLM request. The backend sends reelwright.llm events tagged with
 // the job id the editor chose; editor.js keeps the latest one per job in eph.llmJobs.
 
-/* [OLD 2026-11-06 v0.10.1->v0.10.2] job ids were not remembered, so editor.js could not tell its own jobs from another
-   browser tab's (every reelwright.llm event rebuilt every editor's tab)
-export function newJob(prefix = "llm") {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-[/OLD] */
-// added 2026-11-06 v0.10.2: the job ids made on this page; editor.js ignores reelwright.llm events of other jobs
+// The job ids made on this page; editor.js ignores reelwright.llm events of other jobs
 // (another browser tab or client)
 export const ownJobs = new Set();
 export function newJob(prefix = "llm") {
@@ -34,7 +27,7 @@ export function jobLine(d) {
   return `${d.phase === "done" ? "done" : "writing"} · ≈${n(used)} tokens${d.budget ? ` of ${n(d.budget)}` : ""}${t}${tries}`;
 }
 
-// added 2026-11-06 v0.10.2: an element showing a job's progress. editor.js rewrites its text in place on every
+// An element showing a job's progress. editor.js rewrites its text in place on every
 // reelwright.llm event of that job (fmt(d), jobLine by default), so a running request no longer rebuilds the tab
 // twice a second (the tab's tooltips restarted and its text fields flickered).
 export function jobText(job, d, { tag = "span", fmt = jobLine, ...props } = {}) {
@@ -43,10 +36,7 @@ export function jobText(job, d, { tag = "span", fmt = jobLine, ...props } = {}) 
   return el;
 }
 
-// ---- added 2026-11-09 v0.15.0: what an LLM request receives, as it arrives (Sencer: "The Write prompt LLM response
-// sometimes never ends, after a while times out. When waiting for response, we receive thinking, but cannot see what
-// it thinks. Add the thinking progress and received content as output so we can see what's going on. It should only
-// be shown by a toggle button inside a popup.")
+// ---- what an LLM request receives, as it arrives (the reasoning and the answer, for the output popup) ----------
 // The backend's progress events carry what came since the last one: think_add at think_at (the reasoning) and
 // text_add at text_at (the answer), character offsets in what that request received (llm.py chat). editor.js hands
 // every event of this page's jobs to feedStream, which keeps them per job and per request (a pass, a part, a try);

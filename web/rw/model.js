@@ -9,13 +9,12 @@ export const STABLE_LANGUAGES = ["Arabic", "Chinese", "English", "French", "Germ
   "Japanese", "Korean", "Portuguese", "Russian", "Spanish"];
 export const VISUAL_RETENTION = ["fully_preserved", "partially_preserved", "attribute_transfer", "weak_reference"];
 export const AUDIO_RETENTION = ["fully_copy", "partially_copy", "reference", "weak_reference"];
-// [OLD 2026-11-08 v0.11.0->v0.12.0] export const ROLES = ["reference", "first_frame", "last_frame", "keyframe"];
-export const ROLES = ["reference", "first_frame", "last_frame", "keyframe", "pose"]; // v0.12.0: pose (poseRefs)
+export const ROLES = ["reference", "first_frame", "last_frame", "keyframe", "pose"];
 export const START_MODES = ["fresh", "last_frame", "tail"];
-// added 2026-11-05 v0.8.0: Global -> Long scenes -> hand-off and pass cache (model.py LONG_HANDOFF / LONG_PASS_CACHE)
+// Global -> Long scenes -> hand-off and pass cache (model.py LONG_HANDOFF / LONG_PASS_CACHE)
 export const LONG_HANDOFF = ["pixels", "latent"];
 export const LONG_PASS_CACHE = ["near_lossless", "lossless"];
-export const SUBTITLE_TIMING = ["speech", "planned"]; // added 2026-11-06 v0.10.0: global.merge.subtitle_timing
+export const SUBTITLE_TIMING = ["speech", "planned"];
 export const ASPECTS = { "21:9": [21, 9], "16:9": [16, 9], "4:3": [4, 3], "1:1": [1, 1], "3:4": [3, 4], "9:16": [9, 16] };
 export const ASSET_CATEGORIES = {
   image: ["subject", "location", "prop", "style", "keyframe"],
@@ -24,19 +23,11 @@ export const ASSET_CATEGORIES = {
 };
 export const SECTION_KEYS = ["subject_definitions", "summary", "retention_analysis",
   "detailed_description", "overall_soundscape", "non_diegetic_music"];
-/* [OLD 2026-11-02 v0.2.2->v0.3.0] quality became a per-scene override
-export const OVERRIDE_KEYS = ["seed", "steps", "sampler", "scheduler", "width", "height",
-  "diffusion", "text_encoder", "video_vae", "audio_vae"];
-[/OLD] */
-/* [OLD 2026-11-10 v0.18.0->v0.19.0] no hires overrides
-export const OVERRIDE_KEYS = ["seed", "steps", "sampler", "scheduler", "width", "height",
-  "diffusion", "text_encoder", "video_vae", "audio_vae", "quality"];
-[/OLD] */
-// added 2026-11-10 v0.19.0: hires ("off"), refine_steps, refine_denoise (model.py the same)
+// hires ("off"), refine_steps, refine_denoise (model.py the same)
 export const OVERRIDE_KEYS = ["seed", "steps", "sampler", "scheduler", "width", "height",
   "diffusion", "text_encoder", "video_vae", "audio_vae", "quality", "hires", "refine_steps", "refine_denoise"];
-export const TRANSITIONS = ["cut", "crossfade", "dip"]; // added 2026-11-02 v0.3.0
-// added 2026-11-05 v0.7.0: scene.merge (same values as reelwright/model.py). TRANSITIONS stays for the deprecated
+export const TRANSITIONS = ["cut", "crossfade", "dip"];
+// scene.merge (same values as reelwright/model.py). TRANSITIONS stays for the deprecated
 // scene.transition (read once, by the migration in normMerge)
 export const MERGE_TRANSITIONS = ["cut", "crossfade", "dip", "wipe", "slide", "circle", "dissolve", "pixelize", "radial", "zoom"];
 export const MERGE_DIRECTIONS = ["left", "right", "up", "down"];
@@ -45,7 +36,7 @@ export const MERGE_MAX_FRAMES = 14400; // frame counts in scene.merge: 0 .. 600 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 const CODE_PREFIX = { image: "P", video: "V", audio: "A" };
-// added 2026-11-03 v0.6.0: what normalizeProject enforces (same values as reelwright/model.py)
+// What normalizeProject enforces (same values as reelwright/model.py)
 export const MIN_SCENE_SECONDS = 1 / FPS;
 export const MAX_SCENE_SECONDS = 600;
 export const ASSET_KINDS = ["image", "video", "audio"];
@@ -60,7 +51,7 @@ const MAX_REF_IMAGES = 9;
 const REF_MEDIA_MIN_SECONDS = 2;
 const REF_MEDIA_MAX_SECONDS = 15;
 
-// ---- value coercion (added 2026-11-03 v0.6.0, same as reelwright/spec.py num / flag / text) ----
+// ---- value coercion (same as reelwright/spec.py num / flag / text) -----------------------------
 const NUM_TEXT = /^[ \t\n\r]*[-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?[ \t\n\r]*$/;
 // v as a finite number (numbers, or text such as "12.5"), else dflt. true/false are not numbers.
 function num(v, dflt = 0) {
@@ -90,13 +81,6 @@ export function newId(prefix) {
   return prefix + "_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] no length cap, differed from Python, accents kept as combining marks then dropped
-export function slugify(name) {
-  const s = String(name || "").toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "")
-    .trim().replace(/[\s-]+/g, "_").replace(/^_+|_+$/g, "");
-  return s || "untitled";
-}
-[/OLD] */
 // Folder name for a project name (same as model.py slugify): lower-case ASCII letters, digits and _, at most 64
 // characters. Accents are transliterated ("Ömer" -> "omer"); a name without any ASCII letter gives "untitled".
 export function slugify(name) {
@@ -107,28 +91,13 @@ export function slugify(name) {
   return /[a-z]/.test(s) ? s : "untitled";
 }
 
-// added 2026-11-03 v0.6.0: the project's folder: its slug when that is a valid folder name (kept as typed, so
+// The project's folder: its slug when that is a valid folder name (kept as typed, so
 // "untitled-x7k2" stays), else slugify(slug or name). Same as model.py project_slug.
 export function projectSlug(p) {
   const s = text(p.slug);
   return SLUG_RE.test(s) ? s : slugify(s || p.name);
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] looped forever on NaN / Infinity (a non-numeric duration hung the browser)
-export function alignFramesUp(n) {
-  n = Math.max(5, Math.round(n));
-  while (n % 17 !== 5) n++;
-  return n;
-}
-
-// added 2026-11-03 v0.5.0: largest 17k+5 frame count <= n (spec.align_frames_down)
-export function alignFramesDown(n) {
-  n = Math.floor(n);
-  if (n < 5) return 5;
-  while (n % 17 !== 5) n--;
-  return n;
-}
-[/OLD] */
 // Smallest 17k+5 frame count >= n (and >= 5); not a finite number -> 5 (spec.align_frames_up).
 export function alignFramesUp(n) {
   n = Math.max(5, roundHalfEven(num(n, 0)));
@@ -148,7 +117,6 @@ export function nearestGridFrames(n) {
 }
 
 export function framesOf(seconds) {
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] return Math.round(seconds * FPS);  (Python rounds halves to even)
   return roundHalfEven(seconds * FPS);
 }
 
@@ -171,7 +139,7 @@ function roundHalfEven(x) {
   return Math.abs(x % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r;
 }
 
-// added 2026-11-03 v0.6.0: Python's round(x, nd) (exact ties go to the even digit), for soundtrack.py parity
+// Python's round(x, nd) (exact ties go to the even digit), for soundtrack.py parity
 function pyRound(x, nd) {
   if (!Number.isFinite(x)) return x;
   const ax = Math.abs(x);
@@ -185,7 +153,7 @@ function pyRound(x, nd) {
   return x < 0 ? -v : v;
 }
 
-// added 2026-11-03 v0.6.0: Python's float a // b (CPython float_floor_div), for soundtrack.py parity
+// Python's float a // b (CPython float_floor_div), for soundtrack.py parity
 function pyFloorDiv(vx, wx) {
   let mod = vx % wx;
   let div = (vx - mod) / wx;
@@ -238,55 +206,25 @@ function defaultGlobal() {
     sampling: { steps: 20, sampler: "res_multistep", scheduler: "simple", seed: 104729,
       seed_mode: "increment", sigma_shift: false, shift_video: 12.0, shift_audio: 3.0 },
     quality: "final",
-    // [OLD 2026-11-10 v0.18.0->v0.19.0] draft: { scale: 0.5, steps: 8, lora: "", lora_strength: 1.0 },
-    draft: { scale: 0.5, steps: 8, lora: "", lora_strength: 1.0, hires: false }, // hires: added 2026-11-10 v0.19.0
-    // added 2026-11-10 v0.19.0: Global → Hires, the latent upscaler (see reelwright/model.py default_global)
+    draft: { scale: 0.5, steps: 8, lora: "", lora_strength: 1.0, hires: false },
     hires: { enabled: false, scale: 2.0, refine_steps: 0, refine_denoise: 0.35 },
     defaults: { duration: 8.0, start_mode: "last_frame", overlap_frames: 39, language: "English" },
-    // [OLD 2026-11-05 v0.7.0->v0.8.0] long: { max_pass_frames: 362, overlap_frames: 39, crossfade_frames: 12, seam_mode: "auto", cut_snap_seconds: 2.0 },
-    // added 2026-11-05 v0.8.0: long-scene continuity switches (see reelwright/model.py default_global); the defaults keep
-    // v0.7.0's behaviour and cache keys
     long: { max_pass_frames: 362, overlap_frames: 39, crossfade_frames: 12, seam_mode: "auto", cut_snap_seconds: 2.0,
       guide_vae: "", carry_audio: true, seam_video_ref: true, handoff: "pixels", pass_cache: "near_lossless" },
     memory: { policy: "free_cache", encode_first: true, group_by_lora: true },
-    // [OLD 2026-11-05 v0.6.1->v0.7.0] continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag" },
-    // added 2026-11-05 v0.7.0: name_continuation: the frame or clip a continuing scene (or a pass after an overlap seam)
-    // starts from is also sent as <Picture 1> / <Video 1> and named in the prompt (false: anchored only, as v0.6.1)
-    // [OLD 2026-11-06 v0.9.0->v0.10.0] continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag", name_continuation: true },
-    // added 2026-11-06 v0.10.0: describe_voices: a speaker's voice description (cast voice_desc) goes into every pass
     continuity: { reanchor_after: 2, face_check: false, face_threshold: 0.8, on_drift: "flag", name_continuation: true, describe_voices: true },
-    /* [OLD 2026-11-02 v0.1.0->v0.2.0] no switch for sending MiniMax's prompt guides
-    llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va" },
-    [/OLD] */
-    // [OLD 2026-11-02 v0.3.1->v0.3.2] llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va", include_guides: true },
-    // [OLD 2026-11-03 v0.4.1->v0.4.2] llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va", include_guides: true, thinking: "auto" },
     llm: { base_url: "", model: "", temperature: 0.4, max_tokens: 2048, preset: "h3_ref2va", include_guides: true, thinking: "auto",
-      // added 2026-11-03 v0.4.2: limits (see reelwright/model.py)
       timeout_s: 120, max_wait_s: 900, retries: 2, context_tokens: 0,
-      // [OLD 2026-11-05 v0.7.0->v0.8.0] import_part_chars: 3000, import_max_tokens: 16384, import_thinking: "same", import_guides: false },
-      // added 2026-11-05 v0.8.0: import_max_tokens 24576 (llm.IMPORT_MAX_TOKENS): shots are 2-4 sentences now
       import_part_chars: 3000, import_max_tokens: 24576, import_thinking: "same", import_guides: false },
     merge: { use: "starred", missing: "skip", hard_cut: "cut", transition_frames: 12, audio_fade_frames: 6,
-      loudness: -16.0, normalize: true, score: { asset: "", volume_db: -12.0, duck: true }, // v0.5.0: score moves to p.soundtrack on load
-      scene_audio: { mix: false, volume_db: -12.0 }, // added 2026-11-03 v0.5.0: the scenes' own sound under a soundtrack
+      loudness: -16.0, normalize: true, score: { asset: "", volume_db: -12.0, duck: true },
+      scene_audio: { mix: false, volume_db: -12.0 },
       color_match: false, color_ref_scene: "", codec: "h264", crf: 16,
-      // [OLD 2026-11-06 v0.9.0->v0.10.0] subtitles: true, chapters: true, otio: true, fcpxml: true, bundle: false, auto_after_render: true },
-      // added 2026-11-06 v0.10.0: subtitle_timing "speech" (timed to each take's speech) or "planned"
       subtitles: true, subtitle_timing: "speech", chapters: true, otio: true, fcpxml: true, bundle: false, auto_after_render: true },
   };
 }
 
-/* [OLD 2026-11-05 v0.7.0->v0.8.0] six presets of our own; new projects now start with H3's 20 official moves
-const DEFAULT_CAMERA = [
-  ["Slow push-in", "slow push-in toward the subject"],
-  ["Locked-off", "static locked-off camera"],
-  ["Crane up", "slow crane up revealing the scene"],
-  ["Handheld pan →", "handheld camera panning right"],
-  ["Rack focus", "rack focus from foreground to background"],
-  ["Macro", "macro close-up, shallow depth of field"],
-];
-[/OLD] */
-// added 2026-11-05 v0.8.0: the camera moves of MiniMax's H3 guide (base-en.txt 4.3), same as model.py DEFAULT_CAMERA:
+// The camera moves of MiniMax's H3 guide (base-en.txt 4.3), same as model.py DEFAULT_CAMERA:
 // [name = the guide's label, text = the phrase written into the shot line]. Older projects get the missing ones
 // appended once (camera_version 2, migrateCamera); their own presets stay.
 export const DEFAULT_CAMERA = [
@@ -304,8 +242,8 @@ export const DEFAULT_CAMERA = [
   ["Roll Clockwise", "the camera rolls clockwise"],
   ["Roll Counterclockwise", "the camera rolls counterclockwise"],
 ];
-export const CAMERA_VERSION = 2; // added 2026-11-05 v0.8.0: project.camera_version (model.py)
-// added 2026-11-05 v0.8.0: shot fields camera_amp / camera_speed / framing ("" = not said), as model.py
+export const CAMERA_VERSION = 2;
+// Shot fields camera_amp / camera_speed / framing ("" = not said), as model.py
 export const CAMERA_AMPS = ["", "small", "large"];
 export const CAMERA_SPEEDS = ["", "slow", "fast"];
 export const FRAMINGS = ["", "extreme wide", "wide", "medium wide", "medium", "medium close-up", "close-up", "extreme close-up",
@@ -317,24 +255,11 @@ export const FRAMING_PHRASE = {
   "two-shot": "a two-shot", insert: "an insert shot", "low angle": "a low-angle shot",
   "high angle": "a high-angle shot", overhead: "an overhead shot", "dutch angle": "a Dutch-angle shot",
 };
-export const DIALOGUE_MAX_SECONDS = 600; // added 2026-11-05 v0.8.0
+export const DIALOGUE_MAX_SECONDS = 600;
 
-/* [OLD 2026-11-05 v0.7.0->v0.8.0] no "passes" (each pass's own sections)
 export function defaultPrompt() {
   const sections = {};
   for (const k of SECTION_KEYS) sections[k] = "";
-  return { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections, raw: "", pass_prompts: {} };
-}
-[/OLD] */
-export function defaultPrompt() {
-  const sections = {};
-  for (const k of SECTION_KEYS) sections[k] = "";
-  // passes: added 2026-11-05 v0.8.0 (see passTexts)
-  // [OLD 2026-11-09 v0.14.4->v0.15.0] no brief field
-  // return { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections, raw: "", pass_prompts: {}, passes: [] };
-  // [/OLD]
-  // brief: added 2026-11-09 v0.15.0, the author's own words for Write prompts; never overwritten by what the LLM
-  // writes (model.py default_prompt)
   return { mode: "structured", auto: { subjects: true, retention: true, shots: true }, sections, raw: "", pass_prompts: {}, passes: [], brief: "" };
 }
 
@@ -352,19 +277,15 @@ export function defaultScene(project, patch = {}) {
     prompt: defaultPrompt(),
     overrides: {},
     lock: false, notes: "",
-    // added 2026-11-02 v0.3.0: the cut into this scene; empty/null follow Global -> Merge
     transition: { mode: "", frames: null, audio_fade_frames: null },
-    // added 2026-11-03 v0.6.0: the scene's number in "+1 per scene" seed mode, fixed at creation
     seed_n: nextSeedN(project),
-    // added 2026-11-05 v0.7.0: how the scene sits in the cut (replaces "transition" and Global -> Merge's transition
-    // and colour-match settings)
     merge: defaultMerge(),
-    pass_names: {}, // added 2026-11-10 v0.19.0: names of the scene's passes (passNames)
+    pass_names: {},
     ...patch,
   };
 }
 
-// added 2026-11-05 v0.7.0: scene.merge of a new scene (model.py default_merge): how it sits in the cut. transition:
+// scene.merge of a new scene (model.py default_merge): how it sits in the cut. transition:
 // how a fresh start joins the scene before (MERGE_TRANSITIONS), direction for wipe / slide, frames its length, color
 // the dip colour; audio_frames: the sound's fade out / in at a cut; fade_in / fade_out: the picture from / to a colour
 // at the scene's first / last frame; audio_fade_in / _out (frames); volume_db and mute: the scene's own sound;
@@ -378,15 +299,13 @@ export function defaultMerge() {
 
 export function defaultProject(name = "Untitled") {
   const p = {
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] schema: 1, id: newId("p"), name, slug: slugify(name),
-    // project_id (added 2026-11-03 v0.6.0): who owns the folder; /autosave refuses another project's folder
     schema: 1, id: newId("p"), project_id: newId("p"), name, slug: slugify(name),
     global: defaultGlobal(), assets: [], cast: [],
-    asset_groups: [], // added 2026-11-06 v0.9.0: groups of assets (Assets tab)
+    asset_groups: [],
     camera_presets: DEFAULT_CAMERA.map(([n, t]) => ({ id: newId("k"), name: n, text: t })),
-    camera_version: CAMERA_VERSION, // added 2026-11-05 v0.8.0: the presets are H3's official moves
+    camera_version: CAMERA_VERSION,
     scenes: [], markers: [],
-    soundtrack: [], // added 2026-11-03 v0.5.0: audio laid on the film (see reelwright/soundtrack.py)
+    soundtrack: [],
     ui: { tab: "timeline", selected: "", zoom: 22, playhead: 0, snap: true, ripple: true },
   };
   p.scenes.push(defaultScene(p, { title: "Scene 1", start: { mode: "fresh", overlap_frames: 39 } }));
@@ -398,21 +317,17 @@ function isObj(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
-// added 2026-11-02 v0.3.0: a profile's Global settings, completed with today's defaults
+// A profile's Global settings, completed with today's defaults
 export function normalizeGlobal(g, p = null) {
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const out = fill(isObj(g) ? structuredClone(g) : {}, defaultGlobal());  (no type checks)
-  // v0.6.0: coerced to the defaults' types, same as model.py normalize_global
   const out = like(isObj(g) ? structuredClone(g) : {}, defaultGlobal());
   const d = out.defaults;
   if (!START_MODES.includes(d.start_mode)) d.start_mode = "last_frame";
   d.duration = Math.min(MAX_SCENE_SECONDS, Math.max(MIN_SCENE_SECONDS, d.duration));
   d.overlap_frames = Math.max(0, Math.trunc(d.overlap_frames));
   out.continuity.reanchor_after = Math.max(0, Math.trunc(out.continuity.reanchor_after));
-  // added 2026-11-05 v0.8.0: the long-scene continuity choices (model.py normalize_global the same)
   if (!LONG_HANDOFF.includes(out.long.handoff)) out.long.handoff = "pixels";
   if (!LONG_PASS_CACHE.includes(out.long.pass_cache)) out.long.pass_cache = "near_lossless";
-  if (!SUBTITLE_TIMING.includes(out.merge.subtitle_timing)) out.merge.subtitle_timing = "speech"; // added 2026-11-06 v0.10.0
-  // added 2026-11-10 v0.19.0: Global → Hires (model.py normalize_global the same)
+  if (!SUBTITLE_TIMING.includes(out.merge.subtitle_timing)) out.merge.subtitle_timing = "speech";
   const hi = out.hires;
   hi.scale = Math.min(HIRES_MAX_SCALE, Math.max(1, hi.scale));
   hi.refine_steps = Math.min(100, Math.max(0, Math.trunc(hi.refine_steps)));
@@ -436,20 +351,6 @@ function fill(target, defaults) {
   return target;
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] codes were unique per kind only; tags look them up across kinds, ignoring case
-export function assignCodes(assets) {
-  const used = { image: new Set(), video: new Set(), audio: new Set() };
-  for (const a of assets) if (a.code && used[a.kind]) used[a.kind].add(a.code);
-  for (const a of assets) {
-    if (a.code || !used[a.kind]) continue;
-    let n = 1;
-    while (used[a.kind].has(CODE_PREFIX[a.kind] + n)) n++;
-    a.code = CODE_PREFIX[a.kind] + n;
-    used[a.kind].add(a.code);
-  }
-  return assets;
-}
-[/OLD] */
 // Give every asset without a code the next free P/V/A number; codes are unique across kinds, ignoring case.
 export function assignCodes(assets) {
   const used = new Set(assets.filter(a => a.code).map(a => text(a.code).toUpperCase()));
@@ -463,55 +364,7 @@ export function assignCodes(assets) {
   return assets;
 }
 
-// [OLD 2026-11-03 v0.5.1->v0.6.0] crashed on malformed JSON, did not sort shots/dialogue, fill cast entries or
-// outfits, re-slugify, repair duplicate ids or coerce types, and differed from model.py in places
-// export function normalizeProject(raw) {
-//   let p = raw;
-//   if (typeof p === "string") {
-//     try { p = p.trim() ? JSON.parse(p) : null; } catch { p = null; }
-//   }
-//   if (!isObj(p) || !Array.isArray(p.scenes)) return defaultProject();
-//   const base = defaultProject(p.name || "Untitled");
-//   base.scenes = [];
-//   fill(p, base);
-//   if (!p.slug) p.slug = slugify(p.name);
-//   p.schema = 1;
-//   for (const s of p.scenes) {
-//     fill(s, defaultScene(p, { id: s.id || newId("s") }));
-//     fill(s.prompt, defaultPrompt());
-//     s.refs.forEach(r => fill(r, { id: newId("r"), role: "reference", time: 0, retention: "", keep: [], soundtrack: false }));
-//     s.shots.forEach(x => fill(x, { id: newId("h"), t: 0, camera: "", text: "" }));
-//     s.dialogue.forEach(x => fill(x, { id: newId("d"), speaker: "", t: 0, language: p.global.defaults.language, delivery: "", text: "" }));
-//   }
-//   for (const a of p.assets) {
-//     fill(a, { id: newId("a"), code: "", kind: "image", name: "", file: "", duration: 0, width: 0, height: 0, category: "",
-//       /* [OLD 2026-11-02 v0.1.0->v0.2.0] assets had no description
-//       defaults: { role: "reference", retention: a.kind === "audio" ? "reference" : "fully_preserved", keep: [], soundtrack: false }, notes: "" });
-//       [/OLD] */
-//       defaults: { role: "reference", retention: a.kind === "audio" ? "reference" : "fully_preserved", keep: [], soundtrack: false }, notes: "",
-//       description: "" }); // added 2026-11-02 v0.2.0: description feeds subject_definitions
-//   }
-//   assignCodes(p.assets);
-//   for (const c of p.cast) {
-//     fill(c, { id: newId("c"), kind: "character", name: "", speaker: "", description: "", anchors: [], pack_sheet: true,
-//       outfits: [], default_outfit: "", voice: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 } });
-//     if (![true, false, "auto"].includes(c.pack_sheet)) c.pack_sheet = true; // added 2026-11-03 v0.4.1 (see prompt.py)
-//   }
-//   if (!p.scenes.length) p.scenes.push(defaultScene(p, { title: "Scene 1" }));
-//   if (!p.scenes.some(s => s.id === p.ui.selected)) p.ui.selected = p.scenes[0].id;
-//   // added 2026-11-03 v0.5.0: soundtrack tracks; the old merge score becomes one (same as soundtrack.py)
-//   p.soundtrack = p.soundtrack.filter(isObj);
-//   p.soundtrack.forEach(t => normalizeTrack(t));
-//   const score = p.global.merge.score;
-//   if (score?.asset) {
-//     p.soundtrack.push(normalizeTrack({ id: "t_score", asset: score.asset, volume_db: Number(score.volume_db ?? -12), sync: false, mix: true, duck: score.duck !== false, loop: true }));
-//     score.asset = "";
-//     p.global.merge.scene_audio = { mix: true, volume_db: 0 };
-//   }
-//   return p;
-// }
-// [/OLD]
-// added 2026-11-03 v0.6.0: the hardened normaliser, the same as model.py normalize_project (tests/test_model_parity.py
+// The hardened normaliser, the same as model.py normalize_project (tests/test_model_parity.py
 // runs both on the same JSON). Only difference: a project without a project_id gets one here (the editor owns it).
 // Never throws on bad input: wrong types become defaults, lists keep their objects, shots and dialogue are sorted by
 // time, scene lengths clamped to 1/24 .. 600 s, duplicate ids get _2, _3 ..., duplicate asset codes are re-assigned,
@@ -539,7 +392,7 @@ export function normalizeProject(raw) {
     else if (code) seenCodes.add(code);
   }
   assignCodes(assets);
-  normAssetGroups(p, assets); // added 2026-11-06 v0.9.0
+  normAssetGroups(p, assets);
 
   p.cast = objects(p.cast);
   for (const c of p.cast) normCast(c, lang);
@@ -549,7 +402,6 @@ export function normalizeProject(raw) {
   for (const s of p.scenes) normScene(s, g.defaults, lang, used);
   if (!p.scenes.length) p.scenes.push(defaultScene(p, { title: "Scene 1" }));
   repairSeedNs(p.scenes);
-  // added 2026-11-05 v0.7.0: scene.merge; a scene without one gets it from its v0.6 transition and Global -> Merge
   const sceneIds = new Set(p.scenes.map(s => s.id));
   for (const s of p.scenes) normMerge(s, g.merge, p.scenes[0].id, sceneIds);
 
@@ -566,9 +418,8 @@ export function normalizeProject(raw) {
     textField(k, "name", "");
     textField(k, "text", "");
   }
-  migrateCamera(p); // added 2026-11-05 v0.8.0: H3's official camera moves, appended once (camera_version 2)
+  migrateCamera(p);
 
-  // v0.5.0 soundtrack tracks; the old merge score becomes one (migrateScore, as soundtrack.migrate_score)
   p.soundtrack = objects(p.soundtrack);
   for (const t of p.soundtrack) normalizeTrack(t);
   migrateScore(p);
@@ -590,7 +441,7 @@ function defaultCameraPresets() {
   return DEFAULT_CAMERA.map(([n, t]) => ({ id: newId("k"), name: n, text: t }));
 }
 
-// added 2026-11-05 v0.8.0 (model.py _migrate_camera): a project saved before v0.8.0 (camera_version below 2) gets H3's
+// A project saved before v0.8.0 (camera_version below 2) gets H3's
 // official camera moves it does not have yet (by name, without case) appended once; its own presets stay.
 const cameraKey = name => text(name).replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, "").toLowerCase();
 export function migrateCamera(p) {
@@ -623,7 +474,7 @@ function blank(s) {
   return !/[^ \t\n\r\f\v]/.test(s);
 }
 
-// added 2026-11-05 v0.8.0 (model.py _norm_pass_text): one entry of scene.prompt.passes: {start, end (scene seconds of the
+// One entry of scene.prompt.passes: {start, end (scene seconds of the
 // pass when its text was written), sections: the six sections as text}; anything else becomes an empty entry (0, 0).
 function normPassText(x) {
   x = isObj(x) ? x : {};
@@ -686,7 +537,7 @@ function normAsset(a) {
   df.soundtrack = flag(df.soundtrack, false);
 }
 
-// added 2026-11-06 v0.9.0 (model.py _norm_asset_groups): the asset groups, in their order: {id, name, description}
+// The asset groups, in their order: {id, name, description}
 // with unique ids; each asset's group is one of their ids or "" (no group), and its tags are cleaned by assetTags.
 // Groups and tags only sort the Assets tab: no prompt, plan or cache key reads them.
 function normAssetGroups(p, assets) {
@@ -704,7 +555,7 @@ function normAssetGroups(p, assets) {
   }
 }
 
-// added 2026-11-06 v0.9.0: the name of an asset's group ("" when it has none, or the group has no name); pickers show it
+// The name of an asset's group ("" when it has none, or the group has no name); pickers show it
 // before the asset (visual only)
 export function assetGroupName(project, a) {
   if (!a?.group) return "";
@@ -712,10 +563,10 @@ export function assetGroupName(project, a) {
   return g ? String(g.name || "").trim() : "";
 }
 
-// added 2026-11-06 v0.9.0 (model.py asset_tags): the strings (and numbers) of a list with runs of spaces, tabs and line
+// The strings (and numbers) of a list with runs of spaces, tabs and line
 // breaks made one space, cut to 60 characters and trimmed; empty and repeated tags (same spelling) are dropped
 export const TAG_MAX = 60;
-// added 2026-11-10 v0.19.0: scene.pass_names {"<pass number>": name} (model.py pass_names, the same rules)
+// scene.pass_names {"<pass number>": name} (model.py pass_names, the same rules)
 export const PASS_NAME_MAX = 60;
 export function passNames(v) {
   const out = {};
@@ -729,13 +580,7 @@ export function passNames(v) {
   return out;
 }
 // "Pass 2 · Harbour", or "Pass 2" without a name (the number is always first); k is 1-based
-// [OLD 2026-11-10 v0.19.0 bug search] passLabel had no count, so "Pass 3 of 3" became "Pass 3 (of 3)" where the count shows
-// export function passLabel(scene, k) {
-//   const name = scene?.pass_names?.[String(k)];
-//   return name ? `Pass ${k} · ${name}` : `Pass ${k}`;
-// }
-// [/OLD]
-// of: the number of passes, for "Pass 3 of 3 · Harbour" (added 2026-11-10 v0.19.0 bug search)
+// of: the number of passes, for "Pass 3 of 3 · Harbour"
 export function passLabel(scene, k, of = 0) {
   const name = scene?.pass_names?.[String(k)];
   const head = of ? `Pass ${k} of ${of}` : `Pass ${k}`;
@@ -754,12 +599,10 @@ export function assetTags(v) {
 function normCast(c, lang) {
   c.id = text(c.id) || newId("c");
   c.kind = CAST_KINDS.includes(c.kind) ? c.kind : "character";
-  // [OLD 2026-11-06 v0.9.0->v0.10.0] for (const k of ["name", "speaker", "description", "default_outfit", "voice"]) textField(c, k, "");
-  for (const k of ["name", "speaker", "description", "default_outfit", "voice", "voice_desc"]) textField(c, k, ""); // added 2026-11-06 v0.10.0: voice_desc
-  textField(c, "part_of", ""); // added 2026-11-08 v0.11.0: a prop that is part of this character (see partOwner)
+  for (const k of ["name", "speaker", "description", "default_outfit", "voice", "voice_desc"]) textField(c, k, "");
+  textField(c, "part_of", "");
   textField(c, "language", lang);
   c.anchors = texts(c.anchors);
-  // v0.4.1: true (one sheet), false (separate pictures) or "auto" (see prompt.py)
   if (!(typeof c.pack_sheet === "boolean" || c.pack_sheet === "auto")) c.pack_sheet = true;
   c.outfits = objects(c.outfits);
   for (const o of c.outfits) {
@@ -772,7 +615,6 @@ function normCast(c, lang) {
   const lora = c.lora = isObj(c.lora) ? c.lora : {};
   textField(lora, "name", "");
   lora.strength = num(lora.strength, 0.8);
-  // added 2026-11-09 v0.16.0: video anchors [{id, asset, in, out, soundtrack}] (model.py _norm_cast, pickVideoAnchors)
   c.video_anchors = objects(c.video_anchors);
   const used = new Set();
   for (const va of c.video_anchors) {
@@ -782,8 +624,6 @@ function normCast(c, lang) {
     const o = num(va.out, null);
     va.out = o === null || o <= 0 ? null : snapFrame(o);
     va.soundtrack = flag(va.soundtrack, false);
-    // added 2026-11-10 v0.18.0: a frame of the clip as a picture (model.py _norm_cast): frame = its time in the file
-    // (whole frames, null = none), frame_asset = the image asset made from it (offered under Anchors → + Add anchor)
     const fr = num(va.frame, null);
     va.frame = fr === null || fr < 0 ? null : snapFrame(fr);
     textField(va, "frame_asset", "");
@@ -812,11 +652,10 @@ function normScene(s, d, lang, usedIds) {
     textField(r, "asset", "");
     r.role = ROLES.includes(r.role) ? r.role : "reference";
     r.time = num(r.time, 0);
-    textField(r, "cast", ""); // added 2026-11-08 v0.12.0: the character a pose reference is for
+    textField(r, "cast", "");
     textField(r, "retention", "");
     r.keep = texts(r.keep);
     r.soundtrack = flag(r.soundtrack, false);
-    // added 2026-11-08 v0.14.0: the part of a video or audio asset the reference sends (refClip), on whole frames
     r.in = snapFrame(Math.max(0, num(r.in, 0)));
     const o = num(r.out, null);
     r.out = o === null || o <= 0 ? null : snapFrame(o);
@@ -827,7 +666,6 @@ function normScene(s, d, lang, usedIds) {
     if (!isObj(e)) continue;
     textField(e, "id", "");
     textField(e, "outfit", "");
-    // added 2026-11-10 v0.18.0: the anchors this scene leaves out (picture asset ids, video anchor ids); [] = all
     e.skip = [...new Set(texts(e.skip))];
     cast.push(e);
   }
@@ -839,7 +677,6 @@ function normScene(s, d, lang, usedIds) {
     x.t = num(x.t, 0);
     textField(x, "camera", "");
     textField(x, "text", "");
-    // added 2026-11-05 v0.8.0: H3's camera amplitude and speed (base-en.txt 4.3) and the shot size / angle
     for (const [k, allowed] of [["camera_amp", CAMERA_AMPS], ["camera_speed", CAMERA_SPEEDS], ["framing", FRAMINGS]]) {
       x[k] = allowed.includes(x[k]) ? x[k] : "";
     }
@@ -852,7 +689,6 @@ function normScene(s, d, lang, usedIds) {
     x.t = num(x.t, 0);
     for (const k of ["speaker", "delivery", "text"]) textField(x, k, "");
     textField(x, "language", lang);
-    // added 2026-11-05 v0.8.0: how long the line is spoken (seconds > 0), null = estimated (dialogueSeconds)
     const dur = num(x.duration, null);
     x.duration = dur !== null && dur > 0 ? Math.min(dur, DIALOGUE_MAX_SECONDS) : null;
   }
@@ -867,16 +703,13 @@ function normScene(s, d, lang, usedIds) {
   const sec = pr.sections = isObj(pr.sections) ? pr.sections : {};
   for (const k of SECTION_KEYS) textField(sec, k, "");
   textField(pr, "raw", "");
-  textField(pr, "brief", ""); // added 2026-11-09 v0.15.0: the Write prompts brief (defaultPrompt)
+  textField(pr, "brief", "");
   const pp = isObj(pr.pass_prompts) ? pr.pass_prompts : {};
   pr.pass_prompts = Object.fromEntries(Object.entries(pp).filter(([, v]) => text(v, null) !== null).map(([k, v]) => [k, text(v)]));
-  // added 2026-11-05 v0.8.0: each pass's own six sections (see passTexts); an item that is not an object becomes an
-  // empty entry, so the pass numbers of the others stay
   pr.passes = Array.isArray(pr.passes) ? pr.passes.map(normPassText) : [];
 
   const o = s.overrides = isObj(s.overrides) ? s.overrides : {};
-  // [OLD 2026-11-10 v0.18.0->v0.19.0] for (const k of ["seed", "steps", "width", "height"]) {
-  for (const k of ["seed", "steps", "width", "height", "refine_steps"]) { // refine_steps: added 2026-11-10 v0.19.0
+  for (const k of ["seed", "steps", "width", "height", "refine_steps"]) {
     if (!Object.hasOwn(o, k)) continue;
     const v = num(o[k], null);
     if (v === null) delete o[k]; // "" or junk: follow Global
@@ -885,7 +718,6 @@ function normScene(s, d, lang, usedIds) {
   for (const k of ["sampler", "scheduler", "diffusion", "text_encoder", "video_vae", "audio_vae", "quality"]) {
     if (Object.hasOwn(o, k) && typeof o[k] !== "string") delete o[k];
   }
-  // added 2026-11-10 v0.19.0: the hires overrides (model.py the same)
   if (Object.hasOwn(o, "refine_steps")) o.refine_steps = Math.min(100, Math.max(0, o.refine_steps));
   if (Object.hasOwn(o, "refine_denoise")) {
     const v = num(o.refine_denoise, null);
@@ -906,13 +738,13 @@ function normScene(s, d, lang, usedIds) {
   }
   s.lock = flag(s.lock, false);
   textField(s, "notes", "");
-  s.pass_names = passNames(s.pass_names); // added 2026-11-10 v0.19.0
+  s.pass_names = passNames(s.pass_names);
   const tn = s.transition = isObj(s.transition) ? s.transition : {};
   tn.mode = ["", ...TRANSITIONS].includes(tn.mode) ? tn.mode : "";
   for (const k of ["frames", "audio_fade_frames"]) tn[k] = num(tn[k], null);
 }
 
-// ---- scene.merge (added 2026-11-05 v0.7.0; model.py _norm_merge / _migrated_merge are the same) ----
+// ---- scene.merge (model.py _norm_merge / _migrated_merge are the same) -----------------------------
 // a frame count of scene.merge: a whole number 0 .. MERGE_MAX_FRAMES (fractions are cut off)
 function mergeFrames(v, dflt) {
   return Math.min(MERGE_MAX_FRAMES, Math.max(0, Math.trunc(num(v, dflt))));
@@ -967,7 +799,7 @@ function normMerge(s, gm, firstId, sceneIds) {
   s.merge = m;
 }
 
-// ---- stable seeds (added 2026-11-03 v0.6.0, same as model.py) ----
+// ---- stable seeds (same as model.py) -----------------------------
 // "+1 per scene" seeds used the scene's position, so inserting or moving a scene changed every later seed. Each
 // scene keeps the number it got when it was made: seed = Global seed + seed_n.
 function seedNValue(v) {
@@ -1021,37 +853,23 @@ export function sceneSeed(project, scene, index, take = 0) {
   return Number((((BigInt(base) + BigInt(take) * 1000003n) % M) + M) % M);
 }
 
-// added 2026-11-03 v0.6.0: Python parity, the v0.4 merge score becomes a looping soundtrack track (soundtrack.py
+// Python parity, the v0.4 merge score becomes a looping soundtrack track (soundtrack.py
 // migrate_score). normalizeProject calls it; call it after applying a profile that names a score.
 export function migrateScore(project) {
   const m = project.global?.merge || {};
   const score = m.score || {};
   if (!score.asset) return false;
   if (!Array.isArray(project.soundtrack)) project.soundtrack = [];
-  // added 2026-11-03 v0.6.0: a unique id (an old profile applied twice gave two "t_score" tracks), as soundtrack.py
   const used = new Set(project.soundtrack.map(t => t && t.id));
   let tid = "t_score";
   for (let k = 2; used.has(tid); k++) tid = `t_score_${k}`;
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] project.soundtrack.push(normalizeTrack({ id: "t_score", asset: score.asset, ... (fixed id)
   project.soundtrack.push(normalizeTrack({ id: tid, asset: score.asset, volume_db: num(score.volume_db, -12), sync: false, mix: true, duck: flag(score.duck, true), loop: true }));
   score.asset = "";
   m.scene_audio = { mix: true, volume_db: 0 };
   return true;
 }
 
-/* [OLD 2026-11-03 v0.4.3->v0.5.0] scenes end to end, and only the raw tail overlap: the finished cut was shorter, so a soundtrack drifted
-export function sceneStarts(project) {
-  const starts = {};
-  let t = 0;
-  for (const s of project.scenes) { starts[s.id] = t; t += s.duration; }
-  return { starts, total: t };
-}
-
-export function overlapSeconds(scene) {
-  return scene.start.mode === "tail" ? scene.start.overlap_frames / FPS : 0;
-}
-[/OLD] */
-// ---- memo (added 2026-11-03 v0.6.0) ----
+// ---- memo ------------------------------
 // The store sets a non-enumerable number project.__rwv and bumps it on every change; results that walk the whole
 // project (scene starts, songs, plans) are kept per version. Without __rwv (a copy, a test) everything is computed
 // fresh. Callers must not change what these return.
@@ -1068,7 +886,7 @@ function memo(project, key, fn) {
   return m.vals.get(key);
 }
 
-// ---- how scenes join (added 2026-11-03 v0.6.0, same as model.py; tests/test_model_parity.py) ----
+// ---- how scenes join (same as model.py; tests/test_model_parity.py) -----------------------------
 // How many continuation links lead into each scene (model.continuation_depth).
 export function continuationDepth(project) {
   const depth = {};
@@ -1149,20 +967,6 @@ function timing(project) {
   });
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] used overlapSeconds (no cap by the scene before, no re-anchor rule), not memoised
-// added 2026-11-03 v0.5.0: start of every scene in the finished cut (model.scene_starts). A scene's time t plays at
-// starts[id] + t; a scene that continues the one before begins inside it by overlapSeconds.
-export function sceneStarts(project) {
-  const starts = {};
-  let t = 0;
-  project.scenes.forEach((s, i) => {
-    t = Math.max(0, t - (i > 0 ? overlapSeconds(s) : 0));
-    starts[s.id] = t;
-    t += s.duration;
-  });
-  return { starts, total: t };
-}
-[/OLD] */
 // Start of every scene in the finished cut (model.scene_starts), the cut's length, and where each scene first shows
 // new content (visible = start + overlap). A scene's time t plays at starts[id] + t.
 export function sceneStarts(project) {
@@ -1183,7 +987,7 @@ export function sceneAt(project, t) {
   return project.scenes[0];
 }
 
-// DEPRECATED (2026-11-03 v0.6.0): use sceneOverlapAt(project, i), which knows the scene before (a tail is capped by
+// DEPRECATED: use sceneOverlapAt(project, i), which knows the scene before (a tail is capped by
 // its length) and the re-anchor rule. Kept unchanged for callers that have not switched yet.
 // Seconds at the start of a scene that repeat the end of the one before (callers check that it is not the first):
 // the tail clip (the planner's 17k+5 frames) or the one last frame.
@@ -1195,20 +999,18 @@ export function overlapSeconds(scene) {
   return scene.start.mode === "last_frame" ? 1 / FPS : 0;
 }
 
-// ---- soundtrack (added 2026-11-03 v0.5.0, mirrors reelwright/soundtrack.py) ----
+// ---- soundtrack (mirrors reelwright/soundtrack.py) -----------------------------
 export const TRACK_DEFAULTS = { id: "", asset: "", start: 0, in: 0, out: 0, volume_db: 0, fade_in: 0, fade_out: 0, mute: false,
   sync: true, marker: "fully_copy", mix: true, duck: false, loop: false };
 
 export function normalizeTrack(t) {
   fill(t, TRACK_DEFAULTS);
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] if (!t.id) t.id = newId("t");  (moved below, after the id is made a string)
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] for (const k of ["start", "in", "out", "volume_db", "fade_in", "fade_out"]) t[k] = Number.isFinite(Number(t[k])) ? Number(t[k]) : 0;
-  for (const k of ["start", "in", "out", "volume_db", "fade_in", "fade_out"]) t[k] = num(t[k], 0); // v0.6.0: same as soundtrack.py
+  for (const k of ["start", "in", "out", "volume_db", "fade_in", "fade_out"]) t[k] = num(t[k], 0);
   t.in = Math.max(0, t.in);
   t.fade_in = Math.max(0, t.fade_in);
   t.fade_out = Math.max(0, t.fade_out);
-  for (const k of ["mute", "sync", "mix", "duck", "loop"]) t[k] = flag(t[k], TRACK_DEFAULTS[k]); // added 2026-11-03 v0.6.0
-  for (const k of ["id", "asset"]) t[k] = text(t[k]); // added 2026-11-03 v0.6.0
+  for (const k of ["mute", "sync", "mix", "duck", "loop"]) t[k] = flag(t[k], TRACK_DEFAULTS[k]);
+  for (const k of ["id", "asset"]) t[k] = text(t[k]);
   if (!t.id) t.id = newId("t");
   if (!AUDIO_RETENTION.includes(t.marker)) t.marker = "fully_copy";
   return t;
@@ -1216,18 +1018,10 @@ export function normalizeTrack(t) {
 
 // The source seconds a track plays: in..out, or in..end of the file when out is not set.
 export function trackLength(t, asset) {
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const out = t.out > t.in ? t.out : Number(asset?.duration) || 0;
   const out = t.out > t.in ? t.out : num(asset?.duration, 0);
   return Math.max(0, out - t.in);
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] a track whose asset had no file counted as playing (soundtrack.resolved skips it)
-// Tracks that play: not muted, an audio asset, some length.
-export function playingTracks(project) {
-  return project.soundtrack.map(t => ({ t, a: findAsset(project, t.asset) }))
-    .filter(({ t, a }) => !t.mute && a?.kind === "audio" && trackLength(t, a) > 0);
-}
-[/OLD] */
 // Tracks that play (soundtrack.resolved): not muted, an audio asset with a file, some length. [{t, a}]
 export function playingTracks(project) {
   return memo(project, "playing", () => {
@@ -1237,12 +1031,12 @@ export function playingTracks(project) {
   });
 }
 
-// added 2026-11-03 v0.6.0: soundtrack.resolved: copies of the playing tracks with the asset's file, code and length
+// soundtrack.resolved: copies of the playing tracks with the asset's file, code and length
 export function resolvedTracks(project) {
   return memo(project, "resolved", () => playingTracks(project).map(({ t, a }) => ({ ...t, file: a.file, code: a.code || "", length: trackLength(t, a) })));
 }
 
-// added 2026-11-03 v0.6.0: soundtrack.pieces: what `tracks` play in film time t0..t0+length,
+// soundtrack.pieces: what `tracks` play in film time t0..t0+length,
 // [{asset, file, src_in, src_out, at}] (at: offset inside the window). Looping tracks repeat.
 export function soundtrackPieces(tracks, t0, length) {
   const out = [];
@@ -1263,7 +1057,7 @@ export function soundtrackPieces(tracks, t0, length) {
   return out;
 }
 
-// added 2026-11-03 v0.6.0: soundtrack.pass_soundtrack: the song for one pass, or null. sceneStart: the scene's start
+// soundtrack.pass_soundtrack: the song for one pass, or null. sceneStart: the scene's start
 // in the cut (sceneStarts); pass: a planScene pass. Left out when less than 2 s of it has sound.
 export function passSoundtrack(project, sceneStart, pass) {
   const tracks = resolvedTracks(project).filter(t => t.sync);
@@ -1281,14 +1075,6 @@ export function soundtrackLocked(project) {
   return playingTracks(project).some(({ t }) => t.mix || t.sync);
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] guessed from the scene's span; H3 gets the song only for passes with 2 s of it
-// Whether the song is sent to H3 for this scene (any sync track sounds during it).
-export function sceneHasSong(project, scene) {
-  const { starts } = sceneStarts(project);
-  const a = starts[scene.id], b = a + scene.duration;
-  return playingTracks(project).some(({ t, a: asset }) => t.sync && (t.loop ? t.start < b : t.start < b && t.start + trackLength(t, asset) > a));
-}
-[/OLD] */
 // Whether the song is sent to H3 for this scene: some pass of it gets soundtrack.pass_soundtrack. Memoised.
 export function sceneHasSong(project, scene) {
   const i = timing(project).index[scene.id];
@@ -1300,7 +1086,7 @@ export function sceneHasSong(project, scene) {
   return project.scenes[i] === scene ? memo(project, "song:" + scene.id, run) : run();
 }
 
-// ---- scene length vs shots (added 2026-11-03 v0.4.3) ----
+// ---- scene length vs shots ------------------------------
 // A shot lasts until the next one starts; the last one until the scene ends.
 export function shotLengths(scene) {
   return scene.shots.map((sh, i) => {
@@ -1343,7 +1129,6 @@ export function squeezeToFit(scene) {
 }
 
 export function assembledDuration(project) {
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] return project.scenes.reduce((t, s, i) => t + s.duration - (i > 0 ? overlapSeconds(s) : 0), 0);
   return timing(project).rows.reduce((t, r, i) => t + project.scenes[i].duration - r.overlap, 0);
 }
 
@@ -1364,8 +1149,7 @@ const GLOBAL_PATH = {
   scheduler: g => g.sampling.scheduler, width: g => g.output.width, height: g => g.output.height,
   diffusion: g => g.models.diffusion, text_encoder: g => g.models.text_encoder,
   video_vae: g => g.models.video_vae, audio_vae: g => g.models.audio_vae,
-  quality: g => g.quality, // added 2026-11-02 v0.3.0
-  // added 2026-11-10 v0.19.0: Global → Hires ("" = as Global; a scene can only turn it "off")
+  quality: g => g.quality,
   hires: () => "", refine_steps: g => g.hires.refine_steps, refine_denoise: g => g.hires.refine_denoise,
 };
 
@@ -1373,7 +1157,6 @@ export function effective(project, scene, key) {
   const o = scene.overrides || {};
   if (o[key] !== undefined && o[key] !== null && o[key] !== "") return { value: o[key], overridden: true };
   let value = GLOBAL_PATH[key](project.global);
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] if (key === "seed" && project.global.sampling.seed_mode === "increment") value += sceneIndex(project, scene.id);
   if (key === "seed" && project.global.sampling.seed_mode === "increment") value += sceneSeedN(scene, sceneIndex(project, scene.id));
   return { value, overridden: false };
 }
@@ -1410,23 +1193,10 @@ export function retentionOptions(kind) {
   return kind === "audio" ? AUDIO_RETENTION : VISUAL_RETENTION;
 }
 
-// added 2026-11-03 v0.4.1: anchor sheets, matching prompt.collect_refs and media.sheet_image.
+// Anchor sheets, matching prompt.collect_refs and media.sheet_image.
 // pack_sheet: true (one sheet), false (separate pictures), "auto" (a sheet only when the scene's pictures don't fit
 // H3's 9 slots otherwise). Outfit pictures are left out here; the backend adds them to the anchors.
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] left out outfit pictures and speakers missing from the cast list (prompt.py counts them)
-export function sceneAutoPacks(project, scene) {
-  const anchors = new Set();
-  for (const sc of scene.cast) for (const id of findCast(project, sc.id)?.anchors || []) if (findAsset(project, id)?.kind === "image") anchors.add(id);
-  const refs = new Set(scene.refs.filter(r => r.role === "reference" && findAsset(project, r.asset)?.kind === "image" && !anchors.has(r.asset)).map(r => r.asset));
-  return anchors.size + refs.size > 9;
-}
-[/OLD] */
-/* [OLD 2026-11-05 v0.6.1->v0.7.0] did not count the continuation picture (<Picture 1> of a last-frame start)
-export function sceneAutoPacks(project, scene) {
-  return scenePeople(project, scene).autoPack;
-}
-[/OLD] */
-// added 2026-11-05 v0.7.0: the first pass's continuation picture takes a slot too (as sceneBudget / prompt.collect_refs)
+// The first pass's continuation picture takes a slot too (as sceneBudget / prompt.collect_refs)
 export function sceneAutoPacks(project, scene) {
   const sp = scenePeople(project, scene);
   if (sp.autoPack) return true;
@@ -1436,7 +1206,7 @@ export function sceneAutoPacks(project, scene) {
   return !!first && passContinuation(project, i, first) === "picture" && sp.unpacked + 1 > MAX_REF_IMAGES;
 }
 
-// added 2026-11-08 v0.11.0: a prop can be part of a character (Cast → Prop → Part of), as model.part_owner: its pictures
+// A prop can be part of a character (Cast → Prop → Part of), as model.part_owner: its pictures
 // and description go into that character's subject instead of a subject of its own. The character's id, or "".
 export function partOwner(c, castById) {
   if (!c || c.kind !== "prop") return "";
@@ -1444,30 +1214,11 @@ export function partOwner(c, castById) {
   return owner && owner.kind === "character" && owner.id !== c.id ? owner.id : "";
 }
 
-/* [OLD 2026-11-08 v0.10.3->v0.11.0] every cast member counted on its own (a prop that is part of a character now folds
-   into that character, as model.scene_people)
-// added 2026-11-03 v0.6.0: the cast a scene sends, as prompt.collect_refs / model.scene_media_counts: its cast list
+// The cast a scene sends, as prompt.collect_refs / model.scene_media_counts: its cast list
 // plus speakers missing from it, each with its anchor pictures and outfit pictures; autoPack: "auto" sheets pack.
-function scenePeople(project, scene) {
-  const assets = new Map(project.assets.map(a => [a.id, a]));
-  const cast = new Map(project.cast.map(c => [c.id, c]));
-  const entries = [...scene.cast];
-  for (const d of scene.dialogue) if (cast.has(d.speaker) && !entries.some(e => e.id === d.speaker)) entries.push({ id: d.speaker, outfit: "" });
-  const people = [];
-  for (const e of entries) {
-    const c = cast.get(e.id);
-    if (!c) continue;
-    const outfit = c.outfits.find(o => o.id === (e.outfit || c.default_outfit));
-    const ids = c.anchors.filter(a => assets.get(a)?.kind === "image");
-    if (outfit) ids.push(...outfit.assets.filter(a => assets.get(a)?.kind === "image" && !ids.includes(a)));
-    people.push({ c, ids });
-  }
-[/OLD] */
-// added 2026-11-03 v0.6.0: the cast a scene sends, as prompt.collect_refs / model.scene_media_counts: its cast list
-// plus speakers missing from it, each with its anchor pictures and outfit pictures; autoPack: "auto" sheets pack.
-// added 2026-11-08 v0.11.0: as model.scene_people: a part's pictures join its character's (after the character's own,
+// As model.scene_people: a part's pictures join its character's (after the character's own,
 // each once); a part whose character is not in the scene is left out (leftOut: [{ part, owner }]).
-// added 2026-11-10 v0.18.0: the anchors a scene's cast entry leaves out (model.py entry_skip), as a Set
+// The anchors a scene's cast entry leaves out (model.py entry_skip), as a Set
 export function entrySkip(entry) {
   return new Set(Array.isArray(entry?.skip) ? entry.skip : []);
 }
@@ -1482,8 +1233,7 @@ export function scenePeople(project, scene) {
     const c = cast.get(e.id);
     if (!c) continue;
     const outfit = c.outfits.find(o => o.id === (e.outfit || c.default_outfit));
-    // [OLD 2026-11-10 v0.17.3->v0.18.0] const ids = c.anchors.filter(a => assets.get(a)?.kind === "image");  (every anchor in every scene)
-    const skip = entrySkip(e); // added 2026-11-10 v0.18.0: the anchors the scene unticked stay out (model.cast_pictures)
+    const skip = entrySkip(e);
     const ids = c.anchors.filter(a => assets.get(a)?.kind === "image" && !skip.has(a));
     if (outfit) ids.push(...outfit.assets.filter(a => assets.get(a)?.kind === "image" && !ids.includes(a)));
     const owner = partOwner(c, cast);
@@ -1492,8 +1242,7 @@ export function scenePeople(project, scene) {
       else leftOut.push({ part: c, owner: cast.get(owner) });
       continue;
     }
-    // [OLD 2026-11-10 v0.17.3->v0.18.0] people.push({ c, ids, own: ids.slice(), parts: [] });
-    people.push({ c, ids, own: ids.slice(), parts: [], entry: e }); // added 2026-11-10 v0.18.0: entry (its skip, for pickVideoAnchors)
+    people.push({ c, ids, own: ids.slice(), parts: [], entry: e });
   }
   for (const x of people) {
     for (const part of parts.get(x.c.id) || []) {
@@ -1503,21 +1252,12 @@ export function scenePeople(project, scene) {
   }
   const anchors = new Set(people.flatMap(x => x.ids));
   const refPics = new Set(scene.refs.filter(r => r.role === "reference" && assets.get(r.asset)?.kind === "image").map(r => r.asset));
-  /* [OLD 2026-11-05 v0.6.1->v0.7.0] no unpacked count
-  const autoPack = anchors.size + [...refPics].filter(a => !anchors.has(a)).length > MAX_REF_IMAGES;
-  return { people, autoPack, assets };
-  [/OLD] */
-  // added 2026-11-05 v0.7.0: unpacked (pictures before packing) for sceneBudget's continuation picture
   const unpacked = anchors.size + [...refPics].filter(a => !anchors.has(a)).length;
   const autoPack = unpacked > MAX_REF_IMAGES;
-  // [OLD 2026-11-08 v0.10.3->v0.11.0] return { people, autoPack, assets, unpacked };
-  return { people, autoPack, assets, unpacked, leftOut }; // added 2026-11-08 v0.11.0: leftOut
+  return { people, autoPack, assets, unpacked, leftOut };
 }
-// added 2026-11-08 v0.12.0: pose references, as model.pose_refs: a picture whose body pose one character of the scene
-// takes in the shot at its time; it goes to the pass whose span holds that time. [{ r, a, c }]
-// ---- added 2026-11-08 v0.14.0: clips of video and audio references (Sencer: "allow to select from-to timestamps/frames
-// of source video. we should be able to use the same video/audio asset in a single scene multiple times, with different
-// start/end timestamps/durations, with or without audio"). The same as model.py snap_frame, ref_trimmed, ref_clip,
+// ---- clips of video and audio references: the same asset can be a reference of a scene several times, each with
+// its own From / To and with or without its sound. The same as model.py snap_frame, ref_trimmed, ref_clip,
 // clip_key, media_ref_ids, ref_tokens (tests/test_model_parity.py compares them).
 
 // t seconds on the nearest whole frame (half a frame rounds up).
@@ -1583,8 +1323,7 @@ export function poseRefs(project, scene, pass = null, people = null) {
   return out;
 }
 export function castPacks(project, scene, c) {
-  // [OLD 2026-11-10 v0.17.3->v0.18.0] const n = c.anchors.filter(id => findAsset(project, id)?.kind === "image").length;  (every anchor, ticked or not)
-  const n = sceneAnchorIds(project, scene, c).length; // added 2026-11-10 v0.18.0: the anchors the scene uses
+  const n = sceneAnchorIds(project, scene, c).length;
   if (n < 2) return false;
   return c.pack_sheet === "auto" ? (scene ? sceneAutoPacks(project, scene) : false) : !!c.pack_sheet;
 }
@@ -1611,7 +1350,7 @@ export function anchorPixels(project, c, packed, width, height) {
   const s = max ? Math.min(1, 2048 / Math.min(W, H)) : Math.min(1, Math.sqrt(area / (W * H)));
   return Math.round(Math.min(cw, ch) * s);
 }
-// ---- added 2026-11-09 v0.16.0: video anchors (model.py video_anchors_of / pick_video_anchors, the same rules): sent to
+// ---- video anchors (model.py video_anchors_of / pick_video_anchors, the same rules): sent to
 // every pass of a scene the character is in, after everything else, while H3 takes 3 videos, 15 s of video in all and
 // 12 files; a clip is shortened to the seconds left when at least 2 s are; its sound only when asked and a slot is free.
 const REF_MEDIA_TOTAL_SECONDS = 15;
@@ -1622,9 +1361,8 @@ export function videoAnchorsOf(c, assets) {
 // people: scenePeople's records ({c}); n: {videos, videoSeconds, audio, audioSeconds, files}, updated
 export function pickVideoAnchors(people, assets, n) {
   const picked = [], left = [];
-  // [OLD 2026-11-10 v0.17.3->v0.18.0] for (const { c } of people) {
   for (const { c, entry } of people) {
-    const skip = entrySkip(entry); // added 2026-11-10 v0.18.0: unticked in this scene: not sent, not counted
+    const skip = entrySkip(entry);
     for (const [va, a] of videoAnchorsOf(c, assets)) {
       if (skip.has(va.id)) continue;
       const clip = refClip(va, a);
@@ -1632,9 +1370,6 @@ export function pickVideoAnchors(people, assets, n) {
       const room = REF_MEDIA_TOTAL_SECONDS - n.videoSeconds;
       const secs = full <= room + 1e-6 ? full : Math.floor(room * FPS + 1e-6) / FPS;
       const cut = secs < full - 1e-6;
-      // [OLD 2026-11-09 v0.17.0->v0.17.1] const why = full <= 0 ? "clip" : n.videos >= MAX_REF_VIDEOS ? "videos" : n.files >= MAX_REF_FILES ? "files"
-      // [OLD 2026-11-09 v0.17.0->v0.17.1]   : secs <= 0 || (cut && secs < REF_MEDIA_MIN_SECONDS - 1e-6) ? "seconds" : "";  (a clip under 2 s was sent)
-      // added 2026-11-09 v0.17.1 (third review): a clip under 2 s is not sent ("short"), as model.py
       const why = full <= 0 ? "clip" : full < REF_MEDIA_MIN_SECONDS - 1e-6 ? "short" : n.videos >= MAX_REF_VIDEOS ? "videos"
         : n.files >= MAX_REF_FILES ? "files" : secs <= 0 || (cut && secs < REF_MEDIA_MIN_SECONDS - 1e-6) ? "seconds" : "";
       if (why) { left.push({ cast: c.id, anchor: va.id, asset: a.id, why }); continue; }
@@ -1647,7 +1382,7 @@ export function pickVideoAnchors(people, assets, n) {
   return { picked, left };
 }
 
-// added 2026-11-09 v0.16.0 (model.py tile_pixels): about how many pixels the short side of one picture of a packed sheet
+// About how many pixels the short side of one picture of a packed sheet
 // of `pics` (assets) has when H3 gets it, at width x height and Global → Output → Reference images ("match" | "max")
 export const SMALL_TILE_PX = 300;
 export function tilePixels(pics, width, height, refSize = "match") {
@@ -1661,7 +1396,7 @@ export function tilePixels(pics, width, height, refSize = "match") {
   return Math.floor(Math.min(cw, ch) * s + 0.5);
 }
 
-// ---- added 2026-11-10 v0.19.0: Global → Hires, the latent upscaler (model.py hires_size / scene_hires the same)
+// ---- Global → Hires, the latent upscaler (model.py hires_size / scene_hires the same)
 export const HIRES_MAX_SCALE = 4;
 export const HIRES_SCALES = [1.25, 1.5, 1.75, 2];
 // "draft" or "final": the scene's own choice, else Global (model.py scene_quality)
@@ -1716,7 +1451,7 @@ export function sceneHires(project, scene) {
   return out;
 }
 
-// added 2026-11-09 v0.16.0: the output size a scene renders at (model.py resolve_settings: its own size, else Global;
+// The output size a scene renders at (model.py resolve_settings: its own size, else Global;
 // a draft scene at Global → Draft's scale)
 export function sceneOutputSize(project, scene) {
   const g = project.global, o = scene?.overrides || {};
@@ -1726,7 +1461,7 @@ export function sceneOutputSize(project, scene) {
   return [w, h];
 }
 
-// added 2026-11-09 v0.16.0: the size of one picture of c's sheet in this scene (its anchors, outfit and parts' pictures,
+// The size of one picture of c's sheet in this scene (its anchors, outfit and parts' pictures,
 // as scenePeople gives them), or 0 when c sends no sheet there
 export function sceneTilePixels(project, scene, c) {
   if (!castPacks(project, scene, c)) return 0;
@@ -1737,36 +1472,32 @@ export function sceneTilePixels(project, scene, c) {
   return tilePixels(x.ids.map(a => assets.get(a)).filter(Boolean), w, h, project.global.output.ref_image_size);
 }
 
-// added 2026-11-10 v0.18.0: c's anchor pictures a scene uses (all of them without a scene, or when c is not in its
+// c's anchor pictures a scene uses (all of them without a scene, or when c is not in its
 // cast list), in order
 export function sceneAnchorIds(project, scene, c) {
   const skip = entrySkip(scene?.cast?.find(e => e.id === c.id));
   return c.anchors.filter(id => findAsset(project, id)?.kind === "image" && !skip.has(id));
 }
-// [OLD 2026-11-10 v0.17.3->v0.18.0] export function sheetURL(project, c, cell = 192) {
-// [OLD 2026-11-10 v0.17.3->v0.18.0]   const files = c.anchors.map(id => findAsset(project, id)).filter(a => a?.kind === "image" && a.file).map(a => a.file);
-export function sheetURL(project, c, cell = 192, scene = null) { // scene: added 2026-11-10 v0.18.0 (the pictures it uses)
+export function sheetURL(project, c, cell = 192, scene = null) {
   const files = sceneAnchorIds(project, scene, c).map(id => findAsset(project, id)).filter(a => a?.file).map(a => a.file);
   return files.length ? "/reelwright/sheet?cell=" + cell + "&files=" + encodeURIComponent(JSON.stringify(files)) : "";
 }
 
-// Reference budget, the same numbers as model.scene_media_counts (added 2026-11-03 v0.6.0): a video whose sound is used
+// Reference budget, the same numbers as model.scene_media_counts: a video whose sound is used
 // takes an audio slot, a voice counts only in passes where its character speaks (and not with the song), the song
 // only where passSoundtrack gives one, files = pictures + videos + audio files. With a pass (from planScene): that
 // pass; without: the most any pass of the scene uses (song: any pass).
 // {pictures, videos, videoSeconds, audio, audioSeconds, files, song}
-// added 2026-11-05 v0.7.0: + continuation: "picture" | "video" | "video_audio" (with its sound) | "" (see
+// + continuation: "picture" | "video" | "video_audio" (with its sound) | "" (see
 // passContinuation; without a pass: the first pass that has one). A continuation picture counts for "auto" packing;
 // one that still does not fit (pictures <= 9, videos <= 3, files <= 12) is left out. continuation=false: as v0.6.1.
-const MAX_REF_VIDEOS = 3, MAX_REF_AUDIOS = 3, MAX_REF_FILES = 12; // added 2026-11-05 v0.7.0 (spec.py)
+const MAX_REF_VIDEOS = 3, MAX_REF_AUDIOS = 3, MAX_REF_FILES = 12;
 
-// added 2026-11-05 v0.7.0, same as model.pass_continuation: what a pass (from planScene) of scene i sends as reference 1
+// , same as model.pass_continuation: what a pass (from planScene) of scene i sends as reference 1
 // for the footage it continues from when Global -> Continuity -> name_continuation is on: "picture" (pass 1 of a
 // last-frame start, a re-anchored tail too), "video" (pass 1 of a tail start; a later pass after an overlap seam), "".
 export function passContinuation(project, i, pass, mode = null) {
   if (!flag(project.global?.continuity?.name_continuation ?? true, true)) return "";
-  // [OLD 2026-11-05 v0.7.0->v0.8.0] if (Math.trunc(num(pass.index, 1)) > 1) return pass.seam_before === "overlap" ? "video" : "";
-  // added 2026-11-05 v0.8.0: Global -> Long scenes -> seam_video_ref off: anchored only after an overlap seam
   if (Math.trunc(num(pass.index, 1)) > 1) {
     return pass.seam_before === "overlap" && flag(project.global?.long?.seam_video_ref ?? true, true) ? "video" : "";
   }
@@ -1776,7 +1507,7 @@ export function passContinuation(project, i, pass, mode = null) {
   return mode === "last_frame" || mode === "tail" ? "picture" : "";
 }
 
-// added 2026-11-05 v0.7.0, same as model.continuation_frames: frames of the clip sent as <Video 1> (the tail clip of the
+// , same as model.continuation_frames: frames of the clip sent as <Video 1> (the tail clip of the
 // scene before: its last 124 frames or fewer; the last 124 frames of the pass before), 0 for none.
 export function continuationFrames(project, i, pass, mode = null) {
   if (passContinuation(project, i, pass, mode) !== "video") return 0;
@@ -1784,28 +1515,18 @@ export function continuationFrames(project, i, pass, mode = null) {
   return Math.min(MIN_PASS_FRAMES, sceneFrames(project.scenes[i - 1]));
 }
 
-// [OLD 2026-11-05 v0.6.1->v0.7.0] export function sceneBudget(project, scene, pass = null) {
-// [OLD 2026-11-09 v0.15.1->v0.16.0] export function sceneBudget(project, scene, pass = null, continuation = true) {
-export function sceneBudget(project, scene, pass = null, continuation = true, videoAnchors = true) { // videoAnchors: added 2026-11-09 v0.16.0
+export function sceneBudget(project, scene, pass = null, continuation = true, videoAnchors = true) {
   if (!pass) {
-    /* [OLD 2026-11-05 v0.6.1->v0.7.0] no continuation
-    const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x));
-    [/OLD] */
-    // [OLD 2026-11-09 v0.15.1->v0.16.0] const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x, continuation));
     const outs = planScene(project, scene).passes.map(x => sceneBudget(project, scene, x, continuation, videoAnchors));
     const b = {};
     for (const k of ["pictures", "videos", "videoSeconds", "audio", "audioSeconds", "files"]) b[k] = Math.max(...outs.map(o => o[k]));
     b.song = outs.some(o => o.song);
-    b.continuation = outs.find(o => o.continuation)?.continuation || ""; // added 2026-11-05 v0.7.0
+    b.continuation = outs.find(o => o.continuation)?.continuation || "";
     return b;
   }
-  // [OLD 2026-11-05 v0.6.1->v0.7.0] const { people, autoPack, assets } = scenePeople(project, scene);
-  // added 2026-11-05 v0.7.0: the continuation reference of this pass; a picture counts for "auto" packing
   const { people, assets, unpacked } = scenePeople(project, scene);
   const idx = project.scenes.findIndex(x => x.id === scene.id);
   const cont = continuation ? passContinuation(project, idx < 0 ? null : idx, pass) : "";
-  // [OLD 2026-11-08 v0.11.0->v0.12.0] const autoPack = unpacked + (cont === "picture" ? 1 : 0) > MAX_REF_IMAGES;
-  // added 2026-11-08 v0.12.0: the pose pictures of this pass count too (model.scene_media_counts)
   const posePics = [...new Set(poseRefs(project, scene, pass, people).map(x => x.a.id))];
   const anchorIds = new Set(people.flatMap(x => x.ids));
   const refPicIds = new Set(scene.refs.filter(r => r.role === "reference" && assets.get(r.asset)?.kind === "image").map(r => r.asset));
@@ -1821,23 +1542,13 @@ export function sceneBudget(project, scene, pass = null, continuation = true, vi
     const v = assets.get(c.voice);
     if (v && v.kind === "audio" && !song && speaking.has(c.id)) sounds.push(v);
   }
-  for (const a of posePics) if (!sent.has(a)) { sent.add(a); b.pictures++; } // added 2026-11-08 v0.12.0
-  // added 2026-11-08 v0.14.0: the audio clips sent: each voice sample (the whole file), then the audio references' clips
+  for (const a of posePics) if (!sent.has(a)) { sent.add(a); b.pictures++; }
   const clips = sounds.map(v => ({ key: [v.id, 0, null], seconds: Number(v.duration) || 0 }));
   for (const r of scene.refs) {
     const a = assets.get(r.asset);
     if (!a || r.role !== "reference") continue;
-    // [OLD 2026-11-08 v0.13.1->v0.14.0] const dur = Number(a.duration) || 0;  (refClip gives each clip's length)
     if (a.kind === "image") {
       if (!sent.has(a.id)) { sent.add(a.id); b.pictures++; }
-    /* [OLD 2026-11-08 v0.13.1->v0.14.0] a video counted its asset's whole length; an audio asset counted once
-    } else if (a.kind === "video") {
-      b.videos++;
-      b.videoSeconds += dur;
-      if (r.soundtrack) { b.audio++; b.audioSeconds += dur; } // the video's sound takes an <Audio j> slot
-    } else if (a.kind === "audio" && !sounds.some(x => x.id === a.id)) sounds.push(a);
-    [/OLD] */
-    // added 2026-11-08 v0.14.0: each reference sends its clip (refClip): every video reference, an audio clip once
     } else if (a.kind === "video") {
       const secs = refClip(r, a).seconds || 0;
       b.videos++;
@@ -1848,18 +1559,14 @@ export function sceneBudget(project, scene, pass = null, continuation = true, vi
       if (!clips.some(x => sameClip(x.key, key))) clips.push({ key, seconds: refClip(r, a).seconds || 0 });
     }
   }
-  // [OLD 2026-11-08 v0.13.1->v0.14.0] b.audio += sounds.length + (song ? 1 : 0);
-  // [OLD 2026-11-08 v0.13.1->v0.14.0] for (const a of sounds) b.audioSeconds += Number(a.duration) || 0;
   sounds.length = 0;
-  for (const x of clips) sounds.push(x); // added 2026-11-08 v0.14.0: voice samples (whole files) and audio clips
+  for (const x of clips) sounds.push(x);
   b.audio += sounds.length + (song ? 1 : 0);
   for (const x of sounds) b.audioSeconds += x.seconds;
   if (song) b.audioSeconds += song.length;
   b.files = b.pictures + b.videos + sounds.length + (song ? 1 : 0);
-  // added 2026-11-05 v0.7.0: the continuation reference, when it fits (else the pass counts as in v0.6.1)
   b.continuation = "";
   if (cont === "picture") {
-    // [OLD 2026-11-09 v0.15.1->v0.16.0] if (b.pictures + 1 > MAX_REF_IMAGES || b.files + 1 > MAX_REF_FILES) return sceneBudget(project, scene, pass, false);
     if (b.pictures + 1 > MAX_REF_IMAGES || b.files + 1 > MAX_REF_FILES) return sceneBudget(project, scene, pass, false, videoAnchors);
     b.pictures++;
     b.files++;
@@ -1872,46 +1579,11 @@ export function sceneBudget(project, scene, pass = null, continuation = true, vi
     b.continuation = "video";
     if (b.audio < MAX_REF_AUDIOS) { b.audio++; b.audioSeconds += secs; b.continuation = "video_audio"; } // its sound
   }
-  if (videoAnchors) pickVideoAnchors(people, assets, b); // added 2026-11-09 v0.16.0: the cast's video anchors, after everything else
+  if (videoAnchors) pickVideoAnchors(people, assets, b);
   return b;
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] counted per scene with a guessed song length; voices of non-speakers in other passes
-// Reference budget for one pass of a scene, matching how the backend presents refs.
-export function sceneBudget(project, scene) {
-  const b = { pictures: 0, videos: 0, videoSeconds: 0, audio: 0, audioSeconds: 0, files: 0 };
-  for (const r of scene.refs) {
-    const a = findAsset(project, r.asset);
-    if (!a || r.role !== "reference") continue;
-    if (a.kind === "image") b.pictures++;
-    if (a.kind === "video") {
-      b.videos++; b.videoSeconds += a.duration || 0;
-      if (r.soundtrack) { b.audio++; b.audioSeconds += a.duration || 0; }
-    }
-    if (a.kind === "audio") { b.audio++; b.audioSeconds += a.duration || 0; }
-  }
-  const song = sceneHasSong(project, scene); // added 2026-11-03 v0.5.0: the song replaces the cast voices
-  for (const sc of scene.cast) {
-    const c = findCast(project, sc.id);
-    if (!c) continue;
-    // [OLD 2026-11-03 v0.4.0->v0.4.1] if (c.anchors.length) b.pictures += c.pack_sheet ? 1 : c.anchors.length;
-    if (c.anchors.length) b.pictures += castPacks(project, scene, c) ? 1 : c.anchors.length;
-    const voice = findAsset(project, c.voice);
-    const speaks = scene.dialogue.some(d => d.speaker === c.id);
-    // [OLD 2026-11-03 v0.4.3->v0.5.0] if (voice && speaks) { b.audio++; b.audioSeconds += voice.duration || 0; }
-    if (voice && speaks && !song) { b.audio++; b.audioSeconds += voice.duration || 0; }
-  }
-  if (song) { // one song segment per pass, at most 15 s
-    b.audio++;
-    b.audioSeconds += Math.min(15, estimatePasses(scene.duration, project.global.long).count > 1 ? (project.global.long.max_pass_frames || MAX_PASS_FRAMES) / FPS : Math.max(scene.duration, MIN_PASS_FRAMES / FPS));
-    b.song = true;
-  }
-  b.files = b.pictures + b.videos + b.audio;
-  return b;
-}
-[/OLD] */
-
-// ---- passes (added 2026-11-03 v0.6.0): a port of reelwright/planner.py plan_scene, so the editor knows each pass's
+// ---- passes: a port of reelwright/planner.py plan_scene, so the editor knows each pass's
 // window, shots, lines and guides without asking the backend (tests/test_model_parity.py keeps them equal). ----
 function clampPassFrames(n) {
   return Math.min(MAX_PASS_FRAMES, alignFramesUp(Math.max(MIN_PASS_FRAMES, n)));
@@ -2017,8 +1689,6 @@ function planSceneNow(project, scene, index) {
     const shots = [];
     for (const [number, sh, a, b] of ranges) {
       if (b <= s || a >= end) continue;
-      // [OLD 2026-11-05 v0.7.0->v0.8.0] shots.push({ id: sh.id, number, continuing: a < s, t: (Math.max(a, s) - s + keepIn) / FPS, camera: sh.camera, text: sh.text });
-      // added 2026-11-05 v0.8.0: + the camera's amplitude and speed and the framing (as planner.py)
       shots.push({ id: sh.id, number, continuing: a < s, t: (Math.max(a, s) - s + keepIn) / FPS, camera: sh.camera, text: sh.text,
         camera_amp: sh.camera_amp ?? "", camera_speed: sh.camera_speed ?? "", framing: sh.framing ?? "" });
     }
@@ -2065,7 +1735,7 @@ export function assetUsage(project, assetId) {
   return out;
 }
 
-// ---- added 2026-11-10 v0.18.0: the anchors a scene uses (scene.cast[].skip) and a video anchor's frame picture
+// ---- the anchors a scene uses (scene.cast[].skip) and a video anchor's frame picture
 // (cast.video_anchors[].frame / frame_asset)
 // forget an anchor (a picture asset id or a video anchor id) in the skip lists of cast member cid ("" = everyone)
 export function unskipAnchor(project, cid, id) {
@@ -2082,7 +1752,7 @@ export function assetUsedElsewhere(project, assetId, ignoreAnchorsOf = "") {
   }
   return project.soundtrack.some(t => t.asset === assetId) || project.global?.merge?.score?.asset === assetId;
 }
-// unset video anchor va's frame picture (Sencer: "when frame is unset later, remove from Anchor list and Anchors"): the
+// unset video anchor va's frame picture: the
 // picture leaves cast member c's anchors and the scenes' skip lists, and the project when nothing else uses it.
 // Call inside an edit, with c and va from the project being edited. Returns {asset (its code or ""), kept}.
 export function clearAnchorFrame(project, c, va) {
@@ -2103,13 +1773,13 @@ export function assetCastUse(project, assetId) {
   for (const c of project.cast) {
     const scenes = project.scenes.filter(s => s.cast.some(x => x.id === c.id)).length;
     if (c.anchors.includes(assetId)) out.push({ cast: c, as: "anchor", scenes });
-    if ((c.video_anchors || []).some(x => x.asset === assetId)) out.push({ cast: c, as: "video anchor", scenes }); // added 2026-11-09 v0.16.0
+    if ((c.video_anchors || []).some(x => x.asset === assetId)) out.push({ cast: c, as: "video anchor", scenes });
     if (c.voice === assetId) out.push({ cast: c, as: "voice", scenes });
   }
   return out;
 }
 
-// added 2026-11-02 v0.3.4: mirrors cast_description in reelwright/model.py. A cast member without its own
+// Mirrors cast_description in reelwright/model.py. A cast member without its own
 // description uses the description of its first anchor picture that has one.
 const tidy = t => (t || "").trim().replace(/\.+$/, "");
 export function castDescription(project, c) {
@@ -2122,7 +1792,7 @@ export function castDescription(project, c) {
   return { text: "", asset: null };
 }
 
-// added 2026-11-02 v0.3.4: every place an asset's description ends up (or why it doesn't)
+// Every place an asset's description ends up (or why it doesn't)
 export function descriptionUses(project, assetId) {
   const out = [];
   project.scenes.forEach((s, i) => {
@@ -2149,7 +1819,7 @@ export function continuityChains(project) {
   return chains;
 }
 
-// ---- tags (added 2026-11-03 v0.6.0, PLAN "Tag syntax"; prompt.py TAG_RE and prompttext.js use the same rule) ----
+// ---- tags (PLAN "Tag syntax"; prompt.py TAG_RE and prompttext.js use the same rule) -----------------------------
 // A tag is @ + a name of letters, digits and _ runs joined by single ' ’ - or . (a trailing one is not part of it:
 // "@Anna." is Anna). Not a tag after a letter, digit, _ or @ (e-mail addresses stay text); @@ is a literal @.
 const TAG_NAME = "[\\p{L}\\p{N}\\p{M}_]+(?:['\u2019.\\-][\\p{L}\\p{N}\\p{M}_]+)*";
@@ -2163,33 +1833,16 @@ export function isTagName(name) {
   return TAG_NAME_RE.test(text(name));
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] \w is ASCII-only in JS ("@Ömer" became "@{Ömer}"), "O'Brien" needed braces, empty
-// names gave "@{}", a muted-asset or missing-file track still offered @soundtrack
-export function tagCandidates(project) {
-  const out = project.assets.map(a => ({ tag: "@" + a.code, label: a.name || a.code, kind: a.kind }));
-  for (const c of project.cast) {
-    const tag = /^[\w-]+$/.test(c.name) ? "@" + c.name : "@{" + c.name + "}";
-    out.push({ tag, label: c.kind, kind: "cast" });
-  }
-  out.push({ tag: "@tail", label: "previous scene's tail clip", kind: "video" });
-  // added 2026-11-03 v0.5.0: the part of the soundtrack a pass is sent
-  if (project.soundtrack?.some(t => t.sync && !t.mute)) out.push({ tag: "@soundtrack", label: "the song this part is cut to", kind: "audio" });
-  return out;
-}
-[/OLD] */
-// added 2026-11-08 v0.14.0: `scene` adds its further clips of an asset (@V1.2 ...)
+// `scene` adds its further clips of an asset (@V1.2 ...)
 export function tagCandidates(project, scene = null) {
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] const out = project.assets.filter(a => a.code).map(a => ({ tag: "@" + a.code, label: a.name || a.code, kind: a.kind }));
-  // added 2026-11-06 v0.9.0: the asset's group before its name in the @ list (shown and searched, never written)
   const out = project.assets.filter(a => a.code).map(a => ({ tag: "@" + a.code, label: (assetGroupName(project, a) ? assetGroupName(project, a) + " · " : "") + (a.name || a.code), kind: a.kind }));
   for (const c of project.cast) {
     if (!c.name) continue;
     out.push({ tag: isTagName(c.name) ? "@" + c.name : "@{" + c.name + "}", label: c.kind, kind: "cast" });
   }
   out.push({ tag: "@tail", label: "previous scene's tail clip", kind: "video" });
-  // the part of the soundtrack a pass is sent (v0.5.0); a pass without the song writes it as plain text
+  // the part of the soundtrack a pass is sent; a pass without the song writes it as plain text
   if (playingTracks(project).some(({ t }) => t.sync)) out.push({ tag: "@soundtrack", label: "the song this part is cut to", kind: "audio" });
-  // added 2026-11-08 v0.14.0: the scene's second, third ... reference of a video or audio asset (its own clip)
   if (scene) {
     for (const r of scene.refs || []) {
       const tok = refTokens(project, scene)[r.id];
@@ -2202,7 +1855,7 @@ export function tagCandidates(project, scene = null) {
   return out;
 }
 
-// ---- v0.8.0: camera wording, dialogue length, per-pass prompt sections (added 2026-11-05 v0.8.0; the same as
+// ---- camera wording, dialogue length, per-pass prompt sections (the same as
 // model.py framing_phrase, camera_sentence, dialogue_seconds, dialogue_spans, pass_texts, relayout_pass_texts,
 // pass_sections; tests/test_model_parity.py compares them) ----
 
@@ -2214,7 +1867,7 @@ export function framingPhrase(framing) {
 // A shot's camera text as one sentence in the form of H3's guide (base-en.txt 4.3): "the camera pushes in", "small",
 // "slow" -> "The camera pushes in with small amplitude at slow speed." Medium amplitude / normal speed ("") are not
 // written; hand-written text works the same way. "" without camera text.
-// added 2026-11-06 v0.8.0 (lead review): an official move's name ("Push In", "tracking shot", "POV") is written with
+// An official move's name ("Push In", "tracking shot", "POV") is written with
 // its phrase ("the camera pushes in"), as model.official_camera
 export function officialCamera(camera) {
   const t = text(camera);
@@ -2224,9 +1877,6 @@ export function officialCamera(camera) {
 }
 
 export function cameraSentence(camera, amp = "", speed = "") {
-  /* [OLD 2026-11-06 v0.8.0 lead review] an official name was written as the name
-  let t = text(camera).replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, "");
-  [/OLD] */
   let t = officialCamera(camera).replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, "");
   const extra = (amp === "small" || amp === "large" ? ` with ${amp} amplitude` : "") +
     (speed === "slow" || speed === "fast" ? ` at ${speed} speed` : "");

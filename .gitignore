@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 web-test/shots/
+
+# ComfyUI user-folder settings; they hold API keys and never belong in the repo
+llm.json
+profiles.json
+user/

@@ -1,54 +1,33 @@
 // Scene tab: everything about one scene, plus its overrides of the Global tab.
 
-import { h, icon, button, toggle, segmented, select, number, text, textarea, chip, dot, section, field, meter, keepChips, slider } from "../ui.js";
-import { choiceDialog } from "../ui.js"; // added 2026-11-05 v0.7.0: "Apply to all scenes" asks which scenes
-import { confirmDialog } from "../ui.js"; // added 2026-11-09 v0.15.0: Reset scene asks first
-import { resizableList, uiNum } from "../ui.js"; // added 2026-11-06 v0.9.0: shot and dialogue lists scroll in a box you can resize
-import { kept } from "../ui.js"; // added 2026-11-06 v0.10.0: pictures that survive re-renders
-import { copyButton } from "../ui.js"; // added 2026-11-06 v0.10.0: copy a pass prompt
-import { sortable, dragGrip, moveItem } from "../ui.js"; // added 2026-11-09 v0.15.0: references, cast and LoRAs in the order you drag them to
-import { seamFixes, seamFixTime } from "../passes.js"; // added 2026-11-06 v0.10.0: quick fixes for lines past a seam
-// added 2026-11-05 v0.7.0: the "In the cut" card (scene.merge)
+import {
+  h, icon, button, toggle, segmented, select, number, text, textarea, chip, dot, section, field, meter, keepChips,
+  slider, choiceDialog, confirmDialog, resizableList, uiNum, kept, copyButton, sortable, dragGrip, moveItem,
+  copyWithToast,
+} from "../ui.js";
+import {
+  seamFixes, seamFixTime, passLayout, passTextsOf, adoptLayout, setPassSection, dialogueSecs, lineSeam, shotSeams,
+  cameraOptions, framingOptions, runWrite, stopWrite, stillMove, applyWritten,
+} from "../passes.js";
 import { TRANSITIONS, DIRECTIONS, DIRECTED, mergeOf, ensureMerge, mergeDefaults, joinOf, transitionLabel } from "../cut.js";
 import { rw, viewURL } from "../api.js";
-import { newJob, jobLine } from "../llmjob.js"; // added 2026-11-03 v0.4.2
-import { jobText } from "../llmjob.js"; // added 2026-11-06 v0.10.2: progress lines updated in place
-import { outputButton } from "../llmjob.js"; // added 2026-11-09 v0.15.0: the reasoning and answer as they arrive
+import { newJob, jobLine, jobText, outputButton } from "../llmjob.js";
 import { codeEditor } from "../codeedit.js";
-// added 2026-11-05 v0.8.0: per-pass prompt texts, dialogue lengths, pass seams, the camera picker, "Write prompts"
-import {
-  passLayout, passTextsOf, adoptLayout, setPassSection, dialogueSecs, lineSeam, shotSeams, cameraOptions, framingOptions,
-  runWrite, stopWrite, stillMove,
-} from "../passes.js";
-import { applyWritten } from "../passes.js"; // added 2026-11-06 v0.10.0: the rewriter on a pass tab
-import { fillScene, fillable, fillWords } from "../shotfill.js"; // added 2026-11-09 v0.14.2: shots and lines from the description
-// [OLD 2026-11-03 v0.5.1->v0.6.0] import { sceneMenu } from "./timeline.js"; // added 2026-11-02 v0.2.2
-import { sceneMenu, setSceneDuration, autoRollOn } from "./timeline.js"; // added 2026-11-02 v0.2.2; v0.6.0: auto-roll
-import { beatTimes } from "./soundtrack.js"; // added 2026-11-03 v0.6.0: shot times on the beat
-// [OLD 2026-11-03 v0.5.1->v0.6.0] import { highlightHTML, diffLines, unknownTags } from "../prompttext.js";
+import { fillScene, fillable, fillWords } from "../shotfill.js";
+import { sceneMenu, setSceneDuration, autoRollOn } from "./timeline.js";
+import { beatTimes } from "./soundtrack.js";
 import { highlightHTML, diffLines, tagMatches, looksLikeAssetCode } from "../prompttext.js";
 import {
   FPS, MIN_PASS_FRAMES, ROLES, SECTION_KEYS, STABLE_LANGUAGES, alignFramesUp, nearestGridFrames, framesOf, fmtTime,
   estimatePasses, sceneStarts, sceneIndex, findAsset, findCast, effective, overrideCount, retentionOptions,
-  sceneBudget, tagCandidates, newId, effectiveLoras,
-  castDescription, // added 2026-11-02 v0.3.4
-  castPacks, sheetURL, // added 2026-11-03 v0.4.1
-  sceneAnchorIds, entrySkip, // added 2026-11-10 v0.18.0: the anchors a scene uses
-  shotLengths, overruns, fitLength, lengthenToFit, squeezeToFit, // added 2026-11-03 v0.4.3
-  // added 2026-11-03 v0.6.0: visible start ("In"), how a scene really starts, passes and their song part, per-pass budget
-  visibleStart, effectiveStart, tailOverlapFrames, planScene, passSoundtrack,
-  soundtrackLocked, // added 2026-11-05 v0.7.0: transitions play as dips while a soundtrack sets the timing
+  sceneBudget, tagCandidates, newId, effectiveLoras, castDescription, castPacks, sheetURL, sceneAnchorIds, entrySkip,
+  shotLengths, overruns, fitLength, lengthenToFit, squeezeToFit, visibleStart, effectiveStart, tailOverlapFrames,
+  planScene, passSoundtrack, soundtrackLocked, assetGroupName, partOwner, sceneTilePixels, SMALL_TILE_PX,
+  scenePeople, hiresSize, sceneHires, sceneSampleSize, sceneQuality, passLabel, passNames, refClip, refTrimmed,
+  refTokens, snapFrame,
 } from "../model.js";
-import { assetGroupName } from "../model.js"; // added 2026-11-06 v0.9.0: the group before an asset in pickers
-import { partOwner } from "../model.js"; // added 2026-11-08 v0.11.0: a prop that is part of a character
-import { sceneTilePixels, SMALL_TILE_PX } from "../model.js"; // added 2026-11-09 v0.16.0: sheet pictures too small for identity
-import { scenePeople } from "../model.js"; // added 2026-11-08 v0.12.0: the characters a pose reference can be for
-import { hiresSize, sceneHires, sceneSampleSize, sceneQuality } from "../model.js"; // added 2026-11-10 v0.19.0: Global → Hires
-import { passLabel, passNames } from "../model.js"; // added 2026-11-10 v0.19.0: pass names ("Pass 2 · Harbour")
-import { refClip, refTrimmed, refTokens, snapFrame } from "../model.js"; // added 2026-11-08 v0.14.0: clips of video / audio references
-import { copyWithToast } from "../ui.js"; // added 2026-11-08 v0.14.0: copy a clip's @ tag
 
-// added 2026-11-03 v0.6.0: a render step changes nothing on this tab (status changes come with a full render), so
+// A render step changes nothing on this tab (status changes come with a full render), so
 // progress events no longer rebuild it
 export function onProgress() {}
 
@@ -93,7 +72,7 @@ function navigator(ctx) {
         type: "button", class: ["rw-nav-item", x.id === s.id && "on", "st-" + ctx.statusOf(x.id)], help: "scene.nav.strip",
         style: { "flex-grow": String(Math.max(0.6, x.duration)), "background-image": take?.files?.first ? `url("${viewURL(take.files.first)}")` : null },
         onClick: () => ctx.actions.select(x.id),
-        menu: () => { ctx.actions.select(x.id); return sceneMenu(ctx, x); }, // added 2026-11-02 v0.2.2
+        menu: () => { ctx.actions.select(x.id); return sceneMenu(ctx, x); },
       }, h("span", { class: "mono" }, String(j + 1).padStart(2, "0") + (x.id === s.id ? " · " + x.title : "")));
     })),
     button({ icon: "chevRight", help: "scene.nav.next", disabled: i === p.scenes.length - 1, onClick: () => ctx.actions.select(p.scenes[i + 1].id) }),
@@ -109,8 +88,6 @@ function durationCard(ctx, s) {
   const est = estimatePasses(s.duration, p.global.long);
   const plan = ctx.planFor(s.id);
   const { starts } = sceneStarts(p);
-  // [OLD 2026-11-03 v0.5.1->v0.6.0] const setFrames = f => ctx.actions.editScene(s.id, sc => { sc.duration = Math.max(1, f) / FPS; });
-  // added 2026-11-03 v0.6.0: with Auto-roll (a soundtrack sets the timing) the next scene gives or takes the time
   const roll = autoRollOn(p) && sceneIndex(p, s.id) < p.scenes.length - 1;
   const setFrames = f => setSceneDuration(ctx, s.id, Math.max(1, f) / FPS, { roll });
   const step = dir => {
@@ -138,10 +115,9 @@ function durationCard(ctx, s) {
           : est.short ? `Shorter than one pass: renders ${MIN_PASS_FRAMES} f (${(MIN_PASS_FRAMES / FPS).toFixed(2)} s) and keeps ${s.duration.toFixed(2)} s.`
             : est.trimmed ? `Renders ${alignFramesUp(frames)} f on the 17k+5 grid, trimmed to ${frames} f.` : `Exactly one pass of ${frames} f.`),
       h("div", { class: "rw-kv-grid two" },
-        // [OLD 2026-11-03 v0.5.1->v0.6.0] h("div", { class: "rw-kv", help: "scene.duration.in" }, h("span", null, "In"), h("b", { class: "mono" }, fmtTime(starts[s.id]))),
         h("div", { class: "rw-kv", help: "scene.duration.in" }, h("span", null, "In"), h("b", { class: "mono" }, fmtTime(visibleStart(p, s.id) ?? starts[s.id]))),
         h("div", { class: "rw-kv", help: "scene.duration.out" }, h("span", null, "Out"), h("b", { class: "mono" }, fmtTime(starts[s.id] + s.duration)))),
-      roll && h("div", { class: "rw-dim small", help: "timeline.autoRoll" }, "Auto-roll: the next scene gives or takes the time, so later scenes stay on the soundtrack."), // added 2026-11-03 v0.6.0
+      roll && h("div", { class: "rw-dim small", help: "timeline.autoRoll" }, "Auto-roll: the next scene gives or takes the time, so later scenes stay on the soundtrack."),
       est.short && shortWindow(ctx, s),
     ],
   });
@@ -184,13 +160,12 @@ function startCard(ctx, s) {
         options: OVERLAP_CHOICES, value: String(s.start.overlap_frames), help: "scene.start.overlap",
         onChange: v => ctx.actions.editScene(s.id, sc => { sc.start.overlap_frames = Number(v); }),
       }), { help: "scene.start.overlap" }),
-      startNote(p, s, i), // added 2026-11-03 v0.6.0
-      // [OLD 2026-11-05 v0.6.1->v0.7.0] transitionFields(ctx, s, i), // added 2026-11-02 v0.3.0  (the join moved to the "In the cut" card, scene.merge)
+      startNote(p, s, i),
     ],
   });
 }
 
-// added 2026-11-03 v0.6.0: when a tail start is not what the scene really gets (model.effectiveStart): re-anchored to
+// When a tail start is not what the scene really gets (model.effectiveStart): re-anchored to
 // the last frame, or a shorter overlap because one of the two scenes is short
 function startNote(p, s, i) {
   if (i === 0 || s.start.mode !== "tail") return null;
@@ -205,38 +180,7 @@ function startNote(p, s, i) {
   return null;
 }
 
-/* [OLD 2026-11-05 v0.6.1->v0.7.0] scene.transition with Global -> Merge defaults; replaced by cutCard (scene.merge)
-// added 2026-11-02 v0.3.0: how the cut into this scene looks in the merge (per scene; empty follows Global -> Merge)
-function transitionFields(ctx, s, i) {
-  if (i === 0) return null;
-  const m = ctx.p.global.merge;
-  if (s.start.mode !== "fresh") {
-    return h("div", { class: "rw-dim small", help: "scene.transition" }, s.start.mode === "tail"
-      ? "Continuous start: the merge crossfades inside the tail overlap (Global → Long scenes → Crossfade), so there is no cut transition."
-      : "Continuous start: the merge drops the repeated first frame, so there is no cut transition.");
-  }
-  const tr = s.transition || {};
-  const setT = fn => ctx.actions.editScene(s.id, sc => { sc.transition = sc.transition || { mode: "", frames: null, audio_fade_frames: null }; fn(sc.transition); });
-  const mode = tr.mode || m.hard_cut;
-  const label = { cut: "cut", crossfade: "crossfade", dip: "dip to black" };
-  return [
-    h("div", { class: "rw-subhead", help: "scene.transition" }, "Cut into this scene"),
-    field("Transition", segmented({ small: true, value: tr.mode || "", help: "scene.transition.mode", options: [
-      { value: "", label: `Merge default · ${label[m.hard_cut] || m.hard_cut}`, help: "scene.transition.mode" },
-      { value: "cut", label: "Cut", help: "scene.transition.mode" }, { value: "crossfade", label: "Crossfade", help: "scene.transition.mode" },
-      { value: "dip", label: "Dip to black", help: "scene.transition.mode" }],
-    onChange: v => setT(t => { t.mode = v; }) }), { help: "scene.transition.mode", dot: tr.mode ? "override" : "global", wide: true }),
-    mode !== "cut" && field("Length", number({ value: tr.frames ?? m.transition_frames, min: 0, max: 96, unit: "f", help: "scene.transition.frames",
-      onChange: v => setT(t => { t.frames = v; }) }), { help: "scene.transition.frames", dot: tr.frames != null ? "override" : "global",
-      reset: tr.frames != null ? () => setT(t => { t.frames = null; }) : null }),
-    field("Audio fade", number({ value: tr.audio_fade_frames ?? m.audio_fade_frames, min: 0, max: 48, unit: "f", help: "scene.transition.audioFade",
-      onChange: v => setT(t => { t.audio_fade_frames = v; }) }), { help: "scene.transition.audioFade", dot: tr.audio_fade_frames != null ? "override" : "global",
-      reset: tr.audio_fade_frames != null ? () => setT(t => { t.audio_fade_frames = null; }) : null }),
-  ];
-}
-[/OLD] */
-
-// added 2026-11-05 v0.7.0: "In the cut": how the merge joins this scene to the one before, fades it in and out, sets
+// "In the cut": how the merge joins this scene to the one before, fades it in and out, sets
 // its sound and grades its colour (scene.merge, contract B). Every edit is one named undo step; inputs have keys.
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
@@ -308,13 +252,6 @@ function cutCard(ctx, s) {
         onChange: v => set("Dip colour", x => { x.color = v; }) }),
       { help: "scene.cut.color", reset: reset(m.color === D.color, "Reset dip colour", x => { x.color = D.color; }), ...opt }));
     }
-    /* [OLD 2026-11-05 v0.7.0 lead review] an overlapping transition showed "Audio crossfade", but the merge crossfades the
-       sound over the whole transition there and only uses audio_frames at a cut or a dip that keeps the timing
-    joinRows.push(field(overlapping ? "Audio crossfade" : "Audio fade", framesBox({ value: m.audio_frames, max: 96, key: key("afr"), help: "scene.cut.audio",
-      onChange: v => set(overlapping ? "Audio crossfade" : "Audio fade", x => { x.audio_frames = v ?? D.audio_frames; }) }),
-    { help: "scene.cut.audio", reset: reset(m.audio_frames === D.audio_frames, "Reset audio fade", x => { x.audio_frames = D.audio_frames; }), ...opt }));
-    [/OLD] */
-    // added 2026-11-05 v0.7.0 lead review: the field only where the merge reads it (a cut, or a dip that keeps the timing)
     if (overlapping && !join.asDip) {
       joinRows.push(h("div", { class: "rw-note", help: "scene.cut.audio" }, "The sound crossfades over the whole transition."));
     } else {
@@ -401,7 +338,7 @@ function cutCard(ctx, s) {
         `${next.title} continues from this scene's end, which it takes before the fade: the cut jumps from the faded frame back to the picture.`),
       h("div", { class: "rw-subhead", help: "scene.cut.sound" }, "Sound"),
       field("Level", h("span", { class: "rw-row" },
-        number({ value: m.volume_db, min: -60, max: 24, step: 0.5, /* v0.7.0 lead review: max 24 like the project file (was 12) */ width: "70px", unit: "dB", key: key("vol"), help: "scene.cut.volume",
+        number({ value: m.volume_db, min: -60, max: 24, step: 0.5, width: "70px", unit: "dB", key: key("vol"), help: "scene.cut.volume",
           onChange: v => set("Scene sound level", x => { x.volume_db = v ?? 0; }) }),
         toggle({ value: m.mute, label: "Mute", key: key("mute"), help: "scene.cut.mute", onChange: v => set(v ? "Mute scene sound" : "Unmute scene sound", x => { x.mute = v; }) })),
       { help: "scene.cut.volume", reset: reset(m.volume_db === D.volume_db && m.mute === D.mute, "Reset scene sound", x => { x.volume_db = D.volume_db; x.mute = D.mute; }), ...opt }),
@@ -437,11 +374,9 @@ function overridesCard(ctx, s) {
     title: "Generation", help: "scene.overrides",
     actions: overrideCount(s) ? button({ label: "Reset to Global", small: true, help: "scene.override.resetAll", onClick: () => ctx.actions.editScene(s.id, sc => { sc.overrides = {}; }) }) : h("span", { class: "rw-dim small" }, "follows Global"),
     children: [
-      // added 2026-11-02 v0.3.0: draft or final for this scene only
       row("quality", "Quality", () => segmented({ small: true, value: s.overrides.quality || "", help: "scene.override.quality",
         options: [{ value: "", label: `Global · ${p.global.quality}`, help: "scene.override.quality" }, { value: "draft", label: "Draft", help: "scene.override.quality" }, { value: "final", label: "Final", help: "scene.override.quality" }],
         onChange: v => set("quality", v || null) })),
-      // added 2026-11-10 v0.19.0: Global → Hires for this scene: off, or another refine (the size is the project's)
       hiresRows(ctx, s, row, set),
       row("seed", "Seed", num("seed", { min: 0, width: "120px" })),
       row("steps", "Steps", num("steps", { min: 1, max: 200 })),
@@ -457,7 +392,7 @@ function overridesCard(ctx, s) {
   });
 }
 
-// added 2026-11-10 v0.19.0: the Hires rows of the Generation card (only while Global → Hires is on). The size is the
+// The Hires rows of the Generation card (only while Global → Hires is on). The size is the
 // project's (Global → Hires → scale); a scene can turn it off (the merge enlarges it) or change the refine.
 function hiresRows(ctx, s, row, set) {
   const p = ctx.p, hi = p.global.hires;
@@ -484,56 +419,7 @@ function hiresRows(ctx, s, row, set) {
   ];
 }
 
-// [OLD 2026-11-05 v0.7.0->v0.8.0] one set of sections per scene; v0.8.0: pass tabs with their own sections (promptCard below)
-// function promptCard(ctx, s) {
-//   const p = ctx.p;
-//   const cands = tagCandidates(p);
-//   const tasks = derivedTasks(p, s);
-//   const all = s.prompt.mode === "raw" ? s.prompt.raw : SECTION_KEYS.map(k => s.prompt.sections[k]).join("\n");
-//   // [OLD 2026-11-03 v0.5.1->v0.6.0] const unknown = unknownTags(all, cands);
-//   const tags = tagNotes(p, s, all, cands); // added 2026-11-03 v0.6.0: levels as in the backend (prompt.py)
-//   const list = xs => xs.join(", ");
-//   const input = (path, keyName) => ({
-//     key: keyName,
-//     candidates: cands,
-//     onInput: v => ctx.actions.editScene(s.id, sc => { path(sc, v); }, { coalesce: keyName, render: false }),
-//     onChange: () => ctx.store.notify(),
-//   });
-//   const autoT = (k, label) => toggle({ value: s.prompt.auto[k], label, help: "scene.prompt.auto." + k, onChange: v => ctx.actions.editScene(s.id, sc => { sc.prompt.auto[k] = v; }) });
-//   const sectionEditor = k => h("div", { class: "rw-psec" },
-//     h("div", { class: "rw-psec-head" }, h("span", { class: "mono rw-dim", help: "scene.prompt.section." + k }, SECTION_LABEL[k]),
-//       k === "subject_definitions" && autoT("subjects", "auto from cast"),
-//       k === "retention_analysis" && autoT("retention", "auto from refs"),
-//       k === "detailed_description" && autoT("shots", "auto shots + dialogue")),
-//     codeEditor({ value: s.prompt.sections[k], help: "scene.prompt.section." + k, minRows: k === "detailed_description" ? 4 : 2,
-//       placeholder: placeholderFor(k), ...input((sc, v) => { sc.prompt.sections[k] = v; }, `sec-${s.id}-${k}`) }));
-//   return section({
-//     title: "Prompt", help: "scene.prompt",
-//     actions: [
-//       segmented({ small: true, value: s.prompt.mode, help: "scene.prompt.mode", options: [
-//         { value: "structured", label: "Structured", help: "scene.prompt.structured" }, { value: "raw", label: "Raw", help: "scene.prompt.raw" }],
-//       onChange: v => ctx.actions.editScene(s.id, sc => { sc.prompt.mode = v; }) }),
-//     ],
-//     children: [
-//       h("div", { class: "rw-tasks", help: "scene.prompt.tasks" }, h("span", { class: "rw-dim small" }, "Task"),
-//         tasks.length ? tasks.map((t, i) => [i > 0 && h("span", { class: "rw-dim mono" }, "+"), chip({ label: t, kind: "accent", help: "scene.prompt.tasks" })]) : h("span", { class: "rw-dim small" }, "plain text-to-video (no references)"),
-//         h("span", { class: "rw-dim small" }, "· derived from references and start")),
-//       // [OLD 2026-11-03 v0.5.1->v0.6.0] unknown.length > 0 && h("div", { class: "rw-note warn", help: "scene.prompt.unknown" }, icon("warn", 12), `Unknown tag${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}. Use @P1/@V1/@A1, a cast name, or @tail.`),
-//       // added 2026-11-03 v0.6.0: only a mistyped asset code stops the render; other unknown names are written as text
-//       tags.errors.length > 0 && h("div", { class: "rw-note err", help: "scene.prompt.unknownCode" }, icon("warn", 12),
-//         `${list(tags.errors)} ${tags.errors.length > 1 ? "match" : "matches"} no asset of this project. Check the code (the Asset bin lists them: @P1, @V1, @A1 …).`),
-//       tags.warns.length > 0 && h("div", { class: "rw-note warn", help: "scene.prompt.unknown" }, icon("warn", 12),
-//         `${list(tags.warns)}: not a cast member, asset or @soundtrack, so H3 gets ${tags.warns.length > 1 ? "them" : "it"} as plain text. Write @@ for a literal @.`),
-//       tags.notInScene.length > 0 && h("div", { class: "rw-note warn", help: "scene.prompt.notInScene" }, icon("warn", 12),
-//         `${list(tags.notInScene)} ${tags.notInScene.length > 1 ? "are" : "is"} not in this scene's cast, so only the name is written. Add ${tags.notInScene.length > 1 ? "them" : "it"} under “Cast in this scene” to send the pictures.`),
-//       s.prompt.mode === "raw"
-//         ? codeEditor({ value: s.prompt.raw, help: "scene.prompt.rawEditor", minRows: 10, maxHeight: 420, placeholder: "Write the whole prompt. Refer to assets as @P1, cast as @Mara, the previous tail as @tail.", ...input((sc, v) => { sc.prompt.raw = v; }, `raw-${s.id}`) })
-//         : SECTION_KEYS.map(sectionEditor),
-//     ],
-//   });
-// }
-// [/OLD]
-// added 2026-11-05 v0.8.0: the Prompt card (contract P4). A single-pass scene edits its six sections as before. A
+// The Prompt card (contract P4). A single-pass scene edits its six sections as before. A
 // multi-pass scene gets tabs: "Whole scene" (the scene note, which is not sent, and the sections every pass shares)
 // and one tab per pass ("Pass 2 · 00:14.375–00:22.000", scene times) with that pass's own six sections (empty =
 // shared or automatic, shown as the placeholder), its shots and dialogue, and "Write this pass". "Write prompts"
@@ -545,8 +431,7 @@ const SECTION_NAME = {
 
 function promptCard(ctx, s) {
   const p = ctx.p;
-  // [OLD 2026-11-08 v0.13.1->v0.14.0] const cands = tagCandidates(p);
-  const cands = tagCandidates(p, s); // added 2026-11-08 v0.14.0: with @V1.2 ...
+  const cands = tagCandidates(p, s);
   const tasks = derivedTasks(p, s);
   const raw = s.prompt.mode === "raw";
   const plan = passLayout(p, s);
@@ -565,18 +450,6 @@ function promptCard(ctx, s) {
   const autoT = (k, label) => toggle({ value: s.prompt.auto[k], label, help: "scene.prompt.auto." + k, key: `auto-${k}-${s.id}`,
     onChange: v => ctx.actions.editScene(s.id, sc => { sc.prompt.auto[k] = v; }, { label: (v ? "Automatic " : "No automatic ") + label.replace(/^auto /, "") }) });
   // the scene's own sections; in a multi-pass scene the summary is the whole-scene note
-  /* [OLD 2026-11-08 v0.13.0->v0.13.1] "shared by every pass" even when the passes had their own text for the section
-     (Write prompts), so an edit here changed nothing H3 gets; a single-pass scene never said its prompt was edited by hand
-  const sectionEditor = k => h("div", { class: "rw-psec" },
-    h("div", { class: "rw-psec-head" }, h("span", { class: "mono rw-dim", help: "scene.prompt.section." + k }, SECTION_LABEL[k]),
-      multi && k === "summary" && h("span", { class: "rw-psec-src note", help: "scene.prompt.sceneNote" }, "whole-scene note · not sent"),
-      multi && k !== "summary" && h("span", { class: "rw-psec-src", help: "scene.prompt.shared" }, "shared by every pass"),
-      k === "subject_definitions" && autoT("subjects", "auto from cast"),
-      k === "retention_analysis" && autoT("retention", "auto from refs"),
-      k === "detailed_description" && autoT("shots", "auto shots + dialogue")),
-  [/OLD] */
-  // added 2026-11-08 v0.13.1: which passes use a shared section (sharedUse), and the shot lines H3 gets with the
-  // description (shotLines); a duplicated scene keeps both from the scene it was copied from
   const use = multi ? sharedUse(s, plan, pt) : null;
   const lines = shotLines(s);
   const sectionEditor = k => h("div", { class: "rw-psec" },
@@ -596,8 +469,7 @@ function promptCard(ctx, s) {
   const busy = !!run?.running;
   const mine = busy && run.items[run.at]?.sid === s.id;
   const write = passes => runWrite(ctx, [{ sid: s.id, passes }], { origin: "scene" }).then(r => writeToast(ctx, r));
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] const tab = multi ? Math.max(-1, Math.min(plan.passes.length - 1, ctx.eph.promptTabs?.[s.id] ?? -1)) : -1;
-  const tab = multi ? promptTabOf(ctx, s, plan, true) : -1; // added 2026-11-06 v0.9.0: one rule for every card
+  const tab = multi ? promptTabOf(ctx, s, plan, true) : -1;
   const setTab = k => ctx.store.setEph({ promptTabs: { ...(ctx.eph.promptTabs || {}), [s.id]: k },
     ...(k >= 0 ? { openPasses: { ...ctx.eph.openPasses, [s.id]: k } } : {}) });
 
@@ -605,8 +477,7 @@ function promptCard(ctx, s) {
   if (raw) {
     body = codeEditor({ value: s.prompt.raw, help: "scene.prompt.rawEditor", minRows: 10, maxHeight: 420, placeholder: "Write the whole prompt. Refer to assets as @P1, cast as @Mara, the previous tail as @tail.", ...input((sc, v) => { sc.prompt.raw = v; }, `raw-${s.id}`, "Raw prompt") });
   } else if (!multi) {
-    // [OLD 2026-11-08 v0.13.0->v0.13.1] body = [singlePassNote(ctx, s, pt), SECTION_KEYS.map(sectionEditor)];
-    body = [singlePassNote(ctx, s, pt), handEditedNote(ctx, s), SECTION_KEYS.map(sectionEditor)]; // added 2026-11-08 v0.13.1
+    body = [singlePassNote(ctx, s, pt), handEditedNote(ctx, s), SECTION_KEYS.map(sectionEditor)];
   } else {
     const ownDot = k => SECTION_KEYS.some(key => pt.texts[k][key].trim());
     body = [
@@ -619,14 +490,11 @@ function promptCard(ctx, s) {
           h("b", null, "Whole scene")),
         plan.passes.map((ps, k) => h("button", { type: "button", role: "tab", "aria-selected": tab === k ? "true" : "false", class: ["rw-ptab", tab === k && "on", pt.movedPasses.includes(k + 1) && "moved"],
           key: `ptab-${s.id}-${k + 1}`, help: "scene.prompt.tab.pass", onClick: () => setTab(k) },
-        // [OLD 2026-11-10 v0.18.0->v0.19.0] h("b", null, `Pass ${k + 1}`), h("span", { class: "mono" }, ` · ${fmtTime(ps.start)}–${fmtTime(ps.end)}`),
-        h("b", { class: "rw-ptab-name" }, passLabel(s, k + 1)), h("span", { class: "mono" }, ` · ${fmtTime(ps.start)}–${fmtTime(ps.end)}`), // v0.19.0: its name
+        h("b", { class: "rw-ptab-name" }, passLabel(s, k + 1)), h("span", { class: "mono" }, ` · ${fmtTime(ps.start)}–${fmtTime(ps.end)}`),
         ownDot(k) && h("span", { class: "rw-ptab-dot", help: "scene.prompt.tab.pass" })))),
       tab < 0 ? SECTION_KEYS.map(sectionEditor) : passPane(ctx, s, plan, pt, tab, { cands, write, busy }),
     ];
   }
-  // added 2026-11-09 v0.15.0: the Write prompts brief (scene.prompt.brief), the author's own words for the LLM, which
-  // nothing the LLM writes replaces; the Brief button shows or hides it (ui.brief_open, every scene, no undo step)
   const hasBrief = !!String(s.prompt.brief || "").trim();
   const briefOpen = !raw && !!p.ui.brief_open;
   const briefBox = briefOpen && h("div", { class: "rw-psec rw-brief", help: "scene.prompt.brief" },
@@ -635,74 +503,21 @@ function promptCard(ctx, s) {
     codeEditor({ value: s.prompt.brief || "", help: "scene.prompt.brief", minRows: 3, maxHeight: 300,
       placeholder: "What you want this scene to be, in your words: who does what, the mood, the lines. Write prompts reads it every time and never changes it.",
       ...input((sc, v) => { sc.prompt.brief = v; }, `brief-${s.id}`, "Write prompts brief") }));
-  // added 2026-11-09 v0.15.0: Reset scene (Sencer: "add a "reset scene" button with confirmation, which clears all 6
-  // sections"): the six sections and every pass's own text go, as one undo step; shots, dialogue, references, cast,
-  // LoRAs, the raw prompt and the brief stay
-  /* [OLD 2026-11-09 v0.16.0->v0.16.1] the shots and dialogue stayed (Sencer: "reset scene's doesn't remove the shots.")
-  const sectionsUsed = SECTION_KEYS.some(k => String(s.prompt.sections[k] || "").trim()) || pt.stored ||
-    Object.keys(s.prompt.pass_prompts || {}).length > 0;
-  const reset = async () => {
-    const ok = await confirmDialog(ctx.root, {
-      title: "Reset this scene's prompt?", okLabel: "Reset scene", danger: true, help: "scene.prompt.reset",
-      message: `Clears the six sections (subject definitions, summary, retention analysis, detailed description, soundscape, music)${multi || pt.stored ? " and every pass's own text" : ""}. The shots, dialogue, references, cast, LoRAs${hasBrief ? ", the Write prompts brief" : ""} and the raw prompt stay. Ctrl+Z undoes it.`,
-    });
-    if (!ok) return;
-    ctx.actions.editScene(s.id, sc => {
-      for (const k of SECTION_KEYS) sc.prompt.sections[k] = "";
-      sc.prompt.passes = [];
-      sc.prompt.pass_prompts = {};
-    }, { label: "Reset scene" });
-    ctx.actions.toast("Cleared the six sections. Ctrl+Z brings them back.", "ok");
-  };
-  [/OLD] */
-  // added 2026-11-09 v0.16.1: the shots and the dialogue lines go too (Sencer chose "shots and dialogue"), so Write
-  // prompts starts the scene from scratch; references, cast, LoRAs, the brief and the raw prompt stay
   const nShots = (s.shots || []).length, nLines = (s.dialogue || []).length;
   const sectionsUsed = SECTION_KEYS.some(k => String(s.prompt.sections[k] || "").trim()) || pt.stored ||
     Object.keys(s.prompt.pass_prompts || {}).length > 0 || nShots > 0 || nLines > 0;
-  // added 2026-11-10 v0.18.0: the dialog asks what goes (resetDialog); Sencer: "reset scene should have option to
-  // select what to reset, default checked all (section, shots, dialogues). If multi passes, add them as well. I should
-  // be able to reset a single pass and it's selected sections."
+  // Reset scene asks what goes (resetDialog): the whole scene or one pass, then which sections, shots and lines
   const reset = () => resetDialog(ctx, s, { plan, pt, multi, hasBrief });
-  /* [OLD 2026-11-10 v0.17.3->v0.18.0] one fixed reset of everything; replaced by resetDialog (what to clear, which pass)
-  const reset = async () => {
-    const what = [multi || pt.stored ? "every pass's own text" : "",
-      nShots ? `the ${nShots} shot${nShots === 1 ? "" : "s"}` : "", nLines ? `the ${nLines} dialogue line${nLines === 1 ? "" : "s"}` : ""].filter(Boolean);
-    const ok = await confirmDialog(ctx.root, {
-      title: "Reset this scene?", okLabel: "Reset scene", danger: true, help: "scene.prompt.reset",
-      message: `Clears the six sections (subject definitions, summary, retention analysis, detailed description, soundscape, music)${what.length ? ", " + what.slice(0, -1).join(", ") + (what.length > 1 ? " and " : "") + what[what.length - 1] : ""}. The references, cast, LoRAs${hasBrief ? ", the Write prompts brief" : ""} and the raw prompt stay. Ctrl+Z undoes it.`,
-    });
-    if (!ok) return;
-    ctx.actions.editScene(s.id, sc => {
-      for (const k of SECTION_KEYS) sc.prompt.sections[k] = "";
-      sc.prompt.passes = [];
-      sc.prompt.pass_prompts = {};
-      sc.shots = [];
-      sc.dialogue = [];
-    }, { label: "Reset scene" });
-    ctx.actions.toast("Cleared the sections, shots and dialogue. Ctrl+Z brings them back.", "ok");
-  };
-  [/OLD] */
   return section({
     title: "Prompt", help: "scene.prompt",
     actions: [
-      // added 2026-11-09 v0.15.0: Reset scene
       !raw && button({ label: "Reset scene", icon: "refresh", small: true, variant: "danger-ghost", key: `reset-${s.id}`, help: "scene.prompt.reset",
         disabled: busy || !sectionsUsed, onClick: reset }),
-      // added 2026-11-09 v0.15.0: show / hide the brief; the dot says this scene has one
       !raw && button({ label: "Brief", icon: "file", small: true, variant: briefOpen ? "accent-ghost" : "ghost", key: `brief-btn-${s.id}`,
         help: "scene.prompt.briefToggle", ariaLabel: briefOpen ? "Hide the Write prompts brief" : "Show the Write prompts brief",
         extra: hasBrief && h("span", { class: "rw-ptab-dot rw-brief-dot", help: "scene.prompt.briefToggle" }),
         onClick: () => ctx.store.update(q => { q.ui.brief_open = !q.ui.brief_open; }, { history: false, plan: false, autosave: false }) }),
-      // added 2026-11-09 v0.15.0: the last Write prompts output of this scene, after it ended (while it runs, the
-      // progress row has the button)
       !raw && !mine && ctx.eph.lastWrite?.[s.id] && outputButton(ctx, { job: ctx.eph.lastWrite[s.id], title: "Write prompts · last LLM output", key: `write-out-last-${s.id}`, label: false }),
-      /* [OLD 2026-11-10 v0.18.0->v0.19.0] every pass, without asking
-      !raw && button({ label: mine && !run.items[run.at]?.passes ? "Writing…" : "Write prompts", icon: "wand", small: true, variant: "pink", key: `write-${s.id}`,
-        help: multi ? "scene.prompt.write" : "scene.prompt.writeOne", disabled: busy, onClick: () => write(null) }),
-      [/OLD] */
-      // added 2026-11-10 v0.19.0: a scene of several passes asks which passes the LLM writes (all ticked); "Writing…"
-      // while it writes this scene, unless it writes one pass (that pass's button says so)
       !raw && button({ label: mine && (run.items[run.at]?.passes?.length ?? 0) !== 1 ? "Writing…" : "Write prompts", icon: "wand", small: true, variant: "pink", key: `write-${s.id}`,
         help: multi ? "scene.prompt.write" : "scene.prompt.writeOne", disabled: busy, onClick: async () => {
           if (!multi) return write(null);
@@ -718,20 +533,19 @@ function promptCard(ctx, s) {
         tasks.length ? tasks.map((t, i) => [i > 0 && h("span", { class: "rw-dim mono" }, "+"), chip({ label: t, kind: "accent", help: "scene.prompt.tasks" })]) : h("span", { class: "rw-dim small" }, "plain text-to-video (no references)"),
         h("span", { class: "rw-dim small" }, "· derived from references and start")),
       tags.errors.length > 0 && h("div", { class: "rw-note err", help: "scene.prompt.unknownCode" }, icon("warn", 12),
-        // [OLD 2026-11-06 v0.8.0->v0.9.0] `${list(tags.errors)} ${tags.errors.length > 1 ? "match" : "matches"} no asset of this project. Check the code (the Asset bin lists them: @P1, @V1, @A1 …).`),
         `${list(tags.errors)} ${tags.errors.length > 1 ? "match" : "matches"} no asset of this project. Check the code (the Assets tab lists them: @P1, @V1, @A1 …).`),
       tags.warns.length > 0 && h("div", { class: "rw-note warn", help: "scene.prompt.unknown" }, icon("warn", 12),
         `${list(tags.warns)}: not a cast member, asset or @soundtrack, so H3 gets ${tags.warns.length > 1 ? "them" : "it"} as plain text. Write @@ for a literal @.`),
       tags.notInScene.length > 0 && h("div", { class: "rw-note warn", help: "scene.prompt.notInScene" }, icon("warn", 12),
         `${list(tags.notInScene)} ${tags.notInScene.length > 1 ? "are" : "is"} not in this scene's cast, so only the name is written. Add ${tags.notInScene.length > 1 ? "them" : "it"} under “Cast in this scene” to send the pictures.`),
-      briefBox, // added 2026-11-09 v0.15.0
+      briefBox,
       mine && writeRow(ctx, run, plan),
       body,
     ],
   });
 }
 
-// added 2026-11-06 v0.9.0: the Prompt card's tab (-1 = Whole scene, k = pass k + 1). The Shots and Dialogue cards show
+// The Prompt card's tab (-1 = Whole scene, k = pass k + 1). The Shots and Dialogue cards show
 // only on Whole scene (a pass tab has its own rows), and What H3 receives shows the tab's pass, or every pass in turn on
 // Whole scene. Single-pass scenes and raw prompts have no tabs (-1); `anyMode` gives the stored tab in raw mode too.
 export function promptTabOf(ctx, s, plan = passLayout(ctx.p, s), anyMode = false) {
@@ -739,7 +553,7 @@ export function promptTabOf(ctx, s, plan = passLayout(ctx.p, s), anyMode = false
   return Math.max(-1, Math.min(plan.passes.length - 1, ctx.eph.promptTabs?.[s.id] ?? -1));
 }
 
-// added 2026-11-06 v0.9.0: rows in a box that scrolls, with a grip under it to set its height (ui.shots_h for shot lists,
+// Rows in a box that scrolls, with a grip under it to set its height (ui.shots_h for shot lists,
 // ui.lines_h for dialogue, shared by the scene's cards and the pass tabs; double-click the grip for the default)
 const LIST_H = { shots: ["shots_h", 380], lines: ["lines_h", 300] };
 function rowsBox(ctx, kind, scroll, rows) {
@@ -751,7 +565,7 @@ function rowsBox(ctx, kind, scroll, rows) {
   });
 }
 
-// added 2026-11-05 v0.8.0: a single-pass scene whose pass texts were written when it had more passes: its one pass
+// A single-pass scene whose pass texts were written when it had more passes: its one pass
 // uses them, so they are shown here with a way to keep them as the scene's sections or drop them
 function singlePassNote(ctx, s, pt) {
   const t = pt.texts[0];
@@ -769,8 +583,7 @@ function singlePassNote(ctx, s, pt) {
     } }));
 }
 
-// ---- added 2026-11-08 v0.13.1: what really reaches H3 from the Prompt card (Sencer: a duplicated scene rendered the
-// original whatever he wrote in its sections). A pass uses a shared section only when it has no text of its own for it
+// ---- what really reaches H3 from the Prompt card. A pass uses a shared section only when it has no text of its own for it
 // and its prompt is not edited by hand (model.pass_sections, prompt.build_pass); the shots and spoken lines become
 // [Shot N] lines after the description while "auto shots + dialogue" is on.
 
@@ -817,7 +630,7 @@ export function shotLines(s) {
   return bits.length ? "+ " + bits.join(", ") + " from the scene" : "";
 }
 
-// added 2026-11-10 v0.18.0: Reset scene asks what to clear. Scope (multi-pass scenes only): the whole scene, or one
+// Reset scene asks what to clear. Scope (multi-pass scenes only): the whole scene, or one
 // pass. Parts, all ticked at first: each of the six sections, the hand-edited prompt(s), the shots and the dialogue.
 //   whole scene: the ticked sections go from the scene and from every pass's own text (all six ticked: the pass texts
 //                go entirely, as before), every hand-edited pass prompt, every shot and every line
@@ -871,8 +684,7 @@ async function resetDialog(ctx, s, { plan, multi, pt, hasBrief }) {
       multi && h("div", { class: "rw-reset-scope" },
         segmented({ small: true, value: scope, help: "scene.prompt.resetScope", options: [
           { value: 0, label: "Whole scene", help: "scene.prompt.resetScope" },
-          // [OLD 2026-11-10 v0.18.0->v0.19.0] ...plan.passes.map((_, k) => ({ value: k + 1, label: `Pass ${k + 1}`, help: "scene.prompt.resetScope" }))],
-          ...plan.passes.map((_, k) => ({ value: k + 1, label: passLabel(s, k + 1), help: "scene.prompt.resetScope" }))], // v0.19.0: names
+          ...plan.passes.map((_, k) => ({ value: k + 1, label: passLabel(s, k + 1), help: "scene.prompt.resetScope" }))],
         onChange: v => { scope = v; paint(); msg.querySelector('.rw-reset-scope [aria-checked="true"]')?.focus({ preventScroll: true }); } }),
         h("div", { class: "rw-dim small" }, ps
           ? `${fmtTime(ps.start)}–${fmtTime(ps.end)}: its own sections (the shared ones on Whole scene stay)${x.hand ? ", its hand-edited prompt" : ""}, the shots and the lines that start in it.`
@@ -940,9 +752,7 @@ function handEditedNote(ctx, s) {
     } }));
 }
 
-// added 2026-11-10 v0.19.0: Write prompts on a scene of several passes asks which passes the LLM writes (Sencer: "if
-// there are more than one passes, Write prompts should have the passes listed for which LLM will write, default all
-// checked."). Resolves the ticked 1-based pass numbers, or null when cancelled. The passes left out keep their text.
+// Write prompts on a scene of several passes asks which passes the LLM writes (all ticked at first). Resolves the ticked 1-based pass numbers, or null when cancelled. The passes left out keep their text.
 async function pickPasses(ctx, s, plan, pt) {
   const on = plan.passes.map(() => true);
   const msg = h("div", { class: "rw-reset rw-write-pick", help: "scene.prompt.writePick" });
@@ -978,7 +788,7 @@ async function pickPasses(ctx, s, plan, pt) {
   return on.map((v, k) => (v ? k + 1 : 0)).filter(Boolean);
 }
 
-// added 2026-11-10 v0.19.0: set (or clear, when empty) the name of pass n (1-based) of a scene being edited
+// Set (or clear, when empty) the name of pass n (1-based) of a scene being edited
 function setPassName(sc, n, v) {
   const name = passNames({ [String(n)]: v })[String(n)];
   const names = { ...(sc.pass_names || {}) };
@@ -987,7 +797,7 @@ function setPassName(sc, n, v) {
   sc.pass_names = names;
 }
 
-// added 2026-11-05 v0.8.0: one pass of a multi-pass scene: its own sections, its shots and dialogue (scene times)
+// One pass of a multi-pass scene: its own sections, its shots and dialogue (scene times)
 function passPane(ctx, s, plan, pt, k, { cands, write, busy }) {
   const ps = plan.passes[k];
   const own = pt.texts[k];
@@ -1031,16 +841,13 @@ function passPane(ctx, s, plan, pt, k, { cands, write, busy }) {
   return h("div", { class: "rw-pass-pane", help: "scene.prompt.tab.pass" },
     h("div", { class: "rw-pass-head" },
       h("b", null, `Pass ${n} of ${plan.passes.length}`),
-      // added 2026-11-10 v0.19.0: the pass's name (Sencer: "we should be able to rename passes. pass number is always in
-      // front."); shown as "Pass 2 · name" on its tab and wherever passes are listed
       text({ value: s.pass_names?.[String(n)] || "", placeholder: "name this pass", key: `pass-name-${s.id}-${n}`, help: "scene.prompt.passName", width: "190px",
         onInput: v => ctx.actions.editScene(s.id, sc => { setPassName(sc, n, v); }, { coalesce: `pass-name-${s.id}-${n}`, render: false, label: `Pass ${n} name` }),
         onChange: () => ctx.store.notify() }),
       h("span", { class: "mono rw-dim small" }, `${fmtTime(ps.start)}–${fmtTime(ps.end)} · ${(ps.end - ps.start).toFixed(2)} s · ${ps.gen_frames} f`),
       h("span", { class: "rw-dim small" }, "· " + seam),
       h("span", { class: "rw-flex" }),
-      // [OLD 2026-11-10 v0.18.0->v0.19.0] button({ label: busy && ctx.eph.passWrite?.items?.[ctx.eph.passWrite.at]?.passes?.[0] === n && ctx.eph.passWrite.items[ctx.eph.passWrite.at].sid === s.id ? "Writing…" : "Write this pass",
-      button({ label: busy && ctx.eph.passWrite?.items?.[ctx.eph.passWrite.at]?.passes?.length === 1 && ctx.eph.passWrite.items[ctx.eph.passWrite.at].passes[0] === n && ctx.eph.passWrite.items[ctx.eph.passWrite.at].sid === s.id ? "Writing…" : "Write this pass", // v0.19.0: only when it writes this pass alone
+      button({ label: busy && ctx.eph.passWrite?.items?.[ctx.eph.passWrite.at]?.passes?.length === 1 && ctx.eph.passWrite.items[ctx.eph.passWrite.at].passes[0] === n && ctx.eph.passWrite.items[ctx.eph.passWrite.at].sid === s.id ? "Writing…" : "Write this pass",
         icon: "wand", small: true, variant: "pink", key: `write-${s.id}-${n}`, help: "scene.prompt.writePass", disabled: busy, onClick: () => write([n]) })),
     handEdited && h("div", { class: "rw-note warn", help: "scene.preview.override" }, icon("warn", 12),
       h("span", { class: "grow" }, "This pass's prompt is edited by hand (What H3 receives), so these sections are not used for it."),
@@ -1050,32 +857,23 @@ function passPane(ctx, s, plan, pt, k, { cands, write, busy }) {
       } })),
     SECTION_KEYS.map(passSection),
     h("div", { class: "rw-subhead", help: "scene.prompt.passShots" }, `Shots in this pass (${ps.shots.length})`),
-    // [OLD 2026-11-06 v0.8.0->v0.9.0] ps.shots.length ? h("div", { class: "rw-rows" }, shotRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passShots" }, "No shots: this pass is one continuous take."),
-    ps.shots.length ? rowsBox(ctx, "shots", `pshots-${s.id}-${n}`, shotRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passShots" }, "No shots: this pass is one continuous take."), // added 2026-11-06 v0.9.0
+    ps.shots.length ? rowsBox(ctx, "shots", `pshots-${s.id}-${n}`, shotRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passShots" }, "No shots: this pass is one continuous take."),
     h("div", { class: "rw-subhead", help: "scene.prompt.passLines" }, `Dialogue in this pass (${ps.dialogue.length})`),
-    // [OLD 2026-11-06 v0.8.0->v0.9.0] ps.dialogue.length ? h("div", { class: "rw-rows" }, lineRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passLines" }, "No spoken lines start in this pass."));
-    ps.dialogue.length ? rowsBox(ctx, "lines", `plines-${s.id}-${n}`, lineRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passLines" }, "No spoken lines start in this pass.")); // added 2026-11-06 v0.9.0
+    ps.dialogue.length ? rowsBox(ctx, "lines", `plines-${s.id}-${n}`, lineRows) : h("div", { class: "rw-empty sm", help: "scene.prompt.passLines" }, "No spoken lines start in this pass."));
 }
 
-// added 2026-11-05 v0.8.0: what the running "Write prompts" is doing (this scene), and Stop
+// What the running "Write prompts" is doing (this scene), and Stop
 function writeRow(ctx, run, plan) {
   const d = ctx.eph.llmJobs[run.job];
   const it = run.items[run.at];
-  /* [OLD 2026-11-06 v0.10.1->v0.10.2] the text was fixed at render time (each LLM event rebuilt the tab)
-  const total = d?.passes || it?.passes?.length || plan.passes.length;
-  const which = d?.pass ? `pass ${d.pass} of ${total} · ` : "";
-  [/OLD] */
-  // added 2026-11-06 v0.10.2: editor.js rewrites the line on each progress event of the job
   const line = x => "Writing " + (x?.pass ? `pass ${x.pass} of ${x?.passes || it?.passes?.length || plan.passes.length} · ` : "") + jobLine(x);
   return h("div", { class: "rw-row rw-llm-busy", help: "scene.prompt.writeProgress" },
-    // [OLD 2026-11-06 v0.10.1->v0.10.2] h("span", { class: "rw-dim small mono grow" }, "Writing " + which + jobLine(d)),
-    jobText(run.job, d, { fmt: line, class: "rw-dim small mono grow" }), // added 2026-11-06 v0.10.2
-    // added 2026-11-09 v0.15.0: show what the LLM thinks and writes (follows the run to its next job)
+    jobText(run.job, d, { fmt: line, class: "rw-dim small mono grow" }),
     outputButton(ctx, { job: run.job, follow: () => (ctx.eph.passWrite?.running ? ctx.eph.passWrite.job : null), title: "Write prompts · LLM output", key: "write-out" }),
     button({ label: run.stop ? "Stopping…" : "Stop", icon: "close", small: true, key: "write-stop", help: "scene.prompt.writeStop", disabled: !!run.stop, onClick: () => stopWrite(ctx) }));
 }
 
-// added 2026-11-05 v0.8.0: the toast after "Write prompts" for one scene
+// The toast after "Write prompts" for one scene
 function writeToast(ctx, r) {
   if (!r) return;
   const it = r.items[0];
@@ -1086,7 +884,7 @@ function writeToast(ctx, r) {
   if (it.warnings?.length) ctx.actions.toast(it.warnings.slice(0, 2).join(" · "), "warn");
 }
 
-// added 2026-11-03 v0.6.0: the tags of a prompt that need a note, by the levels prompt.py uses:
+// The tags of a prompt that need a note, by the levels prompt.py uses:
 // errors: an unknown name that looks like an asset code (@P3, @V1, @A2); warns: any other unknown name (@handle), which
 // is written as plain text; notInScene: a cast member who is not in this scene. @soundtrack, @song and @tail are never
 // unknown. "@Mara's" is @Mara with a possessive.
@@ -1122,74 +920,7 @@ function placeholderFor(k) {
   }[k];
 }
 
-// [OLD 2026-11-05 v0.7.0->v0.8.0] one-line rows (start + length, camera text, one-line text); v0.8.0: shotRow below
-// function shotsCard(ctx, s) {
-//   const p = ctx.p;
-//   const presets = p.camera_presets.map(c => c.text);
-//   const listId = "rw-cam-" + s.id;
-//   // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = (id, fn) => ctx.actions.editScene(s.id, sc => { const x = sc.shots.find(q => q.id === id); if (x) fn(x, sc); });
-//   const edit = (id, fn, label = "Edit shot") => ctx.actions.editScene(s.id, sc => { const x = sc.shots.find(q => q.id === id); if (x) fn(x, sc); }, { label });
-//   const lens = shotLengths(s); // added 2026-11-03 v0.4.3
-//   const over = overruns(s);
-//   // added 2026-11-03 v0.6.0: "On the beat" proposes shot start times on the soundtrack's beats (applied on click)
-//   const songs = p.soundtrack.some(t => !t.mute);
-//   const beatPlan = songs && ctx.eph.beatShots === s.id ? beatShotPlan(ctx, s) : null;
-//   const proposed = new Map((beatPlan || []).map(m => [m.id, m]));
-//   return section({
-//     title: "Shots", help: "scene.shots",
-//     /* [OLD 2026-11-03 v0.5.1->v0.6.0] one action
-//     actions: button({ label: "Shot", icon: "plus", small: true, help: "scene.shots.add", onClick: () => ctx.actions.editScene(s.id, sc => {
-//       const last = sc.shots[sc.shots.length - 1];
-//       const t = last ? Math.min(sc.duration - 0.5, last.t + Math.max(1, (sc.duration - last.t) / 2)) : 0;
-//       sc.shots.push({ id: newId("h"), t: Math.max(0, Math.round(t * FPS) / FPS), camera: "", text: "" });
-//       sc.shots.sort((a, b) => a.t - b.t);
-//     }) }),
-//     [/OLD] */
-//     actions: [
-//       songs && s.shots.length > 0 && button({ label: "On the beat", icon: "music", small: true, help: "scene.shots.beat",
-//         onClick: () => ctx.store.setEph({ beatShots: ctx.eph.beatShots === s.id ? null : s.id }) }),
-//       button({ label: "Shot", icon: "plus", small: true, help: "scene.shots.add", onClick: () => ctx.actions.editScene(s.id, sc => {
-//         const last = sc.shots[sc.shots.length - 1];
-//         const t = last ? Math.min(sc.duration - 0.5, last.t + Math.max(1, (sc.duration - last.t) / 2)) : 0;
-//         sc.shots.push({ id: newId("h"), t: Math.max(0, Math.round(t * FPS) / FPS), camera: "", text: "" });
-//         sc.shots.sort((a, b) => a.t - b.t);
-//       }, { label: "Add shot" }) }),
-//     ],
-//     children: [
-//       h("datalist", { id: listId }, presets.map(v => h("option", { value: v }))),
-//       ctx.eph.beatShots === s.id && songs && beatPlanNote(ctx, s, beatPlan), // added 2026-11-03 v0.6.0
-//       s.shots.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.shots" }, "No shots: the scene is written as one continuous take.")
-//         : s.shots.map((sh, i) => h("div", { class: "rw-list-row shot" },
-//           // [OLD 2026-11-02 v0.1.0->v0.2.0] h("span", { class: "mono rw-dim", help: "scene.shots.index" }, `[Shot${i + 1}]`),  (guide writes [Shot 1])
-//           h("span", { class: "mono rw-dim", help: "scene.shots.index" }, `[Shot ${i + 1}]`),
-//           /* [OLD 2026-11-03 v0.5.1->v0.6.0] no key: after a re-sort the caret went to the field now in this row (scene.js:282)
-//           number({ value: Number(sh.t.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "86px", unit: "s", help: "scene.shots.time",
-//             onChange: v => edit(sh.id, (x, sc) => { x.t = Math.round((v ?? 0) * FPS) / FPS; sc.shots.sort((a, b) => a.t - b.t); }) }),
-//           [/OLD] */
-//           number({ value: Number(sh.t.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "86px", unit: "s", help: "scene.shots.time", key: `shot-t-${sh.id}`,
-//             onChange: v => edit(sh.id, (x, sc) => { x.t = Math.round((v ?? 0) * FPS) / FPS; sc.shots.sort((a, b) => a.t - b.t); }, "Shot time") }),
-//           proposed.has(sh.id) && h("span", { class: "mono small rw-beat-to", help: "scene.shots.beatPlan" }, `→ ${proposed.get(sh.id).to.toFixed(2)} s`), // added 2026-11-03 v0.6.0
-//           // added 2026-11-03 v0.4.3: how long the shot lasts (until the next shot, the last one until the scene ends)
-//           h("span", { class: ["mono small rw-shot-len", lens[i].past ? "rw-c-warn" : "rw-dim"], help: "scene.shots.length" },
-//             lens[i].past ? "after the end" : `for ${lens[i].length.toFixed(2)} s${lens[i].last ? " · end" : ""}`),
-//           h("input", { class: "rw-input", list: listId, placeholder: "camera", value: sh.camera, key: `shot-cam-${sh.id}`, help: "scene.shots.camera",
-//             onChange: e => edit(sh.id, x => { x.camera = e.target.value; }) }),
-//           h("input", { class: "rw-input grow", placeholder: "what happens in this shot", value: sh.text, key: `shot-text-${sh.id}`, help: "scene.shots.text",
-//             onChange: e => edit(sh.id, x => { x.text = e.target.value; }) }),
-//           button({ icon: "trash", small: true, variant: "ghost", help: "scene.shots.remove", onClick: () => ctx.actions.editScene(s.id, sc => { sc.shots = sc.shots.filter(x => x.id !== sh.id); }) }))),
-//       // [OLD 2026-11-03 v0.4.2->v0.4.3] s.shots.some(x => x.t > s.duration) && h("div", { class: "rw-note warn" }, "A shot starts after the end of the scene."),
-//       // added 2026-11-03 v0.4.3: say how many, and offer to lengthen the scene or move the shots closer together
-//       over && h("div", { class: "rw-note warn rw-overrun", help: "scene.shots.overrun" }, icon("warn", 12),
-//         h("span", { class: "grow" }, [over.shots && `${over.shots} shot${over.shots === 1 ? "" : "s"}`, over.lines && `${over.lines} dialogue line${over.lines === 1 ? "" : "s"}`]
-//           .filter(Boolean).join(" and ") + ` start${over.shots + over.lines === 1 ? "s" : ""} after the scene ends (${s.duration.toFixed(2)} s).`),
-//         // the buttons vanish once it fits: focus goes back to the editor so Ctrl+Z works right away
-//         button({ label: `Lengthen to ${fitLength(s).toFixed(2)} s`, small: true, help: "scene.shots.lengthen", onClick: () => { ctx.actions.editScene(s.id, sc => lengthenToFit(sc)); ctx.root.focus?.({ preventScroll: true }); } }),
-//         button({ label: `Fit into ${s.duration.toFixed(2)} s`, small: true, help: "scene.shots.squeeze", onClick: () => { ctx.actions.editScene(s.id, sc => squeezeToFit(sc)); ctx.root.focus?.({ preventScroll: true }); } })),
-//     ],
-//   });
-// }
-// [/OLD]
-// added 2026-11-05 v0.8.0: the shots as rows: start, end and length in scene time (the length is editable: it moves
+// The shots as rows: start, end and length in scene time (the length is editable: it moves
 // the next shot's start; the last shot's length sets the scene's length, by the timeline's Ripple / Roll rule), the
 // camera picker (official H3 moves + amplitude + speed + framing), a text field that grows with its text, and a note
 // where a pass seam falls inside the shot. The Prompt card's pass tabs use the same rows (keys with a prefix).
@@ -1203,7 +934,7 @@ function shotsCard(ctx, s) {
   const proposed = new Map((beatPlan || []).map(m => [m.id, m]));
   return section({
     title: "Shots", help: "scene.shots",
-    collapse: { ctx, id: "shots", summary: `${s.shots.length} shot${s.shots.length === 1 ? "" : "s"}` }, // added 2026-11-06 v0.10.0
+    collapse: { ctx, id: "shots", summary: `${s.shots.length} shot${s.shots.length === 1 ? "" : "s"}` },
     actions: [
       songs && s.shots.length > 0 && button({ label: "On the beat", icon: "music", small: true, help: "scene.shots.beat",
         onClick: () => ctx.store.setEph({ beatShots: ctx.eph.beatShots === s.id ? null : s.id }) }),
@@ -1216,10 +947,8 @@ function shotsCard(ctx, s) {
     ],
     children: [
       ctx.eph.beatShots === s.id && songs && beatPlanNote(ctx, s, beatPlan),
-      // [OLD 2026-11-09 v0.14.1->v0.14.2] s.shots.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.shots" }, "No shots: the scene is written as one continuous take.")
-      s.shots.length === 0 ? fillNote(ctx, s, "shots") // added 2026-11-09 v0.14.2: or take them from the description
-        // [OLD 2026-11-06 v0.8.0->v0.9.0] : h("div", { class: "rw-rows" }, s.shots.map((sh, i) => shotRow(ctx, s, sh, i, { plan, lens, proposed: proposed.get(sh.id) }))),
-        : rowsBox(ctx, "shots", "shots-" + s.id, s.shots.map((sh, i) => shotRow(ctx, s, sh, i, { plan, lens, proposed: proposed.get(sh.id) }))), // added 2026-11-06 v0.9.0
+      s.shots.length === 0 ? fillNote(ctx, s, "shots")
+        : rowsBox(ctx, "shots", "shots-" + s.id, s.shots.map((sh, i) => shotRow(ctx, s, sh, i, { plan, lens, proposed: proposed.get(sh.id) }))),
       over && h("div", { class: "rw-note warn rw-overrun", help: "scene.shots.overrun" }, icon("warn", 12),
         h("span", { class: "grow" }, [over.shots && `${over.shots} shot${over.shots === 1 ? "" : "s"}`, over.lines && `${over.lines} dialogue line${over.lines === 1 ? "" : "s"}`]
           .filter(Boolean).join(" and ") + ` start${over.shots + over.lines === 1 ? "s" : ""} after the scene ends (${s.duration.toFixed(2)} s).`),
@@ -1281,15 +1010,14 @@ function shotRow(ctx, s, sh, i, { plan, lens, prefix = "", label, sceneNumber, c
       seg("speed", sh.camera_speed, [["slow", "Slow"], ["", "Normal"], ["fast", "Fast"]], "Camera speed", "scene.shots.speed"),
       select({ options: framingOptions(), value: sh.framing || "", key: key("frame"), help: "scene.shots.framing", width: "136px", placeholder: "any framing",
         onChange: v => edit(x => { x.framing = v; }, "Framing") })),
-    codeEditor({ value: sh.text, key: key("text"), help: "scene.shots.text", candidates: tagCandidates(p, s), /* v0.14.0: with the scene's @V1.2 ... */ placeholder: "What happens in this shot: subject, action, sound. Use @tags for cast and assets.",
-      // [OLD 2026-11-10 v0.17.3->v0.18.0]   minRows: 2, maxHeight: 220, cls: "sans",  (a proportional font, unlike the other cards)
-      minRows: 2, maxHeight: 220, // 2026-11-10 v0.18.0: the prompt font, as every card (Sencer: "why is the Shots card text different than the others?")
+    codeEditor({ value: sh.text, key: key("text"), help: "scene.shots.text", candidates: tagCandidates(p, s), placeholder: "What happens in this shot: subject, action, sound. Use @tags for cast and assets.",
+      minRows: 2, maxHeight: 220,
       onInput: v => ctx.actions.editScene(s.id, sc => { const x = sc.shots.find(q => q.id === sh.id); if (x) x.text = v; }, { coalesce: key("text"), render: false, label: "Shot text" }),
       onChange: () => ctx.store.notify() }));
 }
 
 
-// added 2026-11-03 v0.6.0: shot start times on the beat. Every shot after the opening one moves to the nearest beat
+// Shot start times on the beat. Every shot after the opening one moves to the nearest beat
 // of the soundtrack (a bar start when one is about as near), in order and at least half a beat apart, never into the
 // repeated start of a continuing scene. [{id, number, from, to}] for the shots that move; null while there are no beats.
 function beatShotPlan(ctx, s) {
@@ -1342,78 +1070,18 @@ function beatPlanNote(ctx, s, plan) {
     button({ label: "Apply", small: true, variant: "primary", help: "scene.shots.beatApply", onClick: apply }), close);
 }
 
-// [OLD 2026-11-05 v0.7.0->v0.8.0] one-line rows without end, length or seam note; v0.8.0: dialogueRow below
-// function dialogueCard(ctx, s) {
-//   const p = ctx.p;
-//   /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs now follow speaking order per clip (see the prompt preview)
-//   const speakers = p.cast.filter(c => c.kind === "character").map(c => ({ value: c.id, label: `${c.name} (${c.speaker || "S?"})` }));
-//   [/OLD] */
-//   const speakers = p.cast.filter(c => c.kind === "character").map(c => ({ value: c.id, label: c.name }));
-//   const langs = STABLE_LANGUAGES.map(l => ({ value: l, label: l }));
-//   // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = (id, fn) => ctx.actions.editScene(s.id, sc => { const x = sc.dialogue.find(q => q.id === id); if (x) fn(x, sc); });
-//   const edit = (id, fn) => ctx.actions.editScene(s.id, sc => { const x = sc.dialogue.find(q => q.id === id); if (x) fn(x, sc); }, { label: "Edit line" });
-//   return section({
-//     title: "Dialogue", help: "scene.dialogue",
-//     /* [OLD 2026-11-03 v0.5.1->v0.6.0] a scene shorter than 0.5 s got a line at a negative time
-//     actions: button({ label: "Line", icon: "plus", small: true, help: "scene.dialogue.add", onClick: () => ctx.actions.editScene(s.id, sc => {
-//       const sp = sc.cast.find(c => findCast(p, c.id)?.kind === "character")?.id || speakers[0]?.value || "";
-//       sc.dialogue.push({ id: newId("d"), speaker: sp, t: Math.min(sc.duration - 0.5, 1), language: findCast(p, sp)?.language || p.global.defaults.language, delivery: "says", text: "" });
-//       sc.dialogue.sort((a, b) => a.t - b.t);
-//     }) }),
-//     [/OLD] */
-//     // added 2026-11-03 v0.6.0: the new line starts 1 s after the scene first shows (never before 0 s or the end)
-//     actions: button({ label: "Line", icon: "plus", small: true, help: "scene.dialogue.add", onClick: () => {
-//       const ov = (visibleStart(p, s.id) ?? 0) - (sceneStarts(p).starts[s.id] ?? 0);
-//       ctx.actions.editScene(s.id, sc => {
-//         const sp = sc.cast.find(c => findCast(p, c.id)?.kind === "character")?.id || speakers[0]?.value || "";
-//         const t = Math.max(0, Math.min(sc.duration - 0.5, ov + 1));
-//         sc.dialogue.push({ id: newId("d"), speaker: sp, t: Math.round(t * FPS) / FPS, language: findCast(p, sp)?.language || p.global.defaults.language, delivery: "says", text: "" });
-//         sc.dialogue.sort((a, b) => a.t - b.t);
-//       }, { label: "Add line" });
-//     } }),
-//     children: [
-//       !speakers.length && h("div", { class: "rw-note", help: "scene.dialogue.noCast" }, "Add a character in the Cast tab to give lines a speaker and a voice."),
-//       s.dialogue.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.dialogue" }, "No spoken lines.")
-//         : s.dialogue.map(d => h("div", { class: "rw-list-row dlg" },
-//           /* [OLD 2026-11-03 v0.5.1->v0.6.0] no keys: after a re-sort the caret went to the field now in this row (scene.js:324)
-//           select({ options: speakers, value: d.speaker, placeholder: "speaker", help: "scene.dialogue.speaker", width: "130px", onChange: v => edit(d.id, x => { x.speaker = v; }) }),
-//           number({ value: Number(d.t.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "80px", unit: "s", help: "scene.dialogue.time",
-//             onChange: v => edit(d.id, (x, sc) => { x.t = v ?? 0; sc.dialogue.sort((a, b) => a.t - b.t); }) }),
-//           [/OLD] */
-//           select({ options: speakers, value: d.speaker, placeholder: "speaker", help: "scene.dialogue.speaker", width: "130px", key: `dlg-sp-${d.id}`, onChange: v => edit(d.id, x => { x.speaker = v; }) }),
-//           number({ value: Number(d.t.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "80px", unit: "s", help: "scene.dialogue.time", key: `dlg-t-${d.id}`,
-//             onChange: v => edit(d.id, (x, sc) => { x.t = v ?? 0; sc.dialogue.sort((a, b) => a.t - b.t); }) }),
-//           /* [OLD 2026-11-02 v0.1.0->v0.2.0] language is now typed or picked (free combobox)
-//           select({ options: langs, value: d.language, help: "scene.dialogue.language", width: "104px", onChange: v => edit(d.id, x => { x.language = v; }) }),
-//           [/OLD] */
-//           // [OLD 2026-11-03 v0.5.1->v0.6.0] select({ options: langs, value: d.language, free: true, help: "scene.dialogue.language", width: "104px", onChange: v => edit(d.id, x => { x.language = v; }) }),
-//           select({ options: langs, value: d.language, free: true, help: "scene.dialogue.language", width: "104px", key: `dlg-lang-${d.id}`, onChange: v => edit(d.id, x => { x.language = v; }) }),
-//           h("input", { class: "rw-input", style: { width: "90px" }, placeholder: "delivery", value: d.delivery, key: `dlg-del-${d.id}`, help: "scene.dialogue.delivery",
-//             onChange: e => edit(d.id, x => { x.delivery = e.target.value; }) }),
-//           h("input", { class: "rw-input grow", placeholder: "the spoken line", value: d.text, key: `dlg-text-${d.id}`, help: "scene.dialogue.text",
-//             onChange: e => edit(d.id, x => { x.text = e.target.value; }) }),
-//           button({ icon: "trash", small: true, variant: "ghost", help: "scene.dialogue.remove", onClick: () => ctx.actions.editScene(s.id, sc => { sc.dialogue = sc.dialogue.filter(x => x.id !== d.id); }) }))),
-//       s.dialogue.some(d => d.language && !STABLE_LANGUAGES.includes(d.language)) && h("div", { class: "rw-note" }, "Some lines use a language outside H3's 11 stable ones."),
-//     ],
-//   });
-// }
-// [/OLD]
-// added 2026-11-05 v0.8.0: dialogue lines as rows: speaker, start, end and length in scene time (the length is
+// Dialogue lines as rows: speaker, start, end and length in scene time (the length is
 // editable; empty = estimated from the words, shown as the placeholder), language, delivery, a growing text field,
 // and a note when the line runs past a pass seam or the scene's end
 function dialogueCard(ctx, s) {
   const p = ctx.p;
   const speakers = p.cast.filter(c => c.kind === "character");
   const plan = passLayout(p, s);
-  // added 2026-11-06 v0.10.0: the lines past a seam that a move can fix (Fix lines at seams)
   const fixable = s.dialogue.filter(d => seamFixTime(seamFixes(plan, s, d), d.t) !== null).length;
   const crossing = s.dialogue.filter(d => lineSeam(plan, s, d)).length;
   return section({
     title: "Dialogue", help: "scene.dialogue",
-    collapse: { ctx, id: "dialogue", summary: `${s.dialogue.length} line${s.dialogue.length === 1 ? "" : "s"}${crossing ? ` · ${crossing} past a seam` : ""}` }, // added 2026-11-06 v0.10.0
-    /* [OLD 2026-11-06 v0.9.0->v0.10.0] one action; v0.10.0 adds Fix lines at seams before it
-    actions: button({ label: "Line", icon: "plus", small: true, help: "scene.dialogue.add", key: `dlg-add-${s.id}`, onClick: () => {
-    [/OLD] */
+    collapse: { ctx, id: "dialogue", summary: `${s.dialogue.length} line${s.dialogue.length === 1 ? "" : "s"}${crossing ? ` · ${crossing} past a seam` : ""}` },
     actions: [fixable ? button({ label: `Fix ${fixable} at seams`, icon: "wand", small: true, variant: "ghost", help: "scene.dialogue.seamFixAll", key: `dlg-seamfix-${s.id}`,
       onClick: () => fixSeamLines(ctx, s) }) : null,
     button({ label: "Line", icon: "plus", small: true, help: "scene.dialogue.add", key: `dlg-add-${s.id}`, onClick: () => {
@@ -1427,10 +1095,8 @@ function dialogueCard(ctx, s) {
     } })],
     children: [
       !speakers.length && h("div", { class: "rw-note", help: "scene.dialogue.noCast" }, "Add a character in the Cast tab to give lines a speaker and a voice."),
-      // [OLD 2026-11-09 v0.14.1->v0.14.2] s.dialogue.length === 0 ? h("div", { class: "rw-empty sm", help: "scene.dialogue" }, "No spoken lines.")
-      s.dialogue.length === 0 ? fillNote(ctx, s, "lines") // added 2026-11-09 v0.14.2: or take them from the description
-        // [OLD 2026-11-06 v0.8.0->v0.9.0] : h("div", { class: "rw-rows" }, s.dialogue.map(d => dialogueRow(ctx, s, d, { plan }))),
-        : rowsBox(ctx, "lines", "lines-" + s.id, s.dialogue.map(d => dialogueRow(ctx, s, d, { plan }))), // added 2026-11-06 v0.9.0
+      s.dialogue.length === 0 ? fillNote(ctx, s, "lines")
+        : rowsBox(ctx, "lines", "lines-" + s.id, s.dialogue.map(d => dialogueRow(ctx, s, d, { plan }))),
       s.dialogue.some(d => d.language && !STABLE_LANGUAGES.includes(d.language)) && h("div", { class: "rw-note" }, "Some lines use a language outside H3's 11 stable ones."),
     ],
   });
@@ -1460,20 +1126,14 @@ function dialogueRow(ctx, s, d, { plan, prefix = "" }) {
         onChange: e => edit(x => { x.delivery = e.target.value; }, "Line delivery") }),
       h("span", { class: "rw-flex" }),
       button({ icon: "trash", small: true, variant: "ghost", help: "scene.dialogue.remove", key: key("del-btn"), onClick: () => ctx.actions.editScene(s.id, sc => { sc.dialogue = sc.dialogue.filter(x => x.id !== d.id); }, { label: "Remove line" }) })),
-    codeEditor({ value: d.text, key: key("text"), help: "scene.dialogue.text", candidates: tagCandidates(p, s), /* v0.14.0: with the scene's @V1.2 ... */ placeholder: "The spoken line, word for word.",
-      // [OLD 2026-11-10 v0.17.3->v0.18.0]   minRows: 1, maxHeight: 160, cls: "sans",  (a proportional font, unlike the other cards)
-      minRows: 1, maxHeight: 160, // 2026-11-10 v0.18.0: the prompt font, as every card
+    codeEditor({ value: d.text, key: key("text"), help: "scene.dialogue.text", candidates: tagCandidates(p, s), placeholder: "The spoken line, word for word.",
+      minRows: 1, maxHeight: 160,
       onInput: v => ctx.actions.editScene(s.id, sc => { const x = sc.dialogue.find(q => q.id === d.id); if (x) x.text = v; }, { coalesce: key("text"), render: false, label: "Line text" }),
       onChange: () => ctx.store.notify() }),
-    /* [OLD 2026-11-06 v0.9.0->v0.10.0] the note only warned; v0.10.0 adds quick fixes (the seams stay where they are)
-    seam && h("div", { class: "rw-seam-note", help: "scene.dialogue.seam" }, icon("warn", 11),
-      seam.kind === "end" ? `Runs to ${fmtTime(seam.end)}, past the scene's end (${fmtTime(seam.t)}): the end of the line is cut off.`
-        : `Runs to ${fmtTime(seam.end)}, past the seam at ${fmtTime(seam.t)} where pass ${seam.pass} takes over: the end of the line is cut off.`));
-    [/OLD] */
-    seam && seamNote(ctx, s, d, plan, seam, key, edit)); // added 2026-11-06 v0.10.0
+    seam && seamNote(ctx, s, d, plan, seam, key, edit));
 }
 
-// added 2026-11-06 v0.10.0: the seam note with its quick fixes: start the line just after the seam (the next pass says
+// The seam note with its quick fixes: start the line just after the seam (the next pass says
 // it) or move it earlier so it ends before the seam (or the scene's end). Buttons that can't help are disabled and say why.
 function seamNote(ctx, s, d, plan, seam, key, edit) {
   const fx = seamFixes(plan, s, d) || { earlier: null, later: null };
@@ -1490,7 +1150,7 @@ function seamNote(ctx, s, d, plan, seam, key, edit) {
       onClick: () => move(fx.earlier, "Line before the seam") }));
 }
 
-// added 2026-11-06 v0.10.0: every line of the scene that runs past a seam, moved the smaller way (one undo step)
+// Every line of the scene that runs past a seam, moved the smaller way (one undo step)
 function fixSeamLines(ctx, s) {
   const plan = passLayout(ctx.p, s);
   const moves = new Map();
@@ -1510,23 +1170,13 @@ function previewCard(ctx, s) {
   const long = passes.length > 1 || estimatePasses(s.duration, ctx.p.global.long).count > 1;
   const overrides = s.prompt.pass_prompts || {};
   const hasOverride = overrides[String(open + 1)] !== undefined;
-  const splitting = ctx.eph.splitJob?.scene_id === s.id ? ctx.eph.splitJob : null; // added 2026-11-03 v0.4.2
-  // added 2026-11-06 v0.9.0: which passes to show, from the Prompt card's tab (raw prompts: every pass)
+  const splitting = ctx.eph.splitJob?.scene_id === s.id ? ctx.eph.splitJob : null;
   const tab = promptTabOf(ctx, s);
   const shownPasses = !prompts.length ? [0] : tab >= 0 ? [Math.min(tab, prompts.length - 1)] : prompts.map((_, i) => i);
   return section({
     title: "What H3 receives", help: "scene.preview",
-    collapse: { ctx, id: "h3", summary: prompts.length > 1 ? `${prompts.length} passes` : "" }, // added 2026-11-06 v0.10.0
+    collapse: { ctx, id: "h3", summary: prompts.length > 1 ? `${prompts.length} passes` : "" },
     actions: [
-      /* [OLD 2026-11-03 v0.4.1->v0.4.2] no busy state, no progress, no way to stop
-      long && button({ label: "Split with LLM", icon: "wand", small: true, help: "scene.preview.splitLlm", onClick: async () => {
-        try {
-          const res = await rw.split(ctx.p, s.id);
-          ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts = res.pass_prompts || {}; });
-          ctx.actions.toast("Pass prompts written by the LLM. Edit them below.", "ok");
-        } catch (err) { ctx.actions.toast("Split failed: " + err.message, "error"); }
-      } }),
-      [/OLD] */
       long && button({ label: splitting ? "Splitting…" : "Split with LLM", icon: "wand", small: true, help: "scene.preview.splitLlm", disabled: !!splitting, onClick: async () => {
         const job = newJob("split");
         ctx.store.setEph({ splitJob: { scene_id: s.id, job } });
@@ -1540,51 +1190,24 @@ function previewCard(ctx, s) {
       } }),
       long && Object.keys(overrides).length > 0 && button({ label: "Automatic split", small: true, help: "scene.preview.splitAuto", onClick: () => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts = {}; }) }),
     ],
-    /* [OLD 2026-11-06 v0.8.0->v0.9.0] its own row of pass tabs (eph.openPasses); the Prompt card's tabs choose now
-    children: [
-      splitting && llmBusyRow(ctx, splitting.job, "scene.preview.splitStop"), // added 2026-11-03 v0.4.2
-      prompts.length > 1 && h("div", { class: "rw-pass-tabs" }, prompts.map((_, i) => {
-        const ps = passes[i];
-        return h("button", {
-          type: "button", class: ["rw-pass-tab", i === open && "on"], help: "scene.preview.pass",
-          onClick: () => ctx.store.setEph({ openPasses: { ...ctx.eph.openPasses, [s.id]: i } }),
-        // [OLD 2026-11-10 v0.18.0->v0.19.0] }, `Pass ${i + 1}`, ps && h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)} · ${ps.gen_frames} f${ps.seam_before && ps.seam_before !== "none" ? " · " + ps.seam_before : ""}`),
-        }, passLabel(s, i + 1), ps && h("span", { class: "mono rw-dim" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)} · ${ps.gen_frames} f${ps.seam_before && ps.seam_before !== "none" ? " · " + ps.seam_before : ""}`), // v0.19.0: names
-        overrides[String(i + 1)] !== undefined && h("span", { class: "rw-c-accent" }, " ●"));
-      })),
-      long && hasOverride
-        ? codeEditor({ value: overrides[String(open + 1)], help: "scene.preview.override", minRows: 6, maxHeight: 300, key: `pass-${s.id}-${open + 1}`, candidates: tagCandidates(ctx.p),
-          onInput: v => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts[String(open + 1)] = v; }, { coalesce: `pass-${s.id}-${open + 1}`, render: false }),
-          onChange: () => ctx.store.notify() })
-        : h("pre", { class: "rw-prompt-preview mono tall", help: "scene.preview", html: prompts[open] ? highlightHTML(prompts[open]) : "" },
-          prompts[open] ? null : h("span", { class: "rw-dim" }, ctx.eph.backend === "online" ? "Nothing to send yet: add a summary, shots or references." : "The exact prompt is built by the Reelwright backend; it appears here when ComfyUI is running.")),
-      excerptRow(ctx, s, open), // added 2026-11-03 v0.6.0: listen to the part of the song this pass is sent
-      long && !hasOverride && prompts[open] && button({ label: "Edit this pass by hand", small: true, help: "scene.preview.override", onClick: () => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts[String(open + 1)] = prompts[open]; }) }),
-      plan?.key && h("div", { class: "rw-dim small mono", help: "render.cacheKey" }, "cache key " + plan.key.slice(0, 16)),
-    ],
-    [/OLD] */
-    // added 2026-11-06 v0.9.0: the pass of the Prompt card's tab, or every pass in turn on Whole scene (each with a head:
-    // its range, frames and seam), each with its excerpt and "Edit this pass by hand"
     children: [
       splitting && llmBusyRow(ctx, splitting.job, "scene.preview.splitStop"),
+      // every pass in turn: in a panel of its own height that scrolls, so the card does not grow with the passes
+      h(shownPasses.length > 1 ? "div" : "span", shownPasses.length > 1
+        ? { class: "rw-h3-passes", help: "scene.preview", dataset: { scroll: `h3-passes-${s.id}` } } : { class: "rw-contents" },
       shownPasses.map(i => {
         const ps = passes[i];
         const own = overrides[String(i + 1)] !== undefined;
         return h("div", { class: "rw-h3-pass", key: `h3pass-${s.id}-${i + 1}` },
           shownPasses.length > 1 || (prompts.length > 1 && tab >= 0) ? h("div", { class: "rw-h3-pass-head", help: "scene.preview.pass" },
-            // [OLD 2026-11-10 v0.18.0->v0.19.0] h("b", null, `Pass ${i + 1} of ${prompts.length}`),
-            // [OLD 2026-11-10 v0.19.0 bug search] h("b", null, `${passLabel(s, i + 1)} (of ${prompts.length})`), // v0.19.0: its name
-            h("b", null, passLabel(s, i + 1, prompts.length)), // v0.19.0: "Pass 3 of 3 · name"
+            h("b", null, passLabel(s, i + 1, prompts.length)),
             ps && h("span", { class: "mono rw-dim small" }, ` ${fmtTime(ps.start, false)}–${fmtTime(ps.end, false)} · ${ps.gen_frames} f${ps.seam_before && ps.seam_before !== "none" ? " · " + ps.seam_before : ""}`),
             own && h("span", { class: "rw-c-accent small", help: "scene.preview.override" }, " ● edited by hand"),
-            // added 2026-11-06 v0.10.0: copy this pass's prompt
             h("span", { class: "rw-flex" }), prompts[i] && copyButton({ text: () => prompts[i], key: `h3copy-${s.id}-${i + 1}`, help: "scene.preview.copy", what: "prompt" })) : null,
-          // added 2026-11-06 v0.10.0: a single prompt (no pass head) gets its copy button here
           !(shownPasses.length > 1 || (prompts.length > 1 && tab >= 0)) && prompts[i] ? h("div", { class: "rw-h3-copy" },
             copyButton({ label: "Copy prompt", text: () => prompts[i], key: `h3copy-${s.id}-${i + 1}`, help: "scene.preview.copy", what: "prompt" })) : null,
-          // [OLD 2026-11-08 v0.13.0->v0.13.1] long && own  (a single-pass scene showed a hand-edited prompt as plain text, with no sign it was one)
-          own && (long || String(overrides[String(i + 1)]).trim() !== "") // added 2026-11-08 v0.13.1
-            ? codeEditor({ value: overrides[String(i + 1)], help: "scene.preview.override", minRows: 6, maxHeight: 300, key: `pass-${s.id}-${i + 1}`, candidates: tagCandidates(ctx.p, s), /* v0.14.0: with the scene's @V1.2 ... */
+          own && (long || String(overrides[String(i + 1)]).trim() !== "")
+            ? codeEditor({ value: overrides[String(i + 1)], help: "scene.preview.override", minRows: 6, maxHeight: 300, key: `pass-${s.id}-${i + 1}`, candidates: tagCandidates(ctx.p, s),
               onInput: v => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts[String(i + 1)] = v; }, { coalesce: `pass-${s.id}-${i + 1}`, render: false }),
               onChange: () => ctx.store.notify() })
             : h("pre", { class: "rw-prompt-preview mono tall", help: "scene.preview", html: prompts[i] ? highlightHTML(prompts[i]) : "" },
@@ -1592,13 +1215,13 @@ function previewCard(ctx, s) {
           excerptRow(ctx, s, i),
           long && !own && prompts[i] && button({ label: "Edit this pass by hand", small: true, help: "scene.preview.override", key: `h3edit-${s.id}-${i + 1}`,
             onClick: () => ctx.actions.editScene(s.id, sc => { sc.prompt.pass_prompts[String(i + 1)] = prompts[i]; }, { label: `Pass ${i + 1}: edit by hand` }) }));
-      }),
+      })),
       plan?.key && h("div", { class: "rw-dim small mono", help: "render.cacheKey" }, "cache key " + plan.key.slice(0, 16)),
     ],
   });
 }
 
-// added 2026-11-03 v0.6.0: the part of the soundtrack a pass is sent, to listen to (POST /reelwright/soundtrack/excerpt
+// The part of the soundtrack a pass is sent, to listen to (POST /reelwright/soundtrack/excerpt
 // builds the same WAV the render uses). The <audio> element is kept across renders, so a progress event or a plan
 // refresh does not stop it (files.js keeps its previews the same way). A changed song part asks again.
 const excerpts = new WeakMap(); // ctx -> Map(key -> { state: "loading"|"ok"|"none"|"error", el, reason, error, info })
@@ -1622,11 +1245,7 @@ function excerptRow(ctx, s, open) {
     map.set(key, entry);
     ctx.store.notify();
     try {
-      /* [OLD 2026-11-03 v0.6.0 review] the route read the saved project.json, so a pending edit was saved first
-      if (ctx.eph.saveState === "pending") await ctx.store.saveNow();
-      const res = await rw.soundtrackExcerpt(p.slug, s.id, open + 1);
-      [/OLD] */
-      const res = await rw.soundtrackExcerpt(p.slug, s.id, open + 1, p); // added 2026-11-03 v0.6.0: the unsaved project
+      const res = await rw.soundtrackExcerpt(p.slug, s.id, open + 1, p);
       if (!res?.url) Object.assign(entry, { state: "none", reason: res?.reason || "This pass gets no part of the soundtrack." });
       else {
         const src = res.file ? viewURL(res.file, "output") : ctx.host.apiURL(res.url);
@@ -1649,7 +1268,7 @@ function excerptRow(ctx, s, open) {
   return h("div", { class: "rw-row rw-excerpt", help: "scene.preview.excerpt" }, icon("music", 12), h("b", { class: "small" }, `Pass ${open + 1} song`), ...body);
 }
 
-// added 2026-11-09 v0.14.2: the empty Shots / Dialogue card of a scene whose description holds [Shot N] lines or
+// The empty Shots / Dialogue card of a scene whose description holds [Shot N] lines or
 // spoken lines (written before v0.14.2, or by hand) offers to put them on the timeline (shotfill.fillScene)
 function fillNote(ctx, s, what) {
   const empty = what === "shots" ? "No shots: the scene is written as one continuous take." : "No spoken lines.";
@@ -1667,60 +1286,14 @@ function fillNote(ctx, s, what) {
 }
 
 function rewriteCard(ctx, s) {
-  // added 2026-11-06 v0.10.0: on a pass tab the rewriter rewrites that pass's own sections (Write prompts' request for
-  // one pass, with the instruction); a proposal made for another pass or tab is not shown
   const plan = passLayout(ctx.p, s);
   const tab = promptTabOf(ctx, s, plan);
   const passK = s.prompt.mode !== "raw" && plan.passes.length > 1 && tab >= 0 ? tab : -1;
   const pt = passK >= 0 ? passTextsOf(ctx.p, s, plan) : null;
-  // [OLD 2026-11-06 v0.9.0->v0.10.0] const rwState = ctx.eph.rewrite?.scene_id === s.id ? ctx.eph.rewrite : null;
-  const rwState = ctx.eph.rewrite?.scene_id === s.id && (ctx.eph.rewrite.pass ?? -1) === passK ? ctx.eph.rewrite : null; // added 2026-11-06 v0.10.0
+  const rwState = ctx.eph.rewrite?.scene_id === s.id && (ctx.eph.rewrite.pass ?? -1) === passK ? ctx.eph.rewrite : null;
   const instr = h("input", { class: "rw-input grow", key: "rewrite-instr", placeholder: "Optional instruction, e.g. make shot 2 more intimate", help: "scene.rewrite.instruction", value: ctx.eph.rewriteInstr || "",
     onInput: e => { ctx.eph.rewriteInstr = e.target.value; } });
   const llm = ctx.p.global.llm;
-  /* [OLD 2026-11-03 v0.4.1->v0.4.2] no job id: no progress line and no Stop
-  const run = async () => {
-    ctx.store.setEph({ rewrite: { scene_id: s.id, busy: true } });
-    try {
-      const res = await rw.rewrite(ctx.p, s.id, ctx.eph.rewriteInstr || "");
-      ctx.store.setEph({ rewrite: { scene_id: s.id, proposal: res, warnings: res.warnings || [], editing: false } });
-    } catch (err) {
-      ctx.store.setEph({ rewrite: null });
-      ctx.actions.toast("Rewrite failed: " + err.message, "error");
-    }
-  };
-  [/OLD] */
-  /* [OLD 2026-11-06 v0.9.0->v0.10.0] whole-scene sections only
-  const run = async () => {
-    const job = newJob("rewrite");
-    ctx.store.setEph({ rewrite: { scene_id: s.id, busy: true, job } });
-    try {
-      const res = await rw.rewrite(ctx.p, s.id, ctx.eph.rewriteInstr || "", job);
-      if (res.cancelled) { ctx.store.setEph({ rewrite: null }); ctx.actions.toast("Rewrite stopped.", "warn"); return; }
-      ctx.store.setEph({ rewrite: { scene_id: s.id, proposal: res, warnings: res.warnings || [], editing: false } });
-    } catch (err) {
-      ctx.store.setEph({ rewrite: null });
-      ctx.actions.toast("Rewrite failed: " + err.message, "error");
-    } finally {
-      delete ctx.store.eph.llmJobs[job];
-    }
-  };
-  const accept = () => {
-    const prop = rwState.proposal;
-    ctx.actions.editScene(s.id, sc => {
-      if (prop.raw !== undefined && prop.raw !== null) { sc.prompt.raw = prop.raw; sc.prompt.mode = "raw"; }
-      if (prop.sections) for (const k of SECTION_KEYS) if (prop.sections[k] !== undefined) sc.prompt.sections[k] = prop.sections[k];
-    });
-    ctx.store.setEph({ rewrite: null });
-    ctx.actions.toast("Rewrite applied. Undo with Ctrl+Z.", "ok");
-  };
-  let diffView = null;
-  if (rwState?.proposal) {
-    const prop = rwState.proposal;
-    const pairs = prop.raw !== undefined && prop.raw !== null ? [["raw", s.prompt.raw, prop.raw]]
-      : SECTION_KEYS.filter(k => prop.sections?.[k] !== undefined && prop.sections[k] !== s.prompt.sections[k]).map(k => [k, s.prompt.sections[k], prop.sections[k]]);
-  [/OLD] */
-  // added 2026-11-06 v0.10.0: a pass tab sends the pass (POST /reelwright/llm/passes for that one pass)
   const run = async () => {
     const job = newJob("rewrite");
     ctx.store.setEph({ rewrite: { scene_id: s.id, pass: passK, busy: true, job } });
@@ -1749,16 +1322,6 @@ function rewriteCard(ctx, s) {
     if (prop.pass) {
       ctx.actions.editScene(s.id, (sc, q) => { applyWritten(sc, q, { passes: [{ ...prop.pass, sections: prop.sections }] }); }, { label: `Rewrite pass ${passK + 1}` });
     } else {
-      /* [OLD 2026-11-09 v0.14.1->v0.14.2] the shots and lines written for a scene without shots stayed in the description
-      ctx.actions.editScene(s.id, sc => {
-        if (prop.raw !== undefined && prop.raw !== null) { sc.prompt.raw = prop.raw; sc.prompt.mode = "raw"; }
-        if (prop.sections) for (const k of SECTION_KEYS) if (prop.sections[k] !== undefined) sc.prompt.sections[k] = prop.sections[k];
-      }, { label: "Rewrite" });
-    }
-    ctx.store.setEph({ rewrite: null });
-    ctx.actions.toast("Rewrite applied. Undo with Ctrl+Z.", "ok");
-    [/OLD] */
-      // added 2026-11-09 v0.14.2: a scene without shots takes the shots and spoken lines the rewrite wrote
       let filled = null;
       ctx.actions.editScene(s.id, (sc, q) => {
         if (prop.raw !== undefined && prop.raw !== null) { sc.prompt.raw = prop.raw; sc.prompt.mode = "raw"; }
@@ -1775,7 +1338,7 @@ function rewriteCard(ctx, s) {
   let diffView = null;
   if (rwState?.proposal) {
     const prop = rwState.proposal;
-    const cur = prop.pass && pt ? pt.texts[passK] : s.prompt.sections; // added 2026-11-06 v0.10.0: a pass's own texts
+    const cur = prop.pass && pt ? pt.texts[passK] : s.prompt.sections;
     const pairs = prop.raw !== undefined && prop.raw !== null ? [["raw", s.prompt.raw, prop.raw]]
       : SECTION_KEYS.filter(k => prop.sections?.[k] !== undefined && prop.sections[k] !== (cur[k] || "")).map(k => [k, cur[k] || "", prop.sections[k]]);
     diffView = h("div", { class: "rw-diff", help: "scene.rewrite.diff" },
@@ -1794,32 +1357,24 @@ function rewriteCard(ctx, s) {
         button({ label: "Accept", small: true, variant: "solid", help: "scene.rewrite.accept", onClick: accept })));
   }
   return section({
-    // [OLD 2026-11-06 v0.9.0->v0.10.0] title: "Prompt rewriter", help: "scene.rewrite", tint: "dlg",
-    // [OLD 2026-11-10 v0.18.0->v0.19.0] title: passK >= 0 ? `Prompt rewriter · pass ${passK + 1}` : "Prompt rewriter", help: "scene.rewrite", tint: "dlg", // added 2026-11-06 v0.10.0
-    title: passK >= 0 ? `Prompt rewriter · ${passLabel(s, passK + 1)}` : "Prompt rewriter", help: "scene.rewrite", tint: "dlg", // v0.19.0: its name
+    title: passK >= 0 ? `Prompt rewriter · ${passLabel(s, passK + 1)}` : "Prompt rewriter", help: "scene.rewrite", tint: "dlg",
     actions: h("span", { class: "mono rw-dim small", help: "global.llm" }, llm.model ? `${llm.model}` : "set up in Global → LLM"),
     children: [
       h("div", { class: "rw-row" }, instr,
         button({ label: rwState?.busy ? "Rewriting…" : "Rewrite", icon: "wand", variant: "pink", help: "scene.rewrite.run", key: `rewrite-run-${s.id}`, disabled: !!rwState?.busy, onClick: run })),
-      rwState?.busy && llmBusyRow(ctx, rwState.job, "scene.rewrite.stop"), // added 2026-11-03 v0.4.2
+      rwState?.busy && llmBusyRow(ctx, rwState.job, "scene.rewrite.stop"),
       h("div", { class: "rw-dim small" }, "Runs only when you press Rewrite, never during a render. Tags and <d>…</d> lines are kept as written."),
-      /* [OLD 2026-11-06 v0.9.0->v0.10.0] on Whole scene of a multi-pass scene; the card is now only on a pass tab there
-      // added 2026-11-05 v0.8.0: what Rewrite changes in a scene of several passes (Write prompts writes the passes)
-      passLayout(ctx.p, s).passes.length > 1 && h("div", { class: "rw-dim small", help: "scene.rewrite.passes" }, "This scene has several passes: Rewrite changes the scene note and the shared sections. Write prompts (Prompt card) writes each pass's own sections."),
-      [/OLD] */
-      // added 2026-11-06 v0.10.0
       passK >= 0 && h("div", { class: "rw-dim small", help: "scene.rewrite.passes" }, `Rewrites pass ${passK + 1}'s own sections (${fmtTime(plan.passes[passK].start)}–${fmtTime(plan.passes[passK].end)}), with its shots and spoken lines. Other passes and the Whole scene texts stay as they are.`),
       diffView,
     ],
   });
 }
 
-// added 2026-11-03 v0.4.2: what a running LLM request is doing, and a button to stop it
+// What a running LLM request is doing, and a button to stop it
 function llmBusyRow(ctx, job, stopHelp) {
   return h("div", { class: "rw-row rw-llm-busy" },
-    // [OLD 2026-11-06 v0.10.1->v0.10.2] h("span", { class: "rw-dim small mono grow", help: "global.llm.progress" }, jobLine(ctx.eph.llmJobs[job])),
-    jobText(job, ctx.eph.llmJobs[job], { class: "rw-dim small mono grow", help: "global.llm.progress" }), // added 2026-11-06 v0.10.2: updated in place
-    outputButton(ctx, { job, title: "LLM output", key: `llm-out-${job}` }), // added 2026-11-09 v0.15.0
+    jobText(job, ctx.eph.llmJobs[job], { class: "rw-dim small mono grow", help: "global.llm.progress" }),
+    outputButton(ctx, { job, title: "LLM output", key: `llm-out-${job}` }),
     button({ label: "Stop", icon: "close", small: true, help: stopHelp, onClick: () => rw.llmCancel(job).catch(() => {}) }));
 }
 
@@ -1832,14 +1387,13 @@ function budgetCard(ctx, s) {
       meter({ label: "Pictures", value: b.pictures, max: 9, text: `${b.pictures} / 9`, kind: "pic", help: "scene.budget.pictures" }),
       meter({ label: "Videos", value: b.videos, max: 3, text: `${b.videos} / 3 · ${b.videoSeconds.toFixed(1)}/15 s`, kind: "vid", help: "scene.budget.videos" }),
       meter({ label: "Audio", value: Math.max(b.audio, b.audioSeconds > 15 ? 4 : 0), max: 3, text: `${b.audio} / 3 · ${b.audioSeconds.toFixed(1)}/15 s`, kind: "aud", help: "scene.budget.audio" }),
-      // added 2026-11-03 v0.5.0
       b.song && h("div", { class: "rw-dim small", help: "scene.budget.song" }, "One audio slot is the soundtrack: every pass gets the part of the song it covers, so cast voice samples are not sent."),
-      passBudgets(ctx, s), // added 2026-11-03 v0.6.0
+      passBudgets(ctx, s),
     ],
   });
 }
 
-// added 2026-11-03 v0.6.0: a long scene's budget per pass (model.sceneBudget(p, s, pass)); the meters above show the
+// A long scene's budget per pass (model.sceneBudget(p, s, pass)); the meters above show the
 // fullest pass. A pass over a limit is marked.
 function passBudgets(ctx, s) {
   const p = ctx.p;
@@ -1851,8 +1405,7 @@ function passBudgets(ctx, s) {
     passes.map((ps, k) => {
       const x = sceneBudget(p, s, ps);
       return h("div", { class: ["rw-budget-pass mono small", over(x) && "over"], help: "scene.budget.pass" },
-        // [OLD 2026-11-10 v0.18.0->v0.19.0] h("b", null, `Pass ${k + 1}`),
-        h("b", null, passLabel(s, k + 1)), // v0.19.0: its name
+        h("b", null, passLabel(s, k + 1)),
         h("span", null, `${x.pictures} pic · ${x.videos} vid · ${x.audio} aud${x.song ? " (song)" : ""} · ${x.files} files`),
         over(x) && icon("warn", 11));
     }));
@@ -1861,66 +1414,41 @@ function passBudgets(ctx, s) {
 function refsCard(ctx, s) {
   const p = ctx.p;
   const edit = (id, fn) => ctx.actions.editScene(s.id, sc => { const r = sc.refs.find(q => q.id === id); if (r) fn(r); });
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] const addable = p.assets.map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file.split("/").pop()}` }));
-  const addable = p.assets.map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file.split("/").pop()}`, pre: assetGroupName(p, a) })); // added 2026-11-06 v0.9.0: group first
+  const addable = p.assets.map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file.split("/").pop()}`, pre: assetGroupName(p, a) }));
   return section({
     title: "References", help: "scene.refs",
     actions: h("span", { class: "rw-dim small" }, "tags renumber per pass"),
     children: [
-      // [OLD 2026-11-06 v0.8.0->v0.9.0] s.refs.length === 0 && h("div", { class: "rw-empty sm", help: "scene.refs" }, "No references. Add one below or drag from the Timeline's asset bin."),
-      s.refs.length === 0 && h("div", { class: "rw-empty sm", help: "scene.refs" }, "No references. Add one below."),  // added 2026-11-06 v0.9.0: no asset bin
-      // [OLD 2026-11-09 v0.14.4->v0.15.0] s.refs.map(r => {  (no reordering)
-      // added 2026-11-09 v0.15.0: drag a reference's grip to put it elsewhere in the list (one undo step)
+      s.refs.length === 0 && h("div", { class: "rw-empty sm", help: "scene.refs" }, "No references. Add one below."),
       sortable({ id: `refs-${s.id}`, onMove: (from, to) => ctx.actions.editScene(s.id, sc => { moveItem(sc.refs, from, to); }, { label: "Reorder references" }), rows: s.refs.map(r => {
         const a = findAsset(p, r.asset);
-        // [OLD 2026-11-09 v0.14.4->v0.15.0] if (!a) return h("div", { class: "rw-note warn" }, "A reference points at a deleted asset.", button({ label: "Remove", small: true, help: "scene.refs.remove", onClick: () => ctx.actions.editScene(s.id, sc => { sc.refs = sc.refs.filter(x => x.id !== r.id); }) }));
-        if (!a) return h("div", { class: "rw-note warn" }, dragGrip({ help: "scene.refs.order", key: `ref-grip-${r.id}` }), "A reference points at a deleted asset.", button({ label: "Remove", small: true, help: "scene.refs.remove", onClick: () => ctx.actions.editScene(s.id, sc => { sc.refs = sc.refs.filter(x => x.id !== r.id); }) })); // added 2026-11-09 v0.15.0: grip
+        if (!a) return h("div", { class: "rw-note warn" }, dragGrip({ help: "scene.refs.order", key: `ref-grip-${r.id}` }), "A reference points at a deleted asset.", button({ label: "Remove", small: true, help: "scene.refs.remove", onClick: () => ctx.actions.editScene(s.id, sc => { sc.refs = sc.refs.filter(x => x.id !== r.id); }) }));
         const kc = kindClass(a.kind);
         const ret = r.retention || a.defaults.retention;
         const overridden = (r.retention && r.retention !== a.defaults.retention) || r.role !== a.defaults.role;
         const roles = a.kind === "image" ? ROLES : ["reference"];
         return h("div", { class: ["rw-ref", overridden && "over"] },
-          dragGrip({ help: "scene.refs.order", key: `ref-grip-${r.id}` }), // added 2026-11-09 v0.15.0
-          // [OLD 2026-11-06 v0.9.0->v0.10.0] a.kind === "image" ? h("img", { class: "rw-ref-thumb", src: viewURL(a.file, "input"), alt: "" }) : h("span", { class: "rw-ref-thumb rw-bg-" + kc + "-soft" }, icon(a.kind, 16)),
-          // added 2026-11-06 v0.10.0: the same <img> across renders (it blinked while a render ran)
+          dragGrip({ help: "scene.refs.order", key: `ref-grip-${r.id}` }),
           a.kind === "image" ? kept(ctx, "ref-" + r.id, viewURL(a.file, "input"), () => h("img", { class: "rw-ref-thumb", src: viewURL(a.file, "input"), alt: "" })) : h("span", { class: "rw-ref-thumb rw-bg-" + kc + "-soft" }, icon(a.kind, 16)),
           h("div", { class: "rw-ref-body" },
             h("div", { class: "rw-row" }, h("b", { class: "mono rw-c-" + kc }, a.code), h("b", { class: "rw-ellipsis" }, a.name || a.file.split("/").pop()),
               overridden && dot("override", "scene.refs.overridden"), h("span", { class: "rw-flex" }),
               button({ icon: "trash", small: true, variant: "ghost", help: "scene.refs.remove", onClick: () => ctx.actions.editScene(s.id, sc => { sc.refs = sc.refs.filter(x => x.id !== r.id); }) })),
             h("div", { class: "rw-row wrap" },
-              /* [OLD 2026-11-03 v0.5.1->v0.6.0] no keys (focus came back by position)
-              select({ options: roles, value: r.role, help: "scene.refs.role", onChange: v => edit(r.id, x => { x.role = v; }) }),
-              r.role === "keyframe" && number({ value: Number(r.time.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "80px", unit: "s", help: "scene.refs.time", onChange: v => edit(r.id, x => { x.time = v ?? 0; }) }),
-              r.role === "reference" && select({ options: retentionOptions(a.kind), value: ret, help: "scene.refs.retention", mono: true, onChange: v => edit(r.id, x => { x.retention = v === a.defaults.retention ? "" : v; }) }),
-              a.kind === "video" && toggle({ value: r.soundtrack, label: "soundtrack", help: "scene.refs.soundtrack", onChange: v => edit(r.id, x => { x.soundtrack = v; }) })),
-              [/OLD] */
-              // added 2026-11-03 v0.6.0: keys by reference id
-              // [OLD 2026-11-08 v0.11.0->v0.12.0] select({ options: roles, value: r.role, help: "scene.refs.role", key: `ref-role-${r.id}`, onChange: v => edit(r.id, x => { x.role = v; }) }),
-              // [OLD 2026-11-08 v0.11.0->v0.12.0] r.role === "keyframe" && number({ value: Number(r.time.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "80px", unit: "s", help: "scene.refs.time", key: `ref-t-${r.id}`, onChange: v => edit(r.id, x => { x.time = v ?? 0; }) }),
-              // added 2026-11-08 v0.12.0: a pose reference picks its character (the first one of the scene to start with)
               select({ options: roles, value: r.role, help: "scene.refs.role", key: `ref-role-${r.id}`, onChange: v => edit(r.id, x => { x.role = v; if (v === "pose" && !x.cast) x.cast = sceneChars(p, s)[0]?.id || ""; }) }),
               r.role === "pose" && poseCast(ctx, s, r, edit),
               (r.role === "keyframe" || r.role === "pose") && number({ value: Number(r.time.toFixed(3)), min: 0, max: s.duration, step: 1 / FPS, width: "80px", unit: "s", help: r.role === "pose" ? "scene.refs.poseTime" : "scene.refs.time", key: `ref-t-${r.id}`, onChange: v => edit(r.id, x => { x.time = v ?? 0; }) }),
               r.role === "reference" && select({ options: retentionOptions(a.kind), value: ret, help: "scene.refs.retention", mono: true, key: `ref-ret-${r.id}`, onChange: v => edit(r.id, x => { x.retention = v === a.defaults.retention ? "" : v; }) }),
-              // [OLD 2026-11-08 v0.13.1->v0.14.0] a.kind === "video" && toggle({ value: r.soundtrack, label: "soundtrack", help: "scene.refs.soundtrack", key: `ref-snd-${r.id}`, onChange: v => edit(r.id, x => { x.soundtrack = v; }) })),
-              a.kind === "video" && toggle({ value: r.soundtrack, label: "with sound", help: "scene.refs.soundtrack", key: `ref-snd-${r.id}`, onChange: v => edit(r.id, x => { x.soundtrack = v; }) })), // added 2026-11-08 v0.14.0: plainer label
-            // added 2026-11-08 v0.14.0: the part of a video or audio asset this reference sends
+              a.kind === "video" && toggle({ value: r.soundtrack, label: "with sound", help: "scene.refs.soundtrack", key: `ref-snd-${r.id}`, onChange: v => edit(r.id, x => { x.soundtrack = v; }) })),
             (a.kind === "video" || a.kind === "audio") && r.role === "reference" && clipEditor(ctx, s, r, a, edit),
-            // [OLD 2026-11-03 v0.6.0 review] r.role === "reference" && keepChips({ values: r.keep.length ? r.keep : a.defaults.keep, help: "scene.refs.keep", onChange: v => edit(r.id, x => { x.keep = v; }) }),
-            r.role === "reference" && keepChips({ values: r.keep.length ? r.keep : a.defaults.keep, help: "scene.refs.keep", key: `ref-keep-${r.id}`, onChange: v => edit(r.id, x => { x.keep = v; }) }), // added 2026-11-03 v0.6.0 review: key
-            r.role === "pose" && poseNote(p, s, r, a), // added 2026-11-08 v0.12.0
-            // added 2026-11-02 v0.3.4: the asset's description as it is used here (edit it in the Assets tab)
+            r.role === "reference" && keepChips({ values: r.keep.length ? r.keep : a.defaults.keep, help: "scene.refs.keep", key: `ref-keep-${r.id}`, onChange: v => edit(r.id, x => { x.keep = v; }) }),
+            r.role === "pose" && poseNote(p, s, r, a),
             a.kind !== "audio" && h("button", { type: "button", class: ["rw-ref-desc link rw-ellipsis", !a.description && "empty"], help: "scene.refs.description",
               title: a.description || "", onClick: () => { ctx.store.setEph({ selectedAsset: a.id }); ctx.actions.setTab("assets"); } },
             a.description ? a.description : r.role === "reference" ? "No description: add one in the Assets tab" : "No description")));
-      // [OLD 2026-11-09 v0.14.4->v0.15.0] }),
-      }) }), // added 2026-11-09 v0.15.0: end of sortable
-      // [OLD 2026-11-08 v0.13.1->v0.14.0] addable.length ? h("div", { class: "rw-row" }, select({ options: addable, value: "", placeholder: "+ Add a reference…", help: "scene.refs.add", onChange: v => {
-      addable.length ? h("div", { class: "rw-row" }, select({ options: addable, value: "", placeholder: "+ Add a reference…", help: "scene.refs.add", key: `ref-add-${s.id}`, onChange: v => { // added 2026-11-08 v0.14.0: key
+      }) }),
+      addable.length ? h("div", { class: "rw-row" }, select({ options: addable, value: "", placeholder: "+ Add a reference…", help: "scene.refs.add", key: `ref-add-${s.id}`, onChange: v => {
         const a = findAsset(p, v);
-        // [OLD 2026-11-08 v0.11.0->v0.12.0] if (a) ctx.actions.editScene(s.id, sc => { sc.refs.push({ id: newId("r"), asset: a.id, role: a.defaults.role, time: 0, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack }); });
-        // added 2026-11-08 v0.12.0: cast (a pose picture's default role starts it with the scene's first character)
         const role = a && a.defaults.role === "pose" && a.kind !== "image" ? "reference" : a?.defaults.role; // only a picture poses
         if (a) ctx.actions.editScene(s.id, sc => { sc.refs.push({ id: newId("r"), asset: a.id, role, time: 0, retention: "", keep: [], soundtrack: !!a.defaults.soundtrack, cast: role === "pose" ? sceneChars(p, s)[0]?.id || "" : "" }); });
       } })) : h("div", { class: "rw-dim small" }, "Upload assets in the Assets tab first."),
@@ -1928,9 +1456,7 @@ function refsCard(ctx, s) {
   });
 }
 
-// ---- added 2026-11-08 v0.14.0: clips of video and audio references (Sencer: "when using video or audio references,
-// allow to select from-to timestamps/frames of source video. we should be able to use the same video/audio asset in a
-// single scene multiple times, with different start/end timestamps/durations, with or without audio (for videos)").
+// ---- clips of video and audio references ----------------------------------------------------------------------
 // Each reference has From / To (r.in / r.out, seconds on whole frames; To empty = the asset's end). The fields take
 // seconds (4.5), frames (108f) or a time (0:04.5, 1:02:03.25). The bar shows the clip in the whole file; drag its ends.
 // Preview plays the file: From here / To here take its position, Play clip plays From to To. Each reference's @ tag
@@ -1949,8 +1475,7 @@ export function parseClipTime(text) {
   return NaN;
 }
 
-// [OLD 2026-11-09 v0.15.1->v0.16.0] function clipTimeField(ctx, { label, value, placeholder, help, key, onCommit }) {
-export function clipTimeField(ctx, { label, value, placeholder, help, key, onCommit }) { // exported 2026-11-09 v0.16.0: Cast → Video anchors
+export function clipTimeField(ctx, { label, value, placeholder, help, key, onCommit }) { // also used by Cast → Video anchors
   const show = v => (v === null || v === undefined ? "" : fmtTime(v));
   return h("label", { class: "rw-clip-field", help },
     h("span", { class: "rw-dim small" }, label, value !== null && value !== undefined && h("span", { class: "mono" }, ` · ${framesOf(value)} f`)),
@@ -1965,49 +1490,13 @@ export function clipTimeField(ctx, { label, value, placeholder, help, key, onCom
     }));
 }
 
-/* [OLD 2026-11-09 v0.16.0->v0.16.1] scene references only; Cast → Video anchors uses the same editor now (see below)
-function clipEditor(ctx, s, r, a, edit) {
-  const c = refClip(r, a);
-  const dur = Number(a.duration) || 0;
-  const tok = refTokens(ctx.p, s)[r.id] || "@" + a.code;
-  const many = s.refs.filter(x => x.asset === a.id && x.role === "reference").length > 1;
-  const secs = c.seconds;
-  const bad = dur > 0 && c.start >= dur - 0.5 / FPS ? `starts after the end of ${a.code} (${fmtTime(dur)})`
-    : r.out !== null && r.out !== undefined && r.out <= c.start + 0.5 / FPS ? "ends before it starts"
-      : "";
-  const note = bad || (secs !== null && secs > 15 + 1e-6 ? "only the first 15 s is sent" : secs !== null && secs < 2 - 1e-6 ? "H3 references are 2–15 s" : "");
-  const open = !!ctx.eph.clipPreview?.[r.id];
-  const setOpen = v => ctx.store.setEph({ clipPreview: { ...(ctx.eph.clipPreview || {}), [r.id]: v } });
-  return h("div", { class: "rw-clip", help: "scene.refs.clip" },
-    h("div", { class: "rw-row rw-clip-row" },
-      h("button", { type: "button", class: ["rw-clip-tok mono", many && "many"], help: "scene.refs.token", key: `clip-tok-${r.id}`,
-        onClick: e => copyWithToast(tok, e.currentTarget, "tag") }, tok),
-      h("span", { class: "rw-dim small rw-ellipsis" }, refTrimmed(r) ? "a part of the file" : "the whole file"),
-      h("span", { class: "rw-flex" }),
-      refTrimmed(r) && button({ label: "Whole file", small: true, variant: "ghost", help: "scene.refs.clipReset", key: `clip-reset-${r.id}`, onClick: () => edit(r.id, x => { x.in = 0; x.out = null; }) }),
-      button({ label: open ? "Hide" : "Preview", icon: a.kind === "video" ? "video" : "audio", small: true, variant: "ghost", help: "scene.refs.clipPreview", key: `clip-prev-${r.id}`, onClick: () => setOpen(!open) })),
-    h("div", { class: "rw-clip-grid" },
-      clipTimeField(ctx, { label: "From", value: r.in || 0, help: "scene.refs.clipFrom", key: `clip-in-${r.id}`, onCommit: v => edit(r.id, x => { x.in = v ?? 0; }) }),
-      clipTimeField(ctx, { label: "To", value: r.out ?? null, placeholder: "end", help: "scene.refs.clipTo", key: `clip-out-${r.id}`,
-        onCommit: v => edit(r.id, x => { x.out = v; }) }),
-      clipTimeField(ctx, { label: "Length", value: secs, placeholder: "?", help: "scene.refs.clipLength", key: `clip-len-${r.id}`,
-        onCommit: v => edit(r.id, x => { x.out = v === null ? null : snapFrame((x.in || 0) + Math.max(1 / FPS, v)); }) })),
-    dur > 0 && clipBar(ctx, r, a, c, edit),
-    note && h("div", { class: ["rw-note", bad ? "err" : "warn", "rw-clip-note"], help: "scene.refs.clip" }, icon("warn", 12), `${tok} ${note}.`),
-    open && clipPreview(ctx, r, a, c, edit));
-}
-[/OLD] */
-
-// added 2026-11-09 v0.16.1: the same clip editor for a scene reference and for a cast member's video anchor (Sencer:
-// "add the same options to video anchors as in scene tab/reference card/video reference. preview, from and to buttons
-// etc."). `r` is anything with id / in / out; `s` is the scene (null for a video anchor). opts:
+// The same clip editor for a scene reference and for a cast member's video anchor. `r` is anything with id / in / out; `s` is the scene (null for a video anchor). opts:
 //   help  name -> help key (default "scene.refs." + name)       key   data-key prefix (default "clip")
 //   tok   the clip's name in its notes (default its @ tag)       token false: no @ tag chip (a video anchor has none)
 //   short the note for a clip under 2 s
 export function clipEditor(ctx, s, r, a, edit, opts = {}) {
   const o = clipOpts(opts);
   const c = refClip(r, a);
-  // added 2026-11-10 v0.18.0: the frame picture's time on the bar (a video anchor's frame)
   const frameAt = opts.frameAt ?? null;
   const dur = Number(a.duration) || 0;
   const tok = opts.tok || (s && refTokens(ctx.p, s)[r.id]) || "@" + a.code;
@@ -2033,54 +1522,30 @@ export function clipEditor(ctx, s, r, a, edit, opts = {}) {
         onCommit: v => edit(r.id, x => { x.out = v; }) }),
       clipTimeField(ctx, { label: "Length", value: secs, placeholder: "?", help: o.hk("clipLength"), key: `${o.kp}-len-${r.id}`,
         onCommit: v => edit(r.id, x => { x.out = v === null ? null : snapFrame((x.in || 0) + Math.max(1 / FPS, v)); }) })),
-    // [OLD 2026-11-10 v0.17.3->v0.18.0] dur > 0 && clipBar(ctx, r, a, c, edit, o),
-    dur > 0 && clipBar(ctx, r, a, c, edit, o, frameAt), // frameAt: added 2026-11-10 v0.18.0
+    dur > 0 && clipBar(ctx, r, a, c, edit, o, frameAt),
     note && h("div", { class: ["rw-note", bad ? "err" : "warn", "rw-clip-note"], help: o.hk("clip") }, icon("warn", 12), `${tok} ${note}.`),
     open && clipPreview(ctx, r, a, c, edit, o));
 }
-// added 2026-11-09 v0.16.1: help keys and data-key prefix of one clip editor
+// Help keys and data-key prefix of one clip editor
 function clipOpts(opts = {}) {
-  // [OLD 2026-11-10 v0.17.3->v0.18.0] return { hk: name => (opts.help ? opts.help(name) : "scene.refs." + name), kp: opts.key || "clip" };
-  // added 2026-11-10 v0.18.0: frame(t): Preview offers "Use this frame as a picture" (Cast → Video anchors)
   return { hk: name => (opts.help ? opts.help(name) : "scene.refs." + name), kp: opts.key || "clip", frame: opts.frame || null };
 }
 
 // the whole file as a bar with the clip on it; drag an end to move From / To (on frames)
-// [OLD 2026-11-09 v0.16.0->v0.16.1] function clipBar(ctx, r, a, c, edit) {
-// [OLD 2026-11-10 v0.17.3->v0.18.0] function clipBar(ctx, r, a, c, edit, o = clipOpts()) { // added 2026-11-09 v0.16.1: o = help keys (video anchors)
-function clipBar(ctx, r, a, c, edit, o = clipOpts(), frameAt = null) { // v0.16.1: o = help keys (video anchors); v0.18.0: frameAt, a mark
+function clipBar(ctx, r, a, c, edit, o = clipOpts(), frameAt = null) {
   const dur = Number(a.duration) || 0;
   const end = c.end ?? dur;
   const pct = t => Math.max(0, Math.min(100, (t / dur) * 100)) + "%";
   const sel = h("span", { class: "rw-clip-sel", style: { left: pct(c.start), width: `calc(${pct(end)} - ${pct(c.start)})` } });
   const tip = h("span", { class: "rw-clip-tip mono" });
-  // [OLD 2026-11-09 v0.16.0->v0.16.1] const bar = h("div", { class: "rw-clip-bar", help: "scene.refs.clipBar" }, sel, tip);
-  const bar = h("div", { class: "rw-clip-bar", help: o.hk("clipBar"), dataset: { clipBar: `${o.kp}-${r.id}` } }, sel, tip); // added 2026-11-09 v0.16.1: found again after a re-render
+  const bar = h("div", { class: "rw-clip-bar", help: o.hk("clipBar"), dataset: { clipBar: `${o.kp}-${r.id}` } }, sel, tip);
   const handle = which => {
-    // [OLD 2026-11-09 v0.16.0->v0.16.1] const el = h("span", { class: ["rw-clip-h", which], help: "scene.refs.clipBar", style: { left: pct(which === "in" ? c.start : end) } });
-    const el = h("span", { class: ["rw-clip-h", which], help: o.hk("clipBar"), style: { left: pct(which === "in" ? c.start : end) } }); // added 2026-11-09 v0.16.1
+    const el = h("span", { class: ["rw-clip-h", which], help: o.hk("clipBar"), style: { left: pct(which === "in" ? c.start : end) } });
     el.addEventListener("pointerdown", e => {
       if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       let v = which === "in" ? c.start : end;
-      /* [OLD 2026-11-09 v0.16.0->v0.16.1] measured and drew on this render's bar: a re-render during the drag (autosave,
-         a render's progress) detached it, its width became 0 and To jumped to the end of the file
-      const move = ev => {
-        const rect = bar.getBoundingClientRect();
-        const t = snapFrame(Math.max(0, Math.min(dur, ((ev.clientX - rect.left) / Math.max(1, rect.width)) * dur)));
-        v = which === "in" ? Math.min(t, end - 1 / FPS) : Math.max(t, c.start + 1 / FPS);
-        el.style.left = pct(v);
-        const a0 = which === "in" ? v : c.start, b0 = which === "in" ? end : v;
-        sel.style.left = pct(a0);
-        sel.style.width = `calc(${pct(b0)} - ${pct(a0)})`;
-        tip.textContent = `${fmtTime(a0)} – ${fmtTime(b0)} · ${(b0 - a0).toFixed(2)} s`;
-        tip.style.left = pct(v);
-        bar.classList.add("dragging");
-      };
-      [/OLD] */
-      // added 2026-11-09 v0.16.1: the bar on screen now (a re-render replaces it; found by its data-clip-bar), and
-      // nothing measured on a bar that is not on screen
       const root = bar.closest(".rw-root") || document;
       const live = () => (bar.isConnected ? bar : root.querySelector(`.rw-clip-bar[data-clip-bar="${CSS.escape(bar.dataset.clipBar)}"]`));
       const move = ev => {
@@ -2100,9 +1565,8 @@ function clipBar(ctx, r, a, c, edit, o = clipOpts(), frameAt = null) { // v0.16.
         window.removeEventListener("pointermove", move, true);
         window.removeEventListener("pointerup", up, true);
         window.removeEventListener("pointercancel", up, true);
-        // [OLD 2026-11-09 v0.16.0->v0.16.1] bar.classList.remove("dragging");
         bar.classList.remove("dragging");
-        live()?.classList.remove("dragging"); // added 2026-11-09 v0.16.1
+        live()?.classList.remove("dragging");
         if (ev.type === "pointercancel") return;
         if (which === "in" && v !== c.start) edit(r.id, x => { x.in = v; });
         if (which === "out" && v !== end) edit(r.id, x => { x.out = v >= dur - 0.5 / FPS ? null : v; });
@@ -2114,14 +1578,12 @@ function clipBar(ctx, r, a, c, edit, o = clipOpts(), frameAt = null) { // v0.16.
     return el;
   };
   bar.append(handle("in"), handle("out"));
-  // added 2026-11-10 v0.18.0: where the frame picture was taken (a video anchor's "Use this frame as a picture")
   if (frameAt !== null && frameAt !== undefined) bar.append(h("span", { class: "rw-clip-frame", help: o.hk("frame"), style: { left: pct(frameAt) }, title: `frame picture at ${fmtTime(frameAt)}` }));
   return bar;
 }
 
 // the file in a player kept across renders; From here / To here / Play clip
-// [OLD 2026-11-09 v0.16.0->v0.16.1] function clipPreview(ctx, r, a, c, edit) {
-function clipPreview(ctx, r, a, c, edit, o = clipOpts()) { // added 2026-11-09 v0.16.1: o = help keys and data-key prefix
+function clipPreview(ctx, r, a, c, edit, o = clipOpts()) {
   const url = viewURL(a.file, "input");
   const el = kept(ctx, "clip-" + r.id, url, () => {
     const m = h(a.kind === "video" ? "video" : "audio", { class: "rw-clip-media", src: url, controls: true, preload: "metadata", playsinline: true });
@@ -2129,26 +1591,6 @@ function clipPreview(ctx, r, a, c, edit, o = clipOpts()) { // added 2026-11-09 v
     return m;
   });
   const end = c.end;
-  /* [OLD 2026-11-09 v0.16.0->v0.16.1] fixed help keys and data-keys (scene references only)
-  return h("div", { class: "rw-clip-prev", help: "scene.refs.clipPreview" }, el,
-    h("div", { class: "rw-row wrap" },
-      button({ label: "From here", small: true, help: "scene.refs.clipHere", key: `clip-here-in-${r.id}`, onClick: () => {
-        const t = snapFrame(el.currentTime || 0);
-        edit(r.id, x => { x.in = t; if (x.out !== null && x.out !== undefined && x.out <= t) x.out = null; });
-      } }),
-      button({ label: "To here", small: true, help: "scene.refs.clipHere", key: `clip-here-out-${r.id}`, onClick: () => {
-        const t = snapFrame(el.currentTime || 0);
-        if (t <= (r.in || 0)) { ctx.actions.toast("To must be after From.", "warn"); return; }
-        edit(r.id, x => { x.out = t; });
-      } }),
-      button({ label: "Play clip", icon: "play", small: true, help: "scene.refs.clipPlay", key: `clip-play-${r.id}`, onClick: () => {
-        el.currentTime = c.start;
-        el.__rwStopAt = end ?? null;
-        el.play?.()?.catch?.(() => {});
-      } }),
-      h("span", { class: "rw-dim small mono" }, `${fmtTime(c.start)} – ${end !== null ? fmtTime(end) : "end"}`)));
-  [/OLD] */
-  // added 2026-11-09 v0.16.1: the help keys and data-keys of the editor it is in (a scene reference or a video anchor)
   return h("div", { class: "rw-clip-prev", help: o.hk("clipPreview") }, el,
     h("div", { class: "rw-row wrap" },
       button({ label: "From here", small: true, help: o.hk("clipHere"), key: `${o.kp}-here-in-${r.id}`, onClick: () => {
@@ -2165,15 +1607,13 @@ function clipPreview(ctx, r, a, c, edit, o = clipOpts()) { // added 2026-11-09 v
         el.__rwStopAt = end ?? null;
         el.play?.()?.catch?.(() => {});
       } }),
-      // added 2026-11-10 v0.18.0: the frame on screen becomes a picture (a video anchor: Cast tab)
       o.frame && a.kind === "video" && button({ label: "Use this frame as a picture", icon: "image", small: true, variant: "accent-ghost", help: o.hk("frame"), key: `${o.kp}-frame-${r.id}`,
         onClick: () => { el.pause?.(); o.frame(snapFrame(el.currentTime || 0)); } }),
       h("span", { class: "rw-dim small mono" }, `${fmtTime(c.start)} – ${end !== null ? fmtTime(end) : "end"}`)));
 }
 
-// added 2026-11-08 v0.12.0: pose references (role "pose"): a picture whose body pose one character of the scene takes,
-// in the shot at its time. The prompt cites it in that character's line and transfers only the pose (Sencer: "so the
-// real characters can use the same pose as from a given picture").
+// Pose references (role "pose"): a picture whose body pose one character of the scene takes,
+// in the shot at its time. The prompt cites it in that character's line and transfers only the pose.
 function sceneChars(p, s) {
   return scenePeople(p, s).people.map(x => x.c).filter(c => c.kind === "character");
 }
@@ -2203,66 +1643,37 @@ function castCard(ctx, s) {
     title: "Cast in this scene", help: "scene.cast",
     children: [
       s.cast.length === 0 && h("div", { class: "rw-empty sm", help: "scene.cast" }, "Nobody from the story bible yet."),
-      // [OLD 2026-11-09 v0.14.4->v0.15.0] s.cast.map(sc => {  (no reordering)
-      // added 2026-11-09 v0.15.0: drag a cast member's grip to put them elsewhere in the list (one undo step)
       sortable({ id: `cast-${s.id}`, onMove: (from, to) => ctx.actions.editScene(s.id, x => { moveItem(x.cast, from, to); }, { label: "Reorder cast" }), rows: s.cast.map(sc => {
         const c = findCast(p, sc.id);
         if (!c) return null;
         const anchor = findAsset(p, c.anchors[0]);
-        const first = findAsset(p, sceneAnchorIds(p, s, c)[0]) || null; // added 2026-11-10 v0.18.0: the first one used here
-        // added 2026-11-03 v0.4.1: when the anchors go as one sheet in this scene, the sheet is what is shown
+        const first = findAsset(p, sceneAnchorIds(p, s, c)[0]) || null;
         const packed = castPacks(p, s, c);
-        // [OLD 2026-11-10 v0.17.3->v0.18.0] return h("div", { class: "rw-list-row" },
-        // added 2026-11-10 v0.18.0: the row and, under it, the anchors used here (sceneAnchors, collapsed at first)
         const open = !!ctx.eph.castAnchorsOpen?.[`${s.id}:${c.id}`];
         return h("div", { class: "rw-cast-item" }, h("div", { class: "rw-list-row" },
-          dragGrip({ help: "scene.cast.order", key: `cast-grip-${c.id}` }), // added 2026-11-09 v0.15.0
-          // [OLD 2026-11-03 v0.4.0->v0.4.1] anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
-          // [OLD 2026-11-06 v0.9.0->v0.10.0] packed ? h("img", { class: "rw-avatar sheet", src: ctx.host.apiURL(sheetURL(p, c, 96)), alt: "", help: "scene.cast.sheet" })
-          // [OLD 2026-11-06 v0.9.0->v0.10.0]   : anchor ? h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" }) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
-          // added 2026-11-06 v0.10.0: the same <img> across renders; the sheet is made by the server (not cached), so a
-          // new <img> fetched and drew it again on every render and it blinked while a render ran
-          /* [OLD 2026-11-10 v0.17.3->v0.18.0] every anchor, ticked here or not
-          packed ? kept(ctx, "castsheet-" + c.id, sheetURL(p, c, 96), () => h("img", { class: "rw-avatar sheet", src: ctx.host.apiURL(sheetURL(p, c, 96)), alt: "", help: "scene.cast.sheet" }))
-            : anchor ? kept(ctx, "castav-" + c.id, viewURL(anchor.file, "input"), () => h("img", { class: "rw-avatar", src: viewURL(anchor.file, "input"), alt: "" })) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
-          [/OLD] */
-          // added 2026-11-10 v0.18.0: the sheet and the first picture of the anchors this scene uses
+          dragGrip({ help: "scene.cast.order", key: `cast-grip-${c.id}` }),
           packed ? kept(ctx, "castsheet-" + c.id, sheetURL(p, c, 96, s), () => h("img", { class: "rw-avatar sheet", src: ctx.host.apiURL(sheetURL(p, c, 96, s)), alt: "", help: "scene.cast.sheet" }))
             : first ? kept(ctx, "castav-" + c.id, viewURL(first.file, "input"), () => h("img", { class: "rw-avatar", src: viewURL(first.file, "input"), alt: "" })) : h("span", { class: "rw-avatar empty" }, icon("cast", 14)),
-          /* [OLD 2026-11-02 v0.1.0->v0.2.0] speaker IDs are assigned per clip now
-          h("div", { class: "grow" }, h("b", null, c.name), h("div", { class: "rw-dim small" }, `${c.kind}${c.speaker ? " · " + c.speaker : ""} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`)),
-          [/OLD] */
-          /* [OLD 2026-11-02 v0.3.3->v0.3.4] no description shown
-          h("div", { class: "grow" }, h("b", null, c.name), h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`)),
-          [/OLD] */
           (() => {
             const d = castDescription(p, c);
-            // added 2026-11-09 v0.16.0: how big each picture of its sheet reaches H3 here (0: no sheet)
             const tilePx = sceneTilePixels(p, s, c);
             const tileN = tilePx ? scenePeople(p, s).people.find(x => x.c.id === c.id)?.ids.length || 0 : 0;
-            // added 2026-11-08 v0.11.0: a part says whose; without its character in the scene it is left out
             const owner = findCast(p, partOwner(c, new Map(p.cast.map(x => [x.id, x]))));
             const ownerHere = owner && (inScene.has(owner.id) || s.dialogue.some(x => x.speaker === owner.id));
             return h("div", { class: "grow", style: { "min-width": "0" } }, h("b", null, c.name),
-              // [OLD 2026-11-08 v0.10.3->v0.11.0] h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`),
               owner ? h("div", { class: ["small", ownerHere ? "rw-dim" : "rw-c-warn"], help: "scene.cast.part" },
                 ownerHere ? `part of ${owner.name}: in ${owner.name}'s subject · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}` : `part of ${owner.name}, who is not in this scene: left out`)
-                // [OLD 2026-11-09 v0.15.1->v0.16.0] : h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${c.lora?.name ? " · LoRA" : ""}`),
-                : h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${(c.video_anchors || []).length ? ` · ${c.video_anchors.length} video anchor${c.video_anchors.length === 1 ? "" : "s"}` : ""}${c.lora?.name ? " · LoRA" : ""}`), // v0.16.0: video anchors
-              // [OLD 2026-11-09 v0.15.1->v0.16.0] h("div", { class: "rw-dim small rw-ellipsis", help: "scene.cast.description", title: d.text }, d.text ? (d.asset ? `from ${d.asset.code}: ${d.text}` : d.text) : "No description"));
+                : h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${(c.video_anchors || []).length ? ` · ${c.video_anchors.length} video anchor${c.video_anchors.length === 1 ? "" : "s"}` : ""}${c.lora?.name ? " · LoRA" : ""}`),
               h("div", { class: "rw-dim small rw-ellipsis", help: "scene.cast.description", title: d.text }, d.text ? (d.asset ? `from ${d.asset.code}: ${d.text}` : d.text) : "No description"),
-              // added 2026-11-09 v0.16.0: its sheet makes each picture too small for a reliable identity
               tilePx > 0 && tilePx < SMALL_TILE_PX && h("div", { class: "small rw-c-warn", help: "scene.cast.smallSheet" },
                 `${tileN} pictures in one sheet: about ${tilePx} px each in H3, too small for identity`),
-              sceneAnchorsToggle(ctx, s, c, sc, open)); // added 2026-11-10 v0.18.0
+              sceneAnchorsToggle(ctx, s, c, sc, open));
           })(),
-          // [OLD 2026-11-03 v0.5.1->v0.6.0] c.outfits.length > 0 && select({ options: c.outfits.map(o => ({ value: o.id, label: o.name })), value: sc.outfit || c.default_outfit, help: "scene.cast.outfit",
           c.outfits.length > 0 && select({ options: c.outfits.map(o => ({ value: o.id, label: o.name })), value: sc.outfit || c.default_outfit, help: "scene.cast.outfit", key: `cast-outfit-${c.id}`,
             onChange: v => ctx.actions.editScene(s.id, x => { x.cast.find(q => q.id === c.id).outfit = v; }) }),
           button({ icon: "close", small: true, variant: "ghost", help: "scene.cast.remove", onClick: () => ctx.actions.editScene(s.id, x => { x.cast = x.cast.filter(q => q.id !== c.id); }) })),
-          open && sceneAnchors(ctx, s, c, sc)); // added 2026-11-10 v0.18.0
-      // [OLD 2026-11-09 v0.14.4->v0.15.0] }),
-      }) }), // added 2026-11-09 v0.15.0: end of sortable
+          open && sceneAnchors(ctx, s, c, sc));
+      }) }),
       avail.length > 0 && select({ options: avail, value: "", placeholder: "+ Add from the story bible…", help: "scene.cast.add", onChange: v => {
         const c = findCast(p, v);
         if (c) ctx.actions.editScene(s.id, x => { x.cast.push({ id: c.id, outfit: c.default_outfit || "" }); });
@@ -2271,9 +1682,8 @@ function castCard(ctx, s) {
   });
 }
 
-// ---- added 2026-11-10 v0.18.0: the anchors a scene uses for a cast member (Sencer: "In scene tab, let me toggle select
-// which anchors to use for the cast character. default all are selected, but I should be able to deselect video, or
-// specific picture. make that setting collapsible, default collapsed."). scene.cast[].skip holds the unticked ones
+// ---- the anchors a scene uses for a cast member (all at first; the setting is folded by default) ----------------
+// scene.cast[].skip holds the unticked ones
 // (picture asset ids, video anchor ids), so an anchor added later is used everywhere until unticked.
 function anchorCounts(p, c, sc) {
   const skip = entrySkip(sc);
@@ -2354,29 +1764,19 @@ function lorasCard(ctx, s) {
           dot(ov !== undefined ? "override" : "global"),
           h("span", { class: "mono grow rw-ellipsis" }, gl.name.replace(/\.safetensors$/, "")),
           h("span", { class: "rw-dim small" }, ov !== undefined ? `Global ${gl.strength} →` : "Global"),
-          // [OLD 2026-11-03 v0.5.1->v0.6.0] number({ value: ov ?? gl.strength, min: -4, max: 4, step: 0.05, width: "74px", help: "scene.loras.strength", onChange: v => setL(l => {
           number({ value: ov ?? gl.strength, min: -4, max: 4, step: 0.05, width: "74px", help: "scene.loras.strength", key: `lora-g-${gl.id}`, onChange: v => setL(l => {
             l.strengths = l.strengths || {};
             if (v === null || v === gl.strength) delete l.strengths[gl.id]; else l.strengths[gl.id] = v;
           }) }),
           ov !== undefined ? button({ icon: "refresh", small: true, variant: "ghost", help: "common.reset", onClick: () => setL(l => { delete l.strengths[gl.id]; }) }) : h("span", { class: "rw-reset-ph" }));
       }),
-      // [OLD 2026-11-09 v0.14.4->v0.15.0] (o.items || []).map(it => h("div", { class: "rw-lora-row" },  (no reordering)
-      // added 2026-11-09 v0.15.0: drag a scene LoRA's grip to put it elsewhere among the scene's own LoRAs (one undo step;
-      // Global's LoRAs keep Global's order, set on the Global tab)
       sortable({ id: `loras-${s.id}`, onMove: (from, to) => ctx.actions.editScene(s.id, sc => { if (sc.overrides.loras) moveItem(sc.overrides.loras.items, from, to); }, { label: "Reorder scene LoRAs" }), rows: (o.items || []).map(it => h("div", { class: "rw-lora-row" },
-        dragGrip({ help: "scene.loras.order", key: `lora-grip-${it.id}` }), // added 2026-11-09 v0.15.0
+        dragGrip({ help: "scene.loras.order", key: `lora-grip-${it.id}` }),
         dot("override"),
-        /* [OLD 2026-11-03 v0.5.1->v0.6.0] no keys
-        select({ options: loraList, value: it.name, placeholder: "choose LoRA", mono: true, help: "scene.loras.name", onChange: v => setL(l => { l.items.find(x => x.id === it.id).name = v; }) }),
-        h("span", { class: "rw-dim small" }, "scene"),
-        number({ value: it.strength, min: -4, max: 4, step: 0.05, width: "74px", help: "scene.loras.strength", onChange: v => setL(l => { l.items.find(x => x.id === it.id).strength = v ?? 1; }) }),
-        [/OLD] */
         select({ options: loraList, value: it.name, placeholder: "choose LoRA", mono: true, help: "scene.loras.name", key: `lora-name-${it.id}`, onChange: v => setL(l => { l.items.find(x => x.id === it.id).name = v; }) }),
         h("span", { class: "rw-dim small" }, "scene"),
         number({ value: it.strength, min: -4, max: 4, step: 0.05, width: "74px", help: "scene.loras.strength", key: `lora-s-${it.id}`, onChange: v => setL(l => { l.items.find(x => x.id === it.id).strength = v ?? 1; }) }),
-        // [OLD 2026-11-09 v0.14.4->v0.15.0] button({ icon: "trash", small: true, variant: "ghost", help: "scene.loras.remove", onClick: () => setL(l => { l.items = l.items.filter(x => x.id !== it.id); }) }))),
-        button({ icon: "trash", small: true, variant: "ghost", help: "scene.loras.remove", onClick: () => setL(l => { l.items = l.items.filter(x => x.id !== it.id); }) }))) }), // added 2026-11-09 v0.15.0: end of sortable
+        button({ icon: "trash", small: true, variant: "ghost", help: "scene.loras.remove", onClick: () => setL(l => { l.items = l.items.filter(x => x.id !== it.id); }) }))) }),
       eff.filter(l => l.source === "cast").map(l => h("div", { class: "rw-lora-row" },
         dot("auto", "scene.loras.cast"), h("span", { class: "mono grow rw-ellipsis" }, l.name.replace(/\.safetensors$/, "")),
         h("span", { class: "rw-c-pic small" }, "auto · Cast: " + l.castName), h("span", { class: "mono" }, Number(l.strength).toFixed(2)))),
@@ -2397,7 +1797,7 @@ function notesCard(ctx, s) {
   });
 }
 
-// added 2026-11-05 v0.7.0: Render → Merge scenes' "Scene tab → In the cut" brings the card into view once
+// Render → Merge scenes' "Scene tab → In the cut" brings the card into view once
 export function afterRender(ctx) {
   if (!ctx.eph.scrollToCut) return;
   ctx.eph.scrollToCut = false;
@@ -2413,19 +1813,12 @@ export function afterRender(ctx) {
 export function render(ctx) {
   const s = ctx.scene;
   const issues = ctx.planFor(s.id)?.issues || [];
-  const wholeScene = promptTabOf(ctx, s) < 0; // added 2026-11-06 v0.9.0
+  const wholeScene = promptTabOf(ctx, s) < 0;
   return h("div", { class: "rw-scene-tab" },
     navigator(ctx),
     issues.length > 0 && h("div", { class: "rw-banner warn", help: "app.issues" }, icon("warn", 13), issues.map(i => i.message).join(" · ")),
     h("div", { class: "rw-cols", dataset: { scroll: "scene-cols" } },
-      // [OLD 2026-11-05 v0.6.1->v0.7.0] h("div", { class: "rw-col narrow" }, durationCard(ctx, s), startCard(ctx, s), overridesCard(ctx, s), notesCard(ctx, s)),
-      h("div", { class: "rw-col narrow" }, durationCard(ctx, s), startCard(ctx, s), cutCard(ctx, s), overridesCard(ctx, s), notesCard(ctx, s)), // added 2026-11-05 v0.7.0: In the cut
-      // [OLD 2026-11-06 v0.8.0->v0.9.0] h("div", { class: "rw-col wide" }, promptCard(ctx, s), shotsCard(ctx, s), dialogueCard(ctx, s), previewCard(ctx, s), rewriteCard(ctx, s)),
-      // added 2026-11-06 v0.9.0: on a pass tab the pass's own shots and dialogue are in the Prompt card, so the whole
-      // scene's cards are hidden
-      // [OLD 2026-11-06 v0.9.0->v0.10.0] h("div", { class: "rw-col wide" }, promptCard(ctx, s), wholeScene && shotsCard(ctx, s), wholeScene && dialogueCard(ctx, s), previewCard(ctx, s), rewriteCard(ctx, s)),
-      // added 2026-11-06 v0.10.0: the rewriter works on one pass: hidden on Whole scene of a scene with several passes
-      // (structured), shown on a pass tab (it rewrites that pass) and in single-pass or raw scenes
+      h("div", { class: "rw-col narrow" }, durationCard(ctx, s), startCard(ctx, s), cutCard(ctx, s), overridesCard(ctx, s), notesCard(ctx, s)),
       h("div", { class: "rw-col wide" }, promptCard(ctx, s), wholeScene && shotsCard(ctx, s), wholeScene && dialogueCard(ctx, s), previewCard(ctx, s),
         !(wholeScene && s.prompt.mode !== "raw" && passLayout(ctx.p, s).passes.length > 1) && rewriteCard(ctx, s)),
       h("div", { class: "rw-col mid" }, budgetCard(ctx, s), refsCard(ctx, s), castCard(ctx, s), lorasCard(ctx, s))));

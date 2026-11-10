@@ -8,7 +8,7 @@ guides, file writing, pass stitching, takes, caching and the merge.
 import importlib.util
 import json
 import os
-import re  # added 2026-11-02 v0.2.0
+import re
 import subprocess
 import sys
 import types
@@ -51,9 +51,7 @@ def stubs(comfy, monkeypatch):
         calls["encode"].append({"prompt": kw["prompt"], "length": kw["length"],
                                 "images": sorted(kw["ref_images"] or {}), "videos": sorted(kw["ref_videos"] or {}),
                                 "video_audios": sorted(kw["ref_video_audios"] or {}), "audios": sorted(kw["ref_audios"] or {}),
-                                # added 2026-11-03 v0.5.0: seconds of each reference audio
                                 "audio_secs": [round(a["waveform"].shape[-1] / a["sample_rate"], 3) for a in (kw["ref_audios"] or {}).values()],
-                                # added 2026-11-05 v0.7.0: what reaches the node, in the order it is presented
                                 "image_order": list(kw["ref_images"] or {}),
                                 "image_shapes": [tuple(v.shape) for v in (kw["ref_images"] or {}).values()],
                                 "image_means": [round(float(v.float().mean()), 3) for v in (kw["ref_images"] or {}).values()],
@@ -63,17 +61,15 @@ def stubs(comfy, monkeypatch):
                                                      for v in (kw["ref_videos"] or {}).values()],
                                 "video_audio_secs": {k: round(a["waveform"].shape[-1] / a["sample_rate"], 3)
                                                      for k, a in (kw["ref_video_audios"] or {}).items()},
-                                "vae": kw.get("vae")})  # added 2026-11-05 v0.8.0: which VAE encodes the references
+                                "vae": kw.get("vae")})
         return types.SimpleNamespace(result=([["cond", {}]], {"samples": torch.zeros(1), "frames": kw["length"],
                                                              "size": (kw["width"], kw["height"])}))
 
     def fake_guide(**kw):
-        # v0.8.0: a sound-only guide (latent hand-off) has no image: frames 0
         n = int(kw["image"].shape[0]) if kw.get("image") is not None else 0
         calls["guides"].append({"frame_idx": kw["frame_idx"], "frames": n, "audio": kw["audio"] is not None})
-        # added 2026-11-03 v0.6.0: the pass length, to check that every guide fits inside its pass
         calls.setdefault("guide_fit", []).append((kw["frame_idx"], n, kw["latent"]["frames"]))
-        calls.setdefault("guide_vaes", []).append(kw.get("vae"))  # added 2026-11-05 v0.8.0
+        calls.setdefault("guide_vaes", []).append(kw.get("vae"))
         return types.SimpleNamespace(result=(kw["positive"],))
 
     def fake_sample(model, positive, latent, seed, settings, on_step):
@@ -83,7 +79,7 @@ def stubs(comfy, monkeypatch):
 
     class FakeDecode:
         def decode(self, vae, samples):
-            calls.setdefault("decode_vaes", []).append(vae)  # added 2026-11-05 v0.8.0
+            calls.setdefault("decode_vaes", []).append(vae)
             w, h = samples["size"]
             n = samples["frames"]
             ramp = torch.linspace(0, 1, n).view(n, 1, 1, 1)
@@ -138,15 +134,13 @@ def test_render_pending_then_cache_then_partial(stubs, harbor, store, roots):
     assert done == ["s_one", "s_long", "s_short"]
 
     # encode-first: every pass was encoded before sampling began
-    # v0.7.0: except s_long's pass 1, which sends the tail clip of s_one (made in this run) as <Video 1>; it is
-    # encoded when it is rendered (tests/test_render_flow.py::test_continuation_reaches_the_node)
     long_passes = len(analyze(harbor, store)["scenes"]["s_long"]["plan"]["passes"])
     assert len(calls["encode"]) == 1 + long_passes + 1
-    long_enc = calls["encode"][1]  # v0.7.0: s_long pass 2 (after a cut: no continuation)
-    # Mara's sheet (v0.6.0: the keyframe picture named in the prompt goes only with the pass that holds the keyframe)
+    long_enc = calls["encode"][1]
+    # Mara's sheet (the keyframe picture named in the prompt goes only with the pass that holds the keyframe)
     assert long_enc["images"][0] == "ref_image_0"
     assert long_enc["videos"] == ["ref_video_0"] and long_enc["video_audios"] == ["ref_video_audio_0"]
-    # Mara's voice (v0.6.0: sent with the passes where she speaks)
+    # Mara's voice (sent with the passes where she speaks)
     assert any(e["audios"] == ["ref_audio_0"] for e in calls["encode"][1:1 + long_passes])
 
     # pass 1 continues the previous scene's 39-frame tail with audio; later passes get overlap or keyframe guides
@@ -157,7 +151,6 @@ def test_render_pending_then_cache_then_partial(stubs, harbor, store, roots):
         take = store.starred_take(sid)
         video = store.output_path(take["files"]["video"])
         assert merge.probe(video)["duration"] == pytest.approx(secs, abs=0.1), sid
-        # added 2026-11-02 v0.2.0: takes are named <slug>_<NN>_<title>_<take>.mp4
         assert re.fullmatch(r"harbor_lights_\d\d_[a-z0-9_]+_" + re.escape(take["id"]) + r"\.mp4", os.path.basename(video)), video
         for k in ("first", "last", "tail"):
             assert os.path.isfile(store.output_path(take["files"][k]))
@@ -200,10 +193,11 @@ def test_node_execute_returns_outputs(stubs, harbor, roots):
     assert Reelwright.fingerprint_inputs("a", "b") != Reelwright.fingerprint_inputs("a", "c")
 
 
-# added 2026-11-02 v0.2.1: a failed auto-merge must not break the node (it used to probe its own broken cut)
+# A failed auto-merge must not break the node (it used to probe its own broken cut)
 def test_node_survives_a_failed_merge(stubs, harbor, roots, monkeypatch):
     render, calls, events = stubs
-    from reelwright import assemble as asm, merge
+    from reelwright import assemble as asm
+    from reelwright import merge
     from reelwright.node import Reelwright
     from reelwright.storage import ProjectStore
     harbor["global"]["output"].update(width=64, height=32)
@@ -222,7 +216,7 @@ def test_node_survives_a_failed_merge(stubs, harbor, roots, monkeypatch):
     assert audio["waveform"].shape[1] == 2
 
 
-# added 2026-11-02 v0.3.5: latent previews go to the Render tab as reelwright.preview events, not onto the node
+# Latent previews go to the Render tab as reelwright.preview events, not onto the node
 def test_latent_preview_events(stubs, harbor, store, roots, monkeypatch):
     render, calls, events = stubs
     harbor["global"]["output"].update(width=64, height=32)
@@ -239,11 +233,10 @@ def test_latent_preview_events(stubs, harbor, store, roots, monkeypatch):
     previews = [d for e, d in events if e == "reelwright.preview"]
     assert previews and all(d["scene_id"] == "s_one" and d["image"].startswith("data:image/jpeg") for d in previews)
     assert previews[-1]["step"] == previews[-1]["steps"]          # the last step is always shown
-    # [OLD 2026-11-02 v0.3.7->v0.3.8] assert len(asked) < 5                                          # decoded only when sent (about once a second)
     assert len(asked) < 5                                          # decoded only when sent (at most every 0.25 s)
 
 
-# added 2026-11-02 v0.3.8: previews follow the sampler (it used to be at most one a second)
+# Previews follow the sampler (it used to be at most one a second)
 def test_latent_preview_every_step_when_steps_are_slow(stubs, harbor, store, roots, monkeypatch):
     render, calls, events = stubs
     harbor["global"]["output"].update(width=64, height=32)
@@ -297,12 +290,13 @@ def test_preview_jpeg_handles_nested_latents(comfy):
     nested = types.SimpleNamespace(is_nested=True, tensors=[torch.zeros(1, 4, 3, 8, 8), torch.zeros(1, 2, 5)])
     url = render.preview_jpeg(Previewer(), nested)
     assert seen == [(1, 4, 3, 8, 8)] and url.startswith("data:image/jpeg;base64,")
-    import base64, io
+    import base64
+    import io
     img = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
     assert max(img.size) == render.PREVIEW_MAX_SIDE
 
 
-# added 2026-11-09 v0.15.0 (Sencer: "Latent preview should update properly, it updates only once or twice"): the
+# the
 # preview shows the middle of what a pass makes new, not the first frame a continuation or guide fixes
 def test_preview_shows_the_middle_of_the_new_part(comfy):
     render, _ = comfy
@@ -325,10 +319,11 @@ def test_preview_shows_the_middle_of_the_new_part(comfy):
     assert render.preview_frame({}) is None
 
 
-# added 2026-11-02 v0.3.9: VideoHelperSuite's animated previews wrap latent_preview.get_previewer; Reelwright uses the
+# VideoHelperSuite's animated previews wrap latent_preview.get_previewer; Reelwright uses the
 # original underneath (VHS's previewer sends its own frames under the node and returns no image)
 def test_stock_previewer_skips_wrappers(comfy, monkeypatch):
     import functools
+
     import latent_preview
     render, _ = comfy
     seen = []
@@ -361,9 +356,10 @@ def test_preview_jpeg_explains_a_previewer_without_image(comfy):
         render.preview_jpeg(WrappedPreviewer(), torch.zeros(1, 4, 2, 8, 8))
 
 
-# added 2026-11-03 v0.4.1: the anchor sheet keeps every anchor (no 3×3 cap) and shapes cells like the pictures
+# The anchor sheet keeps every anchor (no 3×3 cap) and shapes cells like the pictures
 def test_sheet_image_grid(comfy, tmp_path):
     from PIL import Image
+
     from reelwright import media
     paths = []
     for i in range(10):
@@ -380,7 +376,7 @@ def test_sheet_image_grid(comfy, tmp_path):
     assert tuple(t.shape)[0] == 1 and t.shape[-1] == 3
 
 
-# added 2026-11-03 v0.4.1: a failing face check no longer loses the finished take
+# A failing face check no longer loses the finished take
 def test_face_check_failure_keeps_the_take(stubs, harbor, store, roots, monkeypatch, caplog):
     render, calls, events = stubs
     harbor["global"]["output"].update(width=64, height=32)
@@ -399,7 +395,7 @@ def test_face_check_failure_keeps_the_take(stubs, harbor, store, roots, monkeypa
     assert any(d.get("message", "").startswith("face check skipped") for e, d in events if e == "reelwright.progress")
 
 
-# added 2026-11-03 v0.5.0: a song on the soundtrack is cut per pass, sent as the pass's audio reference, mixed in the cut
+# A song on the soundtrack is cut per pass, sent as the pass's audio reference, mixed in the cut
 def test_render_with_a_soundtrack(stubs, harbor, store, roots):
     render, calls, events = stubs
     from reelwright import assemble, merge, spec
@@ -418,14 +414,6 @@ def test_render_with_a_soundtrack(stubs, harbor, store, roots):
     plans = analyze(p, store)["scenes"]
     lengths = [min(spec.REF_MEDIA_MAX_SECONDS, x["gen_frames"] / spec.FPS) for sid in done for x in plans[sid]["plan"]["passes"]]
     assert len(calls["encode"]) == len(lengths)
-    # [OLD v0.6.1] the encodes came in pass order
-    # for enc, want in zip(calls["encode"], lengths):
-    #     assert "Audio" in enc["prompt"] and "is the song this part of the film is cut to" in enc["prompt"]
-    #     assert want in [pytest.approx(x, abs=0.01) for x in enc["audio_secs"]]
-    # assert len(calls["encode"][1]["audios"]) == 1  # the long scene sends the song, not Mara's voice
-    # [/OLD]
-    # v0.7.0: the long scene's pass 1 sends the tail of the scene before as <Video 1>, so it is encoded when it is
-    # rendered (after the scene before), not with the others
     for enc in calls["encode"]:
         assert "Audio" in enc["prompt"] and "is the song this part of the film is cut to" in enc["prompt"]
         assert len(enc["audios"]) == 1  # the song, not Mara's voice
@@ -443,8 +431,6 @@ def test_render_with_a_soundtrack(stubs, harbor, store, roots):
     from reelwright.model import scene_starts
     assert out["duration"] == pytest.approx(scene_starts(p)[1], abs=0.05)
 
-
-# ---- v0.6.0 (added 2026-11-03) ------------------------------------------------------------------------------------
 
 def _run_events(events, phase=None):
     return [d for e, d in events if e == "reelwright.run" and (phase is None or d.get("phase") == phase)]
@@ -759,7 +745,7 @@ def test_reference_media_are_cut_before_decoding(comfy, tmp_path):
 
 
 def test_reference_clips_start_at_their_from(comfy, tmp_path):
-    """added 2026-11-08 v0.14.0: media.load_video / load_audio read a reference's clip from its From."""
+    """media.load_video / load_audio read a reference's clip from its From."""
     from reelwright import media, merge
     ff = merge.ffmpeg_bin()
     path = str(tmp_path / "ramp.mp4")
@@ -780,9 +766,8 @@ def test_reference_clips_start_at_their_from(comfy, tmp_path):
 
 
 def test_reference_clips_reach_the_encoder(stubs, harbor, store, roots):
-    """added 2026-11-08 v0.14.0: the same video twice, as two clips (one with its sound), and an audio clip."""
+    """The same video twice, as two clips (one with its sound), and an audio clip."""
     render, calls, events = stubs
-    from reelwright import merge
     harbor["global"]["output"].update(width=64, height=32)
     s = harbor["scenes"][1]
     s["refs"][1].update({"in": 0.5, "out": None})
@@ -850,6 +835,7 @@ def test_take_meta_records_upstream_prompts_and_keys(stubs, harbor, store, roots
 def test_node_output_is_a_full_cut_never_a_draft(stubs, harbor, roots, monkeypatch):
     render, calls, events = stubs
     import shutil
+
     from reelwright import assemble as asm
     from reelwright.node import Reelwright, full_cuts
     from reelwright.storage import ProjectStore
@@ -961,8 +947,6 @@ def test_auto_merge_events_carry_a_job(stubs, harbor, roots):
     assert merges[0]["phase"] == "start" and merges[-1]["phase"] == "end" and merges[-1]["files"]["video"]
     assert len({d["job"] for d in merges}) == 1 and merges[0]["job"].startswith("merge-")
 
-
-# ---- v0.6.0 review (added 2026-11-03) -----------------------------------------------------------------------------
 
 def test_error_upstream_does_not_keep_the_next_scene_stale(stubs, harbor, store, roots):
     """An upstream scene with a lint error and an undone edit (an older take matches, a newer one is starred): the
@@ -1159,13 +1143,12 @@ def test_stop_during_a_drift_retake_still_stops_the_run(stubs, harbor, store, ro
     assert len(calls["sample"]) == 1
 
 
-# ---- added 2026-11-04 v0.6.1 (review of v0.6.0) --------------------------------------------------------------------
-
 def test_node_output_survives_a_missing_last_frame(stubs, harbor, roots):
     """Review 2: a missing or unreadable last.png (or a take entry without files.last, as one rebuilt from meta.json
     may be) failed the node after the scenes were rendered."""
     render, calls, events = stubs
     import torch
+
     from reelwright.node import Reelwright
     from reelwright.storage import ProjectStore
     harbor["global"]["output"].update(width=64, height=32)
@@ -1250,7 +1233,7 @@ def test_a_video_without_decodable_frames_says_so(comfy, tmp_path):
         media.load_video(broken, max_seconds=15)
 
 
-# ---- the continuation as a named reference (added 2026-11-05 v0.7.0) ----------------------------------------------
+# ---- the continuation as a named reference ------------------------------------------------------------------------
 
 def _continuing_harbor(harbor, roots, on=True):
     """s_one (fresh) -> s_lf (last-frame start, Mara's sheet) -> s_long (tail start, dolly video with its sound,
@@ -1345,7 +1328,7 @@ def test_continuation_switched_off_sends_what_v061_sent(stubs, harbor, store, ro
                    for e in calls["encode"])
 
 
-# ---- long-scene continuity (added 2026-11-05 v0.8.0, Agent V) ------------------------------------------------------
+# ---- long-scene continuity -----------------------------------------------------------------------------------------
 # Global -> Long scenes: guide_vae, carry_audio, seam_video_ref, handoff, pass_cache, and the drift meter. Each test
 # checks what reaches MiniMaxH3AddGuide and MiniMaxH3ReferenceToVideo for one setting. _continuing_harbor: s_one
 # (fresh) -> s_lf (last-frame start) -> s_long (tail start, three passes joined by 39-frame overlap seams).
@@ -1477,7 +1460,7 @@ def _expected_slice(seed, t_prev, need=12):
 
 def test_latent_handoff_guides_with_the_sampled_latents(stubs, harbor, store, roots, monkeypatch):
     """With handoff "latent", the guide after an overlap seam is the pass before's last 12 sampled latents (39 frames),
-    added to minimax_keyframes as MiniMaxH3AddGuide would add an encoded clip; MiniMaxH3AddGuide gets only the sound
+    To minimax_keyframes as MiniMaxH3AddGuide would add an encoded clip; MiniMaxH3AddGuide gets only the sound
     (no picture, so no VAE encode for that guide). A pass read back from the pass cache hands off the latents kept
     next to it; without them it falls back to the decoded frames."""
     render, calls, events = stubs
@@ -1549,8 +1532,8 @@ def test_h3_vae_latents_of_an_aligned_overlap_are_a_slice(comfy):
     """Why the latent hand-off is valid: the H3 video VAE encodes each 17-frame chunk on its own, so encoding the last
     17j+5 frames of a 17m+5-frame clip gives exactly its last 5j+2 latents (here with a small randomly initialised
     encoder). A tail that does not start on a chunk boundary gives other latents."""
-    import torch
     import comfy.ldm.minimax.vae as h3vae
+    import torch
     torch.manual_seed(0)
     vae = h3vae.MiniMaxH3VideoVAE(ch=32, decoder=False, tiling=False)
     for prm in vae.parameters():
@@ -1569,6 +1552,7 @@ def test_h3_vae_latents_of_an_aligned_overlap_are_a_slice(comfy):
 def test_lossless_pass_cache_reads_back_identical_frames(stubs, harbor, store, roots):
     render, calls, events = stubs
     import torch
+
     from reelwright import media
     p = _continuing_harbor(harbor, roots)
     p["global"]["long"]["pass_cache"] = "lossless"
@@ -1601,6 +1585,7 @@ def test_lossless_pass_cache_reads_back_identical_frames(stubs, harbor, store, r
 
 def test_lossless_writer_round_trip(comfy, tmp_path):
     import torch
+
     from reelwright import media
     torch.manual_seed(5)
     frames = torch.rand(29, 48, 80, 3)
@@ -1649,7 +1634,7 @@ def test_drift_is_recorded_per_continuing_pass(stubs, harbor, store, roots):
     assert {k: v for k, v in again[1].items() if k != "pass_cache"} == long_[1]
 
 
-# ---- added 2026-11-10 v0.19.0: Global -> Hires (the latent upscaler, an optional refine) ---------------------------
+# ---- Global -> Hires (the latent upscaler, an optional refine) -----------------------------------------------------
 
 def test_hires_enlarges_every_pass_to_the_project_size(stubs, harbor, store, roots, monkeypatch):
     render, calls, events = stubs
@@ -1738,10 +1723,10 @@ def test_hires_with_the_real_upscale_node(comfy, roots):
     render, _ = comfy
     if render.MiniMaxH3LatentUpscaleWithModel is None:
         pytest.skip("this ComfyUI has no H3 latent upscale node")
-    import torch
     import comfy.nested_tensor
     import comfy.ops
     import folder_paths
+    import torch
     from comfy.ldm.minimax.latent_upscaler import MiniMaxH3LatentUpscaler
     from safetensors.torch import save_file
     d = os.path.join(roots.output, "ups")

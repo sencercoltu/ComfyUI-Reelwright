@@ -17,18 +17,11 @@ export function h(tag, props, ...children) {
         if (typeof v === "string") el.setAttribute("style", v);
         else for (const [sk, sv] of Object.entries(v)) if (sv !== undefined && sv !== null) el.style.setProperty(sk, String(sv));
       } else if (k === "help") el.dataset.help = v;
-      // added 2026-11-02 v0.2.2: right-click menu and wheel handlers are routed by editor.js (see installEventGuards)
       else if (k === "menu") el.__rwMenu = v;
       else if (k === "wheel") el.__rwWheel = v;
       else if (k === "key") el.dataset.key = v;
-      // added 2026-11-06 v0.10.0: text the tooltip shows above the help text (a spoken line in full, why a button is off)
       else if (k === "detail") el.dataset.detail = v;
       else if (k === "dataset") Object.assign(el.dataset, v);
-      // [OLD 2026-11-03 v0.6.0 review] else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
-      // added 2026-11-03 v0.6.0 review: a field with an onInput handler stores (or shows) what is typed as it is typed;
-      // editor.js render() treats only the other text fields as holding unsaved typing (__rwLive marks the live ones)
-      // [OLD 2026-11-09 v0.17.2->v0.17.3] else if (k.startsWith("on") && typeof v === "function") { el.addEventListener(k.slice(2).toLowerCase(), v); if (k === "onInput") el.__rwLive = true; }
-      // added 2026-11-09 v0.17.3: __rwOn marks an element with handlers (editor.js adoptMedia never swaps it for an old copy)
       else if (k.startsWith("on") && typeof v === "function") { el.addEventListener(k.slice(2).toLowerCase(), v); el.__rwOn = true; if (k === "onInput") el.__rwLive = true; }
       else if (k === "html") el.innerHTML = v;
       else if (!svg && k in el && typeof v !== "string") el[k] = v;
@@ -59,7 +52,6 @@ const ICONS = {
   image: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.2"/><path d="m2.5 12 3.5-3.5 2.5 2.5 2-2 3 3"/>',
   video: '<rect x="1.5" y="4" width="9" height="8" rx="1.5"/><path d="m10.5 7 4-2v6l-4-2"/>',
   audio: '<path d="M2 8h1.5M5 5v6M8 3v10M11 5.5v5M14 8h-1"/>',
-  // added 2026-11-03 v0.5.0: soundtrack lanes
   music: '<path d="M6 12V3.5l7-1.5v8.5"/><circle cx="4.3" cy="12" r="1.8"/><circle cx="11.3" cy="10.5" r="1.8"/>',
   speaker: '<path d="M2.5 6h2.5l3.5-3v10L5 10H2.5z"/><path d="M11 5.5a3.5 3.5 0 0 1 0 5M12.8 3.8a6 6 0 0 1 0 8.4"/>',
   mute: '<path d="M2.5 6h2.5l3.5-3v10L5 10H2.5z"/><path d="m11 6 3.5 4M14.5 6 11 10"/>',
@@ -110,13 +102,12 @@ const ICONS = {
   grip: '<circle cx="6" cy="4" r=".9"/><circle cx="10" cy="4" r=".9"/><circle cx="6" cy="8" r=".9"/><circle cx="10" cy="8" r=".9"/><circle cx="6" cy="12" r=".9"/><circle cx="10" cy="12" r=".9"/>',
   clapper: '<rect x="2" y="6" width="12" height="8" rx="1.5"/><path d="M2 6 3.5 2.5h9L14 6M6.5 2.5 5.3 6M10.5 2.5 9.3 6"/>',
   sheet: '<rect x="2" y="2" width="5.5" height="5.5" rx="1"/><rect x="8.5" y="2" width="5.5" height="5.5" rx="1"/><rect x="2" y="8.5" width="5.5" height="5.5" rx="1"/><rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1"/>',
-  // added 2026-11-03 v0.4.0: Files tab
   disk: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 9.5h12"/><path d="M11 11.3h.8"/>',
   folder: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/>',
-  tag: '<path d="M2.5 3.5v4l6 6 5-5-6-6h-4a1 1 0 0 0-1 1z"/><circle cx="5.5" cy="5.5" r="1"/>', // added 2026-11-06 v0.9.0: asset tags
+  tag: '<path d="M2.5 3.5v4l6 6 5-5-6-6h-4a1 1 0 0 0-1 1z"/><circle cx="5.5" cy="5.5" r="1"/>',
   file: '<path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/>',
-  history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.3 2.6v2.6h2.6M8 5v3.2l2.2 1.4"/>', // added 2026-11-03 v0.6.0
-  expand: '<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>', // added 2026-11-08 v0.13.0: full screen
+  history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.3 2.6v2.6h2.6M8 5v3.2l2.2 1.4"/>',
+  expand: '<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>',
 };
 
 export function icon(name, size = 14) {
@@ -134,7 +125,7 @@ export function icon(name, size = 14) {
   return el;
 }
 
-// added 2026-11-03 v0.6.0: the one focus helper. ComfyUI runs its workflow undo (a graph reload) on Ctrl+Z unless
+// The one focus helper. ComfyUI runs its workflow undo (a graph reload) on Ctrl+Z unless
 // the focused element is an INPUT, TEXTAREA or contenteditable, so keyboard focus must never rest on the page body,
 // a button pressed with the mouse, a <video controls> or a dialog button while the editor is in use.
 // - isTextField(el): fields where Ctrl+Z belongs to the browser (text, number, textarea, contenteditable).
@@ -189,13 +180,7 @@ export function focusGuard(root, keys) {
   };
 }
 
-/* [OLD 2026-11-06 v0.9.0->v0.10.0] no detail: buttons now take one (why a quick fix is disabled, where it moves a line)
-export function button({ label, icon: ic, help, onClick, variant = "default", small = false, disabled = false, ariaLabel, key, extra }) {
-  return h("button", {
-    type: "button", class: ["rw-btn", "rw-btn-" + variant, small && "rw-btn-sm", !label && "rw-btn-icon"],
-    help, key, disabled, "aria-label": ariaLabel || (!label ? help : undefined),
-[/OLD] */
-export function button({ label, icon: ic, help, onClick, variant = "default", small = false, disabled = false, ariaLabel, key, extra, detail }) { // added 2026-11-06 v0.10.0: detail
+export function button({ label, icon: ic, help, onClick, variant = "default", small = false, disabled = false, ariaLabel, key, extra, detail }) {
   return h("button", {
     type: "button", class: ["rw-btn", "rw-btn-" + variant, small && "rw-btn-sm", !label && "rw-btn-icon"],
     help, key, disabled, "aria-label": ariaLabel || (!label ? help : undefined), detail,
@@ -224,23 +209,7 @@ export function segmented({ options, value, onChange, help, key, small }) {
     }));
 }
 
-/* [OLD 2026-11-02 v0.1.0->v0.2.0] native <select> could not be searched; replaced by the combobox below
-export function select({ options, value, onChange, help, key, placeholder, mono, width }) {
-  const opts = options.map(o => (typeof o === "string" ? { value: o, label: o } : o));
-  const known = opts.some(o => o.value === value);
-  const sel = h("select", {
-    class: ["rw-select", mono && "mono"], help, key, style: width ? { width } : null,
-    onChange: e => onChange(e.target.value),
-  },
-  placeholder !== undefined && h("option", { value: "" }, placeholder),
-  !known && value && h("option", { value }, value + " (missing)"),
-  opts.map(o => h("option", { value: o.value }, o.label)));
-  sel.value = value ?? "";
-  return sel;
-}
-[/OLD] */
-
-// added 2026-11-02 v0.2.0: type-to-filter combobox with the same API as the old select().
+// type-to-filter combobox with the same API as the old select().
 // Typing narrows the list (every word must match, e.g. "minimax int8"); arrows + Enter pick.
 // `free: true` also accepts a typed value that is not in the list (languages, LLM model ids).
 // The list lives in the editor root so cards with overflow cannot clip it.
@@ -254,9 +223,6 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
   const opts = noneOpt ? [{ value: "", label: placeholder }, ...given] : given;
   const cur = opts.find(o => o.value === value);
   const missing = !cur && !!value && !free;
-  // [OLD 2026-11-06 v0.8.0->v0.9.0] const shown = cur ? (cur.value === "" ? "" : cur.label) : (value || "");
-  // added 2026-11-06 v0.9.0: an option's `pre` (an asset's group) is shown before its label and found by the filter;
-  // it is only shown, never part of the value
   const full = o => (o.pre ? o.pre + " · " + o.label : o.label);
   const shown = cur ? (cur.value === "" ? "" : full(cur)) : (value || "");
   const input = h("input", {
@@ -267,12 +233,11 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
   input.value = missing ? value + " (missing)" : shown;
   const wrap = h("span", { class: ["rw-select", "rw-combo", mono && "mono"], style: width ? { width } : null });
   let list = null, items = [], active = -1, done = false;
-  let listRoot = null; // added 2026-11-03 v0.6.0
+  let listRoot = null;
 
   const matches = q => {
     const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
-    // [OLD 2026-11-06 v0.8.0->v0.9.0] return opts.filter(o => { const s = (o.label + " " + o.value).toLowerCase(); return terms.every(t => s.includes(t)); });
-    return opts.filter(o => { const s = (o.label + " " + o.value + " " + (o.pre || "")).toLowerCase(); return terms.every(t => s.includes(t)); }); // added 2026-11-06 v0.9.0: pre
+    return opts.filter(o => { const s = (o.label + " " + o.value + " " + (o.pre || "")).toLowerCase(); return terms.every(t => s.includes(t)); });
   };
   const mark = (label, q) => {
     const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -307,8 +272,7 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
       ...items.map((o, i) => h("button", {
         type: "button", class: ["rw-combo-opt", i === active && "active", o.value === value && "cur", o.value === "" && "none"], role: "option",
         onPointerdown: e => { e.preventDefault(); choose(o); },
-      // [OLD 2026-11-06 v0.8.0->v0.9.0] }, mark(o.label, q))),
-      }, o.pre ? h("span", { class: "rw-combo-pre" }, mark(o.pre, q), " · ") : null, mark(o.label, q))), // added 2026-11-06 v0.9.0: pre
+      }, o.pre ? h("span", { class: "rw-combo-pre" }, mark(o.pre, q), " · ") : null, mark(o.label, q))),
       freeItem ? h("button", { type: "button", class: ["rw-combo-opt free", active === items.length && "active"],
         onPointerdown: e => { e.preventDefault(); choose({ value: typed, label: typed }); } }, "Use “" + typed + "”") : null,
       !items.length && !freeItem ? h("div", { class: "rw-combo-empty" }, opts.length ? "No match" : "Nothing to pick yet") : null].filter(Boolean));
@@ -318,16 +282,13 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
     const root = wrap.closest(".rw-root");
     if (!root) return;
     if (!list) {
-      /* [OLD 2026-11-02 v0.2.1->v0.2.2] pressing the list's scrollbar moved focus out of the input, which closed the list
-      list = h("div", { class: ["rw-combo-list", mono && "mono"], role: "listbox" });
-      [/OLD] */
       // keep focus in the input while the list is pressed; the scrollbar gutter is left alone so dragging works
       list = h("div", { class: ["rw-combo-list", mono && "mono"], role: "listbox",
         onPointerdown: () => { pressed = true; document.addEventListener("pointerup", () => { pressed = false; }, { capture: true, once: true }); },
         onMousedown: e => { if (e.target !== e.currentTarget || e.offsetX < e.currentTarget.clientWidth) e.preventDefault(); } });
       root.appendChild(list);
       comboState.open++;
-      listRoot = root; // added 2026-11-03 v0.6.0: open lists are counted per editor (root.__rwCombo)
+      listRoot = root;
       root.__rwCombo = (root.__rwCombo || 0) + 1;
       input.setAttribute("aria-expanded", "true");
     }
@@ -343,7 +304,6 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
     input.setAttribute("aria-expanded", "false");
     comboState.open = Math.max(0, comboState.open - 1);
     if (!comboState.open && comboState.onClose) { const f = comboState.onClose; comboState.onClose = null; f(); }
-    // added 2026-11-03 v0.6.0: the editor that owns the list re-renders once its last list closes
     if (listRoot) {
       const r = listRoot;
       listRoot = null;
@@ -353,8 +313,7 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
   }
   function choose(o) {
     done = true;
-    // [OLD 2026-11-06 v0.8.0->v0.9.0] input.value = o.value === "" ? "" : o.label;
-    input.value = o.value === "" ? "" : full(o); // added 2026-11-06 v0.9.0: pre
+    input.value = o.value === "" ? "" : full(o);
     close();
     if (o.value !== value) onChange(o.value);
   }
@@ -369,18 +328,15 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
     if (e.key === "ArrowDown") { e.preventDefault(); if (!list) open(""); else { active = Math.min(n - 1, active + 1); paint(input.value === shown ? "" : input.value); } }
     else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(0, active - 1); if (list) paint(input.value === shown ? "" : input.value); }
     else if (e.key === "Enter") {
-      if (e.isComposing) return; // added 2026-11-03 v0.6.0: Enter that confirms an IME candidate
+      if (e.isComposing) return;
       e.preventDefault();
       const q = input.value === shown ? "" : input.value;
       if (active >= 0 && active < items.length) choose(items[active]);
       else if (free && q.trim()) choose({ value: q.trim(), label: q.trim() });
-      // [OLD 2026-11-03 v0.5.1->v0.6.0] input.blur();  (focus fell to the page, so the next Ctrl+Z undid the workflow)
       done = true;
       if (!keepFocus(input)) input.blur();
-    // [OLD 2026-11-03 v0.5.1->v0.6.0] } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); revert(); close(); input.blur(); }
     } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done = true; revert(); close(); if (!keepFocus(input)) input.blur(); }
   });
-  // added 2026-11-02 v0.2.2: a press inside the list (scrollbar included) never closes it
   let pressed = false;
   input.addEventListener("blur", () => {
     const inList = pressed; // read now: the button may be released before the timeout runs
@@ -404,26 +360,11 @@ export function select({ options, value, onChange, help, key, placeholder, mono,
   return wrap;
 }
 
-// [OLD 2026-11-05 v0.7.0->v0.8.0] export function number({ value, onChange, help, key, min, max, step = 1, width = "84px", unit, mono = true }) {
-// [OLD 2026-11-05 v0.7.0->v0.8.0]   const input = h("input", {
-// [OLD 2026-11-05 v0.7.0->v0.8.0]     type: "number", class: ["rw-input", mono && "mono"], help, key, value: value ?? "", min, max, step,
-// added 2026-11-05 v0.8.0: placeholder (an empty field shows it, e.g. a dialogue line's estimated length)
+// placeholder (an empty field shows it, e.g. a dialogue line's estimated length)
 export function number({ value, onChange, help, key, min, max, step = 1, width = "84px", unit, mono = true, placeholder }) {
   const input = h("input", {
     type: "number", class: ["rw-input", mono && "mono"], help, key, value: value ?? "", min, max, step, placeholder,
     style: { width },
-    /* [OLD 2026-11-03 v0.5.1->v0.6.0] a typo ("1e", "-", ".") reads as "" in a number field and was stored as null (the default; a seed became 0)
-    onChange: e => {
-      if (e.target.value === "") { onChange(null); return; }
-      let v = Number(e.target.value);
-      if (Number.isNaN(v)) return;
-      if (min !== undefined) v = Math.max(min, v);
-      if (max !== undefined) v = Math.min(max, v);
-      onChange(v);
-    },
-    [/OLD] */
-    // added 2026-11-03 v0.6.0: only an emptied field means "no value"; text the browser cannot read as a number puts
-    // the stored value back
     onChange: e => {
       const el = e.target;
       const back = () => { el.value = value ?? ""; };
@@ -484,45 +425,7 @@ export function helpButton(id) {
   return h("button", { type: "button", class: "rw-q", "aria-label": "Help", dataset: { more: id }, help: id }, "?");
 }
 
-/* [OLD 2026-11-06 v0.9.0->v0.10.0] cards could not be collapsed
-export function section({ title, help, actions, children, cls, tint }) {
-  return h("section", { class: ["rw-card", cls, tint && "rw-card-" + tint] },
-    h("div", { class: "rw-card-head" },
-      h("span", { class: "rw-card-title" }, title),
-      help && helpButton(help),
-      h("span", { class: "rw-flex" }),
-      actions),
-    children);
-}
-[/OLD] */
-/* [OLD 2026-11-09 v0.14.0->v0.14.1] only cards given `collapse` could fold; no menu, no fold-all
-// added 2026-11-06 v0.10.0: collapse: {ctx, id, summary?} makes the card collapsible: a chevron before the title (and
-// a click on the title) folds it to its head, which then shows `summary` instead of the actions. The state is kept
-// per card id in project.ui.collapsed (no undo step), so a folded card stays folded in every scene.
-export function section({ title, help, actions, children, cls, tint, collapse }) {
-  const folded = !!(collapse && collapse.ctx.p.ui?.collapsed?.[collapse.id]);
-  const flip = collapse && (e => {
-    e?.stopPropagation?.();
-    collapse.ctx.store.update(q => {
-      const c = q.ui.collapsed && typeof q.ui.collapsed === "object" ? q.ui.collapsed : (q.ui.collapsed = {});
-      if (c[collapse.id]) delete c[collapse.id]; else c[collapse.id] = true;
-    }, { history: false, plan: false, autosave: false });
-  });
-  return h("section", { class: ["rw-card", cls, tint && "rw-card-" + tint, collapse && "foldable", folded && "folded"] },
-    h("div", { class: "rw-card-head" },
-      // [OLD 2026-11-06 v0.10.0->v0.10.1] class "rw-fold" was already the Global tab's fold rows (layout clash)
-      // collapse && h("button", { type: "button", class: "rw-fold", help: folded ? "common.expand" : "common.collapse", key: "fold-" + collapse.id,
-      collapse && h("button", { type: "button", class: "rw-card-fold", help: folded ? "common.expand" : "common.collapse", key: "fold-" + collapse.id, // added 2026-11-06 v0.10.1
-        "aria-expanded": folded ? "false" : "true", onClick: flip }, icon(folded ? "chevRight" : "chevDown", 13)),
-      h("span", { class: ["rw-card-title", collapse && "clickable"], onClick: flip || undefined }, title),
-      help && helpButton(help),
-      h("span", { class: "rw-flex" }),
-      // [OLD 2026-11-06 v0.10.0->v0.10.1] folded ? (collapse.summary ? h("span", { class: "rw-dim small rw-fold-sum" }, collapse.summary) : null) : actions),
-      folded ? (collapse.summary ? h("span", { class: "rw-dim small rw-card-fold-sum" }, collapse.summary) : null) : actions), // added 2026-11-06 v0.10.1
-    folded ? null : children);
-}
-[/OLD] */
-// added 2026-11-09 v0.14.1: every card folds (Sencer: "make every section under every tab collapsible"). While a tab
+// Every card folds. While a tab
 // renders (editor.js wraps the tab's render in foldScope), a card without its own `collapse` folds under its help id,
 // else its title; `collapse: false` keeps a card open. The state is project.ui.collapsed[id] as before (no undo step).
 // The head's right-click menu folds or opens this card or every card in the tab; Alt+click on the chevron or the title
@@ -598,7 +501,7 @@ export function section({ title, help, actions, children, cls, tint, collapse })
     folded ? null : children);
 }
 
-// added 2026-11-09 v0.14.1: a foldable block inside a panel (the Timeline inspector has blocks, not cards): a chevron
+// A foldable block inside a panel (the Timeline inspector has blocks, not cards): a chevron
 // and a label on one line, the block's content below. Same state, menu, Alt+click and media pause as a card.
 export function foldBlock({ ctx, id, label, help, summary, children, cls }) {
   const folded = !!ctx.p.ui?.collapsed?.[id];
@@ -618,18 +521,7 @@ export function foldBlock({ ctx, id, label, help, summary, children, cls }) {
     folded ? null : children);
 }
 
-/* [OLD 2026-11-05 v0.6.1->v0.7.0] the reset button always said "inherited from the Global tab"
-export function field(label, control, { help, dot: dotState, reset, wide } = {}) {
-  return h("div", { class: ["rw-field", wide && "wide"] },
-    h("span", { class: "rw-field-label", help }, label),
-    h("span", { class: "rw-field-ctl" }, control),
-    dotState && dot(dotState),
-    reset !== undefined && (reset
-      ? button({ icon: "refresh", help: "common.reset", onClick: reset, small: true, variant: "ghost" })
-      : h("span", { class: "rw-reset-ph" })));
-}
-[/OLD] */
-// added 2026-11-05 v0.7.0: resetHelp (the reset button's help id, for values that go back to a default rather than to
+// resetHelp (the reset button's help id, for values that go back to a default rather than to
 // the Global tab) and cls (an extra class on the row)
 export function field(label, control, { help, dot: dotState, reset, wide, resetHelp, cls } = {}) {
   return h("div", { class: ["rw-field", wide && "wide", cls] },
@@ -653,12 +545,10 @@ export function empty(textContent, help) {
   return h("div", { class: "rw-empty", help }, textContent);
 }
 
-// [OLD 2026-11-03 v0.6.0 review] export function keepChips({ values, onChange, help, placeholder = "+ feature" }) {
-// added 2026-11-03 v0.6.0 review: `key` (lists of chip fields share a help id; render() puts focus back by key)
+// `key` (lists of chip fields share a help id; render() puts focus back by key)
 export function keepChips({ values, onChange, help, placeholder = "+ feature", key }) {
   const input = h("input", {
-    // [OLD 2026-11-03 v0.6.0 review] class: "rw-chip-input", placeholder, help,
-    class: "rw-chip-input", placeholder, help, key, // added 2026-11-03 v0.6.0 review: key
+    class: "rw-chip-input", placeholder, help, key,
     onKeydown: e => {
       if (e.key === "Enter" && e.target.value.trim()) {
         e.preventDefault();
@@ -671,7 +561,7 @@ export function keepChips({ values, onChange, help, placeholder = "+ feature", k
     input);
 }
 
-// deprecated 2026-11-03 v0.6.0: use confirmDialog (the bar vanished on any re-render); kept until the tabs move over
+// deprecated: use confirmDialog (the bar vanished on any re-render); kept until the tabs move over
 export function confirmInline(host, message, onYes) {
   const bar = h("div", { class: "rw-confirm" },
     h("span", null, message),
@@ -680,22 +570,9 @@ export function confirmInline(host, message, onYes) {
   host.appendChild(bar);
 }
 
-// added 2026-11-02 v0.2.2: the editor's own right-click menu. Items: {label, icon, help, onClick, danger, disabled}
+// The editor's own right-click menu. Items: {label, icon, help, onClick, danger, disabled}
 // or {sep: true}. Positioned in the root's unscaled pixels and kept inside the node.
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] no menu class, item class or heading rows
-export function contextMenu(root, clientX, clientY, items) {
-  root.querySelectorAll(".rw-ctx").forEach(m => m.remove());
-  const close = () => { menu.remove(); document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", esc, true); };
-  const outside = e => { if (!menu.contains(e.target)) close(); };
-  const esc = e => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
-  const menu = h("div", { class: "rw-ctx", role: "menu" }, items.filter(Boolean).map(it => it.sep
-    ? h("div", { class: "rw-ctx-sep" })
-    : h("button", {
-      type: "button", role: "menuitem", class: ["rw-ctx-item", it.danger && "danger"], help: it.help, disabled: !!it.disabled,
-      onClick: e => { e.stopPropagation(); close(); it.onClick?.(); },
-    }, it.icon ? icon(it.icon, 13) : h("span", { class: "rw-ctx-ic" }), h("span", null, it.label), it.hint ? h("span", { class: "rw-ctx-hint mono" }, it.hint) : null)));
-[/OLD] */
-// added 2026-11-03 v0.6.0: opts.cls (class of the menu), items may carry `cls` (extra class) and {head: "text"}
+// opts.cls (class of the menu), items may carry `cls` (extra class) and {head: "text"}
 // (a heading row); a menu that is still open is closed first (its listeners too)
 export function contextMenu(root, clientX, clientY, items, opts = {}) {
   root.__rwMenuClose?.();
@@ -724,39 +601,7 @@ export function contextMenu(root, clientX, clientY, items, opts = {}) {
   return close;
 }
 
-/* [OLD 2026-11-03 v0.5.1->v0.6.0] Enter confirmed even with Cancel focused; Tab left the dialog; OK had focus, so Ctrl+Z went to ComfyUI
-// added 2026-11-02 v0.3.0: a modal confirmation inside the editor. Resolves true/false.
-// Enter confirms, Escape or a click outside cancels.
-export function confirmDialog(root, { title, message, confirmLabel = "Delete", danger = true, cancelLabel = "Cancel" }) {
-  return new Promise(resolve => {
-    root.querySelectorAll(".rw-modal").forEach(m => m.remove());
-    const key = e => {
-      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
-      else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); done(true); }
-    };
-    // focus goes back to the editor so its shortcuts (Ctrl+Z) work right after the dialog closes
-    const prev = document.activeElement;
-    const done = v => {
-      overlay.remove(); document.removeEventListener("keydown", key, true);
-      const back = prev && prev.isConnected && root.contains(prev) ? prev : root;
-      back.focus?.({ preventScroll: true });
-      resolve(v);
-    };
-    const ok = button({ label: confirmLabel, variant: danger ? "danger" : "primary", help: "common.confirm", onClick: () => done(true) });
-    const overlay = h("div", { class: "rw-modal", onPointerdown: e => { if (e.target === overlay) done(false); } },
-      h("div", { class: "rw-modal-box", role: "alertdialog", "aria-modal": "true" },
-        h("div", { class: "rw-modal-title" }, danger ? icon("warn", 15) : null, h("span", null, title)),
-        message ? h("div", { class: "rw-modal-msg" }, message) : null,
-        h("div", { class: "rw-modal-actions" }, button({ label: cancelLabel, help: "common.cancel", onClick: () => done(false) }), ok)));
-    root.appendChild(overlay);
-    document.addEventListener("keydown", key, true);
-    ok.focus({ preventScroll: true });
-  });
-}
-[/OLD] */
-
-// ---- added 2026-11-09 v0.15.1: dialogs open next to what opened them (Sencer: "All confirmation dialogs should pop up
-// near the cursor or triggering button, not center of the node. It's easy to miss if the node grows high.")
+// ---- dialogs open next to what opened them --------------------------------------------------------------------
 // The last press and the last key press anywhere on the page (window, capture phase: before ComfyUI or the editor can
 // stop them). dialogAnchor(root) gives the screen rect to open next to: the control that was pressed (still on screen
 // and small), else the point pressed; after a key press, the focused control; null when none is recent or in the editor.
@@ -811,19 +656,17 @@ export function placeNear(root, box, anchor, gap = 8) {
   Object.assign(box.style, { left: `${Math.round((left - rr.left) / sc)}px`, top: `${Math.round((top - rr.top) / sc)}px` });
 }
 
-// added 2026-11-03 v0.6.0: a modal dialog inside the editor with any number of buttons. Resolves with the `value`
+// A modal dialog inside the editor with any number of buttons. Resolves with the `value`
 // of the button pressed, or `cancelValue` (Escape, a click outside the box, the editor closing, or another dialog
 // opening). Keyboard: Tab / Shift+Tab stay on the dialog's buttons; Enter presses the focused button only (Enter
 // with Cancel focused cancels); Space presses it as usual; Ctrl+Z / Ctrl+Y do nothing while it is open, and never
 // reach ComfyUI (Ctrl moves focus to a hidden field first). Other keys don't reach the editor's shortcuts.
-// (2026-11-10 v0.18.0: `message` can be an element with ticks and buttons; Tab goes through those too.)
+// (`message` can be an element with ticks and buttons; Tab goes through those too.)
 //   choices: [{value, label, variant?: "primary"|"danger"|"default", help?}] in display order
 //   focus: the value whose button has focus at first (default: the cancel button when danger, else the last button)
-//   anchor (added 2026-11-09 v0.15.1): an element or screen rect to open next to; default dialogAnchor(root)
-// [OLD 2026-11-09 v0.15.0->v0.15.1] export function choiceDialog(root, { title, message, choices, cancelValue = null, focus, danger = false, help } = {}) {
+//   anchor: an element or screen rect to open next to; default dialogAnchor(root)
 export function choiceDialog(root, { title, message, choices, cancelValue = null, focus, danger = false, help, anchor } = {}) {
   return new Promise(resolve => {
-    // added 2026-11-09 v0.15.1: taken before anything changes focus
     const near = anchor instanceof Element ? anchor.getBoundingClientRect() : anchor || dialogAnchor(root);
     root.__rwModalClose?.(); // a dialog still open is cancelled, so its promise and listeners never leak
     root.querySelectorAll(".rw-modal").forEach(m => m.remove());
@@ -841,8 +684,6 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
       if (e.key === "Escape") { e.preventDefault(); finish(cancelValue); return; }
       if (e.key === "Tab") {
         e.preventDefault();
-        // [OLD 2026-11-10 v0.17.3->v0.18.0] const live = btns.filter(b => !b.disabled);  (ticks in the message were out of reach)
-        // added 2026-11-10 v0.18.0: the controls in an element message (Reset scene's ticks and pass choice) come first
         const inMsg = [...box.querySelectorAll(".rw-modal-msg input:not(.rw-keys), .rw-modal-msg select, .rw-modal-msg button, .rw-modal-msg textarea")];
         const live = [...inMsg, ...btns].filter(b => !b.disabled);
         if (!live.length) return;
@@ -855,7 +696,6 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
         e.preventDefault();
         const i = btns.indexOf(document.activeElement);
         if (i >= 0 && !btns[i].disabled) finish(choices[i].value);
-        // added 2026-11-10 v0.18.0: Enter on a button or tick inside the message presses it
         const a = document.activeElement;
         if (i < 0 && a && !a.disabled && box.contains(a) && a.closest(".rw-modal-msg") && (a.tagName === "BUTTON" || a.type === "checkbox")) a.click();
       }
@@ -876,16 +716,6 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
     const cancel = () => finish(cancelValue);
     const btns = choices.map(c => button({ label: c.label, variant: c.variant || "default", help: c.help || (c.value === cancelValue ? "common.cancel" : "common.confirm"),
       onClick: () => finish(c.value) }));
-    /* [OLD 2026-11-09 v0.15.0->v0.15.1] the box was centred in the node (out of sight when the node is taller than the window)
-    const overlay = h("div", { class: "rw-modal", onPointerdown: e => { if (e.target === overlay) finish(cancelValue); } },
-      h("div", { class: ["rw-modal-box", choices.length > 2 && "wide"], role: "alertdialog", "aria-modal": "true", help },
-        h("div", { class: "rw-modal-title" }, danger ? icon("warn", 15) : null, h("span", null, title)),
-        message ? h("div", { class: "rw-modal-msg" }, message) : null,
-        h("div", { class: "rw-modal-actions" }, btns),
-        sink));
-    root.appendChild(overlay);
-    [/OLD] */
-    // added 2026-11-09 v0.15.1: the box opens next to what opened it (placeNear)
     const box = h("div", { class: ["rw-modal-box", choices.length > 2 && "wide"], role: "alertdialog", "aria-modal": "true", help },
       h("div", { class: "rw-modal-title" }, danger ? icon("warn", 15) : null, h("span", null, title)),
       message ? h("div", { class: "rw-modal-msg" }, message) : null,
@@ -906,11 +736,8 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
 
 // A confirmation: Cancel and OK. Resolves true/false. Options: {title, message, confirmLabel | okLabel,
 // cancelLabel, danger = true, help}. A dangerous one opens with Cancel focused, so Enter alone never deletes.
-// added 2026-11-03 v0.6.0: built on choiceDialog
-// [OLD 2026-11-09 v0.15.0->v0.15.1] export function confirmDialog(root, { title, message, confirmLabel, okLabel, danger = true, cancelLabel = "Cancel", help } = {}) {
-// [OLD 2026-11-09 v0.15.0->v0.15.1]   return choiceDialog(root, {
-// [OLD 2026-11-09 v0.15.0->v0.15.1]     title, message, danger, help, cancelValue: false,
-export function confirmDialog(root, { title, message, confirmLabel, okLabel, danger = true, cancelLabel = "Cancel", help, anchor } = {}) { // anchor: added 2026-11-09 v0.15.1
+// Built on choiceDialog
+export function confirmDialog(root, { title, message, confirmLabel, okLabel, danger = true, cancelLabel = "Cancel", help, anchor } = {}) {
   return choiceDialog(root, {
     title, message, danger, help, anchor, cancelValue: false,
     choices: [
@@ -920,7 +747,7 @@ export function confirmDialog(root, { title, message, confirmLabel, okLabel, dan
   });
 }
 
-// added 2026-11-06 v0.9.0: the scale of the editor on screen (ComfyUI's canvas zoom scales the root), so a drag in
+// The scale of the editor on screen (ComfyUI's canvas zoom scales the root), so a drag in
 // screen pixels can be turned into CSS pixels of the editor
 export function rootScale(el) {
   const root = el?.closest?.(".rw-root");
@@ -929,7 +756,7 @@ export function rootScale(el) {
   return r.width / (root.offsetWidth || r.width) || 1;
 }
 
-// added 2026-11-06 v0.9.0: a bar between two panels (Timeline tab, Files tab). dir "x" drags sideways (a bar between
+// A bar between two panels (Timeline tab, Files tab). dir "x" drags sideways (a bar between
 // columns), "y" up and down (a bar between rows). onStart() returns the size being changed (CSS px); onMove(size) is
 // called while dragging (set the style there, cheap) and onEnd(size) once at the end (store it). A double-click calls
 // onReset (back to the default size). Arrow keys move it by 16 px when it has focus.
@@ -981,7 +808,7 @@ export function splitter({ dir = "x", help, key, onStart, onMove, onEnd, onReset
   return bar;
 }
 
-// added 2026-11-06 v0.9.0: a list that scrolls inside a box whose height the user sets with the grip under it (Scene
+// A list that scrolls inside a box whose height the user sets with the grip under it (Scene
 // tab shots and dialogue). `height` is the box's largest height in CSS px (shorter content makes it shorter);
 // onResize(px) stores a new height, onResize(null) the default. `scroll` keeps the list's scroll position across
 // re-renders (editor.js restores [data-scroll]).
@@ -1001,8 +828,7 @@ export function resizableList({ height, min = 90, max = 2000, scroll, help, onRe
   return h("div", { class: "rw-rlist-wrap" }, box, grip);
 }
 
-// ---- added 2026-11-09 v0.15.0: lists put in order by dragging (Sencer: "let me re-order contents of "references",
-// "cast in this scene" and "Scene LORA's" by dragging them. Same goes for LORAs in other tabs").
+// ---- lists put in order by dragging (references, scene cast, LoRAs) ------------------------------------------
 // sortable({ id, rows, onMove }) puts the rows (one element per item, in the list's order) in a box; each row holds a
 // dragGrip(). Dragging a grip up or down shows where the item will go (a line before or after a row) and, on release,
 // calls onMove(from, to): take the item at `from` out and put it back at `to` (moveItem does that), as one undo step.
@@ -1095,14 +921,14 @@ export function dragGrip({ help, key, label = "Drag to reorder" }) {
   return grip;
 }
 
-// added 2026-11-06 v0.9.0: a number kept in project.ui (layout sizes, the monitor's volume), clamped; anything that is
+// A number kept in project.ui (layout sizes, the monitor's volume), clamped; anything that is
 // not a finite number gives the default
 export function uiNum(p, key, dflt, lo = -Infinity, hi = Infinity) {
   const v = p?.ui?.[key];
   return typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt;
 }
 
-// added 2026-11-06 v0.10.0: a picture or video that survives re-renders. A tab is rebuilt from scratch on every
+// A picture or video that survives re-renders. A tab is rebuilt from scratch on every
 // render; a new <img> with the same address shows nothing until it is decoded again (a <video> goes black, and a
 // picture the server makes, like the anchor sheet, is fetched again), so they blinked while a render ran. kept()
 // hands back the same element for the same slot and address; `make()` builds it the first time. The slot must be
@@ -1115,13 +941,13 @@ export function kept(ctx, slot, src, make) {
   let el = map.get(key);
   if (el) map.delete(key); // most recently used last
   else el = make();
-  el.__rwKept = true; // added 2026-11-09 v0.17.3: managed here (editor.js adoptMedia leaves it alone)
+  el.__rwKept = true;
   map.set(key, el);
   if (map.size > KEPT_MAX) map.delete(map.keys().next().value);
   return el;
 }
 
-// added 2026-11-06 v0.10.0: copying text. ComfyUI's canvas takes the mouse, so text in the editor often can't be
+// Copying text. ComfyUI's canvas takes the mouse, so text in the editor often can't be
 // selected; a right-click offers Copy text (editor.js) and some cards have a copy button. navigator.clipboard works
 // only on a secure page (https or localhost); ComfyUI on a LAN address is plain http, so a hidden text field and
 // execCommand("copy") are the fallback there. Resolves true when the text was copied.

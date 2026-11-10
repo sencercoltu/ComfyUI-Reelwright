@@ -1,13 +1,3 @@
-// added 2026-11-02 v0.3.8: the Render tab's latent preview window.
-//
-// v0.3.5–v0.3.7 rebuilt the <img> on every re-render, set its src straight from the event (a data: URL from the
-// backend, or an object URL from ComfyUI's preview stream), revoked the previous object URL as soon as a new one arrived,
-// and only re-rendered every 250 ms. A picture that failed to load stayed on screen as a broken-image icon.
-//
-// Now one <figure> lives as long as the editor and the Render tab moves it into each new banner. A new preview is
-// decoded off-screen first and swapped in only once it has loaded, so the window never shows a broken image; the
-// previous object URL is released only after its replacement is on screen. Every preview is shown through a blob: URL,
-// the backend's base64 JPEG too, the same kind of URL ComfyUI uses for the previews it draws under nodes.
 import { h } from "./ui.js";
 
 export function dataUrlToBlob(url) {
@@ -23,7 +13,7 @@ export function dataUrlToBlob(url) {
   return new Blob([bytes], { type: mime });
 }
 
-// added 2026-11-02 v0.3.9: the picture inside a preview message. VideoHelperSuite's animated latent previews send
+// The picture inside a preview message. VideoHelperSuite's animated latent previews send
 // each frame as a normal preview message with 24 bytes of their own (frame index, node id) before the JPEG; shown as
 // is, that is "a render preview could not be decoded". Any bytes before a JPEG, PNG or WebP signature are dropped.
 const SIGNATURES = [[0xff, 0xd8, 0xff], [0x89, 0x50, 0x4e, 0x47], [0x52, 0x49, 0x46, 0x46]];
@@ -91,8 +81,6 @@ export function createPreviewView({ captionFor, onVisible }) {
       release(bad);
       if (!warned) {
         warned = true;
-        // [OLD 2026-11-02 v0.3.8->v0.3.9] console.warn(`Reelwright: a render preview could not be decoded (${bad.kind}, ${bad.size} bytes); keeping the last one that worked`);
-        // added 2026-11-02 v0.3.9: the first bytes tell what was sent instead of an image
         const say = head => console.warn(`Reelwright: a render preview could not be decoded (${bad.kind}, ${bad.size} bytes${head ? ", starts " + head : ""}); keeping the last one that worked`);
         if (p.blob instanceof Blob) hexHead(p.blob).then(say, () => say(""));
         else say(typeof p.image === "string" ? JSON.stringify(p.image.slice(0, 30)) : "");

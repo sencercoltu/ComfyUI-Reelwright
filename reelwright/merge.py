@@ -6,23 +6,22 @@ concat (cuts) or xfade/acrossfade (crossfades, dips, continuation overlaps).
 """
 
 import json
-import math  # added 2026-11-05 v0.7.0: filmstrip_layout
-import logging  # added 2026-11-03 v0.6.0
+import logging
+import math
 import os
 import re
 import shutil
 import subprocess
-import tempfile  # added 2026-11-03 v0.6.0: the filter graph goes to ffmpeg in a file
-import threading  # added 2026-11-03 v0.6.0: stderr / stdout are drained in threads
+import tempfile
+import threading
 import zipfile
-# [OLD 2026-11-03 v0.5.1->v0.6.0] from xml.sax.saxutils import escape  (escape() leaves " in attributes)
 from xml.sax.saxutils import quoteattr
 
 from . import spec
 
 FPS = spec.FPS
 AUDIO_RATE = 48000
-log = logging.getLogger("reelwright")  # added 2026-11-03 v0.6.0
+log = logging.getLogger("reelwright")
 
 
 class MergeError(RuntimeError):
@@ -30,11 +29,11 @@ class MergeError(RuntimeError):
 
 
 class MergeBusy(MergeError):
-    """added 2026-11-03 v0.6.0: another merge of the same project is running."""
+    """Another merge of the same project is running."""
 
 
 class MergeCancelled(MergeError):
-    """added 2026-11-03 v0.6.0: the merge was cancelled; ffmpeg was stopped and partial files removed."""
+    """The merge was cancelled; ffmpeg was stopped and partial files removed."""
 
 
 def ffmpeg_bin():
@@ -64,10 +63,6 @@ def probe(path):
     """{duration, width, height, has_audio} via ffprobe, falling back to PyAV."""
     exe = ffprobe_bin()
     if exe:
-        # [OLD 2026-11-02 v0.2.0->v0.2.1] a broken or half-written file raised CalledProcessError out of the node
-        # out = subprocess.run([exe, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path],
-        #                      capture_output=True, text=True, check=True).stdout
-        # [/OLD]
         r = subprocess.run([exe, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path],
                            capture_output=True, text=True)
         if r.returncode != 0:
@@ -77,13 +72,8 @@ def probe(path):
         v = next((s for s in info["streams"] if s["codec_type"] == "video"), None)
         a = next((s for s in info["streams"] if s["codec_type"] == "audio"), None)
         dur = float(info["format"].get("duration") or (v or a or {}).get("duration") or 0)
-        # [OLD 2026-11-04 v0.6.0->v0.6.1] only the file's length (its longest stream), not the video stream's own
-        # return {"duration": dur, "width": int(v["width"]) if v else 0, "height": int(v["height"]) if v else 0,
-        #         "has_video": v is not None, "has_audio": a is not None}
-        # [/OLD]
         out = {"duration": dur, "width": int(v["width"]) if v else 0, "height": int(v["height"]) if v else 0,
                "has_video": v is not None, "has_audio": a is not None}
-        # added 2026-11-04 v0.6.1: the video stream's own length (an audio track can run longer than the picture)
         if v:
             out.update(_video_length(_int_or_none(v.get("nb_frames")), _rate(v.get("avg_frame_rate") or v.get("r_frame_rate")),
                                      _float_or_none(v.get("duration")) or _hms((v.get("tags") or {}).get("DURATION"))))
@@ -92,19 +82,15 @@ def probe(path):
     with av.open(path) as c:
         v = c.streams.video[0] if c.streams.video else None
         dur = float(c.duration / 1e6) if c.duration else 0.0
-        # [OLD 2026-11-04 v0.6.0->v0.6.1] no video stream length
-        # return {"duration": dur, "width": v.width if v else 0, "height": v.height if v else 0,
-        #         "has_video": v is not None, "has_audio": bool(c.streams.audio)}
-        # [/OLD]
         out = {"duration": dur, "width": v.width if v else 0, "height": v.height if v else 0,
                "has_video": v is not None, "has_audio": bool(c.streams.audio)}
-        if v:  # added 2026-11-04 v0.6.1: the video stream's own length
+        if v:
             vdur = float(v.duration * v.time_base) if v.duration and v.time_base else None
             out.update(_video_length(v.frames or None, _rate(v.average_rate), vdur))
         return out
 
 
-# ---- added 2026-11-04 v0.6.1: the video stream's own length, for pre-flight (render.Renderer._clip_frames) ----------
+# ---- the video stream's own length, for pre-flight (render.Renderer._clip_frames) -----------------------------------
 
 def _int_or_none(x):
     try:
@@ -155,29 +141,13 @@ def _f(x):
     return "{:.6f}".format(max(0.0, x)).rstrip("0").rstrip(".") or "0"
 
 
-# [OLD 2026-11-03 v0.6.0 review] exact seconds, while the merged file is whole frames: each segment was cut to
-# round(length * 24) frames on its own, so the rounding added up (a picture 1.4 frames early after 8 scenes of
-# 7.3 s) and a later crossfade, placed at the exact time, outran the shorter picture and dropped the rest of it
-# def plan_timeline(segments):
-#     """Start time of every segment in the output and the total length."""
-#     starts, cur = [], 0.0
-#     for i, seg in enumerate(segments):
-#         length = seg["out"] - seg["in"]
-#         if i == 0 or seg["join"] == "cut":
-#             starts.append(cur)
-#             cur += length
-#         else:
-#             starts.append(cur - seg["dur"])
-#             cur += length - seg["dur"]
-#     return starts, cur
-# [/OLD]
 def frame_index(seconds):
-    """added 2026-11-03 v0.6.0 review: seconds to whole frames, half frames up (the side files' _frames rule)."""
+    """Seconds to whole frames, half frames up (the side files' _frames rule)."""
     return _frames(seconds)
 
 
 def frame_timeline(segments):
-    """added 2026-11-03 v0.6.0 review: the cut on the 24 fps frame grid, the frames build_command really writes.
+    """The cut on the 24 fps frame grid, the frames build_command really writes.
     Returns ([(start, frames, overlap)] per segment, total frames): start is the segment's first frame in the cut,
     frames how many frames it gives, overlap how many it shares with what came before (a crossfade or dip; 0 for a
     cut, and for a transition shorter than half a frame, which is then joined as a cut). The frames are cumulative: a
@@ -197,7 +167,7 @@ def frame_timeline(segments):
 
 
 def _audio_lead(seg, k):
-    """added 2026-11-05 v0.8.0: whole frames a segment's sound starts before its picture (its "audio_lead_frames"), at
+    """Whole frames a segment's sound starts before its picture (its "audio_lead_frames"), at
     most its in-point; 0 for the first segment, a slate, a muted or silent segment."""
     if k <= 0 or not seg.get("path") or seg.get("mute") or not seg.get("has_audio", True):
         return 0
@@ -210,30 +180,26 @@ def _audio_lead(seg, k):
 
 def plan_timeline(segments):
     """Start time of every segment in the output and the total length.
-    added 2026-11-03 v0.6.0 review: on the frame grid (frame_timeline), the times the merged file really has."""
+    On the frame grid (frame_timeline), the times the merged file really has."""
     rows, total_f = frame_timeline(segments)
     return [r[0] / FPS for r in rows], total_f / FPS
 
 
-# [OLD 2026-11-03 v0.4.3->v0.5.0] def build_command(segments, out_path, width, height, codec="h264", crf=16, audio_fade_frames=6,
-# [OLD 2026-11-03 v0.4.3->v0.5.0]                   loudness=None, score=None, chapters_file=None, ffmpeg=None):
-# [OLD 2026-11-03 v0.5.1->v0.6.0] def build_command(segments, out_path, width, height, codec="h264", crf=16, audio_fade_frames=6,
-# [OLD 2026-11-03 v0.5.1->v0.6.0]                   loudness=None, score=None, chapters_file=None, ffmpeg=None, tracks=None, scene_audio=None):
 def build_command(segments, out_path, width, height, codec="h264", crf=16, audio_fade_frames=6,
                   loudness=None, score=None, chapters_file=None, ffmpeg=None, tracks=None, scene_audio=None,
                   preset="medium", stems=None):
     """segments: [{path|None, in, out, has_audio, join: first|cut|xfade|dip, dur, gain: (r,g,b)|None}].
     A segment with path None is a dark slate of out-in seconds.
-    added 2026-11-03 v0.5.0: a segment's vfade_in / vfade_out (seconds) fade its picture from / to black without
+    A segment's vfade_in / vfade_out (seconds) fade its picture from / to black without
     overlapping its neighbours (a dip that keeps the timing). tracks: soundtrack files laid on the cut,
     [{path, start, in, length, volume_db, fade_in, fade_out, duck, loop}]; they are mixed unchanged (loudness
     normalisation only touches the scenes' sound). scene_audio: {"mix": bool, "volume_db": float}, the scenes' own
     sound under the tracks.
-    added 2026-11-03 v0.6.0: preset (x264/x265 preset; "veryfast" for drafts). stems: {"scenes": wav, "mix": wav,
+    Preset (x264/x265 preset; "veryfast" for drafts). stems: {"scenes": wav, "mix": wav,
     "tracks": [wav per track]} also writes the audio stems in the same ffmpeg run: the scenes' sound (after loudness
     normalisation, at the level it has in the mix; at 0 dB when it is not mixed), each track as heard in the cut
     (after ducking) and the final mix.
-    added 2026-11-05 v0.7.0 (scene.merge, set by assemble.cut_plan): transition / transition_expr (the xfade of an
+    Transition / transition_expr (the xfade of an
     overlapping join, see xfade_transition), vfade_in_color / vfade_out_color, edge_in / edge_out ({frames, color}:
     the scene's own picture fades), afade_in / afade_out (seconds), volume_db, mute, eq (brightness, contrast,
     saturation). Picture: trim -> colour-match gain -> eq -> own fades -> timing dip. Sound: level -> own fades -> the
@@ -244,8 +210,6 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
     if not ffmpeg:
         raise MergeError("ffmpeg was not found on PATH")
     starts, total = plan_timeline(segments)
-    # added 2026-11-03 v0.6.0 review: every segment, picture and sound, is the whole number of frames frame_timeline
-    # gives it (cumulative, so the cut is round(total * 24) frames); a transition under half a frame is a cut
     rows, _total_f = frame_timeline(segments)
     joins = ["first"] + [s["join"] if s["join"] != "cut" and rows[k][2] else "cut"
                          for k, s in enumerate(segments) if k > 0]
@@ -253,36 +217,18 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
     graph = []
     n_in = 0
     fade = audio_fade_frames / FPS
-    # added 2026-11-05 v0.8.0: audio_lead_frames (assemble.pass_segments, a pass whose overlap sound was not anchored):
-    # the segment's sound starts that many frames before its picture, inside the overlap, and crossfades with the sound
-    # before over the transition plus the lead; picture, timing and total length are unchanged
     leads = [_audio_lead(seg, k) for k, seg in enumerate(segments)]
     for k, seg in enumerate(segments):
         length = seg["out"] - seg["in"]
         if length <= 0:
             raise MergeError("segment {} has no length".format(k))
-        n_frames = rows[k][1]  # added 2026-11-03 v0.6.0 review
-        length = n_frames / FPS  # added 2026-11-03 v0.6.0 review: its length on the frame grid, for picture and sound
-        alen = length + leads[k] / FPS  # added 2026-11-05 v0.8.0: the sound's length (longer by its lead)
+        n_frames = rows[k][1]
+        length = n_frames / FPS
+        alen = length + leads[k] / FPS
         if seg.get("path"):
             args += ["-i", seg["path"]]
             src = n_in
             n_in += 1
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] a file a frame or two shorter than its segment shortened the cut, and every
-            # later scene drifted against the soundtrack
-            # v = ("[{s}:v]trim=start={a}:end={b},setpts=PTS-STARTPTS,fps={fps},"
-            #      "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,"
-            #      "setsar=1,format=yuv420p").format(s=src, a=_f(seg["in"]), b=_f(seg["out"]), fps=FPS, w=width, h=height)
-            # [/OLD]
-            # added 2026-11-03 v0.6.0: exactly round(length * 24) frames (the last frame is held when the file is short)
-            # [OLD 2026-11-03 v0.6.0 review] round(length * 24) per segment drifted from the planned times
-            # v = ("[{s}:v]trim=start={a}:end={b},setpts=PTS-STARTPTS,fps={fps},"
-            #      "tpad=stop_mode=clone:stop_duration=1,trim=end_frame={n},"
-            #      "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,"
-            #      "setsar=1,format=yuv420p").format(s=src, a=_f(seg["in"]), b=_f(seg["out"]), fps=FPS, w=width, h=height,
-            #                                        n=max(1, int(round(length * FPS))))
-            # [/OLD]
-            # added 2026-11-03 v0.6.0 review: the frame_timeline frame count, read from in .. in + that many frames
             v = ("[{s}:v]trim=start={a}:end={b},setpts=PTS-STARTPTS,fps={fps},"
                  "tpad=stop_mode=clone:stop_duration=1,trim=end_frame={n},"
                  "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,"
@@ -291,54 +237,26 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
             if seg.get("gain"):
                 r, g, b = seg["gain"]
                 v += ",colorchannelmixer=rr={:.4f}:gg={:.4f}:bb={:.4f}".format(r, g, b)
-            v += _eq(seg) + _edge_fades(seg, n_frames)  # added 2026-11-05 v0.7.0: the scene's eq and its own fades
-            v += _vfades(seg, length)  # added 2026-11-03 v0.5.0
+            v += _eq(seg) + _edge_fades(seg, n_frames)
+            v += _vfades(seg, length)
             graph.append(v + "[v{}]".format(k))
-            # [OLD 2026-11-05 v0.6.1->v0.7.0] if seg.get("has_audio", True):
-            if seg.get("has_audio", True) and not seg.get("mute"):  # added 2026-11-05 v0.7.0: a muted scene is silent
-                # [OLD 2026-11-03 v0.6.0 review] a = ("[{s}:a]atrim=start={a}:end={b},asetpts=PTS-STARTPTS,aresample={r},"
-                # [OLD 2026-11-03 v0.6.0 review]      "aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration={d}").format(
-                # [OLD 2026-11-03 v0.6.0 review]     s=src, a=_f(seg["in"]), b=_f(seg["out"]), r=AUDIO_RATE, d=_f(length))
-                # added 2026-11-03 v0.6.0 review: the sound of the same frames (length is on the frame grid now)
-                # [OLD 2026-11-05 v0.7.0->v0.8.0] a = ("[{s}:a]atrim=start={a}:end={b},asetpts=PTS-STARTPTS,aresample={r},"
-                # [OLD 2026-11-05 v0.7.0->v0.8.0]      "aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration={d}").format(
-                # [OLD 2026-11-05 v0.7.0->v0.8.0]     s=src, a=_f(seg["in"]), b=_f(seg["in"] + length), r=AUDIO_RATE, d=_f(length))
-                # added 2026-11-05 v0.8.0: from its lead before the picture's in-point (0 frames: as before)
+            if seg.get("has_audio", True) and not seg.get("mute"):
                 a = ("[{s}:a]atrim=start={a}:end={b},asetpts=PTS-STARTPTS,aresample={r},"
                      "aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration={d}").format(
                     s=src, a=_f(seg["in"] - leads[k] / FPS), b=_f(seg["in"] + length), r=AUDIO_RATE, d=_f(alen))
-                if float(seg.get("volume_db") or 0.0):  # added 2026-11-05 v0.7.0: the scene's own sound level
+                if float(seg.get("volume_db") or 0.0):
                     a += ",volume={}dB".format(float(seg["volume_db"]))
             else:
                 a = "anullsrc=r={}:cl=stereo,atrim=duration={}".format(AUDIO_RATE, _f(length))
         else:
-            # [OLD 2026-11-03 v0.6.0 review] a slate of 0.6 frames (d=0.025) still gave a whole dark frame
-            # graph.append("color=c=0x15171C:s={}x{}:r={}:d={},format=yuv420p,setsar=1[v{}]".format(
-            #     width, height, FPS, _f(length), k))
-            # [/OLD]
-            # added 2026-11-03 v0.6.0 review: exactly its frame_timeline frames
             graph.append("color=c=0x15171C:s={}x{}:r={}:d={},trim=end_frame={},format=yuv420p,setsar=1[v{}]".format(
                 width, height, FPS, _f((n_frames + 0.5) / FPS), n_frames, k))
             a = "anullsrc=r={}:cl=stereo,atrim=duration={}".format(AUDIO_RATE, _f(length))
-        # [OLD 2026-11-05 v0.7.0->v0.8.0] a += _edge_afades(seg, length)  # added 2026-11-05 v0.7.0: the scene's own sound fades at its edges
-        a += _edge_afades(seg, alen)  # added 2026-11-05 v0.8.0: the sound's own length (alen == length without a lead)
-        # [OLD 2026-11-03 v0.6.0 review] nxt = segments[k + 1]["join"] if k + 1 < len(segments) else None
-        nxt = joins[k + 1] if k + 1 < len(segments) else None  # added 2026-11-03 v0.6.0 review: a 0-frame xfade is a cut
-        # [OLD 2026-11-02 v0.2.2->v0.3.0] one audio fade for every cut; a segment's "fade" (seconds) now sets the fade at the cut into it
-        # if fade > 0 and k > 0 and seg["join"] == "cut":
-        #     a += ",afade=t=in:d={}".format(_f(min(fade, length / 2)))
-        # if fade > 0 and nxt == "cut":
-        #     a += ",afade=t=out:st={}:d={}".format(_f(length - min(fade, length / 2)), _f(min(fade, length / 2)))
-        # [/OLD]
+        a += _edge_afades(seg, alen)
+        nxt = joins[k + 1] if k + 1 < len(segments) else None
         fin = seg.get("fade", fade)
         fout = segments[k + 1].get("fade", fade) if k + 1 < len(segments) else 0
-        # [OLD 2026-11-03 v0.6.0 review] if fin > 0 and k > 0 and seg["join"] == "cut":
-        # [OLD 2026-11-05 v0.7.0->v0.8.0] if fin > 0 and k > 0 and joins[k] == "cut":  # added 2026-11-03 v0.6.0 review: a 0-frame xfade is a cut
-        # [OLD 2026-11-05 v0.7.0->v0.8.0]     a += ",afade=t=in:d={}".format(_f(min(fin, length / 2)))
-        # [OLD 2026-11-05 v0.7.0->v0.8.0] if fout > 0 and nxt == "cut":
-        # [OLD 2026-11-05 v0.7.0->v0.8.0]     a += ",afade=t=out:st={}:d={}".format(_f(length - min(fout, length / 2)), _f(min(fout, length / 2)))
-        # added 2026-11-05 v0.8.0: a cut whose sound crossfades over a lead gets no extra fades
-        if fin > 0 and k > 0 and joins[k] == "cut" and not leads[k]:  # a 0-frame xfade is a cut (v0.6.0 review)
+        if fin > 0 and k > 0 and joins[k] == "cut" and not leads[k]:  # a 0-frame xfade is a cut
             a += ",afade=t=in:d={}".format(_f(min(fin, length / 2)))
         if fout > 0 and nxt == "cut" and not leads[k + 1]:
             a += ",afade=t=out:st={}:d={}".format(_f(alen - min(fout, length / 2)), _f(min(fout, length / 2)))
@@ -347,20 +265,13 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
     vcur, acur = "v0", "a0"
     for k in range(1, len(segments)):
         seg = segments[k]
-        # [OLD 2026-11-03 v0.6.0 review] if seg["join"] == "cut":
-        if joins[k] == "cut":  # added 2026-11-03 v0.6.0 review: a transition under half a frame is a cut
-            # [OLD 2026-11-03 v0.5.1->v0.6.0] concat outputs timebase 1/1000000 and a later xfade needs 1/24
-            # graph.append("[{}][v{}]concat=n=2:v=1:a=0[vc{}]".format(vcur, k, k))
-            # [/OLD]
+        if joins[k] == "cut":
             graph.append("[{}][v{}]concat=n=2:v=1:a=0,settb=expr=1/{}[vc{}]".format(vcur, k, FPS, k))
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] graph.append("[{}][a{}]concat=n=2:v=0:a=1[ac{}]".format(acur, k, k))
-            if leads[k]:  # added 2026-11-05 v0.8.0: the picture cuts, the sound crossfades over the lead
+            if leads[k]:
                 graph.append("[{}][a{}]acrossfade=d={}[ac{}]".format(acur, k, _f(leads[k] / FPS), k))
             else:
                 graph.append("[{}][a{}]concat=n=2:v=0:a=1[ac{}]".format(acur, k, k))
         else:
-            # [OLD 2026-11-05 v0.6.1->v0.7.0] trans = "fadeblack" if seg["join"] == "dip" else "fade"
-            # added 2026-11-05 v0.7.0: the scene's transition (xfade_transition); a custom one carries its expression
             trans = seg.get("transition") or ("fadeblack" if seg["join"] == "dip" else "fade")
             ina, inb = vcur, "v{}".format(k)
             if trans == "custom" and seg.get("transition_expr"):
@@ -372,25 +283,12 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
                 trans = "custom:expr='{}'".format(seg["transition_expr"])
             elif trans == "custom":
                 trans = "fadeblack"
-            # [OLD 2026-11-03 v0.6.0 review] exact seconds; the picture before it could be shorter than offset + duration
-            # graph.append("[{}][v{}]xfade=transition={}:duration={}:offset={}[vc{}]".format(
-            #     vcur, k, trans, _f(seg["dur"]), _f(starts[k]), k))
-            # graph.append("[{}][a{}]acrossfade=d={}[ac{}]".format(acur, k, _f(seg["dur"]), k))
-            # [/OLD]
-            # added 2026-11-03 v0.6.0 review: whole frames from frame_timeline; the picture before is exactly
-            # offset + duration frames, so the crossfade keeps every frame of both
             dur = rows[k][2] / FPS
-            # [OLD 2026-11-05 v0.6.1->v0.7.0] graph.append("[{}][v{}]xfade=transition={}:duration={}:offset={}[vc{}]".format(
-            # [OLD 2026-11-05 v0.6.1->v0.7.0]     vcur, k, trans, _f(dur), _f(rows[k][0] / FPS), k))
-            graph.append("[{}][{}]xfade=transition={}:duration={}:offset={}[vc{}]".format(  # added 2026-11-05 v0.7.0
+            graph.append("[{}][{}]xfade=transition={}:duration={}:offset={}[vc{}]".format(
                 ina, inb, trans, _f(dur), _f(rows[k][0] / FPS), k))
-            # [OLD 2026-11-05 v0.7.0->v0.8.0] graph.append("[{}][a{}]acrossfade=d={}[ac{}]".format(acur, k, _f(dur), k))
-            # added 2026-11-05 v0.8.0: plus the segment's audio lead (0 frames: as before)
             graph.append("[{}][a{}]acrossfade=d={}[ac{}]".format(acur, k, _f((rows[k][2] + leads[k]) / FPS), k))
         vcur, acur = "vc{}".format(k), "ac{}".format(k)
 
-    # added 2026-11-03 v0.5.0: soundtrack tracks. The scenes' sound (the bus built above) is normalised on its own,
-    # set to the scene level and laid under the tracks; the tracks pass through as they are.
     tracks = [t for t in (tracks or []) if t.get("path") and t.get("length", 0) > 0]
     if tracks:
         sa = scene_audio or {"mix": True, "volume_db": 0.0}
@@ -400,19 +298,17 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
             labels.append(_track_filter(graph, n_in, j, t, total))
             n_in += 1
         scene_bus = None
-        stem_out = []  # added 2026-11-03 v0.6.0: (label, wav path) of each stem
+        stem_out = []
         if sa.get("mix"):
-            # [OLD 2026-11-03 v0.6.0 review] norm = "loudnorm=I={}:TP=-1.5:LRA=11,aresample={},".format(loudness, AUDIO_RATE) if loudness is not None else ""
-            norm = _loudnorm(loudness, total) + "," if loudness is not None else ""  # added 2026-11-03 v0.6.0 review
+            norm = _loudnorm(loudness, total) + "," if loudness is not None else ""
             graph.append("[{}]{}volume={}dB,{}[scn]".format(acur, norm, float(sa.get("volume_db", 0.0)), _PIN))
             scene_bus = "scn"
-            if stems and stems.get("scenes"):  # added 2026-11-03 v0.6.0
+            if stems and stems.get("scenes"):
                 graph.append("[scn]asplit=2[scnm][stem_scenes]")
                 scene_bus = "scnm"
                 stem_out.append(("stem_scenes", stems["scenes"]))
             ducked = [k for k, t in enumerate(tracks) if t.get("duck")]
             if ducked:
-                # [OLD 2026-11-03 v0.5.1->v0.6.0] graph.append("[scn]asplit={}[scn0]{}".format(len(ducked) + 1, "".join(  (the bus may be split for a stem first)
                 graph.append("[{}]asplit={}[scn0]{}".format(scene_bus, len(ducked) + 1, "".join(
                     "[side{}]".format(k) for k in ducked)))
                 scene_bus = "scn0"
@@ -420,16 +316,13 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
                     graph.append("[{}][side{}]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[tdk{}]".format(
                         labels[k], k, k))
                     labels[k] = "tdk{}".format(k)
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] else:
-        # [OLD 2026-11-03 v0.5.1->v0.6.0]     graph.append("[{}]anullsink".format(acur))
-        elif stems and stems.get("scenes"):  # added 2026-11-03 v0.6.0: not in the mix, still a stem (normalised, 0 dB)
-            # [OLD 2026-11-03 v0.6.0 review] norm = "loudnorm=I={}:TP=-1.5:LRA=11,aresample={},".format(loudness, AUDIO_RATE) if loudness is not None else ""
-            norm = _loudnorm(loudness, total) + "," if loudness is not None else ""  # added 2026-11-03 v0.6.0 review
+        elif stems and stems.get("scenes"):
+            norm = _loudnorm(loudness, total) + "," if loudness is not None else ""
             graph.append("[{}]{}{}[stem_scenes]".format(acur, norm, _PIN))
             stem_out.append(("stem_scenes", stems["scenes"]))
         else:
             graph.append("[{}]anullsink".format(acur))
-        for k, path in enumerate((stems or {}).get("tracks") or []):  # added 2026-11-03 v0.6.0: each track as heard
+        for k, path in enumerate((stems or {}).get("tracks") or []):
             if path and k < len(labels):
                 graph.append("[{}]asplit=2[trm{}][stem_t{}]".format(labels[k], k, k))
                 labels[k] = "trm{}".format(k)
@@ -443,10 +336,9 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
                          "atrim=duration={},{}[aout]".format("".join("[{}]".format(x) for x in ins), len(ins),
                                                              _f(total), _PIN))
         graph.append("[{}]null[vout]".format(vcur))
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] return _finish(args, graph, n_in, chapters_file, codec, crf, total, out_path), starts, total
         return _finish(args, graph, n_in, chapters_file, codec, crf, total, out_path, preset,
                        _mix_stem(graph, stems, stem_out)), starts, total
-    stem_out = []  # added 2026-11-03 v0.6.0
+    stem_out = []
     if score and score.get("path"):
         args += ["-stream_loop", "-1", "-i", score["path"]]
         sidx = n_in
@@ -460,29 +352,18 @@ def build_command(segments, out_path, width, height, codec="h264", crf=16, audio
         else:
             graph.append("[{}][score]amix=inputs=2:duration=first:normalize=0[amix]".format(acur))
         acur = "amix"
-    # [OLD 2026-11-02 v0.2.0->v0.2.1] newer ffmpeg builds (8.x) let the aac encoder take any channel layout, so
-    # the link after this last aresample had no layout to pick: "Cannot select channel layout ... format_out"
-    # if loudness is not None:
-    #     graph.append("[{}]loudnorm=I={}:TP=-1.5:LRA=11,aresample={}[aout]".format(acur, loudness, AUDIO_RATE))
-    # else:
-    #     graph.append("[{}]anull[aout]".format(acur))
-    # [/OLD]
     pin = "aformat=sample_fmts=fltp:sample_rates={}:channel_layouts=stereo".format(AUDIO_RATE)
     if loudness is not None:
-        # [OLD 2026-11-03 v0.6.0 review] graph.append("[{}]loudnorm=I={}:TP=-1.5:LRA=11,aresample={},{}[aout]".format(acur, loudness, AUDIO_RATE, pin))
-        graph.append("[{}]{},{}[aout]".format(acur, _loudnorm(loudness, total), pin))  # added 2026-11-03 v0.6.0 review
+        graph.append("[{}]{},{}[aout]".format(acur, _loudnorm(loudness, total), pin))
     else:
         graph.append("[{}]{}[aout]".format(acur, pin))
     graph.append("[{}]null[vout]".format(vcur))
-    # added 2026-11-03 v0.5.0: the output options moved to _finish so the soundtrack branch shares them
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] return _finish(args, graph, n_in, chapters_file, codec, crf, total, out_path), starts, total
-    # added 2026-11-03 v0.6.0: without tracks the scenes' sound is the mix, so scenes.wav copies it
     return _finish(args, graph, n_in, chapters_file, codec, crf, total, out_path, preset,
                    _mix_stem(graph, stems, stem_out, scenes_from_mix=True)), starts, total
 
 
 def _mix_stem(graph, stems, stem_out, scenes_from_mix=False):
-    """added 2026-11-03 v0.6.0: split the final audio [aout] into the encoder's input [aenc] and the stems that copy
+    """Split the final audio [aout] into the encoder's input [aenc] and the stems that copy
     it (mix.wav, and scenes.wav when there are no tracks). Returns every [(label, wav path)] for _finish."""
     if not stems:
         return []
@@ -501,27 +382,16 @@ _PIN = "aformat=sample_fmts=fltp:sample_rates={}:channel_layouts=stereo".format(
 
 
 def _loudnorm(loudness, total):
-    """added 2026-11-03 v0.6.0 review: loudnorm on under 3 s of silence gives NaN samples and the AAC encoder stops
+    """Loudnorm on under 3 s of silence gives NaN samples and the AAC encoder stops
     ("Input contains (near) NaN", nothing written): the sound is padded with silence to 3 s for it and cut back to
     the cut's length. A cut of 3 s or more is not changed."""
     return "apad=whole_dur=3,loudnorm=I={}:TP=-1.5:LRA=11,aresample={},atrim=duration={}".format(
         loudness, AUDIO_RATE, _f(total))
 
 
-# [OLD 2026-11-05 v0.6.1->v0.7.0] the dip that keeps the timing was always through black
-# def _vfades(seg, length):
-#     """added 2026-11-03 v0.5.0: picture fades to / from black inside a segment."""
-#     out = ""
-#     fi, fo = min(seg.get("vfade_in", 0.0), length / 2), min(seg.get("vfade_out", 0.0), length / 2)
-#     if fi > 0:
-#         out += ",fade=t=in:st=0:d={}:color=black".format(_f(fi))
-#     if fo > 0:
-#         out += ",fade=t=out:st={}:d={}:color=black".format(_f(length - fo), _f(fo))
-#     return out
-# [/OLD]
 def _vfades(seg, length):
-    """added 2026-11-03 v0.5.0: picture fades to / from black inside a segment (a dip that keeps the timing).
-    added 2026-11-05 v0.7.0: through the colour in vfade_in_color / vfade_out_color ("#rrggbb", black by default)."""
+    """Picture fades to / from black inside a segment (a dip that keeps the timing).
+    Through the colour in vfade_in_color / vfade_out_color ("#rrggbb", black by default)."""
     out = ""
     fi, fo = min(seg.get("vfade_in", 0.0), length / 2), min(seg.get("vfade_out", 0.0), length / 2)
     if fi > 0:
@@ -531,7 +401,7 @@ def _vfades(seg, length):
     return out
 
 
-# ---- a scene's look and sound in the cut: scene.merge (added 2026-11-05 v0.7.0) -----------------------------------
+# ---- a scene's look and sound in the cut: scene.merge -------------------------------------------------------------
 # Segment keys build_command reads for these (assemble.cut_plan sets them from scene.merge):
 #   transition / transition_expr   the xfade transition of an overlapping join (xfade_transition)
 #   vfade_in_color / vfade_out_color   the colour of a dip that keeps the timing (vfade_in / vfade_out)
@@ -551,7 +421,7 @@ def color_hex(c):
 
 
 def ffmpeg_color(c):
-    """"#rrggbb" as an ffmpeg colour: black is written "black" (as before v0.7.0), anything else 0xrrggbb."""
+    """"#rrggbb" as an ffmpeg colour: black is written "black", anything else 0xrrggbb."""
     h = color_hex(c)
     return "black" if h == "000000" else "0x" + h
 
@@ -642,7 +512,7 @@ def match_gain(target, mean):
 
 
 def _track_filter(graph, src, j, t, total):
-    """added 2026-11-03 v0.5.0: one soundtrack track as a stereo stream exactly `total` seconds long."""
+    """One soundtrack track as a stereo stream exactly `total` seconds long."""
     start, src_in, length = float(t.get("start", 0.0)), float(t.get("in", 0.0)), float(t["length"])
     skip = 0.0
     if start < 0:  # the part before the film is not heard
@@ -675,12 +545,9 @@ def _track_filter(graph, src, j, t, total):
     return "trk{}".format(j)
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] def _finish(args, graph, n_in, chapters_file, codec, crf, total, out_path):
 def _finish(args, graph, n_in, chapters_file, codec, crf, total, out_path, preset="medium", stem_out=()):
     if chapters_file:
         args += ["-f", "ffmetadata", "-i", chapters_file]
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] args += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map", "[aout]"]
-    # added 2026-11-03 v0.6.0: with stems the final audio is split; the encoder takes [aenc]
     aenc = "[aenc]" if any("[aenc]" in x for x in graph) else "[aout]"
     args += ["-filter_complex", ";".join(graph), "-map", "[vout]", "-map", aenc]
     if chapters_file:
@@ -689,23 +556,16 @@ def _finish(args, graph, n_in, chapters_file, codec, crf, total, out_path, prese
         args += ["-c:v", "libx265", "-tag:v", "hvc1"]
     else:
         args += ["-c:v", "libx264"]
-    # [OLD 2026-11-02 v0.2.0->v0.2.1] no explicit channel count for the encoder
-    # args += ["-preset", "medium", "-crf", str(int(crf)), "-pix_fmt", "yuv420p", "-r", str(FPS),
-    #          "-c:a", "aac", "-b:a", "192k", "-ar", str(AUDIO_RATE), "-movflags", "+faststart",
-    #          "-t", _f(total), out_path]
-    # [/OLD]
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] args += ["-preset", "medium", "-crf", str(int(crf)), "-pix_fmt", "yuv420p", "-r", str(FPS),
     args += ["-preset", str(preset or "medium"), "-crf", str(int(crf)), "-pix_fmt", "yuv420p", "-r", str(FPS),
              "-c:a", "aac", "-b:a", "192k", "-ar", str(AUDIO_RATE), "-ac", "2", "-movflags", "+faststart",
              "-t", _f(total), out_path]
-    for label, path in stem_out:  # added 2026-11-03 v0.6.0: audio stems as 48 kHz stereo WAVs, same length as the cut
+    for label, path in stem_out:
         args += ["-map", "[{}]".format(label), "-c:a", "pcm_s16le", "-ar", str(AUDIO_RATE), "-ac", "2",
                  "-t", _f(total), path]
-    # [OLD 2026-11-03 v0.4.3->v0.5.0] return args, starts, total
     return args
 
 
-# ---- soundtrack segments and waveforms (added 2026-11-03 v0.5.0) -------------------------------------------------
+# ---- soundtrack segments and waveforms ---------------------------------------------------------------------------
 
 def segment_command(pieces, length, out_path, ffmpeg=None):
     """A WAV of `length` seconds with each piece {path, src_in, src_out, at} placed `at` seconds in, silence
@@ -741,15 +601,6 @@ def render_segment(pieces, length, out_dir, file_digest, ffmpeg=None):
     if os.path.isfile(path):
         return path
     os.makedirs(out_dir, exist_ok=True)
-    # [OLD 2026-11-03 v0.5.1->v0.6.0] two makers of the same segment at once (a render and the editor's excerpt)
-    # shared one temp name; the graph went on the command line
-    # tmp = path[:-4] + ".partial.wav"
-    # r = subprocess.run(segment_command(pieces, length, tmp, ffmpeg), capture_output=True, text=True)
-    # if r.returncode != 0:
-    #     if os.path.exists(tmp):
-    #         os.remove(tmp)
-    #     raise MergeError("ffmpeg could not cut the soundtrack: " + (r.stderr or "").strip()[-800:])
-    # [/OLD]
     tmp = "{}.{}.{}.partial.wav".format(path[:-4], os.getpid(), threading.get_ident())
     try:
         run_ffmpeg(segment_command(pieces, length, tmp, ffmpeg))
@@ -788,27 +639,12 @@ def waveform_peaks(path, per_second=50, ffmpeg=None, max_seconds=3600):
     return {"per_second": rate / step, "duration": len(raw) / rate, "peaks": peaks}
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] stdout was read to the end before stderr, so more than a pipe's worth of stderr
-# (64 KB) hung ffmpeg and the node for ever; it could not be stopped; the whole graph was on the command line
-# (Windows allows 32 767 characters: about 55 scenes)
-# def run_ffmpeg(args, total=None, progress=None):
-#     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-#     for line in proc.stdout:
-#         if progress and total and line.startswith("out_time_us="):
-#             try:
-#                 progress(min(1.0, int(line.split("=", 1)[1]) / 1e6 / total))
-#             except ValueError:
-#                 pass
-#     err = proc.stderr.read()
-#     if proc.wait() != 0:
-#         raise MergeError("ffmpeg failed: " + err.strip()[-2000:])
-# [/OLD]
-_SCRIPT_FLAG = {}  # added 2026-11-03 v0.6.0: ffmpeg path -> how it reads a filter graph from a file
+_SCRIPT_FLAG = {}
 STDERR_KEEP = 256 * 1024
 
 
 def script_flag(ffmpeg):
-    """added 2026-11-03 v0.6.0: the option that reads a filter graph from a file: "-filter_complex_script" (ffmpeg
+    """The option that reads a filter graph from a file: "-filter_complex_script" (ffmpeg
     6 and older; deprecated later), "-/filter_complex" (ffmpeg 7+), or None (keep the graph on the command line).
     Found once per ffmpeg by trying a tiny graph."""
     if ffmpeg in _SCRIPT_FLAG:
@@ -837,7 +673,7 @@ def script_flag(ffmpeg):
 
 
 def _graph_to_file(args):
-    """added 2026-11-03 v0.6.0: (args, script path or None): "-filter_complex <graph>" becomes the file form."""
+    """(args, script path or None): "-filter_complex <graph>" becomes the file form."""
     if "-filter_complex" not in args:
         return list(args), None
     k = args.index("-filter_complex")
@@ -851,7 +687,7 @@ def _graph_to_file(args):
 
 
 def run_ffmpeg(args, total=None, progress=None, cancel=None):
-    """Run ffmpeg (added 2026-11-03 v0.6.0: rewritten). stdout (-progress) and stderr are read by threads, so a
+    """Run ffmpeg. stdout (-progress) and stderr are read by threads, so a
     chatty ffmpeg never blocks; the filter graph is passed in a file. progress(fraction) is called on this thread.
     cancel: a callable polled about 5 times a second; when it returns True, ffmpeg is killed and MergeCancelled
     raised; when it raises (e.g. ComfyUI's interrupt check), ffmpeg is killed and that exception goes on.
@@ -914,7 +750,6 @@ def run_ffmpeg(args, total=None, progress=None, cancel=None):
 
 
 def _kill(proc):
-    """added 2026-11-03 v0.6.0"""
     try:
         proc.kill()
         proc.wait(timeout=10)
@@ -928,7 +763,7 @@ _LOUD_RE = {"integrated": re.compile(r"I:\s+(-?[\d.]+|-inf)\s+LUFS"),
 
 
 def measure_loudness(path, ffmpeg=None, cancel=None):
-    """added 2026-11-03 v0.6.0: EBU R128 of a file's sound: {integrated (LUFS), lra (LU), true_peak (dBTP)};
+    """EBU R128 of a file's sound: {integrated (LUFS), lra (LU), true_peak (dBTP)};
     a value is None when the sound is silent (-inf)."""
     ffmpeg = ffmpeg or ffmpeg_bin()
     if not ffmpeg:
@@ -943,22 +778,12 @@ def measure_loudness(path, ffmpeg=None, cancel=None):
     return out
 
 
-# [OLD 2026-11-02 v0.2.0->v0.2.1] ffmpeg wrote straight to the cut, so a failed merge left a broken
-# <slug>_cut_vN.mp4 behind that the node then tried to play
-# def join(segments, out_path, width, height, progress=None, **kw):
-#     args, starts, total = build_command(segments, out_path, width, height, **kw)
-#     run_ffmpeg(args, total, progress)
-#     return starts, total
-# [/OLD]
-# [OLD 2026-11-03 v0.5.1->v0.6.0] def join(segments, out_path, width, height, progress=None, **kw):
 def join(segments, out_path, width, height, progress=None, cancel=None, **kw):
-    """Render into <name>.partial.mp4 and rename only when ffmpeg succeeded. cancel: see run_ffmpeg (added
-    2026-11-03 v0.6.0)."""
+    """Render into <name>.partial.mp4 and rename only when ffmpeg succeeded. cancel: see run_ffmpeg."""
     root, ext = os.path.splitext(out_path)
     tmp = root + ".partial" + ext
     args, starts, total = build_command(segments, tmp, width, height, **kw)
     try:
-        # [OLD 2026-11-03 v0.5.1->v0.6.0] run_ffmpeg(args, total, progress)
         run_ffmpeg(args, total, progress, cancel)
         os.replace(tmp, out_path)
     finally:
@@ -1008,30 +833,8 @@ def _srt_time(t):
     return "{:02d}:{:02d}:{:02d},{:03d}".format(h, m, s, ms)
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] lines before src_in were dropped (a last_frame scene's line at 0 s); a blank line in a
-# line of dialogue ended its SRT cue
-# def subtitle_cues(entries):
-#     """entries: [{start, src_in, src_out, dialogue:[{t, speaker, text}]}] -> [(start, end, text)]."""
-#     cues = []
-#     for e in entries:
-#         lines = sorted(e.get("dialogue", []), key=lambda d: d["t"])
-#         scene_end = e["start"] + (e["src_out"] - e["src_in"])
-#         for i, d in enumerate(lines):
-#             if d["t"] < e["src_in"] or d["t"] >= e["src_out"] or not d["text"].strip():
-#                 continue
-#             a = e["start"] + d["t"] - e["src_in"]
-#             b = a + max(1.2, 0.6 + 0.07 * len(d["text"]))
-#             if i + 1 < len(lines):
-#                 b = min(b, e["start"] + lines[i + 1]["t"] - e["src_in"] - 0.05)
-#             b = min(b, scene_end)
-#             if b - a < 0.3:
-#                 b = a + 0.3
-#             text = (d["speaker"] + ": " if d.get("speaker") else "") + d["text"].strip()
-#             cues.append((a, b, text))
-#     return cues
-# [/OLD]
 def _cue_text(d):
-    """added 2026-11-03 v0.6.0: a dialogue line as cue text; blank lines inside it would end the SRT cue."""
+    """A dialogue line as cue text; blank lines inside it would end the SRT cue."""
     lines = [x.strip() for x in str(d.get("text") or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")]
     text = "\n".join(x for x in lines if x)
     return (d["speaker"] + ": " if d.get("speaker") and text else "") + text
@@ -1039,7 +842,7 @@ def _cue_text(d):
 
 def subtitle_cues(entries):
     """entries: [{start, src_in, src_out, dialogue:[{t, speaker, text}]}] -> [(start, end, text)].
-    added 2026-11-03 v0.6.0: a line up to one frame before the scene's cut-in point (a last_frame scene is cut in one
+    A line up to one frame before the scene's cut-in point (a last_frame scene is cut in one
     frame late) is shown from the cut-in instead of being dropped; lines inside a tail scene's overlap stay out (that
     part of the scene is not in the cut)."""
     cues = []
@@ -1054,7 +857,6 @@ def subtitle_cues(entries):
                 continue
             a = e["start"] + times[i] - e["src_in"]
             b = a + max(1.2, 0.6 + 0.07 * len(text))
-            # added 2026-11-06 v0.8.0: a line with its own duration (Scene tab) is shown that long (reading time otherwise)
             dur = d.get("duration")
             if isinstance(dur, (int, float)) and not isinstance(dur, bool) and dur > 0:
                 b = a + max(0.3, float(dur))
@@ -1089,45 +891,7 @@ def _rt(seconds):
     return {"OTIO_SCHEMA": "RationalTime.1", "rate": float(FPS), "value": float(round(seconds * FPS))}
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] every gap and clip length was rounded to frames on its own, so positions drifted by a
-# frame; no soundtrack, no markers
-# def write_otio(name, entries, path):
-#     """A/B-roll OpenTimelineIO: alternating tracks so crossfading clips can overlap."""
-#     def clip(e):
-#         return {"OTIO_SCHEMA": "Clip.2", "name": e["title"], "metadata": {"reelwright": {"scene_id": e["scene_id"]}},
-#                 "source_range": {"OTIO_SCHEMA": "TimeRange.1", "start_time": _rt(e["src_in"]),
-#                                  "duration": _rt(e["src_out"] - e["src_in"])},
-#                 "media_references": {"DEFAULT_MEDIA": {
-#                     "OTIO_SCHEMA": "ExternalReference.1", "target_url": "file://" + os.path.abspath(e["path"]).replace(os.sep, "/"),
-#                     "available_range": {"OTIO_SCHEMA": "TimeRange.1", "start_time": _rt(0), "duration": _rt(e["src_len"])}}},
-#                 "active_media_reference_key": "DEFAULT_MEDIA", "effects": [], "markers": [], "enabled": True}
-#
-#     def track(kind, label, sub):
-#         children, cur = [], 0.0
-#         for e in sub:
-#             if e["start"] > cur + 1e-6:
-#                 children.append({"OTIO_SCHEMA": "Gap.1", "source_range": {"OTIO_SCHEMA": "TimeRange.1",
-#                                  "start_time": _rt(0), "duration": _rt(e["start"] - cur)}})
-#             children.append(clip(e))
-#             cur = e["start"] + e["src_out"] - e["src_in"]
-#         return {"OTIO_SCHEMA": "Track.1", "name": label, "kind": kind, "children": children,
-#                 "effects": [], "markers": [], "enabled": True, "metadata": {}}
-#
-#     tracks = []
-#     for kind in ("Video", "Audio"):
-#         for parity, label in ((0, "A"), (1, "B")):
-#             sub = [e for i, e in enumerate(entries) if i % 2 == parity]
-#             if sub:
-#                 tracks.append(track(kind, kind + " " + label, sub))
-#     doc = {"OTIO_SCHEMA": "Timeline.1", "name": name, "global_start_time": _rt(0), "metadata": {},
-#            "tracks": {"OTIO_SCHEMA": "Stack.1", "name": "tracks", "children": tracks,
-#                       "effects": [], "markers": [], "enabled": True, "metadata": {}}}
-#     with open(path, "w", encoding="utf-8") as f:
-#         json.dump(doc, f, indent=1)
-# [/OLD]
-
-
-# ---- added 2026-11-03 v0.6.0: exact frame positions, soundtrack tracks and markers in OTIO and FCPXML ------------
+# ---- exact frame positions, soundtrack tracks and markers in OTIO and FCPXML -------------------------------------
 
 def _frames(seconds):
     """Seconds to whole frames, half frames up (the same everywhere in the side files)."""
@@ -1264,37 +1028,14 @@ def _fr(seconds):
     return "{}/{}s".format(int(round(seconds * FPS)), FPS)
 
 
-# [OLD 2026-11-03 v0.5.1->v0.6.0] escape() left " in attributes (a title with a quote broke the file); a clip ran on
-# over the slate or gap after it
-# def write_fcpxml(name, entries, total, width, height, path):
-#     """Single-spine FCPXML 1.10; overlapping clips are cut where the next one starts."""
-#     res = ['<format id="r0" name="FFVideoFormat{}p{}" frameDuration="1/{}s" width="{}" height="{}"/>'.format(
-#         height, FPS, FPS, width, height)]
-#     clips = []
-#     for i, e in enumerate(entries):
-#         res.append('<asset id="r{}" name="{}" start="0s" duration="{}" hasVideo="1" hasAudio="1" format="r0">'
-#                    '<media-rep kind="original-media" src="{}"/></asset>'.format(
-#                        i + 1, escape(e["title"]), _fr(e["src_len"]),
-#                        escape("file://" + os.path.abspath(e["path"]).replace(os.sep, "/"))))
-#         end = entries[i + 1]["start"] if i + 1 < len(entries) else total
-#         clips.append('<asset-clip ref="r{}" name="{}" offset="{}" start="{}" duration="{}"/>'.format(
-#             i + 1, escape(e["title"]), _fr(e["start"]), _fr(e["src_in"]), _fr(end - e["start"])))
-#     xml = ('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE fcpxml>\n<fcpxml version="1.10">\n'
-#            '<resources>\n{}\n</resources>\n<library><event name="{}"><project name="{}">'
-#            '<sequence format="r0" duration="{}" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">'
-#            '<spine>\n{}\n</spine></sequence></project></event></library>\n</fcpxml>\n').format(
-#         "\n".join(res), escape(name), escape(name), _fr(total), "\n".join(clips))
-#     with open(path, "w", encoding="utf-8") as f:
-#         f.write(xml)
-# [/OLD]
 def _ff(frames):
-    """added 2026-11-03 v0.6.0: whole frames as an FCPXML time."""
+    """Whole frames as an FCPXML time."""
     return "{}/{}s".format(int(frames), FPS)
 
 
 def write_fcpxml(name, entries, total, width, height, path, tracks=None, markers=None):
-    """Single-spine FCPXML 1.10; overlapping clips are cut where the next one starts (added 2026-11-03 v0.6.0:
-    slates and missing scenes are <gap>s; soundtrack tracks are connected audio clips below the spine; markers sit
+    """Single-spine FCPXML 1.10; overlapping clips are cut where the next one starts (slates and missing scenes are
+    <gap>s; soundtrack tracks are connected audio clips below the spine; markers sit
     on the clip or gap they fall in)."""
     total_f = _frames(total)
     res = ['<format id="r0" name="FFVideoFormat{}p{}" frameDuration="1/{}s" width="{}" height="{}"/>'.format(
@@ -1366,7 +1107,7 @@ def write_bundle(path, files):
                 z.write(src, arcname)
 
 
-# ---- timeline filmstrips (added 2026-11-05 v0.7.0) -----------------------------------------------------------------
+# ---- timeline filmstrips -------------------------------------------------------------------------------------------
 # One row of small frames of a video, a frame every `interval` seconds, so the timeline can show the frame that is at
 # each time of a rendered scene. Made once per video and tile height and kept next to the video as
 # <video name>.filmstrip_<h>.jpg with a .json that says how it was cut; made again when the video changes.

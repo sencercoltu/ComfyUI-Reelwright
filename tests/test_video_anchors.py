@@ -1,4 +1,4 @@
-"""added 2026-11-09 v0.16.0: anchor sheets named in the subject line, a warning when their pictures reach H3 too small,
+"""Anchor sheets named in the subject line, a warning when their pictures reach H3 too small,
 and video anchors of cast members.
 
 Sencer: "if one character has multiple anchor pictures, and a sheet of say 9x9 is created, how does H3 assign the single
@@ -266,7 +266,7 @@ def test_the_editor_counts_and_sizes_the_same(harbor):
 
 
 def test_a_video_anchor_under_2_s_is_not_sent(harbor):
-    """added 2026-11-09 v0.17.1 (third review 4): a clip under 2 s is left out ("short"), as the Cast tab says; it was
+    """A clip under 2 s is left out ("short"), as the Cast tab says; it was
     sent unless it had been cut to the seconds left."""
     p = _clips(harbor, 1.5)
     p["cast"][0]["video_anchors"] = [{"id": "va_s", "asset": "a_clip0"}]
