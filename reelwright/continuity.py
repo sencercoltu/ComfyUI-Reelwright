@@ -112,6 +112,11 @@ def _embeddings(bgr):
     return [f.normed_embedding for f in _analyzer().get(bgr)]
 
 
+def find_faces(bgr):
+    """[((x1, y1, x2, y2), score)] of the faces in a picture (BGR array), for the crop window's Find faces."""
+    return [(tuple(float(v) for v in f.bbox), float(f.det_score)) for f in _analyzer().get(bgr)]
+
+
 def _anchor_embeddings(path):
     st = os.stat(path)
     key = (path, st.st_mtime_ns)

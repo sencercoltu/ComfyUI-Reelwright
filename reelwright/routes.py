@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import hashlib
 import json
 import logging
 import math
@@ -10,6 +11,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import uuid
 
 import comfy.samplers
@@ -17,10 +19,10 @@ import folder_paths
 from aiohttp import web
 from server import PromptServer
 
-from . import VERSION, assemble, beats, cache, continuity, jobs, llm, media, merge, profiles, scriptparts, spec
+from . import VERSION, assemble, beats, cache, continuity, detect, jobs, llm, media, merge, profiles, scriptparts, spec
 from . import files as diskuse
 from .analysis import analyze, plan_response
-from .model import cast_description, normalize_project, project_index
+from .model import cast_description, normalize_project, project_index, slugify
 from .storage import ID_RE, ProjectStore, Roots, SlugConflict, check_id, check_slug, read_json, safe_join
 
 log = logging.getLogger("reelwright")
@@ -1135,6 +1137,87 @@ async def anchor_frame(request):
         raise ValueError("the frame can't be read as a picture: {}".format(_message(e)[:300])) from e
     return {"asset": dict(info, file=os.path.relpath(dst, store.roots.input).replace(os.sep, "/"), kind="image",
                           category="subject"), "t": t}
+
+
+# ---- crop a picture into a new one, and find faces and things in it first (detect.py) --------------------------------
+
+def _box(v):
+    """[x, y, w, h] as parts of a picture (0..1), inside it."""
+    if not isinstance(v, list) or len(v) != 4:
+        raise ValueError("box must be [x, y, w, h]")
+    x, y, w, h = (_num(n, "box") for n in v)
+    if w <= 0 or h <= 0 or x < -0.01 or y < -0.01 or x + w > 1.01 or y + h > 1.01:
+        raise ValueError("box must lie inside the picture")
+    return [x, y, w, h]
+
+
+def _picture(store, b):
+    rel = _str(b, "file")
+    src = store.input_path(rel)
+    if not os.path.isfile(src):
+        raise FileNotFoundError("the picture {} is not in ComfyUI's input folder".format(rel))
+    if media.kind_of(src) != "image":
+        raise ValueError("only a picture can be cropped or searched")
+    return rel, src
+
+
+@routes.post("/reelwright/crop")
+@json_route
+async def crop_picture(request):
+    """{slug, file (a picture under ComfyUI's input folder), box [x, y, w, h] (parts of it), name} ->
+    {asset: {file, kind: "image", width, height, name, category: "subject"}, small}. Written to
+    input/reelwright/<project>/crops/<name>_<key>.png, the key from the picture and the box (cropping the same box
+    again gives the same file); small: its short side is under 400 px."""
+    b = await body_of(request)
+    store = slug_store(b.get("slug"))
+    rel, src = _picture(store, b)
+    box = _box(b.get("box"))
+    name = (_str(b, "name", "", max_len=200) or "").strip() or "crop"
+    key = hashlib.sha1(json.dumps([rel, int(os.path.getmtime(src)), [round(v, 4) for v in box]]).encode()).hexdigest()[:10]
+    dst = safe_join(store.input_dir, "crops", "{}_{}.png".format(slugify(name)[:40] or "crop", key))
+    w, h = await asyncio.to_thread(detect.crop, src, box, dst)
+    return {"asset": {"file": os.path.relpath(dst, store.roots.input).replace(os.sep, "/"), "kind": "image",
+                      "width": w, "height": h, "name": name, "category": "subject"},
+            "small": min(w, h) < detect.SMALL_SIDE}
+
+
+@routes.get("/reelwright/detect/status")
+@json_route
+async def detect_status(request):
+    return await asyncio.to_thread(detect.status)
+
+
+@routes.post("/reelwright/detect/download")
+@json_route
+async def detect_download(request):
+    return await asyncio.to_thread(detect.download)
+
+
+@routes.post("/reelwright/detect")
+@json_route
+async def detect_things(request):
+    """{slug, file (a picture), mode: "faces" | "objects", queries: ["dog", "tea cup"] (objects)} ->
+    {boxes: [{box: [x, y, w, h], label, score}], engine, ms}. Faces come with their head and shoulders, from
+    insightface, else from the object finder; objects from the object finder (detect.find_objects)."""
+    b = await body_of(request)
+    store = slug_store(b.get("slug"))
+    _rel, src = _picture(store, b)
+    mode = _str(b, "mode", "objects")
+    t0 = time.time()
+    if mode == "faces":
+        if continuity.available():
+            boxes, engine = await asyncio.to_thread(detect.find_faces, src), "insightface"
+        elif detect.detector_ready():
+            boxes, engine = await asyncio.to_thread(detect.faces_with_detector, src), "grounding-dino"
+        else:
+            raise ValueError("Finding faces needs insightface (the face check's package) or the object finder "
+                             "(Download in the crop window)")
+    elif mode == "objects":
+        queries = _str_list(b.get("queries"), "queries", max_items=12)
+        boxes, engine = await asyncio.to_thread(detect.find_objects, src, queries), "grounding-dino"
+    else:
+        raise ValueError("mode must be faces or objects")
+    return {"boxes": boxes, "engine": engine, "ms": int((time.time() - t0) * 1000)}
 
 
 VOICE_MIN, VOICE_MAX = 2.0, 15.0  # H3's audio references: 2-15 s

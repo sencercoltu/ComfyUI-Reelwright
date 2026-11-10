@@ -1508,6 +1508,7 @@ def main():
         v0193_checks(page, check, saved, shots)
         v0194_checks(page, check, saved, shots)
         v0195_checks(page, check, saved, shots)
+        v0200_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
     httpd.shutdown()
@@ -6475,6 +6476,135 @@ def v0195_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
     mode = page.evaluate("() => window.__editor.store.project.global.llm.describe_video")
     check(mode == "frames", f"As frames is stored: {mode}")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+def v0200_checks(page, check, saved, shots):
+    """v0.20.0 (Sencer: "say there are two people in a single image, i want to use the person on the left as an
+    anchor ... should we add crop ability to anchors?" / "instead of just faces, should we add "objects", to find dog,
+    face, person, tea cup or whatever?"): the crop window cuts boxes of a picture into new pictures (crop_of), drawn or
+    found (faces, or things by name with the object finder, downloaded on request), each optionally an anchor;
+    from a cast member's anchor the crop can take the original's place; a crop can be cut again."""
+    def proj():
+        return page.evaluate("() => window.__editor.store.project")
+
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="assets")
+    page.evaluate("j => window.__editor.load(j)", json.dumps(q))
+    page.wait_for_timeout(300)
+    page.evaluate("() => { window.__mockDetect.objects = false; window.__mockDetect.state = 'idle'; window.__editor.store.setEph({ selectedAsset: 'a_p1' }); }")
+    page.wait_for_timeout(300)
+    page.locator("[data-key='asset-crop-a_p1']").click()
+    page.wait_for_timeout(500)
+    box = page.locator(".rw-modal-box.crop")
+    check(box.count() == 1 and "Crop P1" in box.locator(".rw-modal-title").inner_text(), "Crop… opens the crop window")
+    save = box.locator(".rw-modal-actions button").last
+    check(save.is_disabled(), "nothing to save before a box is drawn or found")
+    # draw a box on the left half
+    st = box.locator(".rw-crop-stage").bounding_box()
+    page.mouse.move(st["x"] + st["width"] * 0.05, st["y"] + st["height"] * 0.1)
+    page.mouse.down()
+    page.mouse.move(st["x"] + st["width"] * 0.3, st["y"] + st["height"] * 0.4, steps=4)
+    page.mouse.move(st["x"] + st["width"] * 0.45, st["y"] + st["height"] * 0.6, steps=4)
+    page.mouse.up()
+    page.wait_for_timeout(200)
+    rows = box.locator(".rw-crop-row")
+    drawn = page.evaluate("() => [...document.querySelectorAll('.rw-crop-box.picked')].map(b => [b.style.left, b.style.width])")
+    check(rows.count() == 1 and len(drawn) == 1 and save.is_enabled() and "Save the crop" in save.inner_text(), f"a drawn box is ticked and can be saved: {drawn}")
+    # Find faces: two boxes; tick the second
+    box.locator("[data-help='crop.find.run']").click()
+    page.wait_for_timeout(500)
+    found = box.locator(".rw-crop-box.found")
+    check(found.count() == 2 and "Found 2 with insightface" in box.inner_text(), f"Find faces draws the faces: {found.count()}")
+    found.nth(1).click()
+    page.wait_for_timeout(200)
+    check(box.locator(".rw-crop-row").count() == 2 and "Save 2 pictures" in save.inner_text(), "clicking a found box ticks it")
+    # Things: the object finder is not downloaded; download it
+    box.locator("[data-help='crop.find.objects']").click()
+    page.wait_for_timeout(200)
+    dl = box.locator("[data-help='crop.download']")
+    check(dl.count() == 1 and "690 MB" in dl.inner_text() and box.locator("[data-help='crop.find.run']").is_disabled(), "Things needs the object finder: Download")
+    dl.click()
+    page.wait_for_timeout(3800)
+    check(box.locator("[data-help='crop.find.run']").is_enabled() and "Grounding DINO" in box.inner_text(), "after the download Find works for things")
+    q_in = box.locator("[data-help='crop.find.query']")
+    q_in.fill("person, tea cup")
+    box.locator("[data-help='crop.find.run']").click()
+    page.wait_for_timeout(500)
+    last = page.evaluate("() => window.__lastDetect")
+    labels = page.evaluate("() => [...document.querySelectorAll('.rw-crop-box.found .rw-crop-tag')].map(t => t.textContent.split(' ').slice(0, -1).join(' '))")
+    check(last["mode"] == "objects" and last["queries"] == ["person", "tea cup"] and "person 1" in labels and "tea cup 1" in labels,
+          f"Things sends the names and shows each find: {last} {labels}")
+    # give the face to Mara, name the drawn one; save both
+    sel = box.locator(".rw-crop-row select").nth(1)
+    sel.select_option("c_mara")
+    box.locator(".rw-crop-row input.rw-input").first.fill("Mara left")
+    page.screenshot(path=str(shots / "v0200_crop.png"))
+    n0, anchors0 = len(proj()["assets"]), proj()["cast"][0]["anchors"][:]
+    save.click()
+    page.wait_for_timeout(700)
+    p = proj()
+    new = p["assets"][n0:]
+    check(len(new) == 2 and all(a.get("crop_of", {}).get("asset") == "a_p1" for a in new) and new[0]["name"] == "Mara left"
+          and new[0]["file"].startswith("reelwright/harbor_lights/crops/mara_left_"), f"two new pictures cut from P1: {[(a['code'], a['name'], a['file']) for a in new]}")
+    mara = next(c for c in p["cast"] if c["id"] == "c_mara")
+    check(mara["anchors"] == anchors0 + [new[1]["id"]], f"the face given to Mara is one of her anchors: {mara['anchors']}")
+    toast = page.locator(".rw-toast").last.inner_text()
+    check(f"{new[0]['code']}, {new[1]['code']} cut from P1." in toast, f"the toast names them: {toast!r}")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(300)
+    check(len(proj()["assets"]) == n0, "one undo takes both back")
+    page.keyboard.press("Control+y")
+    page.wait_for_timeout(300)
+    # the crop's inspector: Cut from P1 · Adjust crop…
+    cid = new[1]["id"]
+    page.evaluate("id => window.__editor.store.setEph({ selectedAsset: id })", cid)
+    page.wait_for_timeout(300)
+    check("Cut from" in page.locator(".rw-crop-of").inner_text() and "P1" in page.locator(".rw-crop-of").inner_text(), "a crop says where it was cut from")
+    page.locator(f"[data-key='asset-crop-adjust-{cid}']").click()
+    page.wait_for_timeout(500)
+    box = page.locator(".rw-modal-box.crop")
+    save = box.locator(".rw-modal-actions button").last
+    check("Adjust the crop" in box.locator(".rw-modal-title").inner_text() and "Cut again" in save.inner_text(), "Adjust crop opens on the original with this crop's box")
+    hd = box.locator(".rw-crop-handle.se").bounding_box()
+    page.mouse.move(hd["x"] + 5, hd["y"] + 5)
+    page.mouse.down()
+    page.mouse.move(hd["x"] - 30, hd["y"] - 30, steps=5)
+    page.mouse.up()
+    page.wait_for_timeout(200)
+    before = next(a for a in proj()["assets"] if a["id"] == cid)
+    save.click()
+    page.wait_for_timeout(600)
+    after = next(a for a in proj()["assets"] if a["id"] == cid)
+    check(after["crop_of"]["box"][2] < before["crop_of"]["box"][2] and after["file"] != before["file"] and after["code"] == before["code"]
+          and len(proj()["assets"]) == n0 + 2, f"cutting again keeps the picture's code and gives it the new cut: {before['crop_of']} -> {after['crop_of']}")
+    # from a cast member's anchor: the crop takes the original's place
+    q["ui"].update(tab="cast")
+    page.evaluate("j => window.__editor.load(j)", json.dumps(q))
+    page.wait_for_timeout(300)
+    page.evaluate("() => window.__editor.store.setEph({ selectedCast: 'c_mara' })")
+    page.wait_for_timeout(300)
+    page.locator("[data-key='anchor-crop-c_mara-a_p6']").click()
+    page.wait_for_timeout(500)
+    box = page.locator(".rw-modal-box.crop")
+    box.locator("[data-help='crop.find.faces']").click()
+    box.locator("[data-help='crop.find.run']").click()
+    page.wait_for_timeout(500)
+    box.locator(".rw-crop-box.found").first.click()
+    page.wait_for_timeout(200)
+    cast_val = box.locator(".rw-crop-row select").first.input_value()
+    rep_txt = box.locator(".rw-crop-replace").inner_text()
+    check(cast_val == "c_mara" and "in place of P6 in Mara's anchors" in rep_txt, f"from Mara's anchor the crop is hers and replaces P6: {cast_val} {rep_txt!r}")
+    page.screenshot(path=str(shots / "v0200_crop_anchor.png"))
+    box.locator(".rw-modal-actions button").last.click()
+    page.wait_for_timeout(600)
+    p = proj()
+    mara = next(c for c in p["cast"] if c["id"] == "c_mara")
+    crop = p["assets"][-1]
+    check(mara["anchors"] == ["a_p1", crop["id"], "a_p7"] and any(a["id"] == "a_p6" for a in p["assets"]),
+          f"the crop took P6's place, P6 stays in the assets: {mara['anchors']}")
+    page.keyboard.press("Escape")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

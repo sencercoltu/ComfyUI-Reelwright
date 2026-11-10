@@ -438,6 +438,14 @@ def _norm_asset(a):
     _text_field(df, "retention", "reference" if a["kind"] == "audio" else "fully_preserved")
     df["keep"] = _texts(df.get("keep"))
     df["soundtrack"] = spec.flag(df.get("soundtrack"), False)
+    # a picture cut out of another one (the crop window): {asset: the source's id, box: [x, y, w, h] as parts of it}
+    co = a.get("crop_of")
+    box = co.get("box") if isinstance(co, dict) else None
+    if isinstance(box, list) and len(box) == 4 and spec.text(co.get("asset")) and \
+            all(spec.num(v, None) is not None for v in box):
+        a["crop_of"] = {"asset": spec.text(co.get("asset")), "box": [min(1.0, max(0.0, spec.num(v, 0.0))) for v in box]}
+    else:
+        a.pop("crop_of", None)
 
 
 def _norm_asset_groups(p, assets):

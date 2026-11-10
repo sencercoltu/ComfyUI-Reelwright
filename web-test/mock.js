@@ -539,12 +539,16 @@ function mockSplit(script, size) {
   return { notes, parts, chars: text.length, blocks: blocks.length };
 }
 
+// the crop window's Find (detect.py): insightface and the object finder, which a test can "download"
+const mockDetect = { faces: true, objects: false, state: "idle", polls: 0 };
+if (typeof window !== "undefined") window.__mockDetect = mockDetect;
+
 async function route(path, opts = {}) {
   const url = new URL(path, "http://mock");
   const body = opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : null;
   await new Promise(r => setTimeout(r, 20));
   switch (url.pathname) {
-    case "/reelwright/info": return json({ version: "0.19.5", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.20.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
       if (!body.name) return json({ error: "Give the profile a name" }, 400);
@@ -750,6 +754,30 @@ async function route(path, opts = {}) {
       return json({ scenes, cast: [{ name: "Ada", kind: "character", description: body.part === 1 ? "" : "A young necromancer." }, { name: "Crypt " + body.part, kind: "location" }], tokens: 300 * rows.length, ms: 900, attempts: 1 });
     }
     case "/reelwright/promote_frame": return json({ asset: { id: "a_new", name: "Mara frame", file: `reelwright/${SLUG}/frames/s_02_last.png`, width: 1344, height: 768 } });
+    case "/reelwright/detect/status": {
+      const d = mockDetect;
+      if (d.state === "downloading" && ++d.polls >= 2) { d.state = "done"; d.objects = true; }
+      return json({ faces: { ready: d.faces, error: "" }, objects: { ready: d.objects, model: "IDEA-Research/grounding-dino-tiny", state: d.state, error: "", bytes: 690000000,
+        done: d.state === "downloading" ? 230000000 * d.polls : undefined } });
+    }
+    case "/reelwright/detect/download": mockDetect.state = "downloading"; mockDetect.polls = 0; return json({ objects: { ready: false, state: "downloading", bytes: 690000000, done: 0 }, faces: { ready: mockDetect.faces } });
+    case "/reelwright/detect": {
+      if (typeof window !== "undefined") window.__lastDetect = body;
+      if (body.mode === "faces") return json({ engine: "insightface", ms: 420, boxes: [
+        { box: [0.06, 0.08, 0.36, 0.5], label: "face", score: 0.98 }, { box: [0.56, 0.1, 0.36, 0.48], label: "face", score: 0.95 }] });
+      const boxes = (body.queries || []).flatMap((q, i) => q === "person"
+        ? [{ box: [0.02, 0.04, 0.46, 0.94], label: "person", score: 0.81 }, { box: [0.52, 0.05, 0.45, 0.93], label: "person", score: 0.77 }]
+        : [{ box: [0.3 + 0.05 * i, 0.62, 0.18, 0.2], label: q, score: 0.55 }]);
+      return json({ engine: "grounding-dino", ms: 1310, boxes });
+    }
+    case "/reelwright/crop": {
+      if (typeof window !== "undefined") window.__lastCrop = body;
+      const src = (projectJSON ? JSON.parse(projectJSON).assets : []).find(a => a.file === body.file) || { width: 1024, height: 1365 };
+      const w = Math.round(body.box[2] * (src.width || 1024)), hh = Math.round(body.box[3] * (src.height || 1365));
+      const slug = String(body.name || "crop").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "crop";
+      const key = body.box.map(v => Math.round(v * 1000)).join("");
+      return json({ asset: { file: `reelwright/${SLUG}/crops/${slug}_${key}.png`, kind: "image", width: w, height: hh, name: body.name, category: "subject" }, small: Math.min(w, hh) < 400 });
+    }
     case "/reelwright/anchor_frame": {
       const f = Math.floor(Math.max(0, Number(body.t) || 0) * 24 + 0.5);
       return json({ asset: { kind: "image", file: `reelwright/${SLUG}/frame_${body.cast_id}_${body.anchor_id}_${f}f.png`, width: 1344, height: 768, duration: 0, category: "subject" }, t: f / 24 });

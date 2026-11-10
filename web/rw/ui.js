@@ -98,6 +98,7 @@ const ICONS = {
   compare: '<rect x="2" y="3" width="5" height="10" rx="1"/><rect x="9" y="3" width="5" height="10" rx="1"/>',
   zoomIn: '<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3M5 7h4M7 5v4"/>',
   zoomOut: '<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3M5 7h4"/>',
+  crop: '<path d="M4.5 1.5v10h10M1.5 4.5h10v10"/>',
   search: '<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>',
   grip: '<circle cx="6" cy="4" r=".9"/><circle cx="10" cy="4" r=".9"/><circle cx="6" cy="8" r=".9"/><circle cx="10" cy="8" r=".9"/><circle cx="6" cy="12" r=".9"/><circle cx="10" cy="12" r=".9"/>',
   clapper: '<rect x="2" y="6" width="12" height="8" rx="1.5"/><path d="M2 6 3.5 2.5h9L14 6M6.5 2.5 5.3 6M10.5 2.5 9.3 6"/>',
@@ -665,7 +666,8 @@ export function placeNear(root, box, anchor, gap = 8) {
 //   choices: [{value, label, variant?: "primary"|"danger"|"default", help?}] in display order
 //   focus: the value whose button has focus at first (default: the cancel button when danger, else the last button)
 //   anchor: an element or screen rect to open next to; default dialogAnchor(root)
-export function choiceDialog(root, { title, message, choices, cancelValue = null, focus, danger = false, help, anchor } = {}) {
+//   cls: an extra class for the box (its size: "crop")
+export function choiceDialog(root, { title, message, choices, cancelValue = null, focus, danger = false, help, anchor, cls } = {}) {
   return new Promise(resolve => {
     const near = anchor instanceof Element ? anchor.getBoundingClientRect() : anchor || dialogAnchor(root);
     root.__rwModalClose?.(); // a dialog still open is cancelled, so its promise and listeners never leak
@@ -716,7 +718,7 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
     const cancel = () => finish(cancelValue);
     const btns = choices.map(c => button({ label: c.label, variant: c.variant || "default", help: c.help || (c.value === cancelValue ? "common.cancel" : "common.confirm"),
       onClick: () => finish(c.value) }));
-    const box = h("div", { class: ["rw-modal-box", choices.length > 2 && "wide"], role: "alertdialog", "aria-modal": "true", help },
+    const box = h("div", { class: ["rw-modal-box", choices.length > 2 && "wide", cls], role: "alertdialog", "aria-modal": "true", help },
       h("div", { class: "rw-modal-title" }, danger ? icon("warn", 15) : null, h("span", null, title)),
       message ? h("div", { class: "rw-modal-msg" }, message) : null,
       h("div", { class: "rw-modal-actions" }, btns),

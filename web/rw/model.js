@@ -547,6 +547,11 @@ function normAsset(a) {
   textField(df, "retention", a.kind === "audio" ? "reference" : "fully_preserved");
   df.keep = texts(df.keep);
   df.soundtrack = flag(df.soundtrack, false);
+  // a picture cut out of another one (the crop window): {asset: the source's id, box: [x, y, w, h] as parts of it}
+  const co = a.crop_of, box = isObj(co) && Array.isArray(co.box) ? co.box : null;
+  if (box && box.length === 4 && text(co.asset) && box.every(v => num(v, null) !== null)) {
+    a.crop_of = { asset: text(co.asset), box: box.map(v => Math.min(1, Math.max(0, num(v, 0)))) };
+  } else delete a.crop_of;
 }
 
 // The asset groups, in their order: {id, name, description}

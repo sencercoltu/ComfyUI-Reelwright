@@ -6,6 +6,7 @@ import {
   foldMenu, setFolded, pauseMediaIn,
 } from "../ui.js";
 import { rw, viewURL } from "../api.js";
+import { openCrop } from "../crop.js";
 import { assetMenu } from "./timeline.js";
 import {
   ASSET_CATEGORIES, ROLES, newId, assignCodes, retentionOptions, assetUsage, assetCastUse, sceneBudget, budgetIssues, findAsset,
@@ -496,6 +497,18 @@ function pickGroup(ctx, a, v) {
   else addGroup(ctx, name, a.id);
 }
 
+// "Cut from P3 · Adjust crop…" for a picture the crop window made
+function cropOfRow(ctx, a) {
+  if (!a.crop_of) return null;
+  const src = findAsset(ctx.p, a.crop_of.asset);
+  if (!src || src.kind !== "image") return h("div", { class: "rw-dim small", help: "assets.cropOf" }, "Cut from a picture that is no longer in the project.");
+  return h("div", { class: "rw-crop-of small", help: "assets.cropOf" },
+    h("span", { class: "rw-dim" }, "Cut from"),
+    h("button", { type: "button", class: "link mono rw-c-pic", help: "assets.cropOf", onClick: () => ctx.store.setEph({ selectedAsset: src.id }) }, src.code),
+    h("span", { class: "rw-dim rw-ellipsis" }, src.name || ""),
+    button({ label: "Adjust crop…", icon: "crop", small: true, variant: "ghost", help: "assets.cropAdjust", key: "asset-crop-adjust-" + a.id, onClick: () => openCrop(ctx, src, { adjust: a.id }) }));
+}
+
 function inspector(ctx) {
   const p = ctx.p;
   const a = findAsset(p, ctx.eph.selectedAsset) || p.assets[0];
@@ -509,9 +522,11 @@ function inspector(ctx) {
     section({
       title: "Asset", help: "assets.inspector",
       actions: [h("span", { class: "mono rw-dim small" }, a.width ? `${a.width}×${a.height}` : "", a.duration ? ` · ${a.duration.toFixed(2)} s` : ""),
+        a.kind === "image" && button({ label: "Crop…", icon: "crop", small: true, variant: "ghost", help: "assets.crop", key: "asset-crop-" + a.id, onClick: () => openCrop(ctx, a) }),
         button({ icon: "trash", small: true, variant: "danger-ghost", help: "assets.delete", onClick: () => ctx.actions.deleteAsset(a.id) })],
       children: [
         preview,
+        cropOfRow(ctx, a),
         h("div", { class: "rw-row" }, h("b", { class: "mono rw-c-" + kc, help: "assets.code" }, a.code),
           text({ value: a.name, key: "asset-name-" + a.id, help: "assets.name", onChange: v => edit(x => { x.name = v; }) })),
         h("div", { class: "rw-dim small mono rw-ellipsis", help: "assets.file" }, a.file),

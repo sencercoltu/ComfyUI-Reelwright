@@ -12,6 +12,7 @@ import {
 } from "../model.js";
 import { rw, viewURL } from "../api.js";
 import { clipEditor } from "./scene.js";
+import { openCrop } from "../crop.js";
 import { describeBox } from "./assets.js";
 
 const KINDS = [["character", "Characters"], ["location", "Locations"], ["prop", "Props"]];
@@ -139,6 +140,8 @@ function anchorsCard(ctx, c) {
         h("img", { src: viewURL(a.file, "input"), alt: a.name }),
         h("span", { class: "rw-anchor-label" }, h("b", { class: "mono rw-c-pic" }, a.code), " ", a.name,
           (c.video_anchors || []).some(va => va.frame_asset === a.id) && h("span", { class: "rw-dim" }, " · video frame")),
+        a.kind === "image" && h("button", { type: "button", class: "rw-anchor-crop", "aria-label": "Crop this anchor", help: "cast.anchors.crop", key: `anchor-crop-${c.id}-${a.id}`,
+          onClick: () => openCrop(ctx, a, { cast: c.id }) }, icon("crop", 11)),
         h("button", { type: "button", class: "rw-anchor-x", "aria-label": "Remove anchor", help: "cast.anchors.remove", onClick: () => edit((x, q) => { x.anchors = x.anchors.filter(y => y !== a.id); unskipAnchor(q, x.id, a.id); }) }, icon("close", 11)))))
         : h("div", { class: "rw-empty sm", help: "cast.anchors" }, "No anchors yet. Add front, ¾, profile and full-body pictures for the strongest identity."),
       frames.length > 0 && h("div", { class: "rw-anchor-ready small", help: "cast.anchors.frames" },

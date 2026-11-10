@@ -293,6 +293,12 @@ def malformed():
                     {"kind": "video", "group": "g_set_2", "tags": "x"}, {"kind": "audio", "group": "g_gone"},
                     {"kind": "image", "group": 7, "tags": [True, False]}, {"kind": "image", "group": None}]},
         {"scenes": [{}], "asset_groups": "x", "assets": [{"kind": "image", "group": "g_a", "tags": None}]},
+        # crops (v0.20.0): crop_of {asset, box [x, y, w, h]} kept when whole, clamped to 0..1; dropped otherwise
+        {"scenes": [{}], "assets": [{"kind": "image", "crop_of": {"asset": "a_src", "box": [0.1, "0.2", 0.5, 1.4]}},
+                                    {"kind": "image", "crop_of": {"asset": "a_src", "box": [0.1, 0.2, -0.5, True]}},
+                                    {"kind": "image", "crop_of": {"asset": "", "box": [0, 0, 1, 1]}},
+                                    {"kind": "image", "crop_of": {"asset": "a_src", "box": [0, 0, 1]}},
+                                    {"kind": "image", "crop_of": "a_src"}, {"kind": "image", "crop_of": None}]},
         {"scenes": [{}], "cast": [{"kind": "character", "name": "Nar", "voice_desc": "  a deep voice  "},
                                   {"kind": "character", "name": "Tom", "voice_desc": 5}, {"kind": "prop", "name": "Box", "voice_desc": None},
                                   {"kind": "character", "name": "Ada", "voice_desc": ["x"]}],

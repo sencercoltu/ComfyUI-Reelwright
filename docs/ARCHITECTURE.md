@@ -24,6 +24,7 @@ ComfyUI-Reelwright/
     llm.py               OpenAI-compatible client and prompt templates (aiohttp); v0.8.0: Write prompts (write_passes)
     scriptparts.py       cuts a long script into parts for the import (v0.4.2); imported scene length vs shots (v0.4.3) (pure)
     continuity.py        optional face-match drift check (insightface)
+    detect.py            v0.20.0: the crop window's Find (insightface faces, Grounding DINO things) and crop
     routes.py            /reelwright/* HTTP routes
     profiles.py          saved Global settings in user/reelwright/profiles.json
     node.py              the V3 node
@@ -108,7 +109,9 @@ lives on disk.
       "description": "",                                   // v0.2.0: the asset's subject line; read live by every scene,
                                                            //   and by a cast member without its own description (v0.3.4)
       "group": "g_1",                                      // v0.9.0: an asset_groups id or "" (no group)
-      "tags": ["identity", "face"] }                       // v0.9.0: cleaned by asset_tags (one space, ≤ 60 chars, no repeats)
+      "tags": ["identity", "face"],                        // v0.9.0: cleaned by asset_tags (one space, ≤ 60 chars, no repeats)
+      "crop_of": { "asset": "a_0", "box": [0.1, 0.05, 0.4, 0.9] } }   // v0.20.0, optional: cut from that picture, box [x, y, w, h]
+                                                           //   as parts of it (0..1, EXIF rotation applied); only for Adjust crop
   ],
   "asset_groups": [                                        // v0.9.0: Assets tab only (never in a prompt, plan or cache key)
     { "id": "g_1", "name": "Mara", "description": "Every picture of Mara and her voice." }
@@ -332,6 +335,10 @@ after a letter, digit, `_` or `@` starts no tag, so e-mail addresses are text.
 | GET | `/reelwright/filmstrip?file=<output-relative video>&h=` | – | v0.7.0, `merge.filmstrip`: `{file, url, interval, count, tile_w, tile_h, duration}`. One JPEG row of `count` tiles, each `tile_w` × `tile_h` (`h` 16–256, default 54; the video's aspect, even width); tile k is about the frame at k × `interval` s (ffmpeg `fps`). `interval` is 0.25 s up to 150 s of video, else duration / 600; when the row would pass 65,500 px (the widest JPEG ffmpeg writes) there are fewer tiles, further apart. `file` is the sprite, output-relative (`<video name>.filmstrip_<h>.jpg` next to the video, with a `.json` of the layout); `url` is its `/view` URL plus `&v=<video mtime_ns>`. Made once and reused while the video's size and mtime are unchanged; written through a temporary file under a per-sprite lock; at most 2 filmstrip ffmpeg runs at a time (a `threading.BoundedSemaphore`). 400: `file` not under `output/reelwright/`, not a video extension, a bad `h`, or a file ffmpeg can't read; 404: no such file |
 | POST | `/reelwright/speech` | `{file (output-relative video), lines: [{id, t, duration}], start?, end?}` | v0.10.0, `speech.timed_lines`: `{lines: [{id, t, end, matched, planned}], segments: [[start, end]]}` in file seconds; the take's segments are cached by path, size and mtime |
 | POST | `/reelwright/voice_from_take` | `{slug, scene_id, take_id, cast_id, lines: [{id, t, duration}]}` | v0.10.0: the lines timed to the take's speech, cut (−0.08/+0.12 s), joined with 0.25 s gaps (≤ 15 s), peak-normalised into `input/reelwright/<slug>/voice_<cast>_<scene>_<take>.wav`: `{asset: {file, kind: "audio", duration, name, category: "voice"}, used: [line ids], seconds}`; 400 under 2 s |
+| POST | `/reelwright/crop` | `{slug, file (an input-relative picture), box: [x, y, w, h] (0..1), name}` | v0.20.0, `detect.crop`: `{asset: {file, kind: "image", width, height, name, category: "subject"}, small}`; written to `input/reelwright/<folder>/crops/<slugified name>_<key>.png`, the key a hash of the picture, its mtime and the box (the same box gives the same file); `small` when the short side is under 400 px; a video, a missing file or a box outside the picture answers 400 |
+| GET | `/reelwright/detect/status` | – | v0.20.0, `detect.status`: `{faces: {ready, error}, objects: {ready, model, folder, state: idle\|downloading\|done\|error, error, bytes, done?}}`; `done` (bytes in the folder) while downloading |
+| POST | `/reelwright/detect/download` | `{}` | v0.20.0, `detect.download`: starts `huggingface_hub.snapshot_download("IDEA-Research/grounding-dino-tiny", allow_patterns=["*.json", "*.safetensors", "*.txt"])` into `models/reelwright/grounding-dino-tiny` in a thread; answers the status |
+| POST | `/reelwright/detect` | `{slug, file, mode: faces\|objects, queries?[≤12]}` | v0.20.0: `{boxes: [{box: [x, y, w, h], label, score}], engine: insightface\|grounding-dino, ms}`, best first, ≤ 24. Faces: insightface (`continuity.find_faces`), else the object finder asked for "face"; each widened to head and shoulders (`detect.head_and_shoulders`). Objects: `detect.find_objects` (Grounding DINO, box 0.3 / text 0.25 thresholds, near-identical boxes of one label merged); the model is loaded once, moved to ComfyUI's device for a search and back to the CPU after; 400 when it is not downloaded |
 
 Errors (v0.6.0): a body that is not a JSON object, or a field of the wrong type, answers 400 with the reason.
 `SlugConflict` and `MergeBusy` answer 409, LLM failures 502 `{error, reason}`.
@@ -495,6 +502,8 @@ output/reelwright/<slug>/
   wired.json                         which node inputs were wired at the last render
   cast/<cast_id>/training/…
 input/reelwright/<slug>/             uploaded assets (from_output/: files picked from ComfyUI's output)
+input/reelwright/<slug>/crops/       v0.20.0: crops (<slugified name>_<key>.png)
+models/reelwright/grounding-dino-tiny/   v0.20.0: the object finder's weights, downloaded on request
 input/reelwright/.uploads/           v0.6.0: uploads being received and checked (temporary)
 user/reelwright/llm.json     LLM base URL, model, API key (never in workflows)
 user/reelwright/guides/      MiniMax's H3 prompt guides, downloaded on request

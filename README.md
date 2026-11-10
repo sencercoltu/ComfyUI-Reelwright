@@ -100,7 +100,7 @@ Requirements:
   Without them Reelwright still loads, says why on Global → About, and refuses to render.
 - **ffmpeg** on `PATH`. It stitches long scenes, cuts the soundtrack for each pass,
   finds beats and does the merge. Single-pass scenes without a soundtrack render without it.
-- Optional: `pip install insightface onnxruntime` for the face drift check.
+- Optional: `pip install insightface onnxruntime` for the face drift check (and Find → Faces in the crop window).
 
 Models (standard ComfyUI folders):
 
@@ -126,6 +126,10 @@ node. A wired input replaces the matching Global-tab loader.
    **Describe** asks a vision LLM to write an asset's description. Put assets
    in **groups** (each with a description) and give them **tags** to keep a
    large project tidy; pickers show an asset's group before its name.
+   **Crop…** cuts parts of a picture into pictures of their own (one person
+   from a group photo, for an anchor); **Find** boxes faces, or anything you
+   name ("person, dog, tea cup") once the object finder is downloaded (about
+   690 MB, into `models/reelwright/grounding-dino-tiny`).
 3. **Cast tab:** create your characters, give each anchor pictures, a
    description, a voice and a voice description.
 4. **Timeline:** the monitor (top left), the selected scene's summary
