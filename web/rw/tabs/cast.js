@@ -18,6 +18,7 @@ import { kept } from "../ui.js"; // added 2026-11-09 v0.17.3: the sheet picture 
 // [OLD 2026-11-09 v0.16.0->v0.16.1] import { clipTimeField } from "./scene.js"; // added 2026-11-09 v0.16.0: From / To of a video anchor
 import { clipEditor } from "./scene.js"; // added 2026-11-09 v0.16.1: the scene reference's clip editor (Preview, From here / To here, the bar)
 import { describeBox } from "./assets.js"; // added 2026-11-02 v0.2.0: describe from anchors
+import { unskipAnchor, clearAnchorFrame } from "../model.js"; // added 2026-11-10 v0.18.0: scene anchor picks, a video anchor's frame picture
 
 const KINDS = [["character", "Characters"], ["location", "Locations"], ["prop", "Props"]];
 
@@ -114,7 +115,15 @@ function anchorsCard(ctx, c) {
   // [OLD 2026-11-03 v0.5.1->v0.6.0] const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); });  (no History menu name)
   const edit = fn => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label: `Edit ${c.name}` }); // added 2026-11-03 v0.6.0: History menu name
   // [OLD 2026-11-06 v0.8.0->v0.9.0] const images = p.assets.filter(a => a.kind === "image" && !c.anchors.includes(a.id)).map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}` }));
-  const images = p.assets.filter(a => a.kind === "image" && !c.anchors.includes(a.id)).map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) })); // added 2026-11-06 v0.9.0: group first
+  // [OLD 2026-11-10 v0.17.3->v0.18.0] const images = p.assets.filter(a => a.kind === "image" && !c.anchors.includes(a.id)).map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) })); // added 2026-11-06 v0.9.0: group first
+  // added 2026-11-10 v0.18.0: the frame pictures of this cast member's video anchors come first (Sencer: "select frame
+  // -> set as picture anchor -> then it is added to "Add anchors" in Anchors card, where i can select it if I want")
+  const frames = (c.video_anchors || []).map(va => ({ va, fa: findAsset(p, va.frame_asset), v: findAsset(p, va.asset) }))
+    .filter(x => x.fa?.kind === "image" && !c.anchors.includes(x.fa.id));
+  const frameIds = new Set(frames.map(x => x.fa.id));
+  const frameLabel = x => `${x.fa.code} · frame ${x.va.frame !== null && x.va.frame !== undefined ? fmtTime(x.va.frame) + " " : ""}of ${x.v?.code || "a video anchor"}`;
+  const images = [...frames.map(x => ({ value: x.fa.id, label: frameLabel(x), pre: "video anchor frame" })),
+    ...p.assets.filter(a => a.kind === "image" && !c.anchors.includes(a.id) && !frameIds.has(a.id)).map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) }))];
   const scenesWithTakes = p.scenes.filter(s => ctx.starredTake(s.id)).map(s => ({ value: s.id, label: s.title }));
   const promote = async which => {
     const sid = ctx.eph.promoteScene || scenesWithTakes[0]?.value;
@@ -174,9 +183,18 @@ function anchorsCard(ctx, c) {
     children: [
       anchors.length ? h("div", { class: "rw-anchor-grid" }, anchors.map(a => h("div", { class: "rw-anchor" },
         h("img", { src: viewURL(a.file, "input"), alt: a.name }),
-        h("span", { class: "rw-anchor-label" }, h("b", { class: "mono rw-c-pic" }, a.code), " ", a.name),
-        h("button", { type: "button", class: "rw-anchor-x", "aria-label": "Remove anchor", help: "cast.anchors.remove", onClick: () => edit(x => { x.anchors = x.anchors.filter(y => y !== a.id); }) }, icon("close", 11)))))
+        // [OLD 2026-11-10 v0.17.3->v0.18.0] h("span", { class: "rw-anchor-label" }, h("b", { class: "mono rw-c-pic" }, a.code), " ", a.name),
+        h("span", { class: "rw-anchor-label" }, h("b", { class: "mono rw-c-pic" }, a.code), " ", a.name,
+          (c.video_anchors || []).some(va => va.frame_asset === a.id) && h("span", { class: "rw-dim" }, " · video frame")), // added 2026-11-10 v0.18.0
+        // [OLD 2026-11-10 v0.17.3->v0.18.0] h("button", { type: "button", class: "rw-anchor-x", "aria-label": "Remove anchor", help: "cast.anchors.remove", onClick: () => edit(x => { x.anchors = x.anchors.filter(y => y !== a.id); }) }, icon("close", 11)))))
+        // added 2026-11-10 v0.18.0: the scenes forget it was unticked there
+        h("button", { type: "button", class: "rw-anchor-x", "aria-label": "Remove anchor", help: "cast.anchors.remove", onClick: () => edit((x, q) => { x.anchors = x.anchors.filter(y => y !== a.id); unskipAnchor(q, x.id, a.id); }) }, icon("close", 11)))))
         : h("div", { class: "rw-empty sm", help: "cast.anchors" }, "No anchors yet. Add front, ¾, profile and full-body pictures for the strongest identity."),
+      // added 2026-11-10 v0.18.0: frame pictures of video anchors that are not anchors yet, one click away
+      frames.length > 0 && h("div", { class: "rw-anchor-ready small", help: "cast.anchors.frames" },
+        h("span", { class: "rw-dim" }, frames.length === 1 ? "A frame picture is ready:" : "Frame pictures are ready:"),
+        frames.map(x => button({ label: "+ " + frameLabel(x), small: true, variant: "ghost", key: `anchor-frame-add-${x.fa.id}`, help: "cast.anchors.frames",
+          onClick: () => edit(y => { if (!y.anchors.includes(x.fa.id)) y.anchors.push(x.fa.id); }) }))),
       /* [OLD 2026-11-03 v0.4.0->v0.4.1] an on/off toggle and a CSS grid capped at 3×3
       h("div", { class: "rw-sheet-row" },
         h("div", { class: "grow" },
@@ -225,6 +243,59 @@ function videoAnchorsCard(ctx, c) {
   const p = ctx.p;
   const edit = (fn, label = `Edit ${c.name}`) => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x, q); }, { label });
   const one = (id, fn) => edit(x => { const va = (x.video_anchors || []).find(y => y.id === id); if (va) fn(va); });
+  // added 2026-11-10 v0.18.0: removing a video anchor unsets its frame picture and the scenes forget it was unticked
+  const remove = id => edit((x, q) => {
+    const va = (x.video_anchors || []).find(y => y.id === id);
+    if (va) clearAnchorFrame(q, x, va);
+    x.video_anchors = x.video_anchors.filter(y => y.id !== id);
+    unskipAnchor(q, x.id, id);
+  }, "Remove video anchor");
+  // added 2026-11-10 v0.18.0: a frame of the clip as a picture (Sencer: "let me select a specific frame of a video for
+  // character identity (optional), that will be revealed as picture anchor"). One picture per video anchor: taking
+  // another frame replaces its file (an anchor it already is stays one); it is offered under Anchors → + Add anchor.
+  const setFrame = async (va, a, t) => {
+    let res;
+    try { res = await rw.anchorFrame(p.slug, a.file, t, c.id, va.id); }
+    catch (err) { ctx.actions.toast("Could not take the frame: " + err.message, "error"); return; }
+    const f = res.asset || {}, at = Number.isFinite(Number(res.t)) ? Number(res.t) : t;
+    let state = "gone", code = "";
+    ctx.actions.edit(q => {
+      const x = findCast(q, c.id), v = x && (x.video_anchors || []).find(y => y.id === va.id);
+      if (!v) return;
+      let fa = v.frame_asset && q.assets.find(z => z.id === v.frame_asset);
+      if (fa) { Object.assign(fa, { file: f.file, width: f.width || 0, height: f.height || 0 }); state = x.anchors.includes(fa.id) ? "anchor" : "moved"; }
+      else {
+        fa = { id: newId("a"), code: "", kind: "image", name: `${x.name} · frame of ${a.code}`, file: f.file, duration: 0, width: f.width || 0, height: f.height || 0,
+          category: "subject", defaults: { role: "reference", retention: "fully_preserved", keep: [], soundtrack: false }, notes: "", description: "", group: "", tags: [] };
+        q.assets.push(fa);
+        assignCodes(q.assets);
+        state = "new";
+      }
+      v.frame = at;
+      v.frame_asset = fa.id;
+      code = fa.code;
+    }, { label: `${c.name}: frame of ${a.code} as a picture` });
+    if (state === "gone") ctx.actions.toast(`“${c.name}” or this video anchor was removed meanwhile; the frame was not kept.`, "warn");
+    else if (state === "anchor") ctx.actions.toast(`${code} is now the frame at ${fmtTime(at)}; it stays one of ${c.name}'s anchors.`, "ok");
+    else ctx.actions.toast(`${code} is the frame at ${fmtTime(at)}. Add it under Anchors → + Add anchor to use it.`, "ok");
+  };
+  const clearFrame = va => {
+    let r = { asset: "", kept: false };
+    edit((x, q) => { const v = (x.video_anchors || []).find(y => y.id === va.id); if (v) r = clearAnchorFrame(q, x, v); }, "Clear the frame picture");
+    if (r.asset) ctx.actions.toast(r.kept ? `Frame cleared. ${r.asset} is used elsewhere too, so it stays in the assets.` : `Frame cleared: ${r.asset} is gone from the anchors and the assets.`, "ok");
+  };
+  const frameRow = (va, a) => {
+    const fa = va.frame_asset && findAsset(p, va.frame_asset);
+    if (!fa) return h("div", { class: "rw-dim small", help: "cast.videoAnchors.frame" }, "Optional: Preview → Use this frame as a picture makes a still of this clip, offered under Anchors.");
+    const url = viewURL(fa.file, "input"), isAnchor = c.anchors.includes(fa.id);
+    return h("div", { class: "rw-vanchor-frame", help: "cast.videoAnchors.frame" },
+      kept(ctx, "vaframe-" + va.id, url, () => h("img", { src: url, alt: "" })),
+      h("span", { class: "grow small" }, h("b", { class: "mono rw-c-pic" }, fa.code), ` frame at ${va.frame !== null && va.frame !== undefined ? fmtTime(va.frame) : "?"} · `,
+        h("span", { class: isAnchor ? "rw-c-ok" : "rw-dim" }, isAnchor ? "one of the anchors" : "not an anchor yet")),
+      !isAnchor && button({ label: "Add to Anchors", small: true, variant: "ghost", key: `va-frame-add-${va.id}`, help: "cast.videoAnchors.frame",
+        onClick: () => edit(x => { if (!x.anchors.includes(fa.id)) x.anchors.push(fa.id); }, `${c.name}: add ${fa.code} to the anchors`) }),
+      button({ label: "Clear frame", small: true, variant: "danger-ghost", key: `va-frame-clear-${va.id}`, help: "cast.videoAnchors.frameClear", onClick: () => clearFrame(va) }));
+  };
   const videos = p.assets.filter(a => a.kind === "video").map(a => ({ value: a.id, label: `${a.code} · ${a.name || a.file}`, pre: assetGroupName(p, a) }));
   const list = c.video_anchors || [];
   const rows = list.map(va => {
@@ -232,7 +303,8 @@ function videoAnchorsCard(ctx, c) {
     if (!a || a.kind !== "video") {
       return h("div", { class: "rw-note warn rw-vanchor" }, dragGrip({ help: "cast.videoAnchors.order", key: `va-grip-${va.id}` }),
         h("span", { class: "grow" }, a ? `${a.code} is not a video, so it is not sent.` : "This video anchor's asset was deleted."),
-        button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => edit(x => { x.video_anchors = x.video_anchors.filter(y => y.id !== va.id); }, "Remove video anchor") }));
+        // [OLD 2026-11-10 v0.17.3->v0.18.0] button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => edit(x => { x.video_anchors = x.video_anchors.filter(y => y.id !== va.id); }, "Remove video anchor") }));
+        button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => remove(va.id) })); // added 2026-11-10 v0.18.0: remove()
     }
     /* [OLD 2026-11-09 v0.16.0->v0.16.1] own From / To fields and notes; the scene's clip editor does this now
     const clip = refClip(va, a);
@@ -249,7 +321,8 @@ function videoAnchorsCard(ctx, c) {
       h("div", { class: "rw-vanchor-body" },
         h("div", { class: "rw-row" }, h("b", { class: "mono rw-c-vid" }, a.code), h("b", { class: "rw-ellipsis grow" }, a.name || a.file.split("/").pop()),
           h("span", { class: "rw-dim small mono" }, dur ? fmtTime(dur) : ""),
-          button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => edit(x => { x.video_anchors = x.video_anchors.filter(y => y.id !== va.id); }, "Remove video anchor") })),
+          // [OLD 2026-11-10 v0.17.3->v0.18.0] button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => edit(x => { x.video_anchors = x.video_anchors.filter(y => y.id !== va.id); }, "Remove video anchor") })),
+          button({ icon: "trash", small: true, variant: "ghost", help: "cast.videoAnchors.remove", key: `va-del-${va.id}`, onClick: () => remove(va.id) })), // added 2026-11-10 v0.18.0: remove()
         /* [OLD 2026-11-09 v0.16.0->v0.16.1] From / To / length only, without Preview, From here / To here or the bar
         h("div", { class: "rw-row wrap rw-clip-row" },
           clipTimeField(ctx, { label: "From", value: va.in, placeholder: "0", help: "cast.videoAnchors.from", key: `va-in-${va.id}`, onCommit: v => one(va.id, x => { x.in = v ?? 0; }) }),
@@ -263,7 +336,11 @@ function videoAnchorsCard(ctx, c) {
         // From here / To here / Play clip, From / To / Length, the bar with draggable ends, and its notes
         h("div", { class: "rw-row wrap" },
           toggle({ value: !!va.soundtrack, label: "with sound", help: "cast.videoAnchors.sound", key: `va-snd-${va.id}`, onChange: v => one(va.id, x => { x.soundtrack = v; }) })),
-        clipEditor(ctx, null, va, a, one, { help: VA_HELP, key: "va", token: false, tok: a.code, short: "is under 2 s, so it is not sent (H3 takes 2–15 s)" })));
+        // [OLD 2026-11-10 v0.17.3->v0.18.0] clipEditor(ctx, null, va, a, one, { help: VA_HELP, key: "va", token: false, tok: a.code, short: "is under 2 s, so it is not sent (H3 takes 2–15 s)" })));
+        // added 2026-11-10 v0.18.0: Preview → Use this frame as a picture, its mark on the bar, and the picture's row
+        clipEditor(ctx, null, va, a, one, { help: VA_HELP, key: "va", token: false, tok: a.code, short: "is under 2 s, so it is not sent (H3 takes 2–15 s)",
+          frame: t => setFrame(va, a, t), frameAt: va.frame_asset && findAsset(p, va.frame_asset) ? va.frame : null }),
+        frameRow(va, a)));
   });
   return section({
     title: "Video anchors", help: "cast.videoAnchors",

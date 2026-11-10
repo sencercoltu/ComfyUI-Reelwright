@@ -669,6 +669,12 @@ def _norm_cast(c, lang):
         o = spec.num(va.get("out"), None)
         va["out"] = None if o is None or o <= 0 else snap_frame(o)
         va["soundtrack"] = spec.flag(va.get("soundtrack"), False)
+        # added 2026-11-10 v0.18.0: a frame of the clip as a picture (Cast -> Video anchors -> Preview -> Use this frame
+        # as a picture): "frame" its time in the file (whole frames, None = none), "frame_asset" the image asset made
+        # from it (it is offered under Anchors -> + Add anchor; the cast member uses it only once added there)
+        fr = spec.num(va.get("frame"), None)
+        va["frame"] = None if fr is None or fr < 0 else snap_frame(fr)
+        _text_field(va, "frame_asset", "")
 
 
 def _blank(s):
@@ -724,6 +730,9 @@ def _norm_scene(s, d, lang, used_ids):
         if isinstance(e, dict):
             _text_field(e, "id", "")
             _text_field(e, "outfit", "")
+            # added 2026-11-10 v0.18.0: the anchors this scene leaves out (Scene -> Cast in this scene -> Anchors):
+            # picture asset ids and video anchor ids; empty = every anchor (an anchor added later is used too)
+            e["skip"] = list(dict.fromkeys(_texts(e.get("skip"))))
             cast.append(e)
     s["cast"] = cast
     used = set()
@@ -949,11 +958,19 @@ def part_owner(c, cast):
     return ""
 
 
+def entry_skip(entry):
+    """added 2026-11-10 v0.18.0: the anchors a scene's cast entry leaves out (scene.cast[].skip: picture asset ids and
+    video anchor ids), as a set; model.js entrySkip is the same."""
+    return set((entry or {}).get("skip") or [])
+
+
 def cast_pictures(c, entry, assets):
     """(outfit, picture ids) a cast member sends in a scene: its anchor pictures, then the pictures of the outfit the
     scene entry gives it (else its default outfit) that are not anchors already. Images only."""
     outfit = next((o for o in c["outfits"] if o["id"] == ((entry or {}).get("outfit") or c["default_outfit"])), None)
-    ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image"]
+    # [OLD 2026-11-10 v0.17.3->v0.18.0] ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image"]  (every anchor in every scene)
+    skip = entry_skip(entry)  # added 2026-11-10 v0.18.0: the anchors the scene unticked stay out
+    ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image" and a not in skip]
     if outfit:
         ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in ids]
     return outfit, ids
@@ -982,7 +999,10 @@ def pick_video_anchors(recs, assets, n):
     picked, left = [], []
     for x in recs:
         c = x["cast"]
+        skip = entry_skip(x.get("entry"))  # added 2026-11-10 v0.18.0: unticked in this scene: not sent, not counted
         for va, a in video_anchors_of(c, assets):
+            if va["id"] in skip:
+                continue
             clip = ref_clip(va, a)
             full = min(spec.REF_MEDIA_MAX_SECONDS, clip["seconds"] if clip["seconds"] is not None else
                        spec.REF_MEDIA_MAX_SECONDS)

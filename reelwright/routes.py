@@ -1293,6 +1293,45 @@ async def promote_frame(request):
                           name="{} frame".format(which), category="subject")}
 
 
+# added 2026-11-10 v0.18.0: a frame of a cast member's video anchor as a picture (Sencer: "let me select a specific frame
+# of a video for character identity (optional), that will be revealed as picture anchor"). The editor stores the
+# picture as an image asset (cast.video_anchors[].frame_asset), offered under Cast -> Anchors -> + Add anchor.
+@routes.post("/reelwright/anchor_frame")
+@json_route
+async def anchor_frame(request):
+    """{slug, file (the video asset's file, under ComfyUI's input folder), t (seconds in it), cast_id, anchor_id} ->
+    {asset: {file, kind: "image", width, height, name, category: "subject"}, t}. The frame at t (on whole frames) is
+    written to input/reelwright/<project>/frame_<cast>_<anchor>_<frame>f.png; 400 when the file is missing or ffmpeg
+    can't read a frame there."""
+    b = await body_of(request)
+    store = slug_store(b.get("slug"))
+    cast_id = check_id(_str(b, "cast_id"))
+    anchor_id = check_id(_str(b, "anchor_id"))
+    src = store.input_path(_str(b, "file"))
+    if not os.path.isfile(src):
+        raise FileNotFoundError("the video {} is not in ComfyUI's input folder".format(_str(b, "file")))
+    frame = int(math.floor(max(0.0, _num(b.get("t") or 0, "t")) * spec.FPS + 0.5))
+    t = frame / spec.FPS
+    ff = merge.ffmpeg_bin()
+    if not ff:
+        raise ValueError("ffmpeg is needed to take a frame from a video")
+    os.makedirs(store.input_dir, exist_ok=True)
+    dst = safe_join(store.input_dir, "frame_{}_{}_{}f.png".format(cast_id, anchor_id, frame))
+    # -ss after -i: the exact frame (slower than seeking before it, but anchors are short clips)
+    r = await asyncio.to_thread(subprocess.run, [ff, "-hide_banner", "-loglevel", "error", "-y", "-i", src,
+                                                 "-ss", "{:.6f}".format(t), "-frames:v", "1", dst],
+                                capture_output=True, text=True)
+    if r.returncode != 0 or not os.path.isfile(dst):
+        raise merge.MergeError("ffmpeg could not take a frame at {:.3f} s: {}".format(
+            t, (r.stderr or "").strip()[-400:] or "no frame there (past the end of the video?)"))
+    try:
+        info = await asyncio.to_thread(media.describe, dst)
+    except (OSError, SyntaxError) as e:
+        raise ValueError("the frame can't be read as a picture: {}".format(_message(e)[:300])) from e
+    return {"asset": dict(info, file=os.path.relpath(dst, store.roots.input).replace(os.sep, "/"), kind="image",
+                          category="subject"), "t": t}
+
+
 # added 2026-11-06 v0.10.0: a character's rendered lines as their voice reference (Cast tab -> Voice from a take)
 VOICE_MIN, VOICE_MAX = 2.0, 15.0  # H3's audio references: 2-15 s
 

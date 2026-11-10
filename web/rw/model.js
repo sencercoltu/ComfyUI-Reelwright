@@ -741,6 +741,11 @@ function normCast(c, lang) {
     const o = num(va.out, null);
     va.out = o === null || o <= 0 ? null : snapFrame(o);
     va.soundtrack = flag(va.soundtrack, false);
+    // added 2026-11-10 v0.18.0: a frame of the clip as a picture (model.py _norm_cast): frame = its time in the file
+    // (whole frames, null = none), frame_asset = the image asset made from it (offered under Anchors → + Add anchor)
+    const fr = num(va.frame, null);
+    va.frame = fr === null || fr < 0 ? null : snapFrame(fr);
+    textField(va, "frame_asset", "");
   }
 }
 
@@ -781,6 +786,8 @@ function normScene(s, d, lang, usedIds) {
     if (!isObj(e)) continue;
     textField(e, "id", "");
     textField(e, "outfit", "");
+    // added 2026-11-10 v0.18.0: the anchors this scene leaves out (picture asset ids, video anchor ids); [] = all
+    e.skip = [...new Set(texts(e.skip))];
     cast.push(e);
   }
   s.cast = cast;
@@ -1407,6 +1414,10 @@ function scenePeople(project, scene) {
 // plus speakers missing from it, each with its anchor pictures and outfit pictures; autoPack: "auto" sheets pack.
 // added 2026-11-08 v0.11.0: as model.scene_people: a part's pictures join its character's (after the character's own,
 // each once); a part whose character is not in the scene is left out (leftOut: [{ part, owner }]).
+// added 2026-11-10 v0.18.0: the anchors a scene's cast entry leaves out (model.py entry_skip), as a Set
+export function entrySkip(entry) {
+  return new Set(Array.isArray(entry?.skip) ? entry.skip : []);
+}
 export function scenePeople(project, scene) {
   const assets = new Map(project.assets.map(a => [a.id, a]));
   const cast = new Map(project.cast.map(c => [c.id, c]));
@@ -1418,7 +1429,9 @@ export function scenePeople(project, scene) {
     const c = cast.get(e.id);
     if (!c) continue;
     const outfit = c.outfits.find(o => o.id === (e.outfit || c.default_outfit));
-    const ids = c.anchors.filter(a => assets.get(a)?.kind === "image");
+    // [OLD 2026-11-10 v0.17.3->v0.18.0] const ids = c.anchors.filter(a => assets.get(a)?.kind === "image");  (every anchor in every scene)
+    const skip = entrySkip(e); // added 2026-11-10 v0.18.0: the anchors the scene unticked stay out (model.cast_pictures)
+    const ids = c.anchors.filter(a => assets.get(a)?.kind === "image" && !skip.has(a));
     if (outfit) ids.push(...outfit.assets.filter(a => assets.get(a)?.kind === "image" && !ids.includes(a)));
     const owner = partOwner(c, cast);
     if (owner) {
@@ -1426,7 +1439,8 @@ export function scenePeople(project, scene) {
       else leftOut.push({ part: c, owner: cast.get(owner) });
       continue;
     }
-    people.push({ c, ids, own: ids.slice(), parts: [] });
+    // [OLD 2026-11-10 v0.17.3->v0.18.0] people.push({ c, ids, own: ids.slice(), parts: [] });
+    people.push({ c, ids, own: ids.slice(), parts: [], entry: e }); // added 2026-11-10 v0.18.0: entry (its skip, for pickVideoAnchors)
   }
   for (const x of people) {
     for (const part of parts.get(x.c.id) || []) {
@@ -1516,7 +1530,8 @@ export function poseRefs(project, scene, pass = null, people = null) {
   return out;
 }
 export function castPacks(project, scene, c) {
-  const n = c.anchors.filter(id => findAsset(project, id)?.kind === "image").length;
+  // [OLD 2026-11-10 v0.17.3->v0.18.0] const n = c.anchors.filter(id => findAsset(project, id)?.kind === "image").length;  (every anchor, ticked or not)
+  const n = sceneAnchorIds(project, scene, c).length; // added 2026-11-10 v0.18.0: the anchors the scene uses
   if (n < 2) return false;
   return c.pack_sheet === "auto" ? (scene ? sceneAutoPacks(project, scene) : false) : !!c.pack_sheet;
 }
@@ -1554,8 +1569,11 @@ export function videoAnchorsOf(c, assets) {
 // people: scenePeople's records ({c}); n: {videos, videoSeconds, audio, audioSeconds, files}, updated
 export function pickVideoAnchors(people, assets, n) {
   const picked = [], left = [];
-  for (const { c } of people) {
+  // [OLD 2026-11-10 v0.17.3->v0.18.0] for (const { c } of people) {
+  for (const { c, entry } of people) {
+    const skip = entrySkip(entry); // added 2026-11-10 v0.18.0: unticked in this scene: not sent, not counted
     for (const [va, a] of videoAnchorsOf(c, assets)) {
+      if (skip.has(va.id)) continue;
       const clip = refClip(va, a);
       const full = Math.min(REF_MEDIA_MAX_SECONDS, clip.seconds !== null ? clip.seconds : REF_MEDIA_MAX_SECONDS);
       const room = REF_MEDIA_TOTAL_SECONDS - n.videoSeconds;
@@ -1611,8 +1629,16 @@ export function sceneTilePixels(project, scene, c) {
   return tilePixels(x.ids.map(a => assets.get(a)).filter(Boolean), w, h, project.global.output.ref_image_size);
 }
 
-export function sheetURL(project, c, cell = 192) {
-  const files = c.anchors.map(id => findAsset(project, id)).filter(a => a?.kind === "image" && a.file).map(a => a.file);
+// added 2026-11-10 v0.18.0: c's anchor pictures a scene uses (all of them without a scene, or when c is not in its
+// cast list), in order
+export function sceneAnchorIds(project, scene, c) {
+  const skip = entrySkip(scene?.cast?.find(e => e.id === c.id));
+  return c.anchors.filter(id => findAsset(project, id)?.kind === "image" && !skip.has(id));
+}
+// [OLD 2026-11-10 v0.17.3->v0.18.0] export function sheetURL(project, c, cell = 192) {
+// [OLD 2026-11-10 v0.17.3->v0.18.0]   const files = c.anchors.map(id => findAsset(project, id)).filter(a => a?.kind === "image" && a.file).map(a => a.file);
+export function sheetURL(project, c, cell = 192, scene = null) { // scene: added 2026-11-10 v0.18.0 (the pictures it uses)
+  const files = sceneAnchorIds(project, scene, c).map(id => findAsset(project, id)).filter(a => a?.file).map(a => a.file);
   return files.length ? "/reelwright/sheet?cell=" + cell + "&files=" + encodeURIComponent(JSON.stringify(files)) : "";
 }
 
@@ -1929,6 +1955,39 @@ export function assetUsage(project, assetId) {
     for (const r of s.refs) if (r.asset === assetId) out.push({ scene: s, index: i, ref: r });
   });
   return out;
+}
+
+// ---- added 2026-11-10 v0.18.0: the anchors a scene uses (scene.cast[].skip) and a video anchor's frame picture
+// (cast.video_anchors[].frame / frame_asset)
+// forget an anchor (a picture asset id or a video anchor id) in the skip lists of cast member cid ("" = everyone)
+export function unskipAnchor(project, cid, id) {
+  for (const s of project.scenes) for (const e of s.cast) if ((!cid || e.id === cid) && Array.isArray(e.skip) && e.skip.includes(id)) e.skip = e.skip.filter(x => x !== id);
+}
+// is an asset used anywhere but as a frame picture of a video anchor (scene references, cast anchors, outfits and
+// voices, the soundtrack, the old score)? ignoreAnchorsOf: a cast id whose anchors don't count
+export function assetUsedElsewhere(project, assetId, ignoreAnchorsOf = "") {
+  if (project.scenes.some(s => s.refs.some(r => r.asset === assetId))) return true;
+  for (const c of project.cast) {
+    if (c.id !== ignoreAnchorsOf && c.anchors.includes(assetId)) return true;
+    if (c.voice === assetId || c.outfits.some(o => (o.assets || []).includes(assetId))) return true;
+    if ((c.video_anchors || []).some(va => va.asset === assetId)) return true;
+  }
+  return project.soundtrack.some(t => t.asset === assetId) || project.global?.merge?.score?.asset === assetId;
+}
+// unset video anchor va's frame picture (Sencer: "when frame is unset later, remove from Anchor list and Anchors"): the
+// picture leaves cast member c's anchors and the scenes' skip lists, and the project when nothing else uses it.
+// Call inside an edit, with c and va from the project being edited. Returns {asset (its code or ""), kept}.
+export function clearAnchorFrame(project, c, va) {
+  const id = va.frame_asset;
+  va.frame = null;
+  va.frame_asset = "";
+  const a = id && project.assets.find(x => x.id === id);
+  if (!a) return { asset: "", kept: false };
+  c.anchors = c.anchors.filter(x => x !== id);
+  unskipAnchor(project, c.id, id);
+  if (assetUsedElsewhere(project, id, c.id) || project.cast.some(x => (x.video_anchors || []).some(v => v.frame_asset === id))) return { asset: a.code, kept: true };
+  project.assets = project.assets.filter(x => x.id !== id);
+  return { asset: a.code, kept: false };
 }
 
 export function assetCastUse(project, assetId) {

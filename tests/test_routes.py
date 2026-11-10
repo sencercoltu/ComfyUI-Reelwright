@@ -750,3 +750,29 @@ def test_llm_chat_route(api, monkeypatch):
     assert res[8][1]["cancelled"] is True and res[9] == (200, {"cancelled": True})
     assert seen[0] == [{"role": "user", "content": "hi"}]
     assert ("reelwright.llm", {"phase": "writing", "tokens": 2, "text": "ok", "job": "chat-1"}) in events
+
+
+# ---- added 2026-11-10 v0.18.0: a frame of a video anchor as a picture ----------------------------------------------
+
+def test_anchor_frame_route(api, store, roots):
+    run, _, _ = api
+    d = os.path.join(roots.input, "reelwright", "harbor_lights")
+    os.makedirs(d, exist_ok=True)
+    ff_clip(os.path.join(d, "clip.mp4"), 2)
+    body = {"slug": "harbor_lights", "file": "reelwright/harbor_lights/clip.mp4", "cast_id": "c_mara", "anchor_id": "va_1"}
+
+    async def go(c):
+        return [await post(c, "/reelwright/anchor_frame", dict(body, t=1.01)),
+                await post(c, "/reelwright/anchor_frame", dict(body, t=9)),             # past the end
+                await post(c, "/reelwright/anchor_frame", dict(body, file="../../etc/passwd", t=0)),
+                await post(c, "/reelwright/anchor_frame", dict(body, file="reelwright/harbor_lights/none.mp4", t=0)),
+                await post(c, "/reelwright/anchor_frame", dict(body, anchor_id="../x", t=0)),
+                await post(c, "/reelwright/anchor_frame", dict(body, t="nan"))]
+    ok, past, outside, missing, bad_id, nan = run(go)
+    assert ok[0] == 200, ok
+    a = ok[1]["asset"]
+    assert a["file"] == "reelwright/harbor_lights/frame_c_mara_va_1_24f.png" and ok[1]["t"] == 1.0
+    assert (a["kind"], a["width"], a["height"], a["category"]) == ("image", 160, 90, "subject")
+    assert os.path.isfile(os.path.join(roots.input, a["file"]))
+    assert past[0] == 400 and "could not take a frame" in past[1]["error"]
+    assert outside[0] == 400 and missing[0] == 400 and bad_id[0] == 400 and nan[0] == 400

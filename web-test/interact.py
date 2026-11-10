@@ -1529,6 +1529,7 @@ def main():
         v0160_checks(page, check, saved, shots)  # added 2026-11-09 v0.16.0: video anchors; sheets too small; the sheet in the subject line
         v0161_checks(page, check, saved, shots)  # added 2026-11-09 v0.16.1: a video anchor has the scene reference's clip editor
         v0173_checks(page, check, saved, shots)  # added 2026-11-09 v0.17.3: prompt editors keep their size through a re-render
+        v0180_checks(page, check, saved, shots)  # added 2026-11-10 v0.18.0: Reset scene options, the @ list, scroll kept, anchors per scene, a frame as a picture
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)  # added 2026-11-09 v0.17.3: typing lands where the caret is (real scrollbars)
     httpd.shutdown()
@@ -5581,7 +5582,8 @@ def v0150_checks(page, check, saved, shots):
     page.wait_for_timeout(250)
     # [OLD 2026-11-09 v0.16.0->v0.16.1] check(page.locator(".rw-modal").count() == 1 and "Write prompts brief" in page.locator(".rw-modal").inner_text(), "Reset scene asks first and says what stays")
     ask = page.locator(".rw-modal").inner_text() if page.locator(".rw-modal").count() == 1 else ""
-    check("Write prompts brief" in ask and f"the {shots_before} shot" in ask, f"Reset scene asks first and says what goes and what stays: {ask!r}")  # added 2026-11-09 v0.16.1
+    # [OLD 2026-11-10 v0.17.3->v0.18.0] check("Write prompts brief" in ask and f"the {shots_before} shot" in ask, f"Reset scene asks first and says what goes and what stays: {ask!r}")  # added 2026-11-09 v0.16.1
+    check("Write prompts brief" in ask and f"Shots ({shots_before})" in ask, f"Reset scene asks first and says what goes and what stays: {ask!r}")  # added 2026-11-10 v0.18.0: ticks, all on
     page.screenshot(path=str(shots / "v0150_reset_ask.png"))
     page.locator(".rw-modal button:has-text('Cancel')").click()
     page.wait_for_timeout(250)
@@ -5981,6 +5983,246 @@ def v0173_checks(page, check, saved, shots):
           const after = [...document.querySelectorAll(sel)];
           return [before.length, after.length, after.filter(x => before.includes(x)).length]; }""", sel)
         check(same[0] > 0 and same[0] == same[1] == same[2], f"{tab}: media survive a re-render: {same}")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+# added 2026-11-10 v0.18.0
+def v0180_checks(page, check, saved, shots):
+    """v0.18.0 (Sencer): Reset scene asks what goes (the whole scene or one pass, then ticks); the Shots and Dialogue
+    cards use the prompt font; the @ list stays open through a re-render and lists everything (cast first); boxes keep
+    their scroll position through a re-render; the anchors a scene uses for a cast member (collapsed, all ticked); a
+    frame of a video anchor as a picture, offered under Anchors and removed when cleared."""
+    import os
+
+    def load(p):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(p))
+        page.wait_for_timeout(400)
+
+    def audit(name):
+        r = page.evaluate(AUDIT_JS)
+        check(not r["missing"] and not r["noMore"] and not r["bare"], f"{name}: help problems {r['missing']} {r['noMore']} {r['bare'][:3]}")
+        check(not r["dup"], f"{name}: duplicate keys {r['dup'][:6]}")
+
+    def snap(sel, name):  # a part of the page; a re-render can replace the element, so by its box on screen
+        if not shots:
+            return
+        page.wait_for_timeout(200)
+        bb = page.evaluate("""s => { const e = document.querySelector(s); if (!e) return null; e.scrollIntoView({ block: 'nearest' });
+          const r = e.getBoundingClientRect(); return { x: Math.max(0, r.left), y: Math.max(0, r.top), width: Math.max(1, r.width), height: Math.max(1, Math.min(r.height, innerHeight - Math.max(0, r.top))) }; }""", sel)
+        if bb:
+            page.screenshot(path=str(shots / name), clip=bb)
+
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.project))")
+    scene_of = lambda sid: next(x for x in cur()["scenes"] if x["id"] == sid)
+    cast_of = lambda cid: next(x for x in cur()["cast"] if x["id"] == cid)
+    labels = lambda: [x["label"] for x in page.evaluate("window.__editor.store.history()") if x["done"]]
+    toasts = lambda: " | ".join(page.locator(".rw-toast").all_inner_texts())
+    undo = lambda: (page.evaluate("window.__editor.store.undo()"), page.wait_for_timeout(300))
+    pass_texts = lambda sid: page.evaluate("""sid => import('/web/rw/passes.js').then(m => { const p = window.__editor.project;
+      const s = p.scenes.find(x => x.id === sid); const pl = m.passLayout(p, s);
+      return { shots: pl.passes.map(x => x.shots.map(y => y.id + (y.continuing ? '+' : ''))), lines: pl.passes.map(x => x.dialogue.map(y => y.id)) }; })""", sid)
+
+    # the demo as it starts (the checks before leave other projects and open previews behind)
+    q0 = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q0["ui"].pop("collapsed", None)
+    load(q0)
+    page.evaluate("window.__editor.store.setEph({ clipPreview: {}, castAnchorsOpen: {} })")
+
+    # 1. the Shots and Dialogue cards use the prompt font (Sencer: "why is the Shots card text different")
+    page.evaluate("window.__editor.actions.select('s_02', 'scene')")
+    page.wait_for_timeout(500)
+    fonts = page.evaluate("""() => { const f = sel => { const e = document.querySelector(sel); return e ? getComputedStyle(e).fontFamily : null; };
+      return [f('.rw-psec .rw-code-ta'), f('.rw-shot-row .rw-code-ta'), f('.rw-dlg-row .rw-code-ta')]; }""")
+    check(fonts[0] and fonts[0] == fonts[1] == fonts[2], f"shots and dialogue use the prompt font: {fonts}")
+
+    # 2. the @ list: open after a re-render, cast first, every candidate (scrolls), Enter inserts
+    L = """() => { const l = document.querySelector('.rw-ac.on'); if (!l) return null;
+      return { n: l.querySelectorAll('.rw-ac-item').length, first: l.querySelector('.rw-ac-item')?.textContent || '',
+        active: [...l.querySelectorAll('.rw-ac-item')].findIndex(x => x.classList.contains('on')), scrolls: l.scrollHeight > l.clientHeight }; }"""
+    page.evaluate("() => { const ta = document.querySelector('.rw-shot-row .rw-code-ta'); ta.scrollIntoView({ block: 'center' }); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }")
+    page.keyboard.type(" @")
+    page.wait_for_timeout(250)
+    all_n = page.evaluate("() => import('/web/rw/model.js').then(m => { const p = window.__editor.project; return m.tagCandidates(p, p.scenes.find(s => s.id === 's_02')).length; })")
+    l0 = page.evaluate(L)
+    check(l0 and l0["n"] == min(all_n, 60) and l0["first"].startswith("@") and l0["scrolls"] == (l0["n"] > 11), f"@ lists every candidate: {l0} of {all_n}")
+    page.keyboard.type("M")
+    page.keyboard.press("ArrowDown")
+    page.evaluate("window.__editor.store.notify()")
+    page.wait_for_timeout(300)
+    l1 = page.evaluate(L)
+    check(l1 and l1["active"] == 1 and "Mara" in page.locator(".rw-ac.on").inner_text(), f"the @ list stays open through a re-render, on the same row: {l1}")
+    page.keyboard.press("ArrowUp")
+    page.keyboard.type("ar")
+    page.wait_for_timeout(200)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(250)
+    v = page.evaluate("document.querySelector('.rw-shot-row .rw-code-ta').value")
+    check(v.endswith("@Mara ") and page.evaluate(L) is None, f"Enter inserts the tag: {v[-12:]!r}")
+    load(q0)
+
+    # 3. scroll positions survive a re-render (the What H3 receives box, a long section)
+    page.evaluate("window.__editor.actions.select('s_02', 'scene')")
+    page.wait_for_timeout(400)
+    page.evaluate("t => window.__editor.store.update(p => { const s = p.scenes.find(x => x.id === 's_02'); s.prompt.sections.detailed_description = t; s.prompt.sections.summary = t; })", LONG_SHOT)
+    page.wait_for_timeout(500)
+    kept_scroll = page.evaluate("""async () => {
+      const root = document.querySelector('.rw-root');
+      const boxes = () => [...root.querySelectorAll('pre, .rw-code-ta, .rw-sortable, .rw-rows-box, .rw-list-box')].filter(el => el.scrollHeight > el.clientHeight + 20 && /(auto|scroll)/.test(getComputedStyle(el).overflowY));
+      const want = boxes().map((el, i) => { el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) / 2); return el.scrollTop; });
+      window.__editor.store.notify();
+      for (let k = 0; k < 3; k++) await new Promise(r => requestAnimationFrame(r));
+      return { want, now: boxes().map(el => el.scrollTop) }; }""")
+    check(kept_scroll["want"] and kept_scroll["want"] == kept_scroll["now"], f"scroll positions survive a re-render: {kept_scroll}")
+    load(q0)
+
+    # 4. Reset scene: a pass, then parts
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="scene", selected="s_07")
+    q["ui"].pop("collapsed", None)
+    load(q)
+    before = scene_of("s_07")
+    pt = pass_texts("s_07")
+    page.click("[data-key='reset-s_07']")
+    page.wait_for_timeout(300)
+    ask = page.locator(".rw-modal").inner_text()
+    check(page.locator(".rw-reset-scope .rw-seg-btn").count() == 4 and page.locator(".rw-modal input[type=checkbox]:checked").count() == 8
+          and f"Shots ({len(before['shots'])})" in ask, f"Reset asks: whole scene or a pass, everything ticked: {ask!r}")
+    snap(".rw-modal-box", "v0180_reset_scene.png")
+    page.locator(".rw-reset-scope .rw-seg-btn").nth(2).click()
+    page.wait_for_timeout(150)
+    check(page.locator(".rw-modal .rw-modal-actions button").last.inner_text().strip() == "Reset pass 2", "the button names the pass")
+    page.locator(".rw-modal input[data-part='overall_soundscape']").uncheck()
+    page.wait_for_timeout(100)
+    snap(".rw-modal-box", "v0180_reset_pass.png")
+    audit("Reset dialog")
+    page.locator(".rw-modal button:has-text('Reset pass 2')").click()
+    page.wait_for_timeout(400)
+    after = scene_of("s_07")
+    st = {round(e["start"], 3): e["sections"] for e in after["prompt"]["passes"]}
+    st0 = {round(e["start"], 3): e["sections"] for e in before["prompt"]["passes"]}
+    gone = {x for x in pt["shots"][1] if not x.endswith("+")}
+    check(st[14.375]["summary"] == "" and st[14.375]["overall_soundscape"] == st0[14.375]["overall_soundscape"] != "" and st[0] == st0[0]
+          and after["prompt"]["sections"] == before["prompt"]["sections"], f"pass 2: the ticked sections go, the unticked and the other passes stay: {st}")
+    check([x["id"] for x in after["shots"]] == [x["id"] for x in before["shots"] if x["id"] not in gone]
+          and [x["id"] for x in after["dialogue"]] == [x["id"] for x in before["dialogue"] if x["id"] not in pt["lines"][1]] and labels()[-1] == "Reset pass 2",
+          f"pass 2: its shots and lines go: {[x['id'] for x in after['shots']]} {labels()[-1:]}")
+    check("Pass 2: cleared" in toasts(), f"a toast says what went: {toasts()}")
+    undo()
+    check(scene_of("s_07") == before, "Ctrl+Z restores the pass")
+    # the whole scene with only Dialogue ticked
+    page.click("[data-key='reset-s_07']")
+    page.wait_for_timeout(300)
+    page.locator(".rw-modal button:has-text('Untick all')").click()
+    page.wait_for_timeout(100)
+    check(page.locator(".rw-modal .rw-modal-actions button").last.is_disabled(), "nothing ticked: Reset is off")
+    page.locator(".rw-modal input[data-part='lines']").check()
+    page.locator(".rw-modal button:has-text('Reset scene')").click()
+    page.wait_for_timeout(400)
+    a2 = scene_of("s_07")
+    check(a2["dialogue"] == [] and a2["shots"] == before["shots"] and a2["prompt"] == before["prompt"], "only the dialogue goes")
+    undo()
+
+    # 5. the anchors a scene uses: collapsed, all ticked; untick a picture and a video anchor
+    q = page.evaluate("JSON.parse(JSON.stringify(window.__mockDemo()))")
+    q["ui"].update(tab="scene", selected="s_02")
+    q["ui"].pop("collapsed", None)
+    mara = next(c for c in q["cast"] if c["id"] == "c_mara")
+    mara["video_anchors"] = [{"id": "va_t1", "asset": "a_v1", "in": 0, "out": None, "soundtrack": False}]
+    load(q)
+    sc = next(x for x in scene_of("s_02")["cast"] if x["id"] == "c_mara")
+    tog = page.locator("[data-key='sa-tog-s_02-c_mara']")
+    check(tog.count() == 1 and page.locator(".rw-sa").count() == 0 and sc["skip"] == [] and "all" in tog.inner_text(),
+          f"the anchors here are collapsed and all used: {tog.all_inner_texts()} {sc}")
+    budget = lambda: page.evaluate("() => import('/web/rw/model.js').then(m => { const p = window.__editor.project; return m.sceneBudget(p, p.scenes.find(s => s.id === 's_02')); })")
+    b0 = budget()
+    tog.click()
+    page.wait_for_timeout(300)
+    n_pics = len(mara["anchors"])
+    check(page.locator(".rw-sa input[type=checkbox]").count() == n_pics + 1 and page.locator(".rw-sa input[type=checkbox]:checked").count() == n_pics + 1,
+          f"open: every picture and video anchor, ticked ({page.locator('.rw-sa input[type=checkbox]').count()})")
+    first = mara["anchors"][0]
+    page.locator(f"[data-key='sa-s_02-c_mara-{first}']").uncheck()
+    page.wait_for_timeout(300)
+    page.locator("[data-key='sa-s_02-c_mara-va_t1']").uncheck()
+    page.wait_for_timeout(300)
+    sc = next(x for x in scene_of("s_02")["cast"] if x["id"] == "c_mara")
+    b1 = budget()
+    check(sc["skip"] == [first, "va_t1"] and page.locator(".rw-sa").count() == 1 and "Mara: leave out" in labels()[-1],
+          f"unticking stores the skips (one undo step each) and the list stays open: {sc} {labels()[-2:]}")
+    check(b1["videos"] == b0["videos"] - 1 and (b1["pictures"] == b0["pictures"] or n_pics > 2 or b1["pictures"] == b0["pictures"]),
+          f"the budget follows: {b0} -> {b1}")
+    check("of" in tog.inner_text() and "some" in (tog.get_attribute("class") or ""), f"the toggle says some are left out: {tog.inner_text()!r}")
+    other = next(x for x in scene_of("s_05")["cast"] if x["id"] == "c_mara") if any(x["id"] == "c_mara" for x in scene_of("s_05")["cast"]) else None
+    check(other is None or other["skip"] == [], "other scenes keep every anchor")
+    snap(".rw-cast-item", "v0180_scene_anchors.png")
+    audit("Anchors here")
+    page.locator("[data-key='sa-all-s_02-c_mara']").click()
+    page.wait_for_timeout(300)
+    check(next(x for x in scene_of("s_02")["cast"] if x["id"] == "c_mara")["skip"] == [], "Tick all")
+
+    # 6. a frame of a video anchor as a picture (Cast tab)
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots")
+    path = os.path.join(d, "rw_take_a.webm")
+    if not os.path.exists(path):
+        import subprocess
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=160x90:r=24:d=10",
+                        "-c:v", "libvpx", "-b:v", "200k", path], check=True)
+    page.evaluate("""async () => {
+      const host = window.__host, orig = host.__origApiURL || host.apiURL.bind(host);
+      host.__origApiURL = orig;
+      const blob = URL.createObjectURL(await (await fetch('/web-test/shots/rw_take_a.webm')).blob());
+      host.apiURL = path => /dolly_in/.test(path) ? blob : orig(path);
+    }""")
+    page.evaluate("window.__editor.store.update(p => { p.ui.tab = 'cast'; }, { history: false })")
+    page.evaluate("window.__editor.store.setEph({ selectedCast: 'c_mara', clipPreview: {} })")
+    page.wait_for_timeout(400)
+    check(page.locator(".rw-vanchor-frame").count() == 0 and "Use this frame as a picture" in page.locator(".rw-vanchor").first.inner_text(),
+          "without a frame the row says how to take one")
+    page.locator("[data-key='va-prev-va_t1']").click()
+    page.wait_for_timeout(800)
+    page.evaluate("""async () => { const v = document.querySelector('.rw-vanchor .rw-clip-media');
+      if (v.readyState < 1) await new Promise(r => { v.onloadedmetadata = r; setTimeout(r, 3000); });
+      v.currentTime = 2.0; await new Promise(r => setTimeout(r, 300)); }""")
+    n_assets = len(cur()["assets"])
+    page.locator("[data-key='va-frame-va_t1']").click()
+    page.wait_for_timeout(500)
+    m = cast_of("c_mara")
+    va = m["video_anchors"][0]
+    fa = next((a for a in cur()["assets"] if a["id"] == va["frame_asset"]), None)
+    check(va["frame"] == 2.0 and fa and fa["kind"] == "image" and fa["file"].endswith("frame_c_mara_va_t1_48f.png") and len(cur()["assets"]) == n_assets + 1
+          and fa["id"] not in m["anchors"], f"the frame becomes a picture asset, not an anchor yet: {va} {fa}")
+    check(page.locator(".rw-vanchor-frame").count() == 1 and page.locator(".rw-vanchor .rw-clip-frame").count() == 1, "the row shows the picture and the bar marks the frame")
+    opts = page.evaluate("""() => import('/web/rw/model.js').then(() => [...document.querySelectorAll('.rw-anchor-ready button')].map(b => b.textContent))""")
+    check(opts and fa["code"] in opts[0], f"Anchors offers the frame: {opts}")
+    shots and page.screenshot(path=str(shots / "v0180_frame_picture.png"))
+    audit("Frame picture")
+    page.locator(f"[data-key='anchor-frame-add-{fa['id']}']").click()
+    page.wait_for_timeout(300)
+    check(fa["id"] in cast_of("c_mara")["anchors"] and page.locator(".rw-anchor-ready").count() == 0, "added under Anchors")
+    # another frame replaces the picture's file; it stays an anchor
+    page.evaluate("async () => { const v = document.querySelector('.rw-vanchor .rw-clip-media'); v.currentTime = 3.0; await new Promise(r => setTimeout(r, 300)); }")
+    page.locator("[data-key='va-frame-va_t1']").click()
+    page.wait_for_timeout(500)
+    fa2 = next(a for a in cur()["assets"] if a["id"] == fa["id"])
+    check(fa2["file"].endswith("_72f.png") and fa["id"] in cast_of("c_mara")["anchors"] and len(cur()["assets"]) == n_assets + 1,
+          f"another frame replaces the picture, still an anchor: {fa2['file']}")
+    # a scene unticks it, then Clear frame: gone from the anchors, the assets and the scene's picks
+    page.evaluate("id => window.__editor.store.update(p => { p.scenes.find(s => s.id === 's_02').cast.find(e => e.id === 'c_mara').skip = [id]; })", fa["id"])
+    page.wait_for_timeout(300)
+    page.locator("[data-key='va-frame-clear-va_t1']").click()
+    page.wait_for_timeout(400)
+    m = cast_of("c_mara")
+    check(m["video_anchors"][0]["frame"] is None and m["video_anchors"][0]["frame_asset"] == "" and fa["id"] not in m["anchors"]
+          and not any(a["id"] == fa["id"] for a in cur()["assets"]) and next(x for x in scene_of("s_02")["cast"] if x["id"] == "c_mara")["skip"] == [],
+          f"Clear frame removes the picture everywhere: {m['video_anchors'][0]} {m['anchors']}")
+    undo()
+    check(fa["id"] in cast_of("c_mara")["anchors"], "Ctrl+Z brings it back")
+    # removing the video anchor clears its frame too
+    page.locator("[data-key='va-del-va_t1']").click()
+    page.wait_for_timeout(400)
+    check(not any(a["id"] == fa["id"] for a in cur()["assets"]) and fa["id"] not in cast_of("c_mara")["anchors"], "removing the video anchor removes its frame picture")
+    page.evaluate("() => { const h = window.__host; if (h.__origApiURL) h.apiURL = h.__origApiURL; }")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

@@ -474,6 +474,10 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                 issues.append(_issue("error", "{}: a cast member was deleted".format(name), sid))
             elif c["kind"] == "character" and not c["anchors"]:
                 issues.append(_issue("warn", "{}: {} has no anchor pictures, so identity is not locked".format(name, c["name"]), sid))
+            # added 2026-11-10 v0.18.0: every anchor picture unticked for this scene (Scene -> Cast in this scene -> Anchors)
+            elif c["kind"] == "character" and set(c["anchors"]) <= set(entry.get("skip") or []):
+                issues.append(_issue("warn", "{}: every anchor picture of {} is unticked in this scene (Cast in this "
+                                             "scene -> Anchors), so identity is not locked".format(name, c["name"]), sid))
 
         # added 2026-11-09 v0.16.0: a packed anchor sheet whose pictures reach H3 too small for a reliable identity
         # (model.tile_pixels at the size the scene renders, with Global -> Output -> Reference images)

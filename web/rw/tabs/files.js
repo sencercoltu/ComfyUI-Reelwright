@@ -4,6 +4,7 @@
 // [OLD 2026-11-06 v0.8.0->v0.9.0] import { h, icon, button, segmented, section, confirmDialog } from "../ui.js";
 import { h, icon, button, segmented, section, confirmDialog, splitter, uiNum, rootScale } from "../ui.js"; // added 2026-11-06 v0.9.0: the bar
 import { rw, viewURL } from "../api.js";
+import { clearAnchorFrame } from "../model.js"; // added 2026-11-10 v0.18.0: a video anchor's frame picture
 
 export function fmtBytes(n) {
   if (!n) return "0 B";
@@ -120,6 +121,14 @@ function deletedAssets(ix, ids, slug) {
 export function dropAssets(q, gone) {
   q.assets = q.assets.filter(x => !gone.has(x.id));
   for (const s of q.scenes) s.refs = s.refs.filter(x => !gone.has(x.asset));
+  // added 2026-11-10 v0.18.0: a video anchor that goes takes its frame picture with it; a frame picture that goes unsets
+  // its video anchor's frame; the scenes forget both in their anchor picks
+  const goneVa = new Set();
+  for (const c of q.cast) for (const va of c.video_anchors || []) {
+    if (gone.has(va.asset)) { clearAnchorFrame(q, c, va); goneVa.add(va.id); }
+    else if (gone.has(va.frame_asset)) { va.frame_asset = ""; va.frame = null; }
+  }
+  for (const s of q.scenes) for (const e of s.cast) if (Array.isArray(e.skip)) e.skip = e.skip.filter(x => !gone.has(x) && !goneVa.has(x));
   for (const c of q.cast) {
     c.anchors = c.anchors.filter(x => !gone.has(x));
     c.video_anchors = (c.video_anchors || []).filter(x => !gone.has(x.asset)); // added 2026-11-09 v0.16.0: video anchors

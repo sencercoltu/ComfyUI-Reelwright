@@ -12,7 +12,8 @@ export function setHost(h) {
 // Global → Limits said. These routes do long work whose limits live on the server (the LLM stall timeout and give-up,
 // ffmpeg, face checks), so they wait for the answer; the other routes keep ComfyUI's timeout. Older frontends and the
 // test harness ignore the option.
-export const LONG_ROUTE = /^\/reelwright\/(llm\/(?!cancel\b)|merge(?!\/cancel)|upload|import|continuity\/|cast\/export|beats|soundtrack\/excerpt|speech|voice_from_take|waveform|filmstrip|storage\/repair|promote_frame)/;
+// [OLD 2026-11-10 v0.17.3->v0.18.0] export const LONG_ROUTE = /^\/reelwright\/(llm\/(?!cancel\b)|merge(?!\/cancel)|upload|import|continuity\/|cast\/export|beats|soundtrack\/excerpt|speech|voice_from_take|waveform|filmstrip|storage\/repair|promote_frame)/;
+export const LONG_ROUTE = /^\/reelwright\/(llm\/(?!cancel\b)|merge(?!\/cancel)|upload|import|continuity\/|cast\/export|beats|soundtrack\/excerpt|speech|voice_from_take|waveform|filmstrip|storage\/repair|promote_frame|anchor_frame)/; // anchor_frame: added 2026-11-10 v0.18.0
 
 async function req(method, route, body, form) {
   const opts = { method };
@@ -102,6 +103,8 @@ export const rw = {
   llmPasses: (project, scene_id, passes, job, instruction = "") => req("POST", "/reelwright/llm/passes",
     instruction ? { project, scene_id, passes: passes || null, instruction, job } : { project, scene_id, passes: passes || null, job }),
   promoteFrame: (slug, scene_id, take_id, which, t) => req("POST", "/reelwright/promote_frame", { slug, scene_id, take_id, which, t }),
+  // added 2026-11-10 v0.18.0: a frame of a video anchor as a picture (Cast → Video anchors → Preview)
+  anchorFrame: (slug, file, t, cast_id, anchor_id) => req("POST", "/reelwright/anchor_frame", { slug, file, t, cast_id, anchor_id }),
   // added 2026-11-06 v0.10.0: a character's lines cut from a take into a voice reference WAV {asset, used, seconds}
   voiceFromTake: (slug, scene_id, take_id, cast_id, lines) => req("POST", "/reelwright/voice_from_take", { slug, scene_id, take_id, cast_id, lines }),
   castExport: (project, cast_id) => req("POST", "/reelwright/cast/export", { project, cast_id }),

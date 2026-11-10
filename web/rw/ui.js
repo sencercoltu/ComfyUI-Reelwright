@@ -816,6 +816,7 @@ export function placeNear(root, box, anchor, gap = 8) {
 // opening). Keyboard: Tab / Shift+Tab stay on the dialog's buttons; Enter presses the focused button only (Enter
 // with Cancel focused cancels); Space presses it as usual; Ctrl+Z / Ctrl+Y do nothing while it is open, and never
 // reach ComfyUI (Ctrl moves focus to a hidden field first). Other keys don't reach the editor's shortcuts.
+// (2026-11-10 v0.18.0: `message` can be an element with ticks and buttons; Tab goes through those too.)
 //   choices: [{value, label, variant?: "primary"|"danger"|"default", help?}] in display order
 //   focus: the value whose button has focus at first (default: the cancel button when danger, else the last button)
 //   anchor (added 2026-11-09 v0.15.1): an element or screen rect to open next to; default dialogAnchor(root)
@@ -840,7 +841,10 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
       if (e.key === "Escape") { e.preventDefault(); finish(cancelValue); return; }
       if (e.key === "Tab") {
         e.preventDefault();
-        const live = btns.filter(b => !b.disabled);
+        // [OLD 2026-11-10 v0.17.3->v0.18.0] const live = btns.filter(b => !b.disabled);  (ticks in the message were out of reach)
+        // added 2026-11-10 v0.18.0: the controls in an element message (Reset scene's ticks and pass choice) come first
+        const inMsg = [...box.querySelectorAll(".rw-modal-msg input:not(.rw-keys), .rw-modal-msg select, .rw-modal-msg button, .rw-modal-msg textarea")];
+        const live = [...inMsg, ...btns].filter(b => !b.disabled);
         if (!live.length) return;
         const i = live.indexOf(document.activeElement);
         const j = i < 0 ? (e.shiftKey ? live.length - 1 : 0) : (i + (e.shiftKey ? -1 : 1) + live.length) % live.length;
@@ -851,6 +855,9 @@ export function choiceDialog(root, { title, message, choices, cancelValue = null
         e.preventDefault();
         const i = btns.indexOf(document.activeElement);
         if (i >= 0 && !btns[i].disabled) finish(choices[i].value);
+        // added 2026-11-10 v0.18.0: Enter on a button or tick inside the message presses it
+        const a = document.activeElement;
+        if (i < 0 && a && !a.disabled && box.contains(a) && a.closest(".rw-modal-msg") && (a.tagName === "BUTTON" || a.type === "checkbox")) a.click();
       }
     };
     const outside = e => { if (!root.contains(e.target)) finish(cancelValue); };

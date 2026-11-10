@@ -163,7 +163,10 @@ def check_scene(p, scene, store, video_path, samples=8):
         if not c or c["kind"] != "character":
             continue
         embs = []
+        skip = set(entry.get("skip") or [])  # added 2026-11-10 v0.18.0: the anchors this scene unticked
         for aid in c["anchors"]:
+            if aid in skip:
+                continue
             a = idx["assets"].get(aid)
             if a and a["kind"] == "image":
                 path = store.input_path(a["file"])

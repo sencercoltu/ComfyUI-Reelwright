@@ -637,7 +637,8 @@ async function route(path, opts = {}) {
     // [OLD 2026-11-09 v0.17.0->v0.17.1] case "/reelwright/info": return json({ version: "0.17.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-09 v0.17.1->v0.17.2] case "/reelwright/info": return json({ version: "0.17.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // [OLD 2026-11-09 v0.17.2->v0.17.3] case "/reelwright/info": return json({ version: "0.17.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
-    case "/reelwright/info": return json({ version: "0.17.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    // [OLD 2026-11-10 v0.17.3->v0.18.0] case "/reelwright/info": return json({ version: "0.17.3", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.18.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     // added 2026-11-02 v0.3.0: saved Global profiles kept in memory
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
@@ -867,6 +868,11 @@ async function route(path, opts = {}) {
       return json({ scenes, cast: [{ name: "Ada", kind: "character", description: body.part === 1 ? "" : "A young necromancer." }, { name: "Crypt " + body.part, kind: "location" }], tokens: 300 * rows.length, ms: 900, attempts: 1 });
     }
     case "/reelwright/promote_frame": return json({ asset: { id: "a_new", name: "Mara frame", file: `reelwright/${SLUG}/frames/s_02_last.png`, width: 1344, height: 768 } });
+    // added 2026-11-10 v0.18.0: a frame of a video anchor as a picture
+    case "/reelwright/anchor_frame": {
+      const f = Math.floor(Math.max(0, Number(body.t) || 0) * 24 + 0.5);
+      return json({ asset: { kind: "image", file: `reelwright/${SLUG}/frame_${body.cast_id}_${body.anchor_id}_${f}f.png`, width: 1344, height: 768, duration: 0, category: "subject" }, t: f / 24 });
+    }
     case "/reelwright/cast/export": return json({ folder: `output/reelwright/${SLUG}/cast/${body.cast_id}/training`, files: ["a.png", "b.png", "c.png"] });
     case "/reelwright/continuity/check": return json({ available: true, scores: { c_mara: 0.91 } });
     case "/reelwright/upload": return json({ asset: { kind: "image", name: "upload", file: `reelwright/${SLUG}/upload.png`, width: 512, height: 512 } });

@@ -5,6 +5,7 @@ import { rw, setHost } from "./api.js";
 // [OLD 2026-11-03 v0.5.1->v0.6.0] import { createStore } from "./store.js";
 import { createStore, withProjectId } from "./store.js";
 import * as M from "./model.js"; // added 2026-11-03 v0.6.0: model APIs that may not exist yet (nextSeedN, migrateScore)
+import { clearAnchorFrame } from "./model.js"; // added 2026-11-10 v0.18.0: deleting a video asset clears its anchors' frame pictures
 import { newJob } from "./llmjob.js"; // added 2026-11-03 v0.6.0: merge job ids
 import { ownJobs, jobLine } from "./llmjob.js"; // added 2026-11-06 v0.10.2: LLM progress in place, own jobs only
 import { feedStream } from "./llmjob.js"; // added 2026-11-09 v0.15.0: the reasoning and answer received, for the output popup
@@ -463,8 +464,15 @@ export function mountEditor(container, host) {
         q.assets = q.assets.filter(x => x.id !== id);
         for (const s of q.scenes) s.refs = s.refs.filter(r => r.asset !== id);
         // [OLD 2026-11-09 v0.15.1->v0.16.0] for (const c of q.cast) { c.anchors = c.anchors.filter(x => x !== id); if (c.voice === id) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => x !== id); }
+        // added 2026-11-10 v0.18.0: a video anchor that goes with the asset takes its frame picture with it
+        for (const c of q.cast) for (const va of (c.video_anchors || []).filter(x => x.asset === id)) clearAnchorFrame(q, c, va);
         for (const c of q.cast) { c.anchors = c.anchors.filter(x => x !== id); if (c.voice === id) c.voice = ""; for (const o of c.outfits || []) o.assets = (o.assets || []).filter(x => x !== id);
           c.video_anchors = (c.video_anchors || []).filter(x => x.asset !== id); } // added 2026-11-09 v0.16.0: video anchors
+        // added 2026-11-10 v0.18.0: a deleted frame picture unsets its video anchor's frame; the scenes forget the
+        // asset and the removed video anchors in their anchor picks
+        for (const c of q.cast) for (const va of c.video_anchors || []) if (va.frame_asset === id) { va.frame_asset = ""; va.frame = null; }
+        const goneVa = new Set(store.project.cast.flatMap(c => (c.video_anchors || []).filter(x => x.asset === id).map(x => x.id)));
+        for (const s of q.scenes) for (const e of s.cast) if (Array.isArray(e.skip)) e.skip = e.skip.filter(x => x !== id && !goneVa.has(x));
         if (q.global.merge.score.asset === id) q.global.merge.score.asset = "";
         q.soundtrack = q.soundtrack.filter(t => t.asset !== id); // added 2026-11-03 v0.5.0
       // [OLD 2026-11-03 v0.5.1->v0.6.0] });
@@ -1024,6 +1032,42 @@ export function mountEditor(container, host) {
     }
   }
 
+  // added 2026-11-10 v0.18.0 (Sencer: "when any change is made, the card texts in scene tab are refreshed, but they also lose
+  // scroll position. keep the position as accurate as possible"): a box scrolled away from its top or left that has no
+  // data-scroll key (What H3 receives, a list) is found again in the new body by its key, else by its kind (tag, class,
+  // help id) and its place among the boxes of that kind, and gets the same offset back
+  function scrollSig(el) {
+    return el.dataset.key ? "k:" + el.dataset.key : el.tagName + "." + (el.getAttribute("class") || "") + "|" + (el.dataset.help || "");
+  }
+  function scrollMarks(rootEl) {
+    const marks = [], seen = new Map();
+    const all = rootEl.querySelectorAll("*");
+    let any = false; // most renders have nothing scrolled: no signatures then
+    for (const el of all) if ((el.scrollTop > 0 || el.scrollLeft > 0) && !el.dataset.scroll) { any = true; break; }
+    if (!any) return marks;
+    for (const el of all) {
+      if (el.dataset.scroll) continue;
+      const sig = scrollSig(el);
+      const nth = seen.get(sig) || 0;
+      seen.set(sig, nth + 1);
+      if (el.scrollTop > 0 || el.scrollLeft > 0) marks.push({ sig, nth, top: el.scrollTop, left: el.scrollLeft });
+    }
+    return marks;
+  }
+  function restoreScrollMarks(rootEl, marks) {
+    if (!marks.length) return;
+    const want = new Map(marks.map(m => [m.sig + "#" + m.nth, m]));
+    const seen = new Map();
+    for (const el of rootEl.querySelectorAll("*")) {
+      if (el.dataset.scroll) continue;
+      const sig = scrollSig(el);
+      const nth = seen.get(sig) || 0;
+      seen.set(sig, nth + 1);
+      const m = want.get(sig + "#" + nth);
+      if (m) { el.scrollTop = m.top; el.scrollLeft = m.left; }
+    }
+  }
+
   let frame = 0;
   // added 2026-11-03 v0.6.0: one render per animation frame; nothing after destroy()
   function schedule() { if (!frame && !destroyed) frame = requestAnimationFrame(render); }
@@ -1051,6 +1095,7 @@ export function mountEditor(container, host) {
     const carry = hold && !hold.typed && hold.el === document.activeElement ? hold : null;
     const scroll = {};
     root.querySelectorAll("[data-scroll]").forEach(el => { scroll[el.dataset.scroll] = [el.scrollLeft, el.scrollTop]; });
+    const scrolledAway = scrollMarks(body); // added 2026-11-10 v0.18.0: every other scrolled box of the tab
     // [OLD 2026-11-03 v0.5.0->v0.5.1] const focused = root.querySelector(":focus");
     const focused = root.querySelector(":focus:not(.rw-keys)"); // the key field survives every render
     // added 2026-11-03 v0.5.1: focus was in the editor before this render (see the end of render)
@@ -1091,6 +1136,7 @@ export function mountEditor(container, host) {
       const s = scroll[el.dataset.scroll];
       if (s) { el.scrollLeft = s[0]; el.scrollTop = s[1]; }
     });
+    restoreScrollMarks(body, scrolledAway); // added 2026-11-10 v0.18.0
     // [OLD 2026-11-03 v0.4.0->v0.4.1] if (focusKey) {
     // [OLD 2026-11-03 v0.4.0->v0.4.1]   const el = root.querySelector(`[data-key="${CSS.escape(focusKey)}"]`);
     if (focusKey || helpPos >= 0) {

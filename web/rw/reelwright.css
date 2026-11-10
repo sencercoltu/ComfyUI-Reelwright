@@ -274,6 +274,10 @@
 .rw-ac.on { display: flex; }
 .rw-ac-item { display: flex; gap: 10px; padding: 4px 8px; border-radius: 5px; cursor: pointer; font-size: 11.5px; }
 .rw-ac-item.on, .rw-ac-item:hover { background: #2f343e; }
+/* added 2026-11-10 v0.18.0: the @ list floats in the editor's root (the editor's box clipped it), and scrolls */
+.rw-ac.floating { left: auto; bottom: auto; max-height: 264px; overflow-y: auto; max-width: 440px; z-index: 90; }
+.rw-ac.floating.on { display: flex; }
+.rw-ac.floating .rw-ac-item { flex: none; }
 
 /* ---- Timeline tab ---- */
 /* [OLD 2026-11-06 v0.8.0->v0.9.0] fixed sizes; the bars between the panels are the gaps now
@@ -1146,3 +1150,34 @@ body.rw-sorting, body.rw-sorting * { cursor: grabbing !important; user-select: n
 .rw-vanchor-thumb { width: 44px; height: 44px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .rw-vanchor-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .rw-vanchor .rw-drag-grip { align-self: center; }
+/* added 2026-11-10 v0.18.0: Reset scene asks what goes (scene.js resetDialog) */
+.rw-reset { display: flex; flex-direction: column; gap: 10px; white-space: normal; }
+.rw-reset-scope { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.rw-reset-parts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+.rw-reset-parts .rw-check { padding: 2px 0; color: var(--text); font-size: 12.5px; }
+.rw-reset-parts .rw-check.empty > span:first-of-type { color: var(--text3); }
+.rw-reset-sub { grid-column: 1 / -1; margin: 6px 0 2px; font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--dim); }
+.rw-reset-sub:first-child { margin-top: 0; }
+.rw-reset-quick { display: flex; gap: 6px; }
+/* added 2026-11-10 v0.18.0: the anchors a scene uses for a cast member (scene.js sceneAnchors) */
+.rw-cast-item { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.rw-sa-toggle { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; padding: 1px 4px 1px 0; border: 0; background: transparent; color: var(--dim); cursor: pointer; font-size: 11.5px; max-width: 100%; text-align: left; }
+.rw-sa-toggle:hover { color: var(--text2); }
+.rw-sa-toggle.some { color: var(--accent-text); }
+.rw-sa-toggle.none { color: var(--warn); }
+.rw-sa { margin-left: 34px; padding: 8px; border-radius: 8px; background: var(--panel2); border: 1px solid #262a33; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.rw-sa-pics { display: flex; flex-wrap: wrap; gap: 8px; }
+.rw-sa-pic { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; width: 64px; cursor: pointer; }
+.rw-sa-pic img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line2); }
+.rw-sa-pic input { position: absolute; top: 3px; left: 3px; margin: 0; accent-color: var(--accent); }
+.rw-sa-pic.off img { opacity: 0.35; filter: grayscale(0.8); }
+.rw-sa-pic .rw-sa-code { font-size: 10.5px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.rw-sa-vids { display: flex; flex-direction: column; gap: 2px; }
+.rw-sa-vid { min-width: 0; font-size: 12px; }
+.rw-sa-vid.off > :not(input) { opacity: 0.5; }
+/* added 2026-11-10 v0.18.0: a video anchor's frame picture: its mark on the clip bar and its row */
+.rw-clip-frame { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--pic, #60a5fa); border-radius: 1px; pointer-events: auto; }
+.rw-vanchor-frame { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.rw-vanchor-frame img { width: 54px; height: 54px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line2); flex: none; }
+.rw-anchor-ready { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rw-c-ok { color: var(--ok); } /* added 2026-11-10 v0.18.0 */
