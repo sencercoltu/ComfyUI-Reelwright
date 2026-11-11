@@ -3,7 +3,7 @@
 import {
   h, icon, button, toggle, segmented, select, number, text, textarea, chip, dot, section, field, meter, keepChips,
   slider, choiceDialog, confirmDialog, resizableList, uiNum, kept, copyButton, sortable, dragGrip, moveItem,
-  copyWithToast,
+  copyWithToast, triggerInput,
 } from "../ui.js";
 import {
   seamFixes, seamFixTime, passLayout, passTextsOf, adoptLayout, setPassSection, dialogueSecs, lineSeam, shotSeams,
@@ -24,7 +24,7 @@ import {
   shotLengths, overruns, fitLength, lengthenToFit, squeezeToFit, visibleStart, effectiveStart, tailOverlapFrames,
   planScene, passSoundtrack, soundtrackLocked, assetGroupName, partOwner, sceneTilePixels, SMALL_TILE_PX,
   scenePeople, hiresSize, sceneHires, sceneSampleSize, sceneQuality, passLabel, passNames, refClip, refTrimmed,
-  refTokens, snapFrame, newCastMember,
+  refTokens, snapFrame, newCastMember, triggerText,
 } from "../model.js";
 
 // A render step changes nothing on this tab (status changes come with a full render), so
@@ -1769,6 +1769,13 @@ function sceneAnchors(ctx, s, c, sc) {
         onClick: () => ctx.actions.editScene(s.id, x => { const e = x.cast.find(q => q.id === c.id); if (e) e.skip = []; }, { label: `${c.name}: every anchor in this scene` }) })));
 }
 
+// a LoRA the scene gets from Global or a cast member: its file, and its trigger word under it
+function loraName(name, trigger) {
+  return h("div", { class: "grow rw-lora-main" },
+    h("span", { class: "mono rw-ellipsis" }, name.replace(/\.safetensors$/, "")),
+    trigger ? h("span", { class: "mono small rw-dim rw-ellipsis", help: "scene.loras.trigger" }, "trigger: " + trigger) : null);
+}
+
 function lorasCard(ctx, s) {
   const p = ctx.p;
   const o = s.overrides.loras || { mode: "add", items: [], strengths: {} };
@@ -1790,7 +1797,7 @@ function lorasCard(ctx, s) {
         const ov = o.strengths?.[gl.id];
         return h("div", { class: ["rw-lora-row", !gl.enabled && "off"] },
           dot(ov !== undefined ? "override" : "global"),
-          h("span", { class: "mono grow rw-ellipsis" }, gl.name.replace(/\.safetensors$/, "")),
+          loraName(gl.name, gl.trigger),
           h("span", { class: "rw-dim small" }, ov !== undefined ? `Global ${gl.strength} →` : "Global"),
           number({ value: ov ?? gl.strength, min: -4, max: 4, step: 0.05, width: "74px", help: "scene.loras.strength", key: `lora-g-${gl.id}`, onChange: v => setL(l => {
             l.strengths = l.strengths || {};
@@ -1801,14 +1808,16 @@ function lorasCard(ctx, s) {
       sortable({ id: `loras-${s.id}`, onMove: (from, to) => ctx.actions.editScene(s.id, sc => { if (sc.overrides.loras) moveItem(sc.overrides.loras.items, from, to); }, { label: "Reorder scene LoRAs" }), rows: (o.items || []).map(it => h("div", { class: "rw-lora-row" },
         dragGrip({ help: "scene.loras.order", key: `lora-grip-${it.id}` }),
         dot("override"),
-        select({ options: loraList, value: it.name, placeholder: "choose LoRA", mono: true, help: "scene.loras.name", key: `lora-name-${it.id}`, onChange: v => setL(l => { l.items.find(x => x.id === it.id).name = v; }) }),
+        h("div", { class: "grow rw-lora-main" },
+          select({ options: loraList, value: it.name, placeholder: "choose LoRA", mono: true, help: "scene.loras.name", key: `lora-name-${it.id}`, onChange: v => setL(l => { l.items.find(x => x.id === it.id).name = v; }) }),
+          triggerInput({ value: it.trigger, key: `lora-trigger-${it.id}`, help: "scene.loras.trigger", onChange: v => setL(l => { l.items.find(x => x.id === it.id).trigger = triggerText(v); }) })),
         h("span", { class: "rw-dim small" }, "scene"),
         number({ value: it.strength, min: -4, max: 4, step: 0.05, width: "74px", help: "scene.loras.strength", key: `lora-s-${it.id}`, onChange: v => setL(l => { l.items.find(x => x.id === it.id).strength = v ?? 1; }) }),
         button({ icon: "trash", small: true, variant: "ghost", help: "scene.loras.remove", onClick: () => setL(l => { l.items = l.items.filter(x => x.id !== it.id); }) }))) }),
       eff.filter(l => l.source === "cast").map(l => h("div", { class: "rw-lora-row" },
-        dot("auto", "scene.loras.cast"), h("span", { class: "mono grow rw-ellipsis" }, l.name.replace(/\.safetensors$/, "")),
+        dot("auto", "scene.loras.cast"), loraName(l.name, l.trigger),
         h("span", { class: "rw-c-pic small" }, "auto · Cast: " + l.castName), h("span", { class: "mono" }, Number(l.strength).toFixed(2)))),
-      button({ label: "Add LoRA", icon: "plus", small: true, help: "scene.loras.addItem", onClick: () => setL(l => { l.items.push({ id: newId("l"), name: loraList[0] || "", strength: 0.8, enabled: true }); }) }),
+      button({ label: "Add LoRA", icon: "plus", small: true, help: "scene.loras.addItem", onClick: () => setL(l => { l.items.push({ id: newId("l"), name: loraList[0] || "", strength: 0.8, enabled: true, trigger: "" }); }) }),
     ],
   });
 }

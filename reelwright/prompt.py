@@ -1047,7 +1047,9 @@ def _guide_of_clip(pass_, ref_id):
     return "a guide clip", "guide clip"
 
 
-def subject_definitions(p, scene, refs, pass_, ids, ctx=None):
+def subject_definitions(p, scene, refs, pass_, ids, ctx=None, triggers=None):
+    """triggers: {cast id: trigger word} of the identity LoRAs in use; a word the name and description lack follows
+    the name ("<Subject 1> is Mara (ohwx woman), …")."""
     idx = _index(p, ctx)
     assets, cast = idx["assets"], idx["cast"]
     lines = []
@@ -1057,7 +1059,9 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None):
         if s["cast"]:
             c = cast[s["cast"]]
             desc, _ = cast_description(c, assets)
-            bits = [c["name"]] + ([desc] if desc else [])
+            word = (triggers or {}).get(s["cast"], "")
+            name = c["name"] if not word or has_word(c["name"] + " " + desc, word) else "{} ({})".format(c["name"], word)
+            bits = [name] + ([desc] if desc else [])
             text = "{} is {}".format(head, ", ".join(bits))
             parts = s.get("parts") or []
             only_parts = {k for x in parts for k in x["pictures"]}
@@ -1757,6 +1761,36 @@ def place_task_tags(text, tag_line):
     return text[:m.end()] + gap + tag_line + body
 
 
+def has_word(text, word):
+    """Does text hold word (any case), not as part of a longer word?"""
+    return bool(word) and re.search(r"(?<!\w)" + re.escape(word) + r"(?!\w)", text or "", re.I) is not None
+
+
+def place_trigger_words(text, words):
+    """The LoRA trigger words a prompt lacks, at the start of its summary right after the task tags ("[reference
+    generation] ohwx, sks style, <Subject 1> walks …"), or of the text, after its task tags, when it has no summary
+    section (a raw prompt). An identity LoRA's word goes into its character's subject line instead
+    (subject_definitions), so this gets only the words that are not there."""
+    if not words:
+        return text
+    lead = ", ".join(words)
+    labels = {m.group(1).lower() for m in SECTION_LABEL.finditer(text)}
+    m = SUMMARY_LINE.search(text) if len(labels) >= 2 and "summary" in labels else None
+    start = 0
+    if m:
+        start = m.end() + len(re.match(r"[ \t]*\n?[ \t]*", text[m.end():]).group(0))
+    sep = ""
+    tags = re.match(r"[ \t]*\[([a-z +]+)\][ \t]*", text[start:], re.I)  # on its line: a summary of tags only stays one
+    if tags and all(t.strip().lower() in spec.TASK_TAG_ORDER for t in tags.group(1).split("+")):
+        start += tags.end()
+        sep = "" if text[start - 1] in " \t" else " "
+    rest = text[start:]
+    if m and re.match(r"N/A[ \t]*(?:\n|$)", rest):
+        return text[:start] + sep + lead + "." + rest[3:]
+    line = re.match(r"[^\n]*", rest).group(0).strip()
+    return text[:start] + sep + lead + (", " if line else "") + rest
+
+
 def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
     """Return the prompt and reference plan for one pass. ctx: prepare(p), shared by every scene and pass of the
     same project state."""
@@ -1810,6 +1844,10 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
     tags = task_tags(p, scene, refs, ctx=ctx)
     tag_line = "[{}]".format(" + ".join(tags)) if tags else ""
     unknown = []
+    # LoRA trigger words: an identity LoRA's only in a pass where its character is a subject
+    on_screen = {s["cast"] for s in refs.subjects if s["cast"]}
+    triggers = [t for t in _model.lora_triggers(p, scene) if t["cast"] is None or t["cast"] in on_screen]
+    cast_words = {t["cast"]: t["trigger"] for t in triggers if t["cast"]}
 
     def sub(t):
         return substitute(t, p, refs, unknown, ctx=ctx, scene=scene, issues=issues)
@@ -1831,7 +1869,8 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
         auto = pr["auto"]
         ids = speaker_ids(pass_)
         labelled = lambda lines, pattern: [((pattern.match(x).group("label") if pattern.match(x) else ""), x) for x in lines]
-        subj = _merge(labelled(subject_definitions(p, scene, refs, pass_, ids, ctx), LABEL_START) if auto.get("subjects") else [],
+        subj = _merge(labelled(subject_definitions(p, scene, refs, pass_, ids, ctx, triggers=cast_words), LABEL_START)
+                      if auto.get("subjects") else [],
                       sec["subject_definitions"], LABEL_START, _with_sources(refs))
         written = _strip_task_tags(sec["summary"]).strip()  # the task tags are always added below
         if rich:
@@ -1857,6 +1896,7 @@ def build_pass(p, scene, scene_index, plan, pass_, ctx=None):
             "non_diegetic_music": sec["non_diegetic_music"],
         }
         text = "\n\n".join("{}:\n{}".format(k, body[k].strip() or "N/A") for k in REF2VA_SECTIONS)
+    text = place_trigger_words(text, [t["trigger"] for t in triggers if not has_word(text, t["trigger"])])
 
     tag_map = {}
     idx = ctx["index"]

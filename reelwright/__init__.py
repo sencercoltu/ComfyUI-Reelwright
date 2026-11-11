@@ -4,4 +4,4 @@ The submodules spec, model, planner, prompt, validate, cache and storage are
 pure Python so they can be tested without ComfyUI or torch.
 """
 
-VERSION = "0.20.1"
+VERSION = "0.21.0"

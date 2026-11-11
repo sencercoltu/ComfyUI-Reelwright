@@ -460,6 +460,8 @@ body.rw-dragging-y, body.rw-dragging-y * { cursor: row-resize !important; user-s
 .rw-lora-row { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 8px; border-radius: 7px; background: var(--panel2); }
 .rw-lora-row.off { opacity: 0.55; }
 .rw-lora-row .rw-select { flex: 1 1 auto; height: 26px; }
+.rw-lora-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 4px 0; }
+.rw-lora-main .rw-input { height: 24px; font-size: 11px; }
 
 /* ---- Assets tab ---- */
 .rw-dropzone { display: flex; align-items: center; justify-content: center; gap: 8px; height: 44px; border: 1.5px dashed var(--line3); border-radius: 10px; color: var(--dim); font-size: 11.5px; }

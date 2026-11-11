@@ -89,7 +89,7 @@ export function newCastMember(p, kind) {
   return {
     id: newId("c"), kind, name: kind === "character" ? "New character" : kind === "location" ? "New location" : "New prop",
     speaker: kind === "character" ? "S" + n : "", description: "", anchors: [], pack_sheet: "auto",
-    outfits: [], default_outfit: "", voice: "", voice_desc: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8 },
+    outfits: [], default_outfit: "", voice: "", voice_desc: "", language: p.global.defaults.language, lora: { name: "", strength: 0.8, trigger: "" },
   };
 }
 
@@ -218,7 +218,7 @@ function defaultGlobal() {
     sampling: { steps: 20, sampler: "res_multistep", scheduler: "simple", seed: 104729,
       seed_mode: "increment", sigma_shift: false, shift_video: 12.0, shift_audio: 3.0 },
     quality: "final",
-    draft: { scale: 0.5, steps: 8, lora: "", lora_strength: 1.0, hires: false },
+    draft: { scale: 0.5, steps: 8, lora: "", lora_strength: 1.0, lora_trigger: "", hires: false },
     hires: { enabled: false, scale: 2.0, refine_steps: 0, refine_denoise: 0.35 },
     defaults: { duration: 8.0, start_mode: "last_frame", overlap_frames: 39, language: "English" },
     long: { max_pass_frames: 362, overlap_frames: 39, crossfade_frames: 12, seam_mode: "auto", cut_snap_seconds: 2.0,
@@ -346,6 +346,7 @@ export function normalizeGlobal(g, p = null) {
   hi.refine_denoise = Math.min(1, Math.max(0.01, hi.refine_denoise));
   out.loras = objects(out.loras);
   for (const l of out.loras) normLora(l);
+  out.draft.lora_trigger = triggerText(out.draft.lora_trigger);
   // a profile saved in another project may name a score asset or colour scene this project lacks
   if (p) {
     const m = out.merge;
@@ -535,6 +536,12 @@ function normLora(l) {
   textField(l, "name", "");
   l.strength = num(l.strength, 1);
   l.enabled = flag(l.enabled, true);
+  l.trigger = triggerText(l.trigger);
+}
+
+// A LoRA's trigger word(s): one line, single spaces, at most 120 characters (model.py trigger_text)
+export function triggerText(v) {
+  return text(v, "").split(/\s+/).filter(Boolean).join(" ").slice(0, 120).trim();
 }
 
 function normAsset(a) {
@@ -632,6 +639,7 @@ function normCast(c, lang) {
   const lora = c.lora = isObj(c.lora) ? c.lora : {};
   textField(lora, "name", "");
   lora.strength = num(lora.strength, 0.8);
+  lora.trigger = triggerText(lora.trigger);
   c.video_anchors = objects(c.video_anchors);
   const used = new Set();
   for (const va of c.video_anchors) {
@@ -1195,13 +1203,13 @@ export function effectiveLoras(project, scene) {
     for (const l of project.global.loras) {
       if (!l.enabled) continue;
       const s = o?.strengths?.[l.id];
-      out.push({ name: l.name, strength: s ?? l.strength, source: s !== undefined ? "override" : "global", id: l.id });
+      out.push({ name: l.name, strength: s ?? l.strength, source: s !== undefined ? "override" : "global", id: l.id, trigger: l.trigger || "" });
     }
   }
-  for (const l of o?.items || []) if (l.enabled !== false) out.push({ name: l.name, strength: l.strength, source: "scene", id: l.id });
+  for (const l of o?.items || []) if (l.enabled !== false) out.push({ name: l.name, strength: l.strength, source: "scene", id: l.id, trigger: l.trigger || "" });
   for (const sc of scene.cast) {
     const c = findCast(project, sc.id);
-    if (c?.lora?.name) out.push({ name: c.lora.name, strength: c.lora.strength, source: "cast", castName: c.name, id: c.id });
+    if (c?.lora?.name) out.push({ name: c.lora.name, strength: c.lora.strength, source: "cast", castName: c.name, id: c.id, trigger: c.lora.trigger || "" });
   }
   return out;
 }

@@ -3,12 +3,12 @@
 
 import {
   h, icon, button, toggle, segmented, select, number, text, textarea, section, field, keepChips, slider, chip,
-  confirmDialog, choiceDialog, sortable, dragGrip, moveItem, kept,
+  confirmDialog, choiceDialog, sortable, dragGrip, moveItem, kept, triggerInput,
 } from "../ui.js";
 import {
   dialogueSeconds, sceneIndex, STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes,
   castDescription, sheetGrid, anchorPixels, sheetURL, castPacks, assetGroupName, partOwner, SMALL_TILE_PX, refClip,
-  fmtTime, unskipAnchor, clearAnchorFrame, newCastMember,
+  fmtTime, unskipAnchor, clearAnchorFrame, newCastMember, triggerText,
 } from "../model.js";
 import { rw, viewURL } from "../api.js";
 import { clipEditor } from "./scene.js";
@@ -320,6 +320,8 @@ function profileCard(ctx, c) {
       field("Identity LoRA", h("span", { class: "rw-row" },
         select({ options: loras, value: c.lora.name, placeholder: "none", mono: true, help: "cast.lora", onChange: v => edit(x => { x.lora.name = v; }) }),
         number({ value: c.lora.strength, min: -4, max: 4, step: 0.05, width: "74px", help: "cast.lora.strength", onChange: v => edit(x => { x.lora.strength = v ?? 0.8; }) })), { help: "cast.lora" }),
+      c.lora.name && field("Trigger word", triggerInput({ value: c.lora.trigger, key: "cast-lora-trigger-" + c.id, help: "cast.lora.trigger",
+        onChange: v => edit(x => { x.lora.trigger = triggerText(v); }) }), { help: "cast.lora.trigger" }),
       h("div", { class: "rw-row" },
         button({ label: "Export training set", icon: "download", small: true, help: "cast.export", onClick: async () => {
           try { const r = await rw.castExport(p, c.id); ctx.actions.toast(`Exported ${r.files?.length ?? 0} files to ${r.folder}.`, "ok"); }

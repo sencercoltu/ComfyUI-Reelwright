@@ -400,6 +400,11 @@ export function text({ value, onChange, onInput, help, key, placeholder, mono, w
   });
 }
 
+// A LoRA's trigger word field (Global stack, scene LoRAs, a cast member's identity LoRA, the draft LoRA)
+export function triggerInput({ value, onChange, help, key, width }) {
+  return text({ value, onChange, help, key, width, mono: true, placeholder: "trigger word (optional)" });
+}
+
 export function textarea({ value, onChange, onInput, help, key, placeholder, rows = 3, mono }) {
   return h("textarea", {
     class: ["rw-textarea", mono && "mono"], help, key, placeholder, rows,

@@ -1510,6 +1510,7 @@ def main():
         v0195_checks(page, check, saved, shots)
         v0200_checks(page, check, saved, shots)
         v0201_checks(page, check, saved, shots)
+        v0210_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
         v0201_copy_checks(pw, page_url, check)
@@ -6802,6 +6803,66 @@ def v0201_copy_checks(pw, url, check):
         check(False, "the Chat tab has its input")
     check(not errs, f"no page errors: {errs[:2]}")
     b.close()
+
+
+
+def v0210_checks(page, check, saved, shots):
+    """v0.21.0 (Sencer: "for all LORA's, add trigger word support"): a trigger word field on every LoRA (the Global
+    stack, the draft LoRA, scene LoRAs, a cast member's identity LoRA), stored on one line with single spaces; the
+    Scene LoRAs card shows the trigger words of the LoRAs it gets from Global and the cast."""
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.store.project))")
+
+    def load(q):
+        page.evaluate("j => window.__editor.load(j)", json.dumps(q))
+        page.wait_for_timeout(400)
+
+    def fill(sel, value):
+        box = page.locator(sel).first
+        box.fill(value)
+        box.press("Tab")
+        page.wait_for_timeout(300)
+
+    q = json.loads(saved)
+    q["global"]["loras"] = [{"id": "l_film", "name": "film.safetensors", "strength": 0.5, "enabled": True}]
+    q["global"]["draft"]["lora"] = "turbo.safetensors"
+    mara = next(c for c in q["cast"] if c["id"] == "c_mara")
+    mara["lora"] = {"name": "mara.safetensors", "strength": 0.6}
+    q["ui"].update(tab="global")
+    load(q)
+    # Global: the stack's row and the draft LoRA
+    sel = "input[data-help='global.loras.trigger']"
+    check(page.locator(sel).count() == 1, "a Global LoRA row has a trigger word field")
+    fill(sel, "  sks   film\tlook ")
+    check(cur()["global"]["loras"][0]["trigger"] == "sks film look", f"stored on one line: {cur()['global']['loras'][0].get('trigger')!r}")
+    fill("input[data-help='global.draft.loraTrigger']", "fast")
+    check(cur()["global"]["draft"]["lora_trigger"] == "fast", "the draft LoRA has one too")
+    page.screenshot(path=str(shots / "v0210_global.png"))
+    # Cast: shown once the character has an identity LoRA
+    page.evaluate("window.__editor.actions.setTab('cast')")
+    page.evaluate("() => window.__editor.store.setEph({ selectedCast: 'c_mara' })")
+    page.wait_for_timeout(400)
+    fill("input[data-help='cast.lora.trigger']", "ohwx woman")
+    check(next(c for c in cur()["cast"] if c["id"] == "c_mara")["lora"]["trigger"] == "ohwx woman", "the identity LoRA's trigger word is stored")
+    page.evaluate("() => window.__editor.store.setEph({ selectedCast: 'c_keeper' })")
+    page.wait_for_timeout(300)
+    check(page.locator("input[data-help='cast.lora.trigger']").count() == 0, "no field while a character has no identity LoRA")
+    # Scene: the Global and cast LoRAs show theirs; a scene LoRA gets a field
+    page.evaluate("window.__editor.actions.select('s_02')")
+    page.evaluate("window.__editor.actions.setTab('scene')")
+    page.wait_for_timeout(500)
+    card = page.locator(".rw-card:has(.rw-card-title:has-text('Scene LoRAs'))")
+    txt = card.inner_text()
+    check("trigger: sks film look" in txt and "trigger: ohwx woman" in txt, f"the Scene LoRAs card shows both: {txt[:200]!r}")
+    card.locator("button[data-help='scene.loras.addItem']").click()
+    page.wait_for_timeout(300)
+    fill("input[data-help='scene.loras.trigger']", "grainy")
+    items = cur()["scenes"][1]["overrides"]["loras"]["items"]
+    check(items and items[-1]["trigger"] == "grainy", f"a scene LoRA's trigger word is stored: {items}")
+    page.screenshot(path=str(shots / "v0210_scene.png"))
+    page.evaluate("window.__editor.store.undo()")
+    page.wait_for_timeout(300)
+    check(cur()["scenes"][1]["overrides"]["loras"]["items"][-1].get("trigger") == "", "one undo takes it back")
+    load(json.loads(saved))
 
 
 if __name__ == "__main__":

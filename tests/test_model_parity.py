@@ -293,6 +293,14 @@ def malformed():
                     {"kind": "video", "group": "g_set_2", "tags": "x"}, {"kind": "audio", "group": "g_gone"},
                     {"kind": "image", "group": 7, "tags": [True, False]}, {"kind": "image", "group": None}]},
         {"scenes": [{}], "asset_groups": "x", "assets": [{"kind": "image", "group": "g_a", "tags": None}]},
+        # LoRA trigger words (v0.21.0): one line, single spaces, at most 120 characters, on every kind of LoRA
+        {"scenes": [{"overrides": {"loras": {"mode": "add", "items": [{"name": "s.safetensors", "trigger": " in   sks\tstyle "},
+                                                                      {"name": "t.safetensors", "trigger": None}]}}}],
+         "cast": [{"kind": "character", "name": "Birten", "lora": {"name": "b.safetensors", "trigger": "ohwx\nman"}},
+                  {"kind": "character", "name": "Ada", "lora": {"name": "a.safetensors", "trigger": 7}},
+                  {"kind": "character", "name": "Tom", "lora": {"name": "", "trigger": ["x"]}}],
+         "global": {"loras": [{"name": "g.safetensors", "trigger": "x" * 130}, {"name": "h.safetensors"}],
+                    "draft": {"lora": "turbo.safetensors", "lora_trigger": "  fast  "}}},
         # crops (v0.20.0): crop_of {asset, box [x, y, w, h]} kept when whole, clamped to 0..1; dropped otherwise
         {"scenes": [{}], "assets": [{"kind": "image", "crop_of": {"asset": "a_src", "box": [0.1, "0.2", 0.5, 1.4]}},
                                     {"kind": "image", "crop_of": {"asset": "a_src", "box": [0.1, 0.2, -0.5, True]}},

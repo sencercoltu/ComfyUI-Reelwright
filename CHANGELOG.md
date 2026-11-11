@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.21.0 — 2026-11-11
+
+- **Trigger words for every LoRA.** Sencer: "for all LORA's, add trigger word support". The Global LoRA stack, scene LoRAs, a character's identity LoRA and the draft LoRA each have a **trigger word** field. While a LoRA is in use, a prompt that doesn't already contain its word gets it:
+  - an identity LoRA's word goes after the character's name in their subject line, so it is tied to that person: "<Subject 1> is Birten (ohwx man), …". A LoRA trained with the character's name as its trigger needs nothing: the name is already there;
+  - any other LoRA's word goes at the start of the summary, right after the task tags: "[reference generation] sks film look, …". ai-toolkit puts a missing trigger at the start of the caption when it trains, so the prompt reads the same way. Raw prompts get it after their task tags.
+
+  Each word is written once, and a word already in the prompt (in any case, as a whole word) is not added again. The Scene LoRAs card shows the trigger words of the LoRAs it gets from Global and the cast. Projects without trigger words build exactly the same prompts, so nothing renders again.
+- **For developers:** `trigger` on every LoRA object (`global.draft.lora_trigger` for the draft LoRA), normalised by `model.trigger_text` / `model.js triggerText`; `model._lora_entries` (shared by `effective_loras`) and `model.lora_triggers`; `prompt.has_word`, `prompt.place_trigger_words`, `subject_definitions(…, triggers=)`; `ui.js triggerInput`; `model.js effectiveLoras` entries carry `trigger`. Tests: `test_lora_triggers` (+7), `test_model_parity` (triggers); `interact.py v0210_checks`.
+
 ## v0.20.1 — 2026-11-10
 
 - **Write prompts puts the lines it writes on the timeline.** Sencer: "No dialogues are created for this LLM return, but there are clearly dialogues in the result. I have 2 passes, but it doesn't work on single pass either." A scene that had a shot and no spoken lines got none: the LLM wrote the lines the note asked for (the oath, line by line), but they were taken out of the answer as lines the scene did not have, and in a scene of several passes nothing took written lines at all. Now a scene with no spoken lines and automatic shot lines keeps them and gets them on the timeline, each with its speaker, time and delivery, in one pass or several. In several passes, each pass is told the lines the passes before it wrote, so it goes on from there instead of starting the oath again, and a line the next pass repeats in its overlap is put on the timeline once.

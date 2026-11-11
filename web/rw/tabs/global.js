@@ -3,14 +3,14 @@
 
 import {
   h, icon, button, toggle, segmented, select, number, text, textarea, section, field, dot, confirmDialog, sortable,
-  dragGrip, moveItem, slider, choiceDialog, copyWithToast,
+  dragGrip, moveItem, slider, choiceDialog, copyWithToast, triggerInput,
 } from "../ui.js";
 import { rw } from "../api.js";
 import { newJob, jobLine, jobText, outputButton } from "../llmjob.js";
 import {
   ASPECTS, START_MODES, STABLE_LANGUAGES, OVERRIDE_KEYS, adaptCanvas, newId, slugify, defaultScene, effective, FPS,
   sceneIndex, overruns, lengthenToFit, nextSeedN, hiresSize, HIRES_SCALES, normalizeProject, defaultProject,
-  normalizeGlobal, migrateScore,
+  normalizeGlobal, migrateScore, triggerText,
 } from "../model.js";
 import { VERSION } from "../version.js";
 import { runWrite, stopWrite } from "../passes.js";
@@ -285,13 +285,14 @@ function lorasCard(ctx) {
         return h("div", { class: ["rw-lora-row", !l.enabled && "off"] },
           dragGrip({ help: "global.loras.order", key: `glora-grip-${l.id || i}` }),
           toggle({ value: l.enabled, key: `glora-on-${l.id || i}`, help: "global.loras.enabled", onChange: v => edit(ls => { ls[i].enabled = v; }) }),
-          h("div", { class: "grow" },
+          h("div", { class: "grow rw-lora-main" },
             select({ options: list, value: l.name, key: `glora-name-${l.id || i}`, placeholder: "choose LoRA", mono: true, help: "global.loras.name", onChange: v => edit(ls => { ls[i].name = v; }) }),
+            triggerInput({ value: l.trigger, key: `glora-trigger-${l.id || i}`, help: "global.loras.trigger", onChange: v => edit(ls => { ls[i].trigger = triggerText(v); }) }),
             overriders > 0 && h("div", { class: "rw-c-accent small" }, `${overriders} scene${overriders > 1 ? "s" : ""} override this`)),
           number({ value: l.strength, key: `glora-str-${l.id || i}`, min: -4, max: 4, step: 0.05, width: "74px", help: "global.loras.strength", onChange: v => edit(ls => { ls[i].strength = v ?? 1; }) }),
           button({ icon: "trash", small: true, variant: "ghost", help: "global.loras.remove", onClick: () => edit(ls => { ls.splice(i, 1); }) }));
       }) }),
-      button({ label: "Add LoRA", icon: "plus", small: true, help: "global.loras.add", onClick: () => edit(ls => { ls.push({ id: newId("l"), name: list[0] || "", strength: 0.8, enabled: true }); }) }),
+      button({ label: "Add LoRA", icon: "plus", small: true, help: "global.loras.add", onClick: () => edit(ls => { ls.push({ id: newId("l"), name: list[0] || "", strength: 0.8, enabled: true, trigger: "" }); }) }),
     ],
   });
 }
@@ -409,7 +410,8 @@ function draftCard(ctx) {
         onChange: v => set(x => { x.hires = v; }) }), { help: "global.draft.hires" }),
       field("Turbo LoRA", h("span", { class: "rw-row" },
         select({ options: ctx.eph.models?.loras || [], value: d.lora, placeholder: "none", mono: true, help: "global.draft.lora", onChange: v => set(x => { x.lora = v; }) }),
-        number({ value: d.lora_strength, min: -4, max: 4, step: 0.05, width: "74px", help: "global.draft.loraStrength", onChange: v => set(x => { x.lora_strength = v ?? 1; }) })), { help: "global.draft.lora" }),
+        number({ value: d.lora_strength, min: -4, max: 4, step: 0.05, width: "74px", help: "global.draft.loraStrength", onChange: v => set(x => { x.lora_strength = v ?? 1; }) }),
+        d.lora && triggerInput({ value: d.lora_trigger, key: "draft-lora-trigger", help: "global.draft.loraTrigger", width: "130px", onChange: v => set(x => { x.lora_trigger = triggerText(v); }) })), { help: "global.draft.lora" }),
     ],
   });
 }

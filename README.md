@@ -117,7 +117,8 @@ node. A wired input replaces the matching Global-tab loader.
 
 ## Using it
 
-1. **Global tab:** pick the models, the output size and your LoRAs. Save them
+1. **Global tab:** pick the models, the output size and your LoRAs. Give a
+   LoRA its **trigger word** and the prompts that lack it get it. Save them
    as a **profile** to reuse them; the profile marked *Use for new nodes* fills
    in every new Reelwright node.
 2. **Assets tab:** drop in pictures, video and audio. Each asset gets a code

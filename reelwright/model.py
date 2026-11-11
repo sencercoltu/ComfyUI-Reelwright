@@ -117,7 +117,7 @@ def default_global():
         "sampling": {"steps": 20, "sampler": "res_multistep", "scheduler": "simple", "seed": 104729,
                      "seed_mode": "increment", "sigma_shift": False, "shift_video": 12.0, "shift_audio": 3.0},
         "quality": "final",
-        "draft": {"scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0, "hires": False},
+        "draft": {"scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0, "lora_trigger": "", "hires": False},
         "hires": {"enabled": False, "scale": 2.0, "refine_steps": 0, "refine_denoise": 0.35},
         "defaults": {"duration": 8.0, "start_mode": "last_frame", "overlap_frames": 39, "language": "English"},
         "long": {"max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
@@ -416,7 +416,13 @@ def normalize_global(g):
     g["loras"] = _objects(g["loras"])
     for l in g["loras"]:
         _norm_lora(l)
+    g["draft"]["lora_trigger"] = trigger_text(g["draft"]["lora_trigger"])
     return g
+
+
+def trigger_text(v):
+    """A LoRA's trigger word(s): one line, single spaces, at most 120 characters ("" for none)."""
+    return " ".join(spec.text(v, "").split())[:120].strip()
 
 
 def _norm_lora(l):
@@ -424,6 +430,7 @@ def _norm_lora(l):
     _text_field(l, "name", "")
     l["strength"] = spec.num(l.get("strength"), 1.0)
     l["enabled"] = spec.flag(l.get("enabled"), True)
+    l["trigger"] = trigger_text(l.get("trigger"))
 
 
 def _norm_asset(a):
@@ -520,6 +527,7 @@ def _norm_cast(c, lang):
     lora = c["lora"] = c["lora"] if isinstance(c.get("lora"), dict) else {}
     _text_field(lora, "name", "")
     lora["strength"] = spec.num(lora.get("strength"), 0.8)
+    lora["trigger"] = trigger_text(lora.get("trigger"))
     c["video_anchors"] = _objects(c.get("video_anchors"))
     used = set()
     for va in c["video_anchors"]:
@@ -1057,9 +1065,10 @@ def scene_seed(p, scene, scene_index, take_number=0):
     return (base + take_number * 1000003) % (2 ** 63)
 
 
-def effective_loras(p, scene):
-    """Ordered [(name, strength)] for a scene: global stack (with per-scene strength
-    overrides), scene LoRAs, draft LoRA and the identity LoRAs of its cast."""
+def _lora_entries(p, scene):
+    """The LoRAs a scene is sampled with, in application order: global stack (with per-scene strength overrides),
+    scene LoRAs, the identity LoRAs of its cast, the draft LoRA. One entry per file: a later one sets the strength
+    (a scene item can retune a global LoRA) and, when it has one, the trigger. [{name, strength, trigger, cast}]."""
     g = p["global"]
     ov = scene["overrides"].get("loras") or {}
     mode = ov.get("mode", "add")
@@ -1068,21 +1077,43 @@ def effective_loras(p, scene):
     if mode != "replace":
         for l in g["loras"]:
             if l.get("enabled", True) and l.get("name"):
-                out.append((l["name"], float(strengths.get(l["id"], l["strength"]))))
+                out.append((l["name"], float(strengths.get(l["id"], l["strength"])), l.get("trigger") or "", None))
     for l in ov.get("items") or []:
         if l.get("enabled", True) and l.get("name"):
-            out.append((l["name"], float(l["strength"])))
+            out.append((l["name"], float(l["strength"]), l.get("trigger") or "", None))
     cast = project_index(p)["cast"]
     for sc in scene["cast"]:
         c = cast.get(sc["id"])
         if c and c["lora"].get("name"):
-            out.append((c["lora"]["name"], float(c["lora"]["strength"])))
+            out.append((c["lora"]["name"], float(c["lora"]["strength"]), c["lora"].get("trigger") or "", c["id"]))
     if scene_quality(p, scene) == "draft" and g["draft"].get("lora"):
-        out.append((g["draft"]["lora"], float(g["draft"]["lora_strength"])))
+        out.append((g["draft"]["lora"], float(g["draft"]["lora_strength"]), g["draft"].get("lora_trigger") or "", None))
     seen = {}
-    for name, strength in out:
-        seen[name] = strength  # later entries win, so a scene item can retune a global LoRA
-    return list(seen.items())
+    for name, strength, trigger, cast_id in out:
+        e = seen.setdefault(name, {"name": name, "strength": strength, "trigger": "", "cast": None})
+        e["strength"] = strength
+        if trigger:
+            e["trigger"], e["cast"] = trigger, cast_id
+    return list(seen.values())
+
+
+def effective_loras(p, scene):
+    """Ordered [(name, strength)] for a scene: global stack (with per-scene strength
+    overrides), scene LoRAs, draft LoRA and the identity LoRAs of its cast."""
+    return [(e["name"], e["strength"]) for e in _lora_entries(p, scene)]
+
+
+def lora_triggers(p, scene):
+    """[{trigger, cast}] of the scene's LoRAs that have a trigger word, in application order, each word once (cast:
+    the character whose identity LoRA it is, else None). The prompt builder writes the ones a pass's prompt lacks
+    (prompt.lora_trigger_words)."""
+    out, seen = [], set()
+    for e in _lora_entries(p, scene):
+        key = e["trigger"].lower()
+        if e["trigger"] and key not in seen:
+            seen.add(key)
+            out.append({"trigger": e["trigger"], "cast": e["cast"]})
+    return out
 
 
 def scene_quality(p, scene):

@@ -63,13 +63,14 @@ lives on disk.
       "audio_vae": "minimax_h3_audio_vae_fp32.safetensors",
       "latent_upscaler": ""
     },
-    "loras": [ { "id": "l_1", "name": "film_grain_v2.safetensors", "strength": 0.6, "enabled": true } ],
+    "loras": [ { "id": "l_1", "name": "film_grain_v2.safetensors", "strength": 0.6, "enabled": true,
+                 "trigger": "" } ],                   // v0.21.0: trigger word(s), "" for none (every LoRA has one)
     "output": { "aspect": "16:9", "width": 1344, "height": 768, "ref_image_size": "match" },
     "sampling": { "steps": 20, "sampler": "res_multistep", "scheduler": "simple",
                   "seed": 104729, "seed_mode": "increment",          // fixed | increment | random
                   "sigma_shift": false, "shift_video": 12.0, "shift_audio": 3.0 },
     "quality": "final",                                              // final | draft
-    "draft": { "scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0 },
+    "draft": { "scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0, "lora_trigger": "" },
     "defaults": { "duration": 8.0, "start_mode": "last_frame", "overlap_frames": 39, "language": "English" },
     "long": { "max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
               "seam_mode": "auto", "cut_snap_seconds": 2.0,        // auto | cuts | overlap
@@ -124,7 +125,7 @@ lives on disk.
       "default_outfit": "o_1",
       "voice": "a_7", "language": "English",
       "voice_desc": "a deep, warm male voice, slow and measured",  // v0.10.0: written at the first line in every pass ("" = nothing)
-      "lora": { "name": "", "strength": 0.8 } }
+      "lora": { "name": "", "strength": 0.8, "trigger": "" } }   // v0.21.0: the identity LoRA's trigger word
   ],
   "camera_presets": [ { "id": "k_1", "name": "Push In", "text": "the camera pushes in" } ],  // v0.8.0: H3's 20 moves (DEFAULT_CAMERA)
   "camera_version": 2,                    // v0.8.0: below 2, the official moves the presets lack are appended once
@@ -286,6 +287,19 @@ after a letter, digit, `_` or `@` starts no tag, so e-mail addresses are text.
 - JS (`prompttext.js TAG_SOURCE`, flags `gu`): `(?<![\p{L}\p{N}\p{M}_@])@(?!@)(?:\{([^}\n]+)\}|([\p{L}\p{N}\p{M}_]+(?:['’.\-][\p{L}\p{N}\p{M}_]+)*))`.
 - Names compare without case and with `’` read as `'`. `@X's` that does not resolve but `@X` does is `@X` + `'s`. The canonical token is `@Name` when the whole name matches the name rule, else `@{Name}` (`prompt.tag_token`, `model.js tagCandidates`).
 - Resolution per pass: an asset sent with this pass → its label; an asset of the scene that guides another pass → its words (info); an asset code not attached to the scene, or an unknown name like `P3`/`V1`/`A2` → error; `@tail` → "the end of the previous shot" (warn when the scene starts fresh; v0.7.0: in a pass that names the continuation, its label `<Picture 1>` / `<Video 1>`, and `tag_map["@tail"]` is set so Rewrite turns the label back into `@tail`); `@soundtrack` / `@song` → `<Audio n>`, or "the soundtrack" when the pass gets no song (info; warn when no track is sent to H3); a cast member in the pass → `<Subject n>`; a cast member not in the scene → the name (warn); anything else → left as typed (warn).
+
+### LoRA trigger words (v0.21.0)
+
+Every LoRA has a `trigger` (`global.loras[]`, `overrides.loras.items[]`, `cast[].lora`; the draft LoRA's is
+`global.draft.lora_trigger`): one line, single spaces, ≤ 120 characters (`model.trigger_text`, `model.js triggerText`).
+`model.lora_triggers(p, scene)` lists `{trigger, cast}` for the LoRAs the scene actually loads (`_lora_entries`, the
+same rules as `effective_loras`: Replace Global, enabled, the draft LoRA only in a draft; a later entry for the same
+file takes over a non-empty trigger), each word once. `prompt.build_pass` writes the ones the pass's prompt lacks
+(`has_word`: any case, whole words): an identity LoRA's after its character's name in the automatic subject line
+("<Subject 1> is Birten (ohwx man), …") when the character is a subject of the pass; the others, and an identity word
+the subject line does not carry (own subject definitions, raw prompts), at the start of the summary right after the
+task tags (`place_trigger_words`; a raw prompt without sections: after its leading tags). No trigger set: the prompt,
+and so every cache key, is unchanged.
 
 ## HTTP routes (all JSON unless noted)
 
