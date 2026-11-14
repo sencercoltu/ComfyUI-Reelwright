@@ -667,7 +667,7 @@ function renderInspector(ctx) {
     }),
     h("div", { class: "rw-row" },
       button({ label: "Render scene", icon: "play", help: "timeline.inspector.render", onClick: () => ctx.actions.run("selected", [s.id]) }),
-      button({ label: previewLabel(), icon: "eye", help: "scene.preview", onClick: () => runPreview(ctx, s) }),
+      button({ label: previewLabel(ctx.p), icon: "eye", help: "scene.previewStart", onClick: () => runPreview(ctx, s) }),
       button({ label: "New take", icon: "refresh", help: "timeline.inspector.take", onClick: () => ctx.actions.run("take", [s.id]) }),
       h("span", { class: "rw-flex" }),
       toggle({ value: s.lock, label: "Lock take", help: "scene.lock", onChange: v => ctx.actions.editScene(s.id, sc => { sc.lock = v; }) })));
@@ -1304,7 +1304,7 @@ export function sceneMenu(ctx, s) {
   return [
     { label: "Open in Scene tab", icon: "scene", help: "timeline.inspector.open", onClick: () => ctx.actions.select(s.id, "scene") },
     { label: "Render this scene", icon: "play", help: "timeline.inspector.render", onClick: () => ctx.actions.run("selected", [s.id]) },
-    { label: `${previewLabel()}: just its start`, icon: "eye", help: "scene.preview", onClick: () => runPreview(ctx, s) },
+    { label: `${previewLabel(ctx.p)}: just its start`, icon: "eye", help: "scene.previewStart", onClick: () => runPreview(ctx, s) },
     { label: "New take", icon: "refresh", help: "render.scope.take", onClick: () => ctx.actions.run("take", [s.id]) },
     { sep: true },
     { label: "Split at playhead", icon: "cut", hint: "S", help: "timeline.split", disabled: !(local > 0 && local < s.duration), onClick: () => ctx.actions.splitScene(s.id, local) },

@@ -101,6 +101,14 @@ LONG_HANDOFF = ("pixels", "latent")
 LONG_PASS_CACHE = ("near_lossless", "lossless")
 
 
+# ---- previews: the start of a scene, to see that it is set up right before a long render (planner.preview_plan).
+# Global → Draft quality → Preview length sets the frames (global.preview.frames). The node takes 5 frames and up, in
+# steps of 17; below 124 H3 is under its trained range, so the motion can differ from the full render, but framing,
+# cast, references and look show. The take is marked "preview": it is never starred, merged or continued from, and the
+# scene does not count as rendered (cache.resolve leaves previews out).
+PREVIEW_FRAMES = 39
+
+
 def default_global():
     return {
         "models": {
@@ -118,6 +126,7 @@ def default_global():
                      "seed_mode": "increment", "sigma_shift": False, "shift_video": 12.0, "shift_audio": 3.0},
         "quality": "final",
         "draft": {"scale": 0.5, "steps": 8, "lora": "", "lora_strength": 1.0, "lora_trigger": "", "hires": False},
+        "preview": {"frames": PREVIEW_FRAMES},
         "hires": {"enabled": False, "scale": 2.0, "refine_steps": 0, "refine_denoise": 0.35},
         "defaults": {"duration": 8.0, "start_mode": "last_frame", "overlap_frames": 39, "language": "English"},
         "long": {"max_pass_frames": 362, "overlap_frames": 39, "crossfade_frames": 12,
@@ -417,6 +426,7 @@ def normalize_global(g):
     for l in g["loras"]:
         _norm_lora(l)
     g["draft"]["lora_trigger"] = trigger_text(g["draft"]["lora_trigger"])
+    g["preview"]["frames"] = min(spec.MAX_PASS_FRAMES, spec.align_frames_up(g["preview"]["frames"]))
     return g
 
 
@@ -1347,17 +1357,10 @@ def scene_frames(scene):
     return max(1, spec.frames_of(max(1.0 / spec.FPS, float(scene["duration"]))))
 
 
-# ---- previews: the first seconds of a scene, to see that it is set up right before a long render. A preview renders
-# PREVIEW_FRAMES frames, the shortest pass H3 is trained on (the node takes fewer, but the result is then outside what
-# it learned and says little about the scene): pass 1 of the scene cut to that length (planner.preview_plan), with the
-# scene's prompt, cast, references and start as they are. Its take is marked "preview": it is never starred, merged or
-# continued from, and it does not make the scene count as rendered (cache.resolve leaves previews out).
-PREVIEW_FRAMES = spec.MIN_PASS_FRAMES
-
-
-def previews_whole(scene):
-    """Is the scene no longer than a preview? Then a preview of it is a full render (its normal take)."""
-    return scene_frames(scene) <= PREVIEW_FRAMES
+def preview_frames(p):
+    """Frames a preview renders from the start of a scene (Global → Draft quality → Preview length; 17k+5, 5 to 362).
+    planner.preview_plan cuts the scene's pass 1 to it."""
+    return p["global"]["preview"]["frames"]
 
 
 def _start_info(p, i, scene=None, depth=None):

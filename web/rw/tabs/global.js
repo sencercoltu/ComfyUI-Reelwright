@@ -14,6 +14,7 @@ import {
 } from "../model.js";
 import { VERSION } from "../version.js";
 import { runWrite, stopWrite } from "../passes.js";
+import { previewLength } from "./render.js";
 import { withProjectId } from "../store.js";
 
 const DTYPES = ["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"];
@@ -412,6 +413,7 @@ function draftCard(ctx) {
         select({ options: ctx.eph.models?.loras || [], value: d.lora, placeholder: "none", mono: true, help: "global.draft.lora", onChange: v => set(x => { x.lora = v; }) }),
         number({ value: d.lora_strength, min: -4, max: 4, step: 0.05, width: "74px", help: "global.draft.loraStrength", onChange: v => set(x => { x.lora_strength = v ?? 1; }) }),
         d.lora && triggerInput({ value: d.lora_trigger, key: "draft-lora-trigger", help: "global.draft.loraTrigger", width: "130px", onChange: v => set(x => { x.lora_trigger = triggerText(v); }) })), { help: "global.draft.lora" }),
+      field("Preview length", previewLength(ctx, { key: "preview-frames-global", width: "240px" }), { help: "global.preview.frames" }),
     ],
   });
 }

@@ -5,7 +5,7 @@ import { h, icon, button, toggle, segmented, select, number, section, field, dot
 import { rw, viewURL } from "../api.js";
 import {
   continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, soundtrackLocked, playingTracks, effectiveStart,
-  sceneOverlapAt, normalizeProject, passLabel, assetGroupName, PREVIEW_SECONDS,
+  sceneOverlapAt, normalizeProject, passLabel, assetGroupName, FPS, MIN_PASS_FRAMES, PREVIEW_LENGTHS, previewFrames,
 } from "../model.js";
 
 const STATUS = {
@@ -13,12 +13,22 @@ const STATUS = {
   missing: ["empty", "not rendered"], queued: ["busy", "queued"], rendering: ["busy", "rendering"], error: ["err", "failed"], unknown: ["empty", "unknown"],
 };
 
-// ---- previews: the first seconds of a scene (render.py "preview": pass 1 at the shortest length H3 is trained on),
-// kept among its takes as a preview (never starred, merged or continued from). When a preview run ends, editor.js
-// opens it here: watch it, then render the whole scene, preview again (a new seed) or close.
-export const previewLabel = () => `Preview ${Math.floor(PREVIEW_SECONDS)} s`;
+// ---- previews: the start of a scene (render.py "preview": pass 1 cut to Global → Preview length), kept among its
+// takes as a preview (never starred, merged or continued from). When a preview run ends, editor.js opens it here:
+// watch it, then render the whole scene, preview again (a new seed) or close.
+export const previewSeconds = p => previewFrames(p) / FPS;
+export const previewLabel = p => `Preview ${previewSeconds(p).toFixed(1)} s`;
 export function runPreview(ctx, s) {
   return ctx.actions.run("preview", [s.id]);
+}
+// the preview length picker (Global → Draft quality, the Render tab's scope bar and the preview player)
+export function previewLength(ctx, { key = "preview-frames", width } = {}) {
+  return select({
+    options: PREVIEW_LENGTHS.map(f => ({ value: f,
+      label: `${f} frames · ${(f / FPS).toFixed(2)} s${f === MIN_PASS_FRAMES ? " · shortest trained" : ""}` })),
+    value: previewFrames(ctx.p), key, width, mono: true, help: "global.preview.frames",
+    onChange: v => ctx.actions.edit(q => { q.global.preview.frames = v; }, { label: "Preview length" }),
+  });
 }
 export async function showPreview(ctx, pv) {
   const s = ctx.p.scenes.find(x => x.id === pv.scene_id);
@@ -27,13 +37,14 @@ export async function showPreview(ctx, pv) {
   const video = h("video", { class: "rw-preview-video", src: viewURL(pv.video), controls: true, autoplay: true, playsinline: true, preload: "auto" });
   const of = Number(pv.of_seconds) || s.duration;
   const body = h("div", { class: "rw-col-tight" }, video,
-    h("div", { class: "rw-dim small", help: "render.preview" }, `${pv.take_id}: the first ${Number(pv.seconds || PREVIEW_SECONDS).toFixed(2)} s of ${of.toFixed(2)} s, the start of the scene as a full render begins it. It stays in the scene's takes (Render tab) as a preview: it is never starred or merged.`));
+    h("div", { class: "rw-dim small", help: "render.previewTake" }, `${pv.take_id}: the first ${Number(pv.seconds || previewSeconds(ctx.p)).toFixed(2)} s of ${of.toFixed(2)} s, the start of the scene as a full render begins it. It stays in the scene's takes (Render tab) as a preview: it is never starred or merged.`),
+    h("span", { class: "rw-row", help: "global.preview.frames" }, h("span", { class: "rw-dim small" }, "Next preview"), previewLength(ctx, { key: "preview-frames-dlg", width: "220px" })));
   const v = await choiceDialog(ctx.root, {
-    title: `Preview of ${String(i + 1).padStart(2, "0")} ${s.title}`, message: body, help: "render.preview", cls: "preview", focus: "full",
+    title: `Preview of ${String(i + 1).padStart(2, "0")} ${s.title}`, message: body, help: "render.previewTake", cls: "preview", focus: "full",
     choices: [
       { value: null, label: "Close", help: "common.close" },
-      { value: "again", label: "Preview again", help: "render.preview.again" },
-      { value: "full", label: "Render the whole scene", variant: "primary", help: "render.preview.full" },
+      { value: "again", label: "Preview again", help: "render.previewTake.again" },
+      { value: "full", label: "Render the whole scene", variant: "primary", help: "render.previewTake.full" },
     ],
   });
   video.pause();
@@ -67,7 +78,9 @@ function scopeBar(ctx) {
         message: "Every scene that is not locked is rendered again, even the ones already on disk. The takes you have stay on disk; the new takes are starred." })) ctx.actions.run("all");
     } }),
     button({ label: "New take of selected", icon: "refresh", help: "render.scope.take", onClick: () => ctx.actions.run("take", [s.id]) }),
-    button({ label: `${previewLabel()} of selected`, icon: "eye", help: "render.scope.preview", onClick: () => runPreview(ctx, s) }),
+    h("span", { class: "rw-row rw-preview-len", help: "render.scope.preview" },
+      button({ label: `${previewLabel(p)} of selected`, icon: "eye", help: "render.scope.preview", onClick: () => runPreview(ctx, s) }),
+      previewLength(ctx, { key: "preview-frames-scope", width: "190px" })),
     h("span", { class: "rw-row rw-variants", help: "render.variants" },
       number({ value: nVar, min: 2, max: 8, width: "52px", key: "render-variants-n", help: "render.variants.n", onChange: v => ctx.store.setEph({ variantsN: clampVariants(v) }) }),
       button({ label: `Variants of selected`, icon: "copy", help: "render.variants", onClick: () => queueVariants(ctx, s, variantsN(ctx)) })),

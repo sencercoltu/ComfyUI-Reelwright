@@ -323,6 +323,12 @@ def malformed():
          "global": {"continuity": {"describe_voices": False}, "merge": {"subtitle_timing": "planned"}}},
         {"scenes": [{}], "global": {"continuity": {"describe_voices": "no"}, "merge": {"subtitle_timing": "loud"}}},
         {"scenes": [{}], "global": {"continuity": {"describe_voices": None}, "merge": {"subtitle_timing": None}}},
+        # Preview length (v0.23.1): 17k+5 frames from 5 to 362, 39 when not a number
+        {"scenes": [{}], "global": {"preview": {"frames": "40"}}},
+        {"scenes": [{}], "global": {"preview": {"frames": 999.6}}},
+        {"scenes": [{}], "global": {"preview": {"frames": -3}}},
+        {"scenes": [{}], "global": {"preview": "x"}},
+        {"scenes": [{}], "global": {"preview": {"frames": [5]}}},
     ]
 
 

@@ -46,7 +46,7 @@ except ImportError as _e:  # noqa: N816
 
 from . import assemble, cache, continuity, jobs, media, merge, refmods, spec
 from .analysis import _take_meta, analyze, continues, drift_metrics, long_settings, rekey, short_upstream_tail
-from .model import normalize_project, previews_whole, project_index, slugify
+from .model import normalize_project, project_index, slugify
 from .storage import check_slug, write_json
 
 log = logging.getLogger("reelwright")
@@ -486,18 +486,18 @@ class Renderer:
         self.wired = wired
         self.wired_flags = {"diffusion": wired.get("model") is not None, "text_encoder": wired.get("clip") is not None,
                             "video_vae": wired.get("vae") is not None, "audio_vae": wired.get("audio_vae") is not None}
-        # "preview": the first seconds of the chosen scenes (planner.preview_plan: pass 1 at the shortest length H3 is
-        # trained on), planned and keyed as such; a scene no longer than a preview renders whole (a normal take)
+        # "preview": the start of the chosen scenes (planner.preview_plan: pass 1 cut to Global → Preview length),
+        # planned and keyed as such; a scene the preview would cover whole renders whole (a normal take)
         self.preview = (run_request or {}).get("action") == "preview"
-        self.whole, cut = set(), set()
+        self.whole, chosen = set(), set()
         self.previews = []  # {scene_id, take_id, video, seconds, of_seconds} of the previews made
         if self.preview:
             project = normalize_project(project)
             chosen = set(run_request.get("scenes") or [])
-            self.whole = {s["id"] for s in project["scenes"] if s["id"] in chosen and previews_whole(s)}
             self.full_seconds = {s["id"]: float(s["duration"]) for s in project["scenes"]}
-            cut = chosen - self.whole
-        self.result = analyze(project, store, self.wired_flags, previews=cut)
+        self.result = analyze(project, store, self.wired_flags, previews=chosen)
+        self.whole = {sid for sid in chosen if sid in self.result["scenes"]
+                      and not self.result["scenes"][sid]["plan"].get("preview")}
         self.p = self.result["project"]
         self.idx = project_index(self.p)
         self.request = run_request
@@ -1038,7 +1038,7 @@ class Renderer:
                  "rendered": [], "failed": [], "skipped": [], "warnings": [], "interrupted": False}
         if self.preview:
             state["previews"] = self.previews
-            state["whole"] = sorted(self.whole)  # rendered whole: no longer than a preview
+            state["whole"] = sorted(self.whole)  # rendered whole: the preview would have covered them
         try:
             self._render_all(targets, action, state)
         except BaseException as e:  # Stop is an InterruptProcessingException, which is not an Exception
@@ -1159,7 +1159,7 @@ class Renderer:
         if action == "pass_retake":
             return [self.render_scene(sid, encoded, retake_pass=int(self.request.get("pass")))]
         if action == "preview":
-            if sid in self.whole:  # no longer than a preview: its normal take
+            if sid in self.whole:  # the preview would cover it whole: its normal take
                 return [self.render_scene(sid, encoded, bump=True)]
             return [self.render_scene(sid, encoded, bump=True, star=False, preview=True)]
         take = self.render_scene(sid, encoded, bump=action != "pending")

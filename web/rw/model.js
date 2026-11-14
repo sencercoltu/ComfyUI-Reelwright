@@ -4,8 +4,8 @@
 export const FPS = 24;
 export const MIN_PASS_FRAMES = 124;
 export const MAX_PASS_FRAMES = 362;
-// a preview renders the first MIN_PASS_FRAMES frames of a scene (model.py PREVIEW_FRAMES)
-export const PREVIEW_SECONDS = MIN_PASS_FRAMES / FPS;
+// a preview renders the start of a scene, Global → Preview length frames (model.py PREVIEW_FRAMES, the default)
+export const PREVIEW_FRAMES = 39;
 
 export const STABLE_LANGUAGES = ["Arabic", "Chinese", "English", "French", "German", "Italian",
   "Japanese", "Korean", "Portuguese", "Russian", "Spanish"];
@@ -111,6 +111,12 @@ export function projectSlug(p) {
   const s = text(p.slug);
   return SLUG_RE.test(s) ? s : slugify(s || p.name);
 }
+
+// Frames a preview renders from the start of a scene (model.py preview_frames), and the lengths it can be (17k+5)
+export function previewFrames(p) {
+  return p.global.preview.frames;
+}
+export const PREVIEW_LENGTHS = Array.from({ length: (MAX_PASS_FRAMES - 5) / 17 + 1 }, (_, i) => 5 + 17 * i);
 
 // Smallest 17k+5 frame count >= n (and >= 5); not a finite number -> 5 (spec.align_frames_up).
 export function alignFramesUp(n) {
@@ -221,6 +227,7 @@ function defaultGlobal() {
       seed_mode: "increment", sigma_shift: false, shift_video: 12.0, shift_audio: 3.0 },
     quality: "final",
     draft: { scale: 0.5, steps: 8, lora: "", lora_strength: 1.0, lora_trigger: "", hires: false },
+    preview: { frames: PREVIEW_FRAMES },
     hires: { enabled: false, scale: 2.0, refine_steps: 0, refine_denoise: 0.35 },
     defaults: { duration: 8.0, start_mode: "last_frame", overlap_frames: 39, language: "English" },
     long: { max_pass_frames: 362, overlap_frames: 39, crossfade_frames: 12, seam_mode: "auto", cut_snap_seconds: 2.0,
@@ -349,6 +356,7 @@ export function normalizeGlobal(g, p = null) {
   out.loras = objects(out.loras);
   for (const l of out.loras) normLora(l);
   out.draft.lora_trigger = triggerText(out.draft.lora_trigger);
+  out.preview.frames = Math.min(MAX_PASS_FRAMES, alignFramesUp(out.preview.frames));
   // a profile saved in another project may name a score asset or colour scene this project lacks
   if (p) {
     const m = out.merge;

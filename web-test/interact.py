@@ -1513,6 +1513,7 @@ def main():
         v0210_checks(page, check, saved, shots)
         v0220_checks(page, check, saved, shots)
         v0230_checks(page, check, saved, shots)
+        v0231_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
         v0201_copy_checks(pw, page_url, check)
@@ -6837,6 +6838,7 @@ def v0210_checks(page, check, saved, shots):
     fill(sel, "  sks   film\tlook ")
     check(cur()["global"]["loras"][0]["trigger"] == "sks film look", f"stored on one line: {cur()['global']['loras'][0].get('trigger')!r}")
     fill("input[data-help='global.draft.loraTrigger']", "fast")
+    page.keyboard.press("Escape")  # Tab went on to Preview length and opened its list, which holds renders until closed
     check(cur()["global"]["draft"]["lora_trigger"] == "fast", "the draft LoRA has one too")
     page.screenshot(path=str(shots / "v0210_global.png"))
     # Cast: shown once the character has an identity LoRA
@@ -6962,8 +6964,8 @@ def v0230_checks(page, check, saved, shots):
     page.evaluate("window.__editor.actions.select('s_02')")
     page.evaluate("window.__editor.actions.setTab('scene')")
     page.wait_for_timeout(500)
-    btn = page.locator(".rw-scene-nav button[data-help='scene.preview'], button[data-help='scene.preview']").first
-    check(btn.count() == 1 and "Preview 5 s" in btn.inner_text(), f"the Scene tab has Preview 5 s: {btn.inner_text() if btn.count() else None!r}")
+    btn = page.locator("button[data-help='scene.previewStart']").first
+    check(btn.count() == 1 and "Preview 1.6 s" in btn.inner_text(), f"the Scene tab has Preview 1.6 s (39 frames): {btn.inner_text() if btn.count() else None!r}")
     q0 = len(page.evaluate("window.__host.queued"))
     btn.click()
     page.wait_for_timeout(500)
@@ -7015,6 +7017,67 @@ def v0230_checks(page, check, saved, shots):
     check(len(q) == q0 + 1 and q[-1]["action"] == "preview", f"Preview again queues another: {q[-1] if q else None}")
     page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [], rendered: [] })")
     page.evaluate("() => { const t = window.__mockTakes.s_02; t.takes = t.takes.filter(x => x.id !== 'v9'); }")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+
+def v0231_checks(page, check, saved, shots):
+    """v0.23.1 (Sencer: "make the length configurable. 39 frames works when I try. 5 seconds is too long, thats why i
+    asked for a preview"): Preview length (global.preview.frames, 17k+5 from 5 to 362, 39 by default) is picked in
+    Global → Draft quality, on the Render tab beside Preview and in the preview player; the buttons say the length."""
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(300)
+    page.evaluate("window.__editor.actions.select('s_02')")
+    page.evaluate("window.__editor.actions.setTab('render')")
+    page.wait_for_timeout(500)
+    scope = page.locator("input[data-key='preview-frames-scope']")
+    check(scope.count() == 1 and scope.input_value() == "39 frames · 1.63 s", f"the Render tab shows the preview length: {scope.input_value() if scope.count() else None!r}")
+    scope.click()
+    page.wait_for_timeout(250)
+    opts = page.locator(".rw-combo-list .rw-combo-opt").all_inner_texts()
+    check(len(opts) == 22 and opts[0].startswith("5 frames") and opts[-1].startswith("362 frames")
+          and any("124 frames" in o and "shortest trained" in o for o in opts), f"lengths 5 to 362 in steps of 17: {opts[:3]} … {opts[-1:]}")
+    page.locator(".rw-combo-list .rw-combo-opt", has_text="73 frames").first.dispatch_event("pointerdown")
+    page.wait_for_timeout(400)
+    g = page.evaluate("() => window.__editor.store.project.global.preview")
+    check(g == {"frames": 73}, f"picking 73 frames sets global.preview.frames: {g}")
+    lbl = page.locator("button[data-help='render.scope.preview']").first.inner_text()
+    check("Preview 3.0 s of selected" in lbl, f"the Render tab button follows: {lbl!r}")
+    page.evaluate("window.__editor.actions.setTab('global')")
+    page.wait_for_timeout(500)
+    gl = page.locator("input[data-key='preview-frames-global']")
+    check(gl.count() == 1 and gl.input_value() == "73 frames · 3.04 s", f"Global → Draft quality has it too: {gl.input_value() if gl.count() else None!r}")
+    gl.scroll_into_view_if_needed()
+    page.screenshot(path=str(shots / "v0231_global.png"))
+    page.evaluate("window.__editor.actions.setTab('scene')")
+    page.wait_for_timeout(400)
+    btn = page.locator("button[data-help='scene.previewStart']").first
+    check("Preview 3.0 s" in btn.inner_text(), f"the Scene tab button follows: {btn.inner_text()!r}")
+    q0 = len(page.evaluate("window.__host.queued"))
+    btn.click()
+    page.wait_for_timeout(500)
+    q = page.evaluate("window.__host.queued")
+    toast = " | ".join(page.locator(".rw-toast").all_inner_texts())
+    check(len(q) == q0 + 1 and q[-1]["action"] == "preview" and "first 3.04 s" in toast, f"queued with the length in the toast: {toast!r}")
+    # the player picks the length of the next one
+    page.evaluate("""() => window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [], rendered: ['s_02'], failed: [], skipped: [],
+        previews: [{ scene_id: 's_02', take_id: 'v9', video: 'x.mp4', seconds: 73 / 24, of_seconds: 10.125 }], whole: [] })""")
+    page.wait_for_timeout(600)
+    dlg = page.locator(".rw-modal-box.preview input[data-key='preview-frames-dlg']")
+    check(dlg.count() == 1 and dlg.input_value() == "73 frames · 3.04 s", f"the preview player has the length: {dlg.input_value() if dlg.count() else None!r}")
+    check("the first 3.04 s of 10.13 s" in page.locator(".rw-modal-box.preview").inner_text(), "the player says how long the preview is")
+    dlg.click()
+    page.wait_for_timeout(250)
+    page.locator(".rw-combo-list .rw-combo-opt", has_text="22 frames").first.dispatch_event("pointerdown")
+    page.wait_for_timeout(400)
+    g = page.evaluate("() => window.__editor.store.project.global.preview")
+    still = page.locator(".rw-modal-box.preview").count()
+    check(g == {"frames": 22} and still == 1, f"picked in the player, the dialog stays open: {g} open={still}")
+    page.screenshot(path=str(shots / "v0231_player.png"))
+    page.locator(".rw-modal-box.preview button", has_text="Close").click()
+    page.wait_for_timeout(300)
+    page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [], rendered: [] })")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

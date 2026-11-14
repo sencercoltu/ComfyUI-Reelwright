@@ -148,7 +148,8 @@ node. A wired input replaces the matching Global-tab loader.
 6. **Render pending.** Only new or changed scenes render. Watch progress on the
    timeline blocks, the Render tab ("Scene 2 of 5") and the node title. A scene
    can render as Draft or Final on its own (Scene tab → Generation → Quality).
-   **Preview 5 s** renders just a scene's first 5.17 s to check it first.
+   **Preview** renders just the start of a scene (39 frames, 1.6 s, unless you
+   set Preview length) to check it first.
 7. **Merge scenes.** The cut, plus any side files you enabled, is written to
    `output/reelwright/<project>/cuts/`. Each scene's transition, fades, sound
    and colour are set on its Scene tab → **In the cut** card.

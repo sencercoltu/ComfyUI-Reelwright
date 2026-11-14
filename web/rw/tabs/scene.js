@@ -80,7 +80,7 @@ function navigator(ctx) {
     h("span", { class: "rw-sep" }),
     button({ label: "Duplicate", icon: "copy", small: true, help: "timeline.duplicate", onClick: () => ctx.actions.duplicateScene(s.id) }),
     button({ label: "Delete", icon: "trash", small: true, variant: "danger-ghost", help: "timeline.delete", onClick: () => ctx.actions.deleteScene(s.id) }),
-    button({ label: previewLabel(), icon: "eye", small: true, help: "scene.preview", onClick: () => runPreview(ctx, s) }),
+    button({ label: previewLabel(ctx.p), icon: "eye", small: true, help: "scene.previewStart", onClick: () => runPreview(ctx, s) }),
     button({ label: "Render scene", icon: "play", small: true, variant: "primary", help: "timeline.inspector.render", onClick: () => ctx.actions.run("selected", [s.id]) }));
 }
 

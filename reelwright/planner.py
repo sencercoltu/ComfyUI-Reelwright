@@ -11,7 +11,7 @@ handle before a short scene's window).
 
 import copy
 
-from . import model, spec
+from . import spec
 from .model import _start_info, continuation_depth, scene_seed  # noqa: F401
 
 
@@ -181,22 +181,28 @@ def plan_scene(p, scene, scene_index):
             "generated_frames": sum(x["gen_frames"] for x in passes)}
 
 
-def preview_plan(plan):
-    """A scene's plan cut to a preview (model.PREVIEW_FRAMES, the shortest pass H3 is trained on): its pass 1 made
-    that long, with the shots, spoken lines and keyframes that start in it and no last-frame guide (it would pin the
-    preview's last frame to the scene's). Pass 1's seed, start (a tail clip or last frame guides it as in the full
-    render), first-frame guide and prompt sources stay. A plan no longer than that is returned as it is."""
-    n = model.PREVIEW_FRAMES
-    if plan["frames"] <= n:
-        return plan
+def preview_plan(plan, n):
+    """A scene's plan cut to a preview of n frames (model.preview_frames): its pass 1 generating just that much, with
+    the shots, spoken lines and keyframes that start in it and no last-frame guide (it would pin the preview's last
+    frame to the scene's). A tail start adds the tail clip's frames in front (they repeat the scene before, so the
+    preview still shows n new frames); a short scene's window (Trim) starts where it does in the full render. Every
+    frame generated is kept. Pass 1's seed, start, first-frame guide and prompt sources stay. When that covers the
+    whole scene the plan is returned as it is (a normal render)."""
     x = copy.deepcopy(plan["passes"][0])
-    inside = lambda t: spec.frames_of(float(t)) < n  # noqa: E731 - pass 1 starts at frame 0 of the scene
-    x.update(gen_frames=n, end=n / spec.FPS, keep_in=0.0, keep_out=n / spec.FPS, keep_in_frames=0, keep_out_frames=n)
-    x["shots"] = [sh for k, sh in enumerate(x["shots"]) if k == 0 or inside(sh["t"])]
+    k = int(x["keep_in_frames"])
+    lead = int(x["overlap_frames"]) if plan["start_mode"] == "tail" else 0
+    gen = min(spec.MAX_PASS_FRAMES, spec.align_frames_up(k + lead + int(n)))
+    keep = gen - k
+    if keep >= plan["frames"]:
+        return plan
+    inside = lambda t: spec.frames_of(float(t)) < k + keep  # noqa: E731 - times in what H3 makes (from its frame 0)
+    x.update(gen_frames=gen, end=keep / spec.FPS, keep_out=(k + keep) / spec.FPS, keep_out_frames=k + keep)
+    x["shots"] = [sh for i, sh in enumerate(x["shots"]) if i == 0 or inside(sh["t"])]
     x["dialogue"] = [d for d in x["dialogue"] if inside(d["t"])]
-    x["keyframes"] = [k for k in x["keyframes"] if k["frame_idx"] < n]
+    x["keyframes"] = [kf for kf in x["keyframes"] if kf["frame_idx"] < k + keep]
     x["last_frame"] = []
-    return dict(plan, kind="single", frames=n, passes=[x], generated_frames=n, preview=True)
+    kind = "short" if plan["kind"] == "short" else "single"
+    return dict(plan, kind=kind, frames=keep, passes=[x], generated_frames=gen, preview=True)
 
 
 def plan_project(p):

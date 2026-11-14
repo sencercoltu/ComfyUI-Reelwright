@@ -491,7 +491,7 @@ export function mountEditor(container, host) {
         if (destroyed) return true;
         if (store.eph.lastRun !== lastBefore) return true; // already started and ended (e.g. rejected): its toast is shown
         actions.toast(action === "take" ? "Queued a new take." : action === "variants" ? "Queued the variants."
-          : action === "preview" ? `Queued a preview of the first ${M.PREVIEW_SECONDS.toFixed(2)} s.` : "Render queued.", "ok");
+          : action === "preview" ? `Queued a preview of the first ${(M.previewFrames(store.project) / M.FPS).toFixed(2)} s.` : "Render queued.", "ok");
         return true;
       } catch (err) {
         const qi = queuedRuns.indexOf(qr);
