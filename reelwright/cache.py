@@ -174,7 +174,7 @@ def manual_star(index):
     """True when the starred take was picked by hand. Renders record the take they star in index["auto_star"];
     an index from before v0.6.0 has no such field, and there a render always starred the take it added (the
     newest one)."""
-    takes = index.get("takes") or []
+    takes = [t for t in index.get("takes") or [] if not t.get("preview")]
     starred = index.get("starred")
     if not starred or not takes:
         return False
@@ -189,8 +189,9 @@ def resolve(scene, index, key, has_errors, legacy_key=None, upstream=None):
     scene is going to be rendered). `legacy_key` is the key v0.5.1 computed: a take made before v0.6.0 (no "upstream"
     field) with that key still counts, unless the take it would continue from (`upstream`) is newer than it.
     A scene with lint errors is never rendered or re-starred by a run, so it provides
-    its starred take: that is the take a render of the next scene and a merge use."""
-    takes = index.get("takes") or []
+    its starred take: that is the take a render of the next scene and a merge use. Preview takes (the first seconds,
+    planner.preview_plan) do not count: a scene with only previews is still missing."""
+    takes = [t for t in index.get("takes") or [] if not t.get("preview")]
     starred = next((t for t in takes if t.get("id") == index.get("starred")), None)
 
     def fits(t):
@@ -217,8 +218,8 @@ def resolve(scene, index, key, has_errors, legacy_key=None, upstream=None):
 
 
 def status_of(scene, index, key, has_errors):
-    """cached | stale | missing | locked | error, plus the take that matches."""
-    takes = index.get("takes", [])
+    """cached | stale | missing | locked | error, plus the take that matches (previews do not count)."""
+    takes = [t for t in index.get("takes", []) if not t.get("preview")]
     starred = next((t for t in takes if t["id"] == index.get("starred")), None)
     match = next((t for t in reversed(takes) if t.get("key") == key), None)
     if has_errors:

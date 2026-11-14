@@ -180,7 +180,7 @@ class ProjectStore:
 
     def index_from_takes(self, scene_id):
         takes = sorted(self.takes_on_disk(scene_id).values(), key=_take_order)
-        return {"starred": takes[-1]["id"] if takes else None, "takes": takes}
+        return {"starred": newest_take_id(takes), "takes": takes}
 
     def repair(self):
         """Re-list every scene's takes from the takes' meta.json: a missing or damaged index.json is rebuilt,
@@ -207,8 +207,7 @@ class ProjectStore:
                 new = sorted((e for tid, e in disk.items() if tid not in listed), key=_take_order)
                 idx["takes"] = kept + new
                 ids = [t["id"] for t in idx["takes"]]
-                star = idx.get("starred") if idx.get("starred") in ids else (
-                    max(idx["takes"], key=_take_order)["id"] if idx["takes"] else None)
+                star = idx.get("starred") if idx.get("starred") in ids else newest_take_id(idx["takes"])
                 if not ok or new or len(kept) != len(before) or star != idx.get("starred"):
                     idx["starred"] = star
                     self.write_index(sid, idx)
@@ -262,8 +261,12 @@ class ProjectStore:
     def star(self, scene_id, take_id):
         with jobs.lock(self.slug):
             idx = self.read_index(scene_id)
-            if not any(t["id"] == take_id for t in idx["takes"]):
+            take = next((t for t in idx["takes"] if t["id"] == take_id), None)
+            if take is None:
                 raise ValueError("unknown take {}".format(take_id))
+            if take.get("preview"):
+                raise ValueError("take {} is a preview (the first seconds of the scene), so it cannot be starred: "
+                                 "render the scene to get a take".format(take_id))
             idx["starred"] = take_id
             self.write_index(scene_id, idx)
 
@@ -272,7 +275,7 @@ class ProjectStore:
             idx = self.read_index(scene_id)
             idx["takes"] = [t for t in idx["takes"] if t["id"] != take_id]
             if idx["starred"] == take_id:
-                idx["starred"] = max(idx["takes"], key=_take_order)["id"] if idx["takes"] else None
+                idx["starred"] = newest_take_id(idx["takes"])
                 idx["auto_star"] = idx["starred"]
             self.write_index(scene_id, idx)
             d = os.path.join(self.scene_dir(scene_id), "takes", check_id(take_id))
@@ -435,6 +438,12 @@ def _listdir(path):
         return sorted(os.listdir(path))
     except OSError:
         return []
+
+
+def newest_take_id(takes):
+    """The id of the newest take that can be starred (not a preview), or None."""
+    full = [t for t in takes if not t.get("preview")]
+    return max(full, key=_take_order)["id"] if full else None
 
 
 def _take_order(t):

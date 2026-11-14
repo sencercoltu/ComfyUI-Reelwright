@@ -45,7 +45,7 @@ def pass_segments(plan, pass_files, crossfade_frames, carry_audio=True):
 
 
 def pick_take(entry, use):
-    takes = entry.get("takes") or []
+    takes = [t for t in entry.get("takes") or [] if not t.get("preview")]  # a preview is the first seconds only
     if use == "latest":
         return takes[-1] if takes else None
     return next((t for t in takes if t["id"] == entry.get("starred")), None) or (takes[-1] if takes else None)

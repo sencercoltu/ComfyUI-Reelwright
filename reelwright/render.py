@@ -46,7 +46,7 @@ except ImportError as _e:  # noqa: N816
 
 from . import assemble, cache, continuity, jobs, media, merge, refmods, spec
 from .analysis import _take_meta, analyze, continues, drift_metrics, long_settings, rekey, short_upstream_tail
-from .model import project_index, slugify
+from .model import normalize_project, previews_whole, project_index, slugify
 from .storage import check_slug, write_json
 
 log = logging.getLogger("reelwright")
@@ -486,7 +486,18 @@ class Renderer:
         self.wired = wired
         self.wired_flags = {"diffusion": wired.get("model") is not None, "text_encoder": wired.get("clip") is not None,
                             "video_vae": wired.get("vae") is not None, "audio_vae": wired.get("audio_vae") is not None}
-        self.result = analyze(project, store, self.wired_flags)
+        # "preview": the first seconds of the chosen scenes (planner.preview_plan: pass 1 at the shortest length H3 is
+        # trained on), planned and keyed as such; a scene no longer than a preview renders whole (a normal take)
+        self.preview = (run_request or {}).get("action") == "preview"
+        self.whole, cut = set(), set()
+        self.previews = []  # {scene_id, take_id, video, seconds, of_seconds} of the previews made
+        if self.preview:
+            project = normalize_project(project)
+            chosen = set(run_request.get("scenes") or [])
+            self.whole = {s["id"] for s in project["scenes"] if s["id"] in chosen and previews_whole(s)}
+            self.full_seconds = {s["id"]: float(s["duration"]) for s in project["scenes"]}
+            cut = chosen - self.whole
+        self.result = analyze(project, store, self.wired_flags, previews=cut)
         self.p = self.result["project"]
         self.idx = project_index(self.p)
         self.request = run_request
@@ -543,7 +554,7 @@ class Renderer:
             scene = self.p["scenes"][i]
             if action == "pending":
                 pick = sr["status"] in ("stale", "missing")
-            elif action in ("selected", "take"):
+            elif action in ("selected", "take", "preview"):
                 pick = sid in chosen
             elif action == "from":
                 start = next((k for k, x in enumerate(order) if x in chosen), 0)
@@ -1020,11 +1031,14 @@ class Renderer:
         self.target_set = set(targets)
         if self.p["global"]["continuity"]["face_check"]:
             continuity.retry()  # a model setup that failed last time is tried again
-        reused = self.reuse()
+        reused = [] if self.preview else self.reuse()  # a preview run stars nothing
         send("reelwright.run", {"slug": self.slug, "run_id": self.run_id, "phase": "start", "targets": targets,
                                 "reused": reused})
         state = {"slug": self.slug, "run_id": self.run_id, "phase": "end", "targets": targets, "reused": reused,
                  "rendered": [], "failed": [], "skipped": [], "warnings": [], "interrupted": False}
+        if self.preview:
+            state["previews"] = self.previews
+            state["whole"] = sorted(self.whole)  # rendered whole: no longer than a preview
         try:
             self._render_all(targets, action, state)
         except BaseException as e:  # Stop is an InterruptProcessingException, which is not an Exception
@@ -1144,6 +1158,10 @@ class Renderer:
             return takes
         if action == "pass_retake":
             return [self.render_scene(sid, encoded, retake_pass=int(self.request.get("pass")))]
+        if action == "preview":
+            if sid in self.whole:  # no longer than a preview: its normal take
+                return [self.render_scene(sid, encoded, bump=True)]
+            return [self.render_scene(sid, encoded, bump=True, star=False, preview=True)]
         take = self.render_scene(sid, encoded, bump=action != "pending")
         try:
             return [take] + self._drift_retake(sid, take)
@@ -1482,8 +1500,9 @@ class Renderer:
         del positive, big
         return _with_audio_of(refined, samples)
 
-    def render_scene(self, sid, encoded, bump=False, star=True, retake_pass=None, keep_encoded=False):
-        """Render one take of a scene and add it to the scene's takes; returns the take.
+    def render_scene(self, sid, encoded, bump=False, star=True, retake_pass=None, keep_encoded=False, preview=False):
+        """Render one take of a scene and add it to the scene's takes; returns the take. preview: the scene is planned
+        as its preview (planner.preview_plan) and the take is marked so (never starred).
 
         Passes of long and short scenes go through the pass cache: a pass with the same key and seed is read back
         instead of sampled (after Stop or a failure, after moving a short scene's keep window, for the passes a pass
@@ -1620,6 +1639,9 @@ class Renderer:
             take["hires"] = dict(st["hires"])
         if encode_seconds >= 0.05:
             take["encode_seconds"] = round(encode_seconds, 1)
+        if preview:
+            take["preview"] = True
+            take["preview_of"] = round(self.full_seconds.get(sid, take["seconds"]), 4)  # the scene's whole length
         if self.p["global"]["continuity"]["face_check"] and continuity.available():
             # an optional check must not throw away a finished take
             try:
@@ -1634,10 +1656,13 @@ class Renderer:
         meta = dict(take, passes=[dict(x, key=k) for x, k in zip(sr["passes"], tp["pass_keys"])],
                     settings={k: v for k, v in st.items() if k != "loras"}, loras=st["loras"])
         write_json(os.path.join(tdir, "meta.json"), meta)  # through a temp file: Files -> Repair trusts meta.json
-        self.store.add_take(sid, take, star=star)
-        if star:
+        self.store.add_take(sid, take, star=star and not preview)
+        if star and not preview:
             self._mark_auto(sid, take_id)
         if cacheable:
             self._prune_pass_cache(sid)
-        self.progress(sid, n_pass, n_pass, "done", message=take_id)
+        if preview:
+            self.previews.append({"scene_id": sid, "take_id": take_id, "video": take["files"]["video"],
+                                  "seconds": take["seconds"], "of_seconds": take["preview_of"]})
+        self.progress(sid, n_pass, n_pass, "done", message="preview " + take_id if preview else take_id)
         return take

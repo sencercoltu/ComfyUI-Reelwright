@@ -1,17 +1,45 @@
 // Render tab: what to render, takes, cache keys, dependency chains, memory
 // policy, the seam inspector, merge settings and autosaved versions.
 
-import { h, icon, button, toggle, segmented, select, number, section, field, dot, slider, confirmDialog } from "../ui.js";
+import { h, icon, button, toggle, segmented, select, number, section, field, dot, slider, confirmDialog, choiceDialog } from "../ui.js";
 import { rw, viewURL } from "../api.js";
 import {
   continuityChains, fmtTime, sceneStarts, sceneIndex, findAsset, soundtrackLocked, playingTracks, effectiveStart,
-  sceneOverlapAt, normalizeProject, passLabel, assetGroupName,
+  sceneOverlapAt, normalizeProject, passLabel, assetGroupName, PREVIEW_SECONDS,
 } from "../model.js";
 
 const STATUS = {
   cached: ["ok", "on disk"], locked: ["ok", "locked"], stale: ["warn", "stale"], pending: ["empty", "not rendered"],
   missing: ["empty", "not rendered"], queued: ["busy", "queued"], rendering: ["busy", "rendering"], error: ["err", "failed"], unknown: ["empty", "unknown"],
 };
+
+// ---- previews: the first seconds of a scene (render.py "preview": pass 1 at the shortest length H3 is trained on),
+// kept among its takes as a preview (never starred, merged or continued from). When a preview run ends, editor.js
+// opens it here: watch it, then render the whole scene, preview again (a new seed) or close.
+export const previewLabel = () => `Preview ${Math.floor(PREVIEW_SECONDS)} s`;
+export function runPreview(ctx, s) {
+  return ctx.actions.run("preview", [s.id]);
+}
+export async function showPreview(ctx, pv) {
+  const s = ctx.p.scenes.find(x => x.id === pv.scene_id);
+  if (!s) return;
+  const i = sceneIndex(ctx.p, s.id);
+  const video = h("video", { class: "rw-preview-video", src: viewURL(pv.video), controls: true, autoplay: true, playsinline: true, preload: "auto" });
+  const of = Number(pv.of_seconds) || s.duration;
+  const body = h("div", { class: "rw-col-tight" }, video,
+    h("div", { class: "rw-dim small", help: "render.preview" }, `${pv.take_id}: the first ${Number(pv.seconds || PREVIEW_SECONDS).toFixed(2)} s of ${of.toFixed(2)} s, the start of the scene as a full render begins it. It stays in the scene's takes (Render tab) as a preview: it is never starred or merged.`));
+  const v = await choiceDialog(ctx.root, {
+    title: `Preview of ${String(i + 1).padStart(2, "0")} ${s.title}`, message: body, help: "render.preview", cls: "preview", focus: "full",
+    choices: [
+      { value: null, label: "Close", help: "common.close" },
+      { value: "again", label: "Preview again", help: "render.preview.again" },
+      { value: "full", label: "Render the whole scene", variant: "primary", help: "render.preview.full" },
+    ],
+  });
+  video.pause();
+  if (v === "again") runPreview(ctx, s);
+  else if (v === "full") ctx.actions.run("selected", [s.id]);
+}
 
 // "Merging… 43%"; editor.js rewrites the .rw-merge-pct part on each progress event, so a
 // running merge no longer rebuilds the tab twice a second
@@ -39,6 +67,7 @@ function scopeBar(ctx) {
         message: "Every scene that is not locked is rendered again, even the ones already on disk. The takes you have stay on disk; the new takes are starred." })) ctx.actions.run("all");
     } }),
     button({ label: "New take of selected", icon: "refresh", help: "render.scope.take", onClick: () => ctx.actions.run("take", [s.id]) }),
+    button({ label: `${previewLabel()} of selected`, icon: "eye", help: "render.scope.preview", onClick: () => runPreview(ctx, s) }),
     h("span", { class: "rw-row rw-variants", help: "render.variants" },
       number({ value: nVar, min: 2, max: 8, width: "52px", key: "render-variants-n", help: "render.variants.n", onChange: v => ctx.store.setEph({ variantsN: clampVariants(v) }) }),
       button({ label: `Variants of selected`, icon: "copy", help: "render.variants", onClick: () => queueVariants(ctx, s, variantsN(ctx)) })),
@@ -536,7 +565,7 @@ async function restoreVersion(ctx, x, day, time) {
 // The take a merge would use for a scene (starred, or newest when Merge uses latest)
 function mergeTake(ctx, sceneId) {
   const t = ctx.takesFor(sceneId);
-  if (ctx.p.global.merge.use === "latest") return [...t.takes].sort((a, b) => (b.created || 0) - (a.created || 0))[0] || null;
+  if (ctx.p.global.merge.use === "latest") return [...t.takes].filter(x => !x.preview).sort((a, b) => (b.created || 0) - (a.created || 0))[0] || null;
   return ctx.starredTake(sceneId);
 }
 const baseName = rel => (rel || "").split("/").pop();
@@ -607,12 +636,14 @@ function takesTable(ctx) {
         plan?.manual_star ? h("div", { class: "rw-dim small", help: "render.table.manualStar" }, `You starred ${t.starred} by hand. Renders keep your choice; a new take of this scene is starred when it is made.`) : null,
         newest.length === 2 && h("div", { class: "rw-row" }, button({ label: `Compare ${newest[1].id} and ${newest[0].id}`, icon: "compare", small: true, help: "render.take.compareNewest", onClick: () => setAB(newest[1], newest[0]) })),
         passRetakeRow(ctx, s, plan, starred),
-        t.takes.length ? t.takes.map(tk => h("div", { class: ["rw-take", tk.id === t.starred && "on"] },
-        h("button", { type: "button", class: ["rw-star", tk.id === t.starred && "on"], help: "render.take.star", "aria-label": "Star this take",
-          onClick: async () => { try { await rw.star(p.slug, s.id, tk.id); await ctx.actions.refreshTakes(); ctx.store.refreshPlan(); } catch (err) { ctx.actions.toast(err.message, "error"); } } },
-        icon(tk.id === t.starred ? "starFill" : "star", 13)),
+        t.takes.length ? t.takes.map(tk => h("div", { class: ["rw-take", tk.id === t.starred && "on", tk.preview && "preview"] },
+        tk.preview ? h("span", { class: "rw-star rw-take-pv", help: "render.take.preview", title: "A preview: it cannot be starred" }, icon("eye", 13))
+          : h("button", { type: "button", class: ["rw-star", tk.id === t.starred && "on"], help: "render.take.star", "aria-label": "Star this take",
+            onClick: async () => { try { await rw.star(p.slug, s.id, tk.id); await ctx.actions.refreshTakes(); ctx.store.refreshPlan(); } catch (err) { ctx.actions.toast(err.message, "error"); } } },
+          icon(tk.id === t.starred ? "starFill" : "star", 13)),
         tk.files?.first ? h("img", { class: "rw-take-thumb", src: viewURL(tk.files.first), alt: "" }) : h("span", { class: "rw-take-thumb" }),
         h("b", { class: "mono" }, tk.id),
+        tk.preview ? h("span", { class: "rw-tag rw-tag-pv", help: "render.take.preview" }, `preview · first ${(tk.seconds ?? 0).toFixed(2)} s of ${Number(tk.preview_of || s.duration).toFixed(2)} s`) : null,
         h("span", { class: "rw-tag" }, tk.quality || "final"),
         tk.out_width && h("span", { class: "rw-tag", help: "render.take.hires" }, `hires ${tk.out_width}×${tk.out_height}${tk.hires?.refine_steps ? " · refined" : ""}`),
         tk.files?.video && h("span", { class: "mono small rw-dim rw-ellipsis rw-take-file", title: "output/" + tk.files.video, help: "render.take.file" }, baseName(tk.files.video)),
@@ -624,6 +655,8 @@ function takesTable(ctx) {
         h("span", { class: "rw-flex" }),
         button({ label: "A", small: true, help: "render.take.compareA", variant: ctx.eph.compare?.a?.take === tk.id ? "accent-ghost" : "ghost", onClick: () => ctx.store.setEph({ compare: { ...(ctx.eph.compare || {}), a: { scene: s.id, take: tk.id, url: viewURL(tk.files?.video) } } }) }),
         button({ label: "B", small: true, help: "render.take.compareB", variant: ctx.eph.compare?.b?.take === tk.id ? "accent-ghost" : "ghost", onClick: () => ctx.store.setEph({ compare: { ...(ctx.eph.compare || {}), b: { scene: s.id, take: tk.id, url: viewURL(tk.files?.video) } } }) }),
+        tk.preview && tk.files?.video && button({ label: "Watch", icon: "play", small: true, variant: "ghost", help: "render.take.watchPreview",
+          onClick: () => showPreview(ctx, { scene_id: s.id, take_id: tk.id, video: tk.files.video, seconds: tk.seconds, of_seconds: tk.preview_of }) }),
         tk.files?.video && h("a", { class: "rw-btn rw-btn-ghost rw-btn-sm", href: viewURL(tk.files.video), target: "_blank", rel: "noopener", help: "render.take.open" }, icon("eye", 12), h("span", null, "Open")),
         button({ icon: "trash", small: true, variant: "ghost", help: "render.take.delete", onClick: () => removeTake(tk) })))
         : h("div", { class: "rw-empty sm" }, "No takes yet. Render this scene to create one.")));

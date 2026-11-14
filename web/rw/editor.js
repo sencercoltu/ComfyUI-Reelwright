@@ -264,7 +264,7 @@ export function mountEditor(container, host) {
   const runKey = ids => [...ids].map(String).sort().join("|");
   function queuedRun(req) {
     const ids = req.action === "variants" ? (req.scene_ids || req.scenes || [])
-      : req.action === "selected" || req.action === "take" ? (req.scenes || [])
+      : req.action === "selected" || req.action === "take" || req.action === "preview" ? (req.scenes || [])
         : req.action === "pass_retake" ? [req.scene_id] : null;
     const per = req.action === "variants" ? Math.max(1, Math.min(8, Math.round(Number(req.n) || 2))) : 1;
     return { key: ids && ids.length ? runKey(ids) : null, per };
@@ -490,7 +490,8 @@ export function mountEditor(container, host) {
         await host.queue(request);
         if (destroyed) return true;
         if (store.eph.lastRun !== lastBefore) return true; // already started and ended (e.g. rejected): its toast is shown
-        actions.toast(action === "take" ? "Queued a new take." : action === "variants" ? "Queued the variants." : "Render queued.", "ok");
+        actions.toast(action === "take" ? "Queued a new take." : action === "variants" ? "Queued the variants."
+          : action === "preview" ? `Queued a preview of the first ${M.PREVIEW_SECONDS.toFixed(2)} s.` : "Render queued.", "ok");
         return true;
       } catch (err) {
         const qi = queuedRuns.indexOf(qr);
@@ -1127,6 +1128,10 @@ export function mountEditor(container, host) {
     else if (lastRun.interrupted) actions.toast(`Render stopped · ${n(rendered.length, "rendered")}${extra ? " · " + extra : ""}`, "warn");
     else if (failed.length) actions.toast(`Render finished with errors · ${n(rendered.length, "rendered")} · ${extra} · ${titleOf(failed[0].scene_id)}: ${failed[0].error || "failed"}`, "error");
     else if (d.error) actions.toast("Render stopped: " + d.error, "error");
+    else if (Array.isArray(d.previews) && d.previews.length) {
+      actions.toast(`Preview ready · ${d.previews.map(x => titleOf(x.scene_id)).join(", ")}`, "ok");
+      renderTab.showPreview(ctx, d.previews[d.previews.length - 1]);
+    } else if (Array.isArray(d.whole) && d.whole.length) actions.toast(`${d.whole.map(titleOf).join(", ")} ${d.whole.length === 1 ? "is" : "are"} no longer than a preview, so ${d.whole.length === 1 ? "it was" : "they were"} rendered whole (a normal take).`, "ok");
     else actions.toast(`Render finished · ${rendered.length} generated · ${reused.length} reused${extra ? " · " + extra : ""}${firstWarning}`, warnings.length ? "warn" : "ok");
   }
   on("reelwright.run", d => {

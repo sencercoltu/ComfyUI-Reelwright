@@ -12,7 +12,7 @@ import statistics
 from . import cache, model, refmods, spec
 from . import prompt as prompt_mod
 from .model import normalize_project, project_index, resolve_settings, scene_starts
-from .planner import plan_project
+from .planner import plan_project, preview_plan
 from .validate import lint_project
 
 # Plan fields the editor does not need in every take of every scene (they can be large)
@@ -227,11 +227,15 @@ def _cached_pass_flags(store, sid, plan, builds, keys, continuing, upstream_pend
             for k, d in zip(fkeys, dep)]
 
 
-def analyze(project, store, wired=None):
+def analyze(project, store, wired=None, previews=()):
+    """previews: ids of scenes planned as their preview (planner.preview_plan) instead of in full."""
     p = normalize_project(project)
     wired = wired or {}
     idx = project_index(p)  # built once per analysis
     plans = plan_project(p)
+    for sid in previews or ():
+        if sid in plans:
+            plans[sid] = preview_plan(plans[sid])
     ctx, build = _builder(p)
     builds = {s["id"]: [build(s, i, plans[s["id"]], x) for x in plans[s["id"]]["passes"]]
               for i, s in enumerate(p["scenes"])}

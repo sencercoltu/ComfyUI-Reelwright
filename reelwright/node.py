@@ -157,7 +157,7 @@ class Reelwright(io.ComfyNode):
                        "video_vae": vae is not None, "audio_vae": audio_vae is not None}
         result = analyze(p, store, wired_flags)
         merged, merge_failed = None, False
-        if rendered and p["global"]["merge"]["auto_after_render"]:
+        if rendered and p["global"]["merge"]["auto_after_render"] and not renderer.previews:  # a preview is no cut
             job = "merge-" + (renderer.run_id or uuid.uuid4().hex[:12])
             ev = {"slug": p["slug"], "job": job}
             _send("reelwright.merge", dict(ev, phase="start"))
@@ -188,6 +188,8 @@ class Reelwright(io.ComfyNode):
         cuts = full_cuts(store)
         # an older cut does not show what was just rendered, so after a failed merge the last take comes first
         candidates = [merged] + ([take_video] + cuts if merge_failed else cuts + [take_video])
+        if renderer.previews:  # a preview run shows the preview it made
+            candidates = [store.output_path(renderer.previews[-1]["video"])] + candidates
         video_path, info = None, None
         for c in candidates:
             if c and os.path.isfile(c):

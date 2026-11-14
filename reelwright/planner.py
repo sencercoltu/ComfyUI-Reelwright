@@ -9,7 +9,9 @@ All times in a pass dict are seconds unless the key ends in `_frames`.
 handle before a short scene's window).
 """
 
-from . import spec
+import copy
+
+from . import model, spec
 from .model import _start_info, continuation_depth, scene_seed  # noqa: F401
 
 
@@ -177,6 +179,24 @@ def plan_scene(p, scene, scene_index):
     return {"scene_id": scene["id"], "kind": kind, "duration": duration, "frames": total,
             "start_mode": mode, "declared_start_mode": declared, "seed": seed, "passes": passes,
             "generated_frames": sum(x["gen_frames"] for x in passes)}
+
+
+def preview_plan(plan):
+    """A scene's plan cut to a preview (model.PREVIEW_FRAMES, the shortest pass H3 is trained on): its pass 1 made
+    that long, with the shots, spoken lines and keyframes that start in it and no last-frame guide (it would pin the
+    preview's last frame to the scene's). Pass 1's seed, start (a tail clip or last frame guides it as in the full
+    render), first-frame guide and prompt sources stay. A plan no longer than that is returned as it is."""
+    n = model.PREVIEW_FRAMES
+    if plan["frames"] <= n:
+        return plan
+    x = copy.deepcopy(plan["passes"][0])
+    inside = lambda t: spec.frames_of(float(t)) < n  # noqa: E731 - pass 1 starts at frame 0 of the scene
+    x.update(gen_frames=n, end=n / spec.FPS, keep_in=0.0, keep_out=n / spec.FPS, keep_in_frames=0, keep_out_frames=n)
+    x["shots"] = [sh for k, sh in enumerate(x["shots"]) if k == 0 or inside(sh["t"])]
+    x["dialogue"] = [d for d in x["dialogue"] if inside(d["t"])]
+    x["keyframes"] = [k for k in x["keyframes"] if k["frame_idx"] < n]
+    x["last_frame"] = []
+    return dict(plan, kind="single", frames=n, passes=[x], generated_frames=n, preview=True)
 
 
 def plan_project(p):

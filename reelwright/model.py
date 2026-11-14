@@ -1347,6 +1347,19 @@ def scene_frames(scene):
     return max(1, spec.frames_of(max(1.0 / spec.FPS, float(scene["duration"]))))
 
 
+# ---- previews: the first seconds of a scene, to see that it is set up right before a long render. A preview renders
+# PREVIEW_FRAMES frames, the shortest pass H3 is trained on (the node takes fewer, but the result is then outside what
+# it learned and says little about the scene): pass 1 of the scene cut to that length (planner.preview_plan), with the
+# scene's prompt, cast, references and start as they are. Its take is marked "preview": it is never starred, merged or
+# continued from, and it does not make the scene count as rendered (cache.resolve leaves previews out).
+PREVIEW_FRAMES = spec.MIN_PASS_FRAMES
+
+
+def previews_whole(scene):
+    """Is the scene no longer than a preview? Then a preview of it is a full render (its normal take)."""
+    return scene_frames(scene) <= PREVIEW_FRAMES
+
+
 def _start_info(p, i, scene=None, depth=None):
     """(effective start, tail overlap frames) of scene i; `scene` replaces p["scenes"][i] when given."""
     s = p["scenes"][i] if scene is None else scene

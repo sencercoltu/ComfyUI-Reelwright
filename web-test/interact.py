@@ -1512,6 +1512,7 @@ def main():
         v0201_checks(page, check, saved, shots)
         v0210_checks(page, check, saved, shots)
         v0220_checks(page, check, saved, shots)
+        v0230_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
         v0201_copy_checks(pw, page_url, check)
@@ -6947,6 +6948,73 @@ def v0220_checks(page, check, saved, shots):
     page.evaluate("window.__editor.store.undo()")
     page.wait_for_timeout(300)
     check(not next(e for e in cur()["scenes"][1]["cast"] if e["id"] == "c_mara").get("skip"), "one undo ticks it again")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+def v0230_checks(page, check, saved, shots):
+    """v0.23.0 (Sencer: "Add an option to render only minimum frames that MMH3 supports (first seconds. so we can see
+    if scene is set up correctly before waiting for a long render)."): Preview 5 s renders the first 124 frames of a
+    scene (render.py action "preview"); when the run ends the preview opens in a player with Render the whole scene
+    and Preview again; the take list marks previews and does not let them be starred."""
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(300)
+    page.evaluate("window.__editor.actions.select('s_02')")
+    page.evaluate("window.__editor.actions.setTab('scene')")
+    page.wait_for_timeout(500)
+    btn = page.locator(".rw-scene-nav button[data-help='scene.preview'], button[data-help='scene.preview']").first
+    check(btn.count() == 1 and "Preview 5 s" in btn.inner_text(), f"the Scene tab has Preview 5 s: {btn.inner_text() if btn.count() else None!r}")
+    q0 = len(page.evaluate("window.__host.queued"))
+    btn.click()
+    page.wait_for_timeout(500)
+    q = page.evaluate("window.__host.queued")
+    check(len(q) == q0 + 1 and q[-1]["action"] == "preview" and q[-1]["scenes"] == ["s_02"], f"it queues a preview: {q[-1] if q else None}")
+    video = "reelwright/harbor_lights/scenes/s_02/takes/v9/harbor_lights_02_mara_on_the_pier_v9.mp4"
+    page.evaluate("""v => { const h = window.__host;
+      h.emit('reelwright.run', { slug: 'harbor_lights', phase: 'start', targets: ['s_02'], reused: [] });
+      h.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: 1, steps: 1, phase: 'done', message: 'preview v9' });
+      h.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [], rendered: ['s_02'], failed: [], skipped: [],
+        previews: [{ scene_id: 's_02', take_id: 'v9', video: v, seconds: 124 / 24, of_seconds: 10.125 }], whole: [] }); }""", video)
+    page.wait_for_timeout(600)
+    box = page.locator(".rw-modal-box.preview")
+    check(box.count() == 1 and "Preview of 02 Mara on the pier" in box.inner_text() and
+          "the first 5.17 s of 10.13 s" in box.inner_text(), f"the preview opens when the run ends: {box.inner_text()[:200] if box.count() else None!r}")
+    vid = page.evaluate("() => { const v = document.querySelector('.rw-modal-box.preview video'); return v && [v.controls, v.autoplay]; }")
+    check(vid == [True, True], f"it plays the preview (the mock serves no video files): {vid}")
+    page.screenshot(path=str(shots / "v0230_preview.png"))
+    q0 = len(page.evaluate("window.__host.queued"))
+    box.locator("button", has_text="Render the whole scene").click()
+    page.wait_for_timeout(500)
+    q = page.evaluate("window.__host.queued")
+    check(page.locator(".rw-modal-box.preview").count() == 0 and len(q) == q0 + 1 and q[-1]["action"] == "selected"
+          and q[-1]["scenes"] == ["s_02"], f"Render the whole scene queues the full render: {q[-1] if q else None}")
+    page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [], rendered: [] })")
+    page.wait_for_timeout(300)
+    # the take list: a preview take is marked and has no star
+    page.evaluate("""v => { const t = window.__mockTakes.s_02;
+      t.takes.push({ id: 'v9', key: 'pv', created: Date.now() / 1000, quality: 'final', seconds: 124 / 24, frames: 124, preview: true,
+        preview_of: 10.125, files: { video: v, first: v.replace(/[^/]+$/, 'first.png') } }); }""", video)
+    page.evaluate("window.__editor.actions.setTab('render')")
+    page.evaluate("() => window.__editor.actions.refreshTakes()")
+    page.wait_for_timeout(400)
+    page.evaluate("() => window.__editor.store.setEph({ openTakes: { s_02: true } })")
+    page.wait_for_timeout(400)
+    row = page.locator(".rw-take.preview")
+    check(row.count() == 1 and "preview · first 5.17 s of 10.13 s" in row.inner_text() and
+          row.locator("button.rw-star").count() == 0, f"the preview take is marked and cannot be starred: {row.inner_text()[:160] if row.count() else None!r}")
+    starred = page.evaluate("() => window.__editor.store.eph.takes.scenes.s_02.starred")
+    check(starred and starred != "v9", f"the starred take stays: {starred}")
+    row.locator("button[data-help='render.take.watchPreview']").click()
+    page.wait_for_timeout(400)
+    check(page.locator(".rw-modal-box.preview").count() == 1, "Watch opens the preview again")
+    page.screenshot(path=str(shots / "v0230_takes.png"))
+    q0 = len(page.evaluate("window.__host.queued"))
+    page.locator(".rw-modal-box.preview button", has_text="Preview again").click()
+    page.wait_for_timeout(500)
+    q = page.evaluate("window.__host.queued")
+    check(len(q) == q0 + 1 and q[-1]["action"] == "preview", f"Preview again queues another: {q[-1] if q else None}")
+    page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [], rendered: [] })")
+    page.evaluate("() => { const t = window.__mockTakes.s_02; t.takes = t.takes.filter(x => x.id !== 'v9'); }")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

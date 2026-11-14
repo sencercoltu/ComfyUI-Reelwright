@@ -16,6 +16,7 @@ import { codeEditor } from "../codeedit.js";
 import { fillScene, fillable, fillWords } from "../shotfill.js";
 import { sceneMenu, setSceneDuration, autoRollOn } from "./timeline.js";
 import { beatTimes } from "./soundtrack.js";
+import { previewLabel, runPreview } from "./render.js";
 import { highlightHTML, diffLines, tagMatches, looksLikeAssetCode } from "../prompttext.js";
 import {
   FPS, MIN_PASS_FRAMES, ROLES, SECTION_KEYS, STABLE_LANGUAGES, alignFramesUp, nearestGridFrames, framesOf, fmtTime,
@@ -79,6 +80,7 @@ function navigator(ctx) {
     h("span", { class: "rw-sep" }),
     button({ label: "Duplicate", icon: "copy", small: true, help: "timeline.duplicate", onClick: () => ctx.actions.duplicateScene(s.id) }),
     button({ label: "Delete", icon: "trash", small: true, variant: "danger-ghost", help: "timeline.delete", onClick: () => ctx.actions.deleteScene(s.id) }),
+    button({ label: previewLabel(), icon: "eye", small: true, help: "scene.preview", onClick: () => runPreview(ctx, s) }),
     button({ label: "Render scene", icon: "play", small: true, variant: "primary", help: "timeline.inspector.render", onClick: () => ctx.actions.run("selected", [s.id]) }));
 }
 

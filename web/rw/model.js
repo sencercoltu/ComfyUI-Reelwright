@@ -4,6 +4,8 @@
 export const FPS = 24;
 export const MIN_PASS_FRAMES = 124;
 export const MAX_PASS_FRAMES = 362;
+// a preview renders the first MIN_PASS_FRAMES frames of a scene (model.py PREVIEW_FRAMES)
+export const PREVIEW_SECONDS = MIN_PASS_FRAMES / FPS;
 
 export const STABLE_LANGUAGES = ["Arabic", "Chinese", "English", "French", "German", "Italian",
   "Japanese", "Korean", "Portuguese", "Russian", "Spanish"];

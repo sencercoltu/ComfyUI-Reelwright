@@ -1901,3 +1901,41 @@ def test_refmods_reach_the_h3_node(stubs, harbor, store, roots, monkeypatch):
     digests["mara_look"] = "d4"
     with pytest.raises(RuntimeError, match="has changed since it was picked"):
         render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()
+
+
+def test_preview_renders_the_first_seconds_only(stubs, harbor, store, roots):
+    """v0.23.0: a preview renders the first 124 frames of a scene as a take marked preview: not starred, not counted
+    as the scene's render, never merged; a scene no longer than that is rendered whole instead."""
+    render, calls, events = stubs
+    from reelwright.analysis import analyze
+    harbor["global"]["output"].update(width=64, height=32)
+    _real_assets(harbor, roots)
+    assert render.Renderer(harbor, store, {}, {"action": "preview", "scenes": ["s_one"]}).run() == ["s_one"]
+    assert [c["length"] for c in calls["encode"]] == [124]
+    idx = store.read_index("s_one")
+    (take,) = idx["takes"]
+    assert take["preview"] is True and take["frames"] == 124 and take["preview_of"] == 8.0 and idx["starred"] is None
+    assert analyze(harbor, store)["scenes"]["s_one"]["status"] == "missing"  # still to be rendered
+    end = [d for e, d in events if e == "reelwright.run" and d.get("phase") == "end"][-1]
+    assert end["previews"] == [{"scene_id": "s_one", "take_id": take["id"], "video": take["files"]["video"],
+                                "seconds": 124 / 24, "of_seconds": 8.0}] and end["whole"] == []
+    # a scene no longer than a preview: its normal take, starred
+    calls["encode"].clear()
+    assert render.Renderer(harbor, store, {}, {"action": "preview", "scenes": ["s_short"]}).run() == ["s_short"]
+    short = store.starred_take("s_short")
+    assert short and not short.get("preview")
+    end = [d for e, d in events if e == "reelwright.run" and d.get("phase") == "end"][-1]
+    assert end["previews"] == [] and end["whole"] == ["s_short"]
+    # the full render stars a full take; the preview stays as it was
+    assert "s_one" in render.Renderer(harbor, store, {}, {"action": "pending"}).run()
+    starred = store.starred_take("s_one")
+    assert starred["id"] != take["id"] and not starred.get("preview") and starred["frames"] == 192
+    # a preview of a continuing scene starts from the take before it, like the full render
+    calls["encode"].clear()
+    calls["guides"].clear()
+    before = store.starred_take("s_long")["id"]
+    render.Renderer(harbor, store, {}, {"action": "preview", "scenes": ["s_long"]}).run()
+    assert calls["guides"][0] == {"frame_idx": 0, "frames": 39, "audio": True}  # the tail of scene 1
+    new = store.read_index("s_long")["takes"][-1]
+    assert new["preview"] and new["frames"] == 124 and store.starred_take("s_long")["id"] == before
+    assert analyze(harbor, store)["scenes"]["s_long"]["status"] == "cached"
