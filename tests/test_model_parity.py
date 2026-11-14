@@ -301,6 +301,16 @@ def malformed():
                   {"kind": "character", "name": "Tom", "lora": {"name": "", "trigger": ["x"]}}],
          "global": {"loras": [{"name": "g.safetensors", "trigger": "x" * 130}, {"name": "h.safetensors"}],
                     "draft": {"lora": "turbo.safetensors", "lora_trigger": "  fast  "}}},
+        # RefMods (v0.22.0): name as the pack lists it, strength 0..1, members {kind, t, h, w} (kind "" when unknown)
+        {"scenes": [{}], "cast": [
+            {"kind": "character", "name": "Birten", "refmod": {"name": " chars\\birten.SafeTensors ", "strength": "0.5",
+                                                                 "members": [{"kind": "image", "t": 1, "h": 64.7, "w": "64"},
+                                                                             {"kind": "bundle", "t": 3}, None,
+                                                                             {"kind": "audio", "t": -5, "h": 9, "w": 9},
+                                                                             {"kind": "video", "t": "1e999", "h": True}]},
+             "voice_refmod": {"name": "/voices/b/", "strength": 7, "members": "x"}},
+            {"kind": "character", "name": "Ada", "refmod": "x", "voice_refmod": {"name": 5, "strength": None}},
+            {"kind": "prop", "name": "Box", "refmod": {"name": "y" * 300, "members": [{}] * 70}}]},
         # crops (v0.20.0): crop_of {asset, box [x, y, w, h]} kept when whole, clamped to 0..1; dropped otherwise
         {"scenes": [{}], "assets": [{"kind": "image", "crop_of": {"asset": "a_src", "box": [0.1, "0.2", 0.5, 1.4]}},
                                     {"kind": "image", "crop_of": {"asset": "a_src", "box": [0.1, 0.2, -0.5, True]}},
@@ -354,8 +364,18 @@ def timing_fixtures():
                           fade_out={"frames": 2 * k, "color": "#0000ff"}, audio_fade_in=k, audio_fade_out=k + 1,
                           volume_db=-3.5, mute=k == 2, color_match=model.COLOR_MATCH_MODES[k % 3],
                           color_ref="s_0", brightness=0.1, contrast=1.2, saturation=0.8)
+    # RefMods (v0.22.0): Mara's look RefMod instead of her anchors (one scene unticks it), Tom's voice RefMod
+    mods = harbor_like()
+    mods["cast"][0]["refmod"] = {"name": "chars/mara", "strength": 0.7, "members": [
+        {"kind": "image", "t": 1, "h": 64, "w": 64}, {"kind": "video", "t": 16, "h": 32, "w": 32},
+        {"kind": "audio", "t": 120}, {"kind": "image", "t": 1, "h": 48, "w": 32}]}
+    mods["cast"][0]["video_anchors"] = [{"id": "va_1", "asset": "a_dolly", "in": 0, "out": 3}]
+    mods["cast"][1]["voice_refmod"] = {"name": "voices/tom", "members": [{"kind": "audio", "t": 200}]}
+    mods["cast"][1]["refmod"] = {"name": "chars/tom", "strength": 0, "members": [{"kind": "image", "t": 1, "h": 8, "w": 8}]}
+    mods["scenes"][0]["cast"][1]["skip"] = ["refmod"]
+    mods["scenes"][1]["dialogue"][1]["t"] = 3.5
     return [harbor_like(), chain(), chain(reanchor=0), tiny, over, mixed, long_cuts, overlap_only, fixed, over_seed,
-            random_mode, loop_song, many, v061, merged] + continuation_fixtures() + v080_fixtures()
+            random_mode, loop_song, many, v061, merged, mods] + continuation_fixtures() + v080_fixtures()
 
 
 def v080_fixtures():

@@ -548,7 +548,7 @@ async function route(path, opts = {}) {
   const body = opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : null;
   await new Promise(r => setTimeout(r, 20));
   switch (url.pathname) {
-    case "/reelwright/info": return json({ version: "0.21.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.22.0", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
       if (!body.name) return json({ error: "Give the profile a name" }, 400);
@@ -571,6 +571,12 @@ async function route(path, opts = {}) {
       loras: ["harbor_lights_style_v1.safetensors", "film_grain_v2.safetensors", "candlelight_interiors.safetensors", "vintage_1960s.safetensors", "storm_fx.safetensors", "mara_identity_v1.safetensors", "minimax_h3_turbo_8step.safetensors"],
       latent_upscale_models: ["minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors"],
       samplers: ["res_multistep", "euler", "euler_ancestral", "dpmpp_2m", "uni_pc"], schedulers: ["simple", "normal", "karras", "beta", "sgm_uniform"],
+      refmods: [
+        { name: "characters/mara", kind: "bundle", description: "identity", members: [{ kind: "image", t: 1, h: 64, w: 64 }, { kind: "video", t: 16, h: 32, w: 32 }, { kind: "audio", t: 400, h: 0, w: 0 }] },
+        { name: "characters/keeper", kind: "image", description: "", members: [{ kind: "image", t: 1, h: 48, w: 32 }] },
+        { name: "voices/keeper", kind: "audio", description: "", members: [{ kind: "audio", t: 240, h: 0, w: 0 }] },
+      ],
+      refmod_folders: ["/root/ComfyUI/models/refmods"],
     });
     case "/reelwright/plan": return json(plan(body.project));
     case "/reelwright/takes": return json({ scenes: takes });

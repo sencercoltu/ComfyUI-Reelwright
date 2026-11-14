@@ -1824,3 +1824,80 @@ def test_hires_with_the_real_upscale_node(comfy, roots):
     assert torch.equal(kept["samples"].tensors[1], audio)
     assert render.output_size({"width": 64, "height": 32, "hires": {"width": 128, "height": 64}}) == (128, 64)
     assert render.output_size({"width": 64, "height": 32}) == (64, 32)
+
+
+def test_refmods_reach_the_h3_node(stubs, harbor, store, roots, monkeypatch):
+    """v0.22.0: Mara's look RefMod goes instead of her anchors and her voice RefMod instead of her voice sample; the
+    render places them among the H3 node's references in the order the prompt numbers them, and a changed file
+    re-renders the scene."""
+    import torch
+    render, calls, _ = stubs
+    from reelwright import refmods
+    look = {"kind": "image", "t": 1, "h": 4, "w": 4}
+    voice = {"kind": "audio", "t": 80, "h": 0, "w": 0}
+    files = {"mara_look": [look], "mara_voice": [voice]}
+    monkeypatch.setattr(refmods, "summary", lambda name: files.get(name))
+    digests = {"mara_look": "d1", "mara_voice": "d2"}
+    monkeypatch.setattr(refmods, "digest", lambda name: digests[name])
+    monkeypatch.setattr(refmods, "load", lambda name, i, e: torch.ones(1, 24, 1, 4, 4) if e["kind"] == "image"
+                        else torch.ones(1, 32, 2, 80))
+
+    class Vae:
+        def decode(self, z):
+            return torch.zeros(1, 1, 64, 64, 3)
+    monkeypatch.setattr(render.Models, "vae", lambda self, name, key: Vae())
+    seen = []
+
+    class Clip:
+        def tokenize(self, text, minimax_ref_items=None):
+            seen.append([x["type"] for x in minimax_ref_items])
+            return text
+
+    monkeypatch.setattr(render.Models, "clip", lambda self, st: Clip())
+
+    def fake_ref2v(**kw):  # the node: its references to the tokenizer, then their blocks
+        items, blocks = [], []
+        for _ in (kw["ref_images"] or {}).values():
+            items.append({"type": "image"})
+            blocks.append({"kind": "image", "n": "file"})
+        for k in (kw["ref_videos"] or {}):
+            if "ref_video_audio_" + k.rsplit("_", 1)[-1] in (kw["ref_video_audios"] or {}):
+                items.append({"type": "audio"})
+            items.append({"type": "video"})
+            blocks.append({"kind": "video", "n": "file"})
+        for _ in (kw["ref_audios"] or {}).values():
+            items.append({"type": "audio"})
+            blocks.append({"kind": "audio", "n": "file"})
+        kw["clip"].tokenize(kw["prompt"], minimax_ref_items=items)
+        calls["encode"].append(kw["prompt"])
+        return types.SimpleNamespace(result=([["cond", {"minimax_refs": blocks}]],
+                                             {"samples": torch.zeros(1), "frames": kw["length"], "size": (kw["width"], kw["height"])}))
+    monkeypatch.setattr(render.MiniMaxH3ReferenceToVideo, "execute", staticmethod(fake_ref2v))
+    positives = []
+    real_sample = render._sample
+
+    def sample(model, positive, latent, seed, settings, on_step):
+        positives.append([(b["kind"], b.get("n", "mod")) for b in positive[0][1]["minimax_refs"]])
+        return real_sample(model, positive, latent, seed, settings, on_step)
+    monkeypatch.setattr(render, "_sample", sample)
+
+    harbor["global"]["output"].update(width=64, height=32)
+    harbor["cast"][0]["refmod"] = {"name": "mara_look", "strength": 1.0, "members": [look]}
+    harbor["cast"][0]["voice_refmod"] = {"name": "mara_voice", "strength": 1.0, "members": [voice]}
+    harbor["scenes"] = [s for s in harbor["scenes"] if s["id"] == "s_short"]
+    s = harbor["scenes"][0]
+    s.update(cast=[{"id": "c_mara"}], dialogue=[{"id": "d_1", "speaker": "c_mara", "t": 1.0, "text": "Here."}])
+    _real_assets(harbor, roots)
+    assert render.Renderer(harbor, store, {}, {"action": "pending"}).run() == ["s_short"]
+    assert "<Subject 1> is Mara, woman, early 30s, auburn hair, shown in <Picture 1>." in calls["encode"][0]
+    assert "<Audio 1> is the voice-timbre reference for <Subject 1>" in calls["encode"][0]
+    assert seen == [["image", "audio"]] and positives == [[("image", "mod"), ("audio", "mod")]]
+    # the same files: cached; a new file: rendered again
+    assert render.Renderer(harbor, store, {}, {"action": "pending"}).run() == []
+    digests["mara_look"] = "d3"
+    assert render.Renderer(harbor, store, {}, {"action": "pending"}).run() == ["s_short"]
+    # a file that no longer holds what was picked stops the render before any GPU work
+    files["mara_look"] = [dict(look, h=8)]
+    digests["mara_look"] = "d4"
+    with pytest.raises(RuntimeError, match="has changed since it was picked"):
+        render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_short"]}).run()

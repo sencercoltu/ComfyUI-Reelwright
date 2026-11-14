@@ -224,6 +224,8 @@ class PassRefs:
             audio_n += 1
             if a.get("song"):
                 self.song_number = audio_n
+            elif a.get("refmod"):  # a voice RefMod: no asset
+                a["number"] = audio_n
             else:
                 self.audio_of_asset.setdefault(a["asset"], audio_n)
                 if a.get("ref"):
@@ -232,6 +234,10 @@ class PassRefs:
     @property
     def file_count(self):
         return len(self.images) + len(self.videos) + len(self.audios)
+
+    def audio_number(self, au):
+        """The <Audio n> number of an entry of audios that is not the song."""
+        return au.get("number") or self.audio_of_ref.get(au.get("ref")) or self.audio_of_asset[au["asset"]]
 
 
 # model.clip_key of an entry already in refs.videos / refs.audios (a voice sample or a
@@ -466,32 +472,42 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
     speaking = {d.get("speaker") for d in pass_["dialogue"]}
 
     people = _model.scene_people(p, scene, idx)[0]
-    entries = [(x["entry"], x["cast"], x["outfit"], x["ids"]) for x in people]
+    entries = [(x["entry"], x["cast"], x["outfit"], x["ids"], x.get("look") or []) for x in people]
     parts_of = {x["cast"]["id"]: x["parts"] for x in people}
     own_of = {x["cast"]["id"]: set(x["own"]) for x in people}
     poses = _model.pose_refs(p, scene, pass_, people, idx) if hasattr(_model, "pose_refs") else []
-    unpacked = len({a for *_, ids in entries for a in ids}) + len(
+    unpacked = len({a for *_, ids, _ in entries for a in ids}) + len(
         ({r["asset"] for r in scene["refs"] if r["asset"] in assets and assets[r["asset"]]["kind"] == "image" and
           (r["role"] == "reference" or (r["id"] in guided and assets[r["asset"]]["code"].upper() in mentioned_codes))} |
-         {a["id"] for _, a, _ in poses}) - {a for *_, ids in entries for a in ids})
+         {a["id"] for _, a, _ in poses}) - {a for *_, ids, _ in entries for a in ids}) + \
+        sum(1 for *_, look in entries for _, m in look if m["kind"] == "image")
     auto_pack = unpacked + (1 if cont and cont["kind"] == "picture" else 0) > spec.MAX_REF_IMAGES
 
     song = soundtrack.pass_soundtrack(p, ctx["starts"][scene["id"]], pass_) if any(
         t.get("sync") for t in ctx["tracks"]) else None
-    for n, (entry, c, outfit, anchor_ids) in enumerate(entries):
+    for n, (entry, c, outfit, anchor_ids, look) in enumerate(entries):
         first_pic = len(refs.images) + 1
-        pack = auto_pack if c.get("pack_sheet", True) == "auto" else bool(c.get("pack_sheet", True))
+        # its look RefMod (model.look_parts) instead of its anchors: its pictures first, its videos with the others
+        for i, m in look:
+            x = {"cast": c["id"], "ref": None, "refmod": _model.refmod_entry(c["refmod"], i, m)}
+            if m["kind"] == "image":
+                refs.images.append(dict(x, assets=[]))
+            else:
+                refs.videos.append(dict(x, asset=None, soundtrack=False))
+        base = len(refs.images) + 1  # its first anchor (or outfit) picture
+        pack = not look and (auto_pack if c.get("pack_sheet", True) == "auto" else bool(c.get("pack_sheet", True)))
         if anchor_ids and pack and len(anchor_ids) > 1:
             refs.images.append({"assets": anchor_ids, "cast": c["id"], "ref": None})
         else:
             for a in anchor_ids:
                 refs.images.append({"assets": [a], "cast": c["id"], "ref": None})
         pics = list(range(first_pic, len(refs.images) + 1))
+        sheet = len(refs.images) + 1 - base == 1 and len(anchor_ids) > 1  # its pictures went as one sheet
         own = own_of.get(c["id"], set())
         parts = []
         for part in parts_of.get(c["id"], []):
-            shown = [] if len(pics) == 1 and len(anchor_ids) > 1 else \
-                [first_pic + anchor_ids.index(a) for a in part["ids"] if a not in own and a in anchor_ids]
+            shown = [] if sheet else \
+                [base + anchor_ids.index(a) for a in part["ids"] if a not in own and a in anchor_ids]
             parts.append({"cast": part["cast"]["id"], "outfit": part["outfit"], "pictures": sorted(set(shown))})
         refs.subjects.append({"cast": c["id"], "ref": None, "asset": None, "number": n + 1, "outfit": outfit,
                               "pictures": pics, "videos": []})
@@ -499,11 +515,16 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
             refs.subjects[-1]["parts"] = parts
         worn = outfit_pictures(c, entry, outfit, anchor_ids)
         if worn:  # likewise: only a scene whose outfit has pictures changes
-            if len(pics) == 1 and len(anchor_ids) > 1:  # one sheet: the outfit's views are cells of it
+            if sheet:  # one sheet: the outfit's views are cells of it
                 refs.subjects[-1]["outfit_views"] = [anchor_ids.index(a) + 1 for a in worn]
             else:
-                refs.subjects[-1]["outfit_pictures"] = [first_pic + anchor_ids.index(a) for a in worn]
-        if c.get("voice") in assets and assets[c["voice"]]["kind"] == "audio" and not song and c["id"] in speaking:
+                refs.subjects[-1]["outfit_pictures"] = [base + anchor_ids.index(a) for a in worn]
+        voice = _model.voice_parts(c) if not song and c["id"] in speaking else []
+        for i, m in voice:  # its voice RefMod instead of its voice sample
+            refs.audios.append({"asset": None, "ref": None, "cast": c["id"],
+                                "refmod": _model.refmod_entry(c["voice_refmod"], i, m)})
+        if not voice and c.get("voice") in assets and assets[c["voice"]]["kind"] == "audio" and not song and \
+                c["id"] in speaking:
             refs.audios.append({"asset": c["voice"], "ref": None, "cast": c["id"]})  # a whole file (clip_key: start 0, no end)
     if song:
         refs.audios.append({"asset": None, "ref": None, "cast": None, "song": song})
@@ -557,7 +578,7 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
         refs.anchor_notes = picked + left
     refs.number()
     for k, v in enumerate(refs.videos, 1):
-        if v.get("anchor"):
+        if v.get("anchor") or (v.get("refmod") and v.get("cast")):
             subj = next((x for x in refs.subjects if x["cast"] == v["cast"]), None)
             if subj is not None:
                 subj["videos"].append(k)
@@ -585,7 +606,7 @@ def collect_refs(p, scene, scene_index, pass_, n_passes, mentioned_codes=(), ctx
                               "outfit": None, "pictures": [refs.picture_of_asset[a["id"]]], "videos": []})
         refs.subject_of_asset[a["id"]] = refs.subjects[-1]["number"]
     for k, v in enumerate(refs.videos, 1):
-        if v.get("continuation"):
+        if v.get("continuation") or v.get("refmod"):
             continue
         a = assets[v["asset"]]
         if v.get("guide") or a.get("category") not in SUBJECT_VIDEO_CATEGORIES:
@@ -643,7 +664,7 @@ def task_tags(p, scene, refs, ctx=None):
         tags.add("video continuation")  # the target continues from (or passes through) existing footage
     ref_by_id = {r["id"]: r for r in scene["refs"]}
     for v in refs.videos:
-        if v.get("continuation"):
+        if v.get("continuation") or v.get("refmod"):
             continue
         a = assets[v["asset"]]
         if a.get("category") == "edit_source":
@@ -654,6 +675,9 @@ def task_tags(p, scene, refs, ctx=None):
     for au in refs.audios:
         if au.get("song"):
             tags.add("audio reuse" if au["song"]["marker"] in ("fully_copy", "partially_copy") else "audio reference")
+            continue
+        if au.get("refmod"):
+            tags.add("audio reference")
             continue
         a = assets[au["asset"]]
         ret = _retention(ref_by_id.get(au["ref"], {}), a) if au["ref"] else "reference"
@@ -1137,12 +1161,12 @@ def subject_definitions(p, scene, refs, pass_, ids, ctx=None, triggers=None):
             lines.append("<Audio {}> is the song this part of the film is cut to; it plays unchanged as the final "
                          "soundtrack.".format(refs.song_number))
             continue
-        a = assets[au["asset"]]
-        n = refs.audio_of_ref.get(au.get("ref")) or refs.audio_of_asset[au["asset"]]
+        n = refs.audio_number(au)
         if au["cast"]:
             spk = " ({})".format(ids[au["cast"]]) if au["cast"] in ids else ""
             lines.append("<Audio {}> is the voice-timbre reference for <Subject {}>{}.".format(n, sub_of_cast.get(au["cast"], "?"), spk))
         else:
+            a = assets[au["asset"]]
             desc = (a.get("description") or "").strip().rstrip(".")
             lines.append("<Audio {}> is {}.".format(n, desc or AUDIO_PHRASE.get(a.get("category"), "the audio reference")))
     return lines
@@ -1306,12 +1330,12 @@ def retention_analysis(p, scene, refs, pass_, ctx=None):
             lines.append("<Audio {}>: {} - {}; singing lip movements, gestures, motion and cuts follow its vocals "
                          "and beat.".format(refs.song_number, ret, _keep_phrase(["its vocals, rhythm and beat"], ret)))
             continue
-        a = assets[au["asset"]]
-        n = refs.audio_of_ref.get(au.get("ref")) or refs.audio_of_asset[au["asset"]]
+        n = refs.audio_number(au)
         if au["cast"]:
             lines.append("<Audio {}>: reference - the voice timbre and delivery of <Subject {}> follow <Audio {}> "
                          "without copying the original signal.".format(n, sub_of_cast.get(au["cast"], "?"), n))
         else:
+            a = assets[au["asset"]]
             r = ref_by_id.get(au["ref"], {})
             ret = _retention(r, a)
             keep = _keep(r, a) or DEFAULT_KEEP.get(a.get("category"), ["sound"])
@@ -1537,7 +1561,7 @@ def _auto_summary(refs, pass_):
         shots, "s" if shots > 1 else "")
     voice = [a for a in refs.audios if a["cast"]]
     if voice:
-        text += " " + _join_and("<Audio {}>".format(refs.audio_of_asset[a["asset"]]) for a in voice) + \
+        text += " " + _join_and("<Audio {}>".format(refs.audio_number(a)) for a in voice) + \
                 (" provides" if len(voice) == 1 else " provide") + " the voice timbre."
     if refs.song_number:
         text += " The picture is cut to <Audio {}>: mouths, movement and cuts follow its vocals and beat.".format(

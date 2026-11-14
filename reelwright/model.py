@@ -528,6 +528,8 @@ def _norm_cast(c, lang):
     _text_field(lora, "name", "")
     lora["strength"] = spec.num(lora.get("strength"), 0.8)
     lora["trigger"] = trigger_text(lora.get("trigger"))
+    c["refmod"] = norm_refmod(c.get("refmod"))
+    c["voice_refmod"] = norm_refmod(c.get("voice_refmod"))
     c["video_anchors"] = _objects(c.get("video_anchors"))
     used = set()
     for va in c["video_anchors"]:
@@ -828,16 +830,104 @@ def part_owner(c, cast):
 
 def entry_skip(entry):
     """The anchors a scene's cast entry leaves out (scene.cast[].skip: picture asset ids and
-    video anchor ids), as a set; model.js entrySkip is the same."""
+    video anchor ids, and REFMOD_SKIP for the look RefMod), as a set; model.js entrySkip is the same."""
     return set((entry or {}).get("skip") or [])
 
 
-def cast_pictures(c, entry, assets):
+# ---- RefMods: saved MiniMax H3 references made with ComfyUI-MiniMaxH3Mod (models/refmods/<name>.safetensors, one
+# reference or a bundle of several). A cast member's look RefMod (cast.refmod) goes instead of its anchors: its
+# pictures (image members) and videos (video members, such as stacked photos) are the subject's references, and its
+# anchor pictures and video anchors are not sent (outfit pictures still are), unless the scene unticks the RefMod
+# (scene.cast[].skip holds REFMOD_SKIP). A voice RefMod (cast.voice_refmod) goes instead of the voice sample, in the
+# passes where the character speaks. The project keeps what the file held when it was picked (members: kind and latent
+# size), so plans need no disk; refmods.py reads the files and checks they still hold that. model.js has the same.
+REFMOD_SKIP = "refmod"
+REFMOD_KINDS = ("image", "video", "audio")
+REFMOD_AUDIO_RATE = 40  # audio latent frames per second (32 kHz H3 audio VAE)
+REFMOD_MAX_MEMBERS = 64
+REFMOD_NAME_MAX = 240
+
+
+def refmod_name(v):
+    """A RefMod's name as ComfyUI-MiniMaxH3Mod lists it: the path under a refmods folder with "/" and without
+    .safetensors ("characters/birten")."""
+    n = spec.text(v, "").replace("\\", "/").strip()
+    if n.lower().endswith(".safetensors"):
+        n = n[:-len(".safetensors")]
+    return n.strip("/ ")[:REFMOD_NAME_MAX]
+
+
+def norm_refmod(v):
+    """cast.refmod / cast.voice_refmod: {"name", "strength" (0-1), "members": [{"kind", "t", "h", "w"}]} (members:
+    the file's references in order, kind "" for one Reelwright cannot send)."""
+    v = v if isinstance(v, dict) else {}
+    out = {"name": refmod_name(v.get("name")), "strength": min(1.0, max(0.0, spec.num(v.get("strength"), 1.0))),
+           "members": []}
+    for m in _objects(v.get("members"))[:REFMOD_MAX_MEMBERS]:
+        kind = m.get("kind") if m.get("kind") in REFMOD_KINDS else ""
+        audio = kind == "audio"
+        out["members"].append({"kind": kind, "t": max(1, int(spec.num(m.get("t"), 1))),
+                               "h": 0 if audio else max(0, int(spec.num(m.get("h"), 0))),
+                               "w": 0 if audio else max(0, int(spec.num(m.get("w"), 0)))})
+    return out
+
+
+def refmod_parts(r, visual):
+    """[(member index, member)] of RefMod r that go to H3: its pictures and videos (visual) or its audio; none
+    without a name or at strength 0."""
+    if not isinstance(r, dict) or not r.get("name") or not spec.num(r.get("strength"), 0.0) > 0:
+        return []
+    kinds = ("image", "video") if visual else ("audio",)
+    return [(i, m) for i, m in enumerate(r.get("members") or []) if isinstance(m, dict) and m.get("kind") in kinds]
+
+
+def look_parts(c, entry=None):
+    """The look RefMod members cast member c sends in a scene (its cast entry): none when the scene unticks it."""
+    if REFMOD_SKIP in entry_skip(entry):
+        return []
+    return refmod_parts((c or {}).get("refmod"), True)
+
+
+def voice_parts(c):
+    """The voice RefMod members c sends instead of its voice sample."""
+    return refmod_parts((c or {}).get("voice_refmod"), False)
+
+
+def refmod_frames(t):
+    """Pixel frames of t video latent frames (H3: 1 frame, then 4 per latent, the 1 again every 5th)."""
+    t = max(0, int(t))
+    return (t + 4) // 5 + 4 * (t - (t + 4) // 5)
+
+
+def refmod_seconds(m):
+    """How long a RefMod member counts in H3's 15 s of video or audio references."""
+    if m.get("kind") == "video":
+        return refmod_frames(m["t"]) / spec.FPS
+    if m.get("kind") == "audio":
+        return m["t"] / float(REFMOD_AUDIO_RATE)
+    return 0.0
+
+
+def refmod_tokens(m):
+    """Reference tokens of a RefMod member in the DiT (pictures and videos: t x h/2 x w/2; audio: 2 per frame)."""
+    if m.get("kind") == "audio":
+        return 2 * m["t"]
+    return m["t"] * (m["h"] // 2) * (m["w"] // 2)
+
+
+def refmod_entry(r, i, m):
+    """What a pass build holds for one RefMod member it sends (render and the cache key read it)."""
+    return {"name": r["name"], "member": i, "kind": m["kind"], "t": m["t"], "h": m["h"], "w": m["w"],
+            "strength": r["strength"]}
+
+
+def cast_pictures(c, entry, assets, look=False):
     """(outfit, picture ids) a cast member sends in a scene: its anchor pictures, then the pictures of the outfit the
-    scene entry gives it (else its default outfit) that are not anchors already. Images only."""
+    scene entry gives it (else its default outfit) that are not anchors already. Images only. look: the cast member
+    sends its look RefMod here, so its anchors stay out (the outfit's pictures still go)."""
     outfit = next((o for o in c["outfits"] if o["id"] == ((entry or {}).get("outfit") or c["default_outfit"])), None)
     skip = entry_skip(entry)
-    ids = [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image" and a not in skip]
+    ids = [] if look else [a for a in c["anchors"] if a in assets and assets[a]["kind"] == "image" and a not in skip]
     if outfit:
         ids += [a for a in outfit["assets"] if a in assets and assets[a]["kind"] == "image" and a not in ids]
     return outfit, ids
@@ -866,6 +956,8 @@ def pick_video_anchors(recs, assets, n):
     picked, left = [], []
     for x in recs:
         c = x["cast"]
+        if x.get("look"):  # its look RefMod goes instead of its anchors
+            continue
         skip = entry_skip(x.get("entry"))
         for va, a in video_anchors_of(c, assets):
             if va["id"] in skip:
@@ -927,9 +1019,10 @@ def tile_pixels(pics, width, height, ref_size="match"):
 def scene_people(p, scene, idx=None):
     """The cast a scene sends, as prompt.collect_refs and scene_media_counts use it: its cast list plus the speakers
     missing from it, in that order. Returns (people, left_out):
-    people: [{"entry", "cast", "outfit", "own", "ids", "parts"}], one per cast member that is no part. own: its
-    pictures (cast_pictures); ids: own, then the pictures of its parts in this scene that are not in it yet. parts:
-    [{"entry", "cast", "outfit", "ids"}] (ids: all of that part's pictures).
+    people: [{"entry", "cast", "outfit", "own", "ids", "parts", "look"}], one per cast member that is no part. own:
+    its pictures (cast_pictures); ids: own, then the pictures of its parts in this scene that are not in it yet.
+    parts: [{"entry", "cast", "outfit", "ids"}] (ids: all of that part's pictures). look: look_parts, the RefMod
+    members it sends instead of its anchors ([] for none).
     left_out: [(part, owner)] for the props in the scene that are part of a character who is not in it."""
     idx = idx or project_index(p)
     assets, cast = idx["assets"], idx["cast"]
@@ -943,15 +1036,16 @@ def scene_people(p, scene, idx=None):
         c = cast.get(e["id"])
         if not c:
             continue
-        outfit, ids = cast_pictures(c, e, assets)
         owner = part_owner(c, cast)
+        look = [] if owner else look_parts(c, e)
+        outfit, ids = cast_pictures(c, e, assets, bool(look))
         if owner:
             if owner in present:
                 parts.setdefault(owner, []).append({"entry": e, "cast": c, "outfit": outfit, "ids": ids})
             else:
                 left_out.append((c, cast[owner]))
             continue
-        people.append({"entry": e, "cast": c, "outfit": outfit, "own": ids, "ids": ids, "parts": []})
+        people.append({"entry": e, "cast": c, "outfit": outfit, "own": ids, "ids": ids, "parts": [], "look": look})
     for x in people:
         for part in parts.get(x["cast"]["id"], []):
             x["parts"].append(part)
@@ -1367,9 +1461,10 @@ def continuation_frames(p, i, pass_, mode=None):
 def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuation=True, video_anchors=True):
     """What one pass of `scene` sends H3, counted the way prompt.collect_refs presents references:
 
-    pictures       cast anchors (+ outfit pictures; a packed sheet is 1) and reference pictures, each asset once
-    videos         reference videos;                video_seconds: their length
-    audio          voice samples of cast members who speak IN THIS PASS (left out when the song is sent),
+    pictures       cast anchors (+ outfit pictures; a packed sheet is 1) and reference pictures, each asset once; the
+                   pictures of a look RefMod (instead of the anchors)
+    videos         reference videos and the videos of a look RefMod;   video_seconds: their length
+    audio          voice samples (or voice RefMods) of cast members who speak IN THIS PASS (left out when the song is sent),
                    reference audio, one slot per reference video whose sound is used, and the soundtrack segment
                    when soundtrack.pass_soundtrack gives one;   audio_seconds: their length
     files          pictures + videos + audio files (a video's own sound is not a separate file)
@@ -1396,14 +1491,15 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
     idx = project_index(p)
     assets = idx["assets"]
     recs = scene_people(p, scene, idx)[0]
-    people = [(x["cast"], x["ids"]) for x in recs]
-    anchors = {a for _, ids in people for a in ids}
+    people = [(x["cast"], x["ids"], x["look"]) for x in recs]
+    anchors = {a for _, ids, _ in people for a in ids}
+    look_pics = sum(1 for *_, look in people for _, m in look if m["kind"] == "image")
     ref_pics = {r["asset"] for r in scene["refs"]
                 if r["role"] == "reference" and r["asset"] in assets and assets[r["asset"]]["kind"] == "image"}
     pose_pics = list(dict.fromkeys(a["id"] for _, a, _ in pose_refs(p, scene, pass_, recs, idx)))
     i = next((k for k, s in enumerate(p["scenes"]) if s["id"] == scene["id"]), None)
     cont = pass_continuation(p, i, pass_, mode) if continuation else ""
-    auto_pack = len(anchors) + len((ref_pics | set(pose_pics)) - anchors) + (1 if cont == "picture" else 0) > \
+    auto_pack = len(anchors) + look_pics + len((ref_pics | set(pose_pics)) - anchors) + (1 if cont == "picture" else 0) > \
         spec.MAX_REF_IMAGES
     if starts is None:
         starts = scene_starts(p)[0]
@@ -1411,14 +1507,24 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
     speaking = {d.get("speaker") for d in pass_.get("dialogue") or []}
     out = {"pictures": 0, "videos": 0, "video_seconds": 0.0, "audio": 0, "audio_seconds": 0.0, "files": 0,
            "song": bool(song)}
-    sent, sounds = set(), []
-    for c, ids in people:
-        pack = auto_pack if c.get("pack_sheet", True) == "auto" else bool(c.get("pack_sheet", True))
+    sent, sounds, mod_sounds = set(), [], []
+    for c, ids, look in people:
+        pack = not look and (auto_pack if c.get("pack_sheet", True) == "auto" else bool(c.get("pack_sheet", True)))
         out["pictures"] += 1 if ids and pack and len(ids) > 1 else len(ids)
         sent.update(ids)
-        v = assets.get(c.get("voice"))
-        if v and v["kind"] == "audio" and not song and c["id"] in speaking:
-            sounds.append(v)
+        for _, m in look:
+            if m["kind"] == "image":
+                out["pictures"] += 1
+            else:
+                out["videos"] += 1
+                out["video_seconds"] += refmod_seconds(m)
+        if not song and c["id"] in speaking:
+            voice = voice_parts(c)
+            v = assets.get(c.get("voice"))
+            if voice:
+                mod_sounds += [refmod_seconds(m) for _, m in voice]
+            elif v and v["kind"] == "audio":
+                sounds.append(v)
     for aid in pose_pics:
         if aid not in sent:
             sent.add(aid)
@@ -1443,12 +1549,13 @@ def scene_media_counts(p, scene, pass_=None, starts=None, mode=None, continuatio
             key = clip_key(r, a)
             if not any(x[0] == key for x in sounds):
                 sounds.append((key, ref_clip(r, a)["seconds"] or 0.0))
-    out["audio"] += len(sounds) + (1 if song else 0)
+    out["audio"] += len(sounds) + len(mod_sounds) + (1 if song else 0)
     for _, secs in sounds:
         out["audio_seconds"] += secs
+    out["audio_seconds"] += sum(mod_sounds)
     if song:
         out["audio_seconds"] += song["length"]
-    out["files"] = out["pictures"] + out["videos"] + len(sounds) + (1 if song else 0)
+    out["files"] = out["pictures"] + out["videos"] + len(sounds) + len(mod_sounds) + (1 if song else 0)
     out["continuation"] = ""
     if cont == "picture":
         if out["pictures"] + 1 > spec.MAX_REF_IMAGES or out["files"] + 1 > spec.MAX_REF_FILES:

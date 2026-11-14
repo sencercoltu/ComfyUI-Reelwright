@@ -59,11 +59,19 @@ def settings_fingerprint(settings, wired):
     return s
 
 
-def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pass_key, upstream_take=None, extra=None):
+def _refmod_key(x, refmod_digest):
+    """A RefMod reference in a pass key: its file's bytes, which reference of it and how strong."""
+    m = x["refmod"]
+    return ["refmod", refmod_digest(m["name"]) if refmod_digest else m["name"], m["member"], m["strength"]]
+
+
+def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pass_key, upstream_take=None, extra=None,
+             refmod_digest=None):
     """The key of one pass. `upstream_take` is the id of the take the scene continues from;
     with None the key is the one v0.5.1 computed, so older takes can still be matched (see resolve).
     `extra` (a dict, see long_pass_extra) holds the Global -> Long scenes choices that change
-    how this pass is encoded or guided; empty or None leaves the key as v0.7.0 computed it."""
+    how this pass is encoded or guided; empty or None leaves the key as v0.7.0 computed it.
+    refmod_digest: RefMod name -> digest of its file (refmods.digest); a pass without RefMods does not use it."""
     guides = []
     for g in build["guides"]:
         x = {k: v for k, v in g.items() if k != "asset"}
@@ -81,10 +89,13 @@ def pass_key(settings_fp, build, pass_, asset_digest, upstream_key, previous_pas
         "frames": pass_["gen_frames"],
         "seed": pass_["seed"],
         "prompt": build["prompt"],
-        "images": [[asset_digest(a) for a in img["assets"]] for img in build["images"]],
-        "videos": [[asset_digest(v["asset"]), v["soundtrack"]] + ([v["in"], v["out"]] if "in" in v else [])
+        "images": [_refmod_key(img, refmod_digest) if img.get("refmod") else [asset_digest(a) for a in img["assets"]]
+                   for img in build["images"]],
+        "videos": [_refmod_key(v, refmod_digest) if v.get("refmod") else
+                   [asset_digest(v["asset"]), v["soundtrack"]] + ([v["in"], v["out"]] if "in" in v else [])
                    for v in build["videos"]],
         "audios": [soundtrack.digest(a["song"], asset_digest) if a.get("song") else
+                   _refmod_key(a, refmod_digest) if a.get("refmod") else
                    [asset_digest(a["asset"]), a["in"], a["out"]] if "in" in a else asset_digest(a["asset"])
                    for a in build["audios"]],
         "guides": guides,

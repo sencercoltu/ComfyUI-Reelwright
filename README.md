@@ -132,7 +132,9 @@ node. A wired input replaces the matching Global-tab loader.
    name ("person, dog, tea cup") once the object finder is downloaded (about
    690 MB, into `models/reelwright/grounding-dino-tiny`).
 3. **Cast tab:** create your characters, give each anchor pictures, a
-   description, a voice and a voice description.
+   description, a voice and a voice description. A **RefMod** (a saved H3
+   reference made with ComfyUI-MiniMaxH3Mod, in `models/refmods`) can go
+   instead of the anchor pictures, and for a character instead of the voice.
 4. **Timeline:** the monitor (top left), the selected scene's summary
    (top right) and the lanes (below); drag the bars between them to resize.
    - add scenes and drag their right edge to set the length;

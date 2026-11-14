@@ -8,7 +8,8 @@ import {
 import {
   dialogueSeconds, sceneIndex, STABLE_LANGUAGES, VISUAL_RETENTION, newId, findAsset, findCast, assignCodes,
   castDescription, sheetGrid, anchorPixels, sheetURL, castPacks, assetGroupName, partOwner, SMALL_TILE_PX, refClip,
-  fmtTime, unskipAnchor, clearAnchorFrame, newCastMember, triggerText,
+  fmtTime, unskipAnchor, clearAnchorFrame, newCastMember, triggerText, refmodParts, refmodTokens, refmodSeconds,
+  refmodFrames,
 } from "../model.js";
 import { rw, viewURL } from "../api.js";
 import { clipEditor } from "./scene.js";
@@ -136,6 +137,7 @@ function anchorsCard(ctx, c) {
       images.length > 0 && select({ options: images, value: "", placeholder: "+ Add anchor…", help: "cast.anchors.add", onChange: v => edit(x => { x.anchors.push(v); }) }),
     ],
     children: [
+      lookNote(c, "anchor pictures"),
       anchors.length ? h("div", { class: "rw-anchor-grid" }, anchors.map(a => h("div", { class: "rw-anchor" },
         h("img", { src: viewURL(a.file, "input"), alt: a.name }),
         h("span", { class: "rw-anchor-label" }, h("b", { class: "mono rw-c-pic" }, a.code), " ", a.name,
@@ -260,11 +262,87 @@ function videoAnchorsCard(ctx, c) {
     actions: videos.length > 0 && select({ options: videos, value: "", placeholder: "+ Add a video anchor…", help: "cast.videoAnchors.add", key: `va-add-${c.id}`,
       onChange: v => edit(x => { (x.video_anchors = x.video_anchors || []).push({ id: newId("va"), asset: v, in: 0, out: null, soundtrack: false }); }, "Add video anchor") }),
     children: [
+      lookNote(c, "video anchors"),
       list.length === 0 && h("div", { class: "rw-empty sm", help: "cast.videoAnchors" }, videos.length
         ? "No video anchors. A short clip of this " + (c.kind === "character" ? "character moving and talking" : c.kind) + " (2–15 s) shows H3 how it moves and looks from every side."
         : "Upload a video in the Assets tab to use a clip as an anchor."),
       list.length > 0 && sortable({ id: `va-${c.id}`, rows, onMove: (from, to) => edit(x => { moveItem(x.video_anchors, from, to); }, "Reorder video anchors") }),
       list.length > 0 && h("div", { class: "rw-dim small", help: "cast.videoAnchors" }, "Sent with the pictures to every scene this cast member is in, after the scene's own videos, while H3 takes 3 videos and 15 s of video in all; a clip is shortened to fit when 2 s or more are left. The issues list says when one is left out."),
+    ],
+  });
+}
+
+// ---- RefMods: saved MiniMax H3 references made with ComfyUI-MiniMaxH3Mod, files in models/refmods (one reference or a
+// bundle). The look RefMod goes instead of the anchors (pictures and video anchors; outfit pictures still go) in every
+// scene that does not untick it; the voice RefMod goes instead of the voice sample when the character speaks. The
+// project keeps what the file held when it was picked (members); Update takes it from the file again.
+function membersText(members) {
+  const n = k => members.filter(m => m.kind === k).length;
+  const pics = n("image"), vids = n("video"), auds = n("audio"), bad = n("");
+  return [pics && `${pics} picture${pics === 1 ? "" : "s"}`, vids && `${vids} video${vids === 1 ? "" : "s"}`,
+    auds && `${auds} audio`, bad && `${bad} it cannot send`].filter(Boolean).join(", ") || "nothing";
+}
+const sameMembers = (a, b) => a.length === b.length && a.every((m, i) => ["kind", "t", "h", "w"].every(k => m[k] === b[i][k]));
+function lookNote(c, what) {
+  if (!refmodParts(c.refmod, true).length) return null;
+  return h("div", { class: "rw-note small", help: "cast.refmod" }, icon("info", 12),
+    h("span", null, `Not sent while the RefMod ${c.refmod.name} is set: it goes instead of the ${what}, except in scenes that untick it (Scene → Cast in this scene → Anchors).`));
+}
+function refmodCard(ctx, c) {
+  const p = ctx.p;
+  if (partOf(p, c)) return null; // a part's pictures go into its character's subject
+  const all = ctx.eph.models?.refmods, list = Array.isArray(all) ? all : [];
+  const edit = (fn, label) => ctx.actions.edit(q => { const x = findCast(q, c.id); if (x) fn(x); }, { label });
+  const take = (which, name) => edit(x => {
+    const f = list.find(m => m.name === name);
+    x[which] = { name, strength: name ? (x[which]?.strength ?? 1) : 1, members: f ? f.members.map(m => ({ ...m })) : [] };
+  }, name ? `${c.name}: RefMod ${name}` : `${c.name}: no ${which === "refmod" ? "" : "voice "}RefMod`);
+  const row = (which, visual) => {
+    const r = c[which] || { name: "", strength: 1, members: [] };
+    const fits = m => m.members.some(x => (visual ? x.kind === "image" || x.kind === "video" : x.kind === "audio"));
+    const opts = list.filter(fits).map(m => ({ value: m.name, label: `${m.name} · ${membersText(m.members)}` }));
+    const file = r.name && list.find(m => m.name === r.name);
+    const parts = refmodParts(r, visual);
+    const key = `${which}-${c.id}`;
+    let state = null;
+    if (r.name && Array.isArray(all) && !file) {
+      state = h("div", { class: "rw-note warn small", help: "cast.refmod.missing" }, icon("warn", 12),
+        h("span", null, `${r.name} is not in models/refmods (anymore): scenes that send it cannot render. Put the file back, or pick another.`));
+    } else if (file && !sameMembers(file.members, r.members)) {
+      state = h("div", { class: "rw-note warn small", help: "cast.refmod.update" }, icon("warn", 12),
+        h("span", { class: "grow" }, `The file has changed since it was picked (it holds ${membersText(file.members)} now): scenes that send it cannot render until you update.`),
+        button({ label: "Update", small: true, key: `${key}-update`, help: "cast.refmod.update", onClick: () => take(which, r.name) }));
+    } else if (r.name && !parts.length) {
+      state = h("div", { class: "small rw-c-warn", help: "cast.refmod" }, r.strength > 0
+        ? `It holds no ${visual ? "picture or video" : "audio"}, so nothing of it is sent.` : "Strength 0: not sent.");
+    } else if (parts.length) {
+      const tokens = parts.reduce((n, [, m]) => n + refmodTokens(m), 0);
+      const what = parts.map(([, m]) => (m.kind === "image" ? `a ${m.w * 16}×${m.h * 16} picture`
+        : m.kind === "video" ? `a ${refmodFrames(m.t)}-frame video` : `${refmodSeconds(m).toFixed(1)} s of audio`)).join(", ");
+      state = h("div", { class: "rw-dim small", help: visual ? "cast.refmod" : "cast.voiceRefmod" }, visual
+        ? `Sends ${what} (${tokens.toLocaleString("en-US")} reference tokens) instead of the anchors.`
+        : `Sends ${what} instead of the Voice sample, in the passes where ${c.name} speaks.`);
+    }
+    return [
+      field(visual ? "Look" : "Voice", h("span", { class: "rw-row" },
+        select({ options: opts, value: r.name, placeholder: "none", mono: true, width: "340px", key: `${key}-name`, help: visual ? "cast.refmod" : "cast.voiceRefmod",
+          onChange: v => take(which, v) }),
+        r.name && number({ value: r.strength, min: 0, max: 1, step: 0.05, width: "70px", key: `${key}-strength`, help: "cast.refmod.strength",
+          onChange: v => edit(x => { x[which].strength = Math.min(1, Math.max(0, v ?? 1)); }, `${c.name}: RefMod strength`) })),
+      { help: visual ? "cast.refmod" : "cast.voiceRefmod" }),
+      state,
+    ];
+  };
+  return section({
+    title: "RefMod", help: "cast.refmod",
+    actions: button({ label: "Refresh", icon: "refresh", small: true, variant: "ghost", key: `refmod-refresh-${c.id}`, help: "cast.refmod.refresh",
+      onClick: async () => { await ctx.actions.refreshModels(); ctx.actions.toast(`${(ctx.store.eph.models?.refmods || []).length} RefMods in models/refmods.`, "ok"); } }),
+    children: [
+      ...row("refmod", true),
+      ...(c.kind === "character" ? row("voice_refmod", false) : []),
+      all === null ? h("div", { class: "rw-dim small", help: "cast.refmod" }, "The backend is offline, so the list of RefMods is not loaded.")
+        : Array.isArray(all) && !list.length && h("div", { class: "rw-empty sm", help: "cast.refmod" },
+          "No RefMods in models/refmods yet. Make one from pictures with ComfyUI-MiniMaxH3Mod (Create H3 RefMod, or Create H3 RefMod Master for a voice too), then press Refresh."),
     ],
   });
 }
@@ -310,6 +388,8 @@ function profileCard(ctx, c) {
         select({ options: audio, value: c.voice, placeholder: "no voice reference", help: "cast.voice", key: "cast-voice-" + c.id, onChange: v => edit(x => { x.voice = v; }) }),
         button({ label: ctx.eph.voiceCut === c.id ? "Cutting…" : "From a take…", icon: "audio", small: true, help: "cast.voiceFromTake", key: "cast-voice-take-" + c.id,
           disabled: ctx.eph.voiceCut === c.id, onClick: () => voiceFromTake(ctx, c) })), { help: "cast.voice" }),
+      c.kind === "character" && c.voice && refmodParts(c.voice_refmod, false).length > 0 && h("div", { class: "rw-dim small", help: "cast.voiceRefmod" },
+        `Not sent while the voice RefMod ${c.voice_refmod.name} is set (RefMod → Voice).`),
       c.kind === "character" && h("div", { class: "rw-field wide" }, h("span", { class: "rw-field-label", help: "cast.voiceDesc" }, "Voice description"),
         h("div", { class: "grow", style: { display: "flex", "flex-direction": "column", gap: "4px", "min-width": "0" } },
           textarea({ value: c.voice_desc || "", rows: 2, key: "cast-voice-desc-" + c.id, help: "cast.voiceDesc", placeholder: "a deep, warm male voice, slow and measured",
@@ -494,7 +574,7 @@ export function render(ctx) {
     c ? h("div", { class: "rw-col wide" },
       h("div", { class: "rw-cast-head" }, h("span", { class: "rw-cast-name" }, c.name),
         h("span", { class: "rw-flex" })),
-      anchorsCard(ctx, c), videoAnchorsCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c))
+      anchorsCard(ctx, c), videoAnchorsCard(ctx, c), refmodCard(ctx, c), profileCard(ctx, c), outfitsCard(ctx, c), appearances(ctx, c))
       : h("div", { class: "rw-col wide" }, section({ title: "Story bible", help: "cast.bible", children: [
         h("div", { class: "rw-empty" }, "Add a character, location or prop. Its anchors are sent to every scene it appears in, which keeps it looking the same."),
         h("div", { class: "rw-row" }, KINDS.map(([k, label]) => button({ label: "New " + label.slice(0, -1).toLowerCase(), icon: "plus", help: "cast.add." + k, onClick: () => addEntry(ctx, k) }))),

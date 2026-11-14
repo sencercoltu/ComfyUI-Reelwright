@@ -1077,6 +1077,9 @@ body.rw-sorting, body.rw-sorting * { cursor: grabbing !important; user-select: n
 .rw-sa-vids { display: flex; flex-direction: column; gap: 2px; }
 .rw-sa-vid { min-width: 0; font-size: 12px; }
 .rw-sa-vid.off > :not(input) { opacity: 0.5; }
+.rw-sa-idle { opacity: 0.55; }
+.rw-sa-mod .rw-ellipsis { flex: 1; min-width: 0; }
+.rw-sa-mod > .rw-dim { flex: none; }
 .rw-clip-frame { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--pic, #60a5fa); border-radius: 1px; pointer-events: auto; }
 .rw-vanchor-frame { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .rw-vanchor-frame img { width: 54px; height: 54px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line2); flex: none; }

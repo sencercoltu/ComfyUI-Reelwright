@@ -429,6 +429,8 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
             c = cast.get(entry["id"])
             if not c:
                 issues.append(_issue("error", "{}: a cast member was deleted".format(name), sid))
+            elif getattr(_model, "look_parts", None) and _model.look_parts(c, entry):
+                pass  # its look RefMod goes instead of its anchors
             elif c["kind"] == "character" and not c["anchors"]:
                 issues.append(_issue("warn", "{}: {} has no anchor pictures, so identity is not locked".format(name, c["name"]), sid))
             elif c["kind"] == "character" and set(c["anchors"]) <= set(entry.get("skip") or []):
@@ -517,13 +519,14 @@ def lint_project(p, plans, builds, asset_exists, ctx=None):
                                                              pass_["gen_frames"], room,
                                                              "last" if key == "last_frame" else "first", used,
                                                              "s" if used > 1 else "", "are" if used > 1 else "is", fix), sid))
+            # a RefMod is a saved latent, not a 2-15 s file (its length counts in the budget above)
             audio_items = [{"code": "soundtrack", "duration": x["song"]["length"]} if x.get("song") else
                            {"code": assets[x["asset"]]["code"] + " (clip)", "duration": x["seconds"] or 0} if "seconds" in x
-                           else assets[x["asset"]] for x in b["audios"]]
+                           else assets[x["asset"]] for x in b["audios"] if not x.get("refmod")]
             video_items = [{"code": _prompt.CONT_WHAT.get(v.get("source"), "the continuation clip"),
                             "duration": float(v.get("frames") or 0) / spec.FPS} if v.get("continuation")
                            else {"code": assets[v["asset"]]["code"] + " (clip)", "duration": v["seconds"] or 0}
-                           if "seconds" in v else assets[v["asset"]] for v in b["videos"]]
+                           if "seconds" in v else assets[v["asset"]] for v in b["videos"] if not v.get("refmod")]
             for kind, items in (("video", video_items),
                                 ("audio", audio_items)):
                 total = 0.0

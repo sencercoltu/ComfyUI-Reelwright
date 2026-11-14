@@ -1511,6 +1511,7 @@ def main():
         v0200_checks(page, check, saved, shots)
         v0201_checks(page, check, saved, shots)
         v0210_checks(page, check, saved, shots)
+        v0220_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
         v0201_copy_checks(pw, page_url, check)
@@ -6863,6 +6864,91 @@ def v0210_checks(page, check, saved, shots):
     page.wait_for_timeout(300)
     check(cur()["scenes"][1]["overrides"]["loras"]["items"][-1].get("trigger") == "", "one undo takes it back")
     load(json.loads(saved))
+
+
+def v0220_checks(page, check, saved, shots):
+    """v0.22.0 (Sencer: "can we add RefMod support for cast characters?", picked "instead of anchors" and "also as
+    voice"): Cast -> RefMod picks a saved H3 reference from models/refmods for the look (sent instead of the anchors)
+    and, for a character, the voice (instead of the voice sample); a scene can untick the look RefMod to send the
+    anchors there; the reference budget follows."""
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.store.project))")
+    mara = lambda: next(c for c in cur()["cast"] if c["id"] == "c_mara")
+
+    def pick(key, text):
+        page.locator(f"input[data-key='{key}']").click()
+        page.wait_for_timeout(250)
+        page.locator(".rw-combo-list .rw-combo-opt", has_text=text).first.dispatch_event("pointerdown")
+        page.wait_for_timeout(400)
+
+    q = json.loads(saved)
+    q["ui"].update(tab="cast")
+    page.evaluate("j => window.__editor.load(j)", json.dumps(q))
+    page.evaluate("() => window.__editor.store.setEph({ selectedCast: 'c_mara' })")
+    page.wait_for_timeout(500)
+    card = page.locator(".rw-card:has(.rw-card-title:has-text('RefMod'))")
+    check(card.count() == 1, "the Cast tab has a RefMod card")
+    page.locator("input[data-key='refmod-c_mara-name']").click()
+    page.wait_for_timeout(250)
+    opts = page.evaluate("() => [...document.querySelectorAll('.rw-combo-list .rw-combo-opt')].map(o => o.textContent)")
+    check(opts == ["none", "characters/mara · 1 picture, 1 video, 1 audio", "characters/keeper · 1 picture"],
+          f"the Look lists RefMods with pictures or videos: {opts}")
+    page.keyboard.press("Escape")
+    pick("refmod-c_mara-name", "characters/mara")
+    r = mara()["refmod"]
+    check(r["name"] == "characters/mara" and r["strength"] == 1 and [m["kind"] for m in r["members"]] == ["image", "video", "audio"],
+          f"picking keeps the file's references: {r}")
+    txt = card.inner_text()
+    check("Sends a 1024×1024 picture, a 52-frame video (5,120 reference tokens) instead of the anchors." in txt,
+          f"it says what goes: {txt[:300]!r}")
+    anchors = page.locator(".rw-card:has(.rw-card-title:has-text('Anchors'))").first.inner_text()
+    check("Not sent while the RefMod characters/mara is set" in anchors, "the Anchors card says they are not sent")
+    page.screenshot(path=str(shots / "v0220_cast.png"))
+    # strength
+    box = page.locator("input[data-key='refmod-c_mara-strength']")
+    box.fill("0.6")
+    box.press("Tab")
+    page.wait_for_timeout(300)
+    check(mara()["refmod"]["strength"] == 0.6, "the strength is stored")
+    # the voice of a character
+    pick("voice_refmod-c_mara-name", "characters/mara")
+    check([m["kind"] for m in mara()["voice_refmod"]["members"]] == ["image", "video", "audio"] and
+          "instead of the Voice sample" in card.inner_text(), "the same bundle can be the voice")
+    check("Not sent while the voice RefMod characters/mara is set" in page.locator(".rw-card:has(.rw-card-title:has-text('Character'))").inner_text(),
+          "the Voice field says the sample is not sent")
+    # a changed file: Update takes it again
+    page.evaluate("() => window.__editor.store.update(p => { p.cast.find(c => c.id === 'c_mara').refmod.members[0].h = 32; })")
+    page.wait_for_timeout(400)
+    upd = card.locator("button[data-help='cast.refmod.update']")
+    check(upd.count() == 1 and "has changed since it was picked" in card.inner_text(), "a changed file is shown with Update")
+    upd.first.click()
+    page.wait_for_timeout(400)
+    check(mara()["refmod"]["members"][0]["h"] == 64 and card.locator("button[data-help='cast.refmod.update']").count() == 0,
+          "Update takes the file's references again")
+    # Scene: the RefMod instead of the anchors, unticked per scene
+    page.evaluate("window.__editor.actions.select('s_02')")
+    page.evaluate("window.__editor.actions.setTab('scene')")
+    page.wait_for_timeout(600)
+    tog = page.locator("button[data-key='sa-tog-s_02-c_mara']")
+    check("Anchors here: RefMod characters/mara" in tog.inner_text(), f"the cast row says the RefMod goes: {tog.inner_text()!r}")
+    vids = lambda: page.evaluate("""() => [...document.querySelectorAll('.rw-meter')].map(x => x.textContent).find(x => x.startsWith('Videos')) || ''""")
+    with_mod = vids()
+    if tog.get_attribute("aria-expanded") != "true":
+        tog.click()
+        page.wait_for_timeout(300)
+    page.locator("input[data-key='sa-s_02-c_mara-refmod']").uncheck()
+    page.wait_for_timeout(400)
+    skip = next(e for e in cur()["scenes"][1]["cast"] if e["id"] == "c_mara").get("skip")
+    check(skip == ["refmod"], f"unticking stores it in the scene: {skip}")
+    n_vids = lambda x: int(x[len("Videos"):].split("/")[0])
+    vas = len([va for va in mara()["video_anchors"] if va.get("asset")])
+    check("not the RefMod" in tog.inner_text() and n_vids(vids()) == n_vids(with_mod) - 1 + vas,
+          f"the anchors go there instead, and the budget follows: {tog.inner_text()!r} {with_mod!r} -> {vids()!r}")
+    page.screenshot(path=str(shots / "v0220_scene.png"))
+    page.evaluate("window.__editor.store.undo()")
+    page.wait_for_timeout(300)
+    check(not next(e for e in cur()["scenes"][1]["cast"] if e["id"] == "c_mara").get("skip"), "one undo ticks it again")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
 
 
 if __name__ == "__main__":

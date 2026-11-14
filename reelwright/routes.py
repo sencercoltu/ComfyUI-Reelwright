@@ -19,7 +19,22 @@ import folder_paths
 from aiohttp import web
 from server import PromptServer
 
-from . import VERSION, assemble, beats, cache, continuity, detect, jobs, llm, media, merge, profiles, scriptparts, spec
+from . import (
+    VERSION,
+    assemble,
+    beats,
+    cache,
+    continuity,
+    detect,
+    jobs,
+    llm,
+    media,
+    merge,
+    profiles,
+    refmods,
+    scriptparts,
+    spec,
+)
 from . import files as diskuse
 from .analysis import analyze, plan_response
 from .model import cast_description, normalize_project, project_index, slugify
@@ -168,9 +183,15 @@ async def models(request):
             return folder_paths.get_filename_list(folder)
         except KeyError:
             return []
+    try:
+        mods = await asyncio.to_thread(refmods.list_refmods)
+    except Exception as e:  # noqa: BLE001 - an unreadable refmods folder must not hide the models
+        log.warning("Reelwright: could not list RefMods: %s", e)
+        mods = []
     return {"diffusion_models": names("diffusion_models"), "text_encoders": names("text_encoders"),
             "vae": names("vae"), "loras": names("loras"), "latent_upscale_models": names("latent_upscale_models"),
-            "samplers": list(comfy.samplers.KSampler.SAMPLERS), "schedulers": list(comfy.samplers.KSampler.SCHEDULERS)}
+            "samplers": list(comfy.samplers.KSampler.SAMPLERS), "schedulers": list(comfy.samplers.KSampler.SCHEDULERS),
+            "refmods": mods, "refmod_folders": refmods.roots()}
 
 
 @routes.post("/reelwright/plan")

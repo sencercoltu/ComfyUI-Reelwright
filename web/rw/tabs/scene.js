@@ -24,7 +24,7 @@ import {
   shotLengths, overruns, fitLength, lengthenToFit, squeezeToFit, visibleStart, effectiveStart, tailOverlapFrames,
   planScene, passSoundtrack, soundtrackLocked, assetGroupName, partOwner, sceneTilePixels, SMALL_TILE_PX,
   scenePeople, hiresSize, sceneHires, sceneSampleSize, sceneQuality, passLabel, passNames, refClip, refTrimmed,
-  refTokens, snapFrame, newCastMember, triggerText,
+  refTokens, snapFrame, newCastMember, triggerText, refmodParts, lookParts, REFMOD_SKIP,
 } from "../model.js";
 
 // A render step changes nothing on this tab (status changes come with a full render), so
@@ -1695,7 +1695,7 @@ function castCard(ctx, s) {
             return h("div", { class: "grow", style: { "min-width": "0" } }, h("b", null, c.name),
               owner ? h("div", { class: ["small", ownerHere ? "rw-dim" : "rw-c-warn"], help: "scene.cast.part" },
                 ownerHere ? `part of ${owner.name}: in ${owner.name}'s subject · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}` : `part of ${owner.name}, who is not in this scene: left out`)
-                : h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${(c.video_anchors || []).length ? ` · ${c.video_anchors.length} video anchor${c.video_anchors.length === 1 ? "" : "s"}` : ""}${c.lora?.name ? " · LoRA" : ""}`),
+                : h("div", { class: "rw-dim small" }, `${c.kind} · ${c.anchors.length} anchor${c.anchors.length === 1 ? "" : "s"}${(c.video_anchors || []).length ? ` · ${c.video_anchors.length} video anchor${c.video_anchors.length === 1 ? "" : "s"}` : ""}${refmodParts(c.refmod, true).length ? " · RefMod" : ""}${c.lora?.name ? " · LoRA" : ""}`),
               h("div", { class: "rw-dim small rw-ellipsis", help: "scene.cast.description", title: d.text }, d.text ? (d.asset ? `from ${d.asset.code}: ${d.text}` : d.text) : "No description"),
               tilePx > 0 && tilePx < SMALL_TILE_PX && h("div", { class: "small rw-c-warn", help: "scene.cast.smallSheet" },
                 `${tileN} pictures in one sheet: about ${tilePx} px each in H3, too small for identity`),
@@ -1712,25 +1712,29 @@ function castCard(ctx, s) {
 
 // ---- the anchors a scene uses for a cast member (all at first; the setting is folded by default) ----------------
 // scene.cast[].skip holds the unticked ones
-// (picture asset ids, video anchor ids), so an anchor added later is used everywhere until unticked.
+// (picture asset ids, video anchor ids), so an anchor added later is used everywhere until unticked. A look RefMod
+// (Cast → RefMod) goes instead of all of them; unticking it here (REFMOD_SKIP) sends the ticked anchors in this scene.
 function anchorCounts(p, c, sc) {
   const skip = entrySkip(sc);
   const pics = c.anchors.filter(id => findAsset(p, id)?.kind === "image");
   const vids = (c.video_anchors || []).filter(va => findAsset(p, va.asset)?.kind === "video");
-  return { pics, vids, picsOn: pics.filter(id => !skip.has(id)).length, vidsOn: vids.filter(va => !skip.has(va.id)).length, skip };
+  const mod = refmodParts(c.refmod, true).length > 0;
+  return { pics, vids, picsOn: pics.filter(id => !skip.has(id)).length, vidsOn: vids.filter(va => !skip.has(va.id)).length, skip,
+    mod, modOn: mod && lookParts(c, sc).length > 0 };
 }
 function sceneAnchorsToggle(ctx, s, c, sc, open) {
   const p = ctx.p;
   const n = anchorCounts(p, c, sc);
-  if (!n.pics.length && !n.vids.length) return null;
+  if (!n.pics.length && !n.vids.length && !n.mod) return null;
   const all = n.picsOn === n.pics.length && n.vidsOn === n.vids.length;
   const part = (on, of, one, many) => (of ? (on === of ? `${of} ${of === 1 ? one : many}` : `${on} of ${of} ${of === 1 ? one : many}`) : "");
   const text = [part(n.picsOn, n.pics.length, "picture", "pictures"), part(n.vidsOn, n.vids.length, "video", "videos")].filter(Boolean).join(", ");
-  const none = c.kind === "character" && n.pics.length > 0 && n.picsOn === 0;
-  return h("button", { type: "button", class: ["rw-sa-toggle small", !all && "some", none && "none"], key: `sa-tog-${s.id}-${c.id}`, help: "scene.cast.anchors",
+  const none = !n.modOn && c.kind === "character" && n.pics.length > 0 && n.picsOn === 0;
+  const label = n.modOn ? `Anchors here: RefMod ${c.refmod.name}` : `Anchors here: ${n.mod ? "not the RefMod, " : ""}${all ? "all, " : ""}${text || "none"}`;
+  return h("button", { type: "button", class: ["rw-sa-toggle small", (n.mod ? !n.modOn : !all) && "some", none && "none"], key: `sa-tog-${s.id}-${c.id}`, help: "scene.cast.anchors",
     "aria-expanded": open ? "true" : "false",
     onClick: e => { e.stopPropagation(); ctx.store.setEph({ castAnchorsOpen: { ...(ctx.eph.castAnchorsOpen || {}), [`${s.id}:${c.id}`]: !open } }); } },
-  icon(open ? "chevDown" : "chevRight", 11), h("span", null, `Anchors here: ${all ? "all, " : ""}${text}`));
+  icon(open ? "chevDown" : "chevRight", 11), h("span", null, label));
 }
 function sceneAnchors(ctx, s, c, sc) {
   const p = ctx.p;
@@ -1758,15 +1762,22 @@ function sceneAnchors(ctx, s, c, sc) {
       h("span", { class: "rw-dim small mono" }, `${fmtTime(clip.start)}–${clip.end !== null ? fmtTime(clip.end) : fmtTime(Number(a.duration) || 0)}`));
   };
   const some = n.skip.size > 0 && (n.picsOn < n.pics.length || n.vidsOn < n.vids.length);
+  const mod = n.mod && h("label", { class: ["rw-check rw-sa-vid rw-sa-mod", !n.modOn && "off"], help: "scene.cast.refmod" },
+    h("input", { type: "checkbox", checked: n.modOn, key: `sa-${s.id}-${c.id}-refmod`, onChange: e => set(REFMOD_SKIP, e.target.checked, "the RefMod") }),
+    h("b", { class: "mono" }, "RefMod"), h("span", { class: "rw-ellipsis" }, c.refmod.name),
+    h("span", { class: "rw-dim small" }, n.modOn ? "instead of the anchors" : "anchors instead"));
   return h("div", { class: "rw-sa", help: "scene.cast.anchors" },
-    n.pics.length > 0 && h("div", { class: "rw-sa-pics" }, n.pics.map(pic)),
-    n.vids.length > 0 && h("div", { class: "rw-sa-vids" }, n.vids.map(vid)),
+    mod,
+    h("div", { class: ["rw-col-tight", n.modOn && "rw-sa-idle"] },
+      n.pics.length > 0 && h("div", { class: "rw-sa-pics" }, n.pics.map(pic)),
+      n.vids.length > 0 && h("div", { class: "rw-sa-vids" }, n.vids.map(vid))),
     h("div", { class: "rw-row wrap" },
-      h("span", { class: ["small grow", c.kind === "character" && n.pics.length && !n.picsOn ? "rw-c-warn" : "rw-dim"] },
-        c.kind === "character" && n.pics.length && !n.picsOn ? `No picture of ${c.name} goes to this scene, so identity is not locked.`
-          : "Unticked anchors stay out of this scene only. Anchors added later are ticked."),
+      h("span", { class: ["small grow", !n.modOn && c.kind === "character" && n.pics.length && !n.picsOn ? "rw-c-warn" : "rw-dim"] },
+        n.modOn ? `The RefMod goes to this scene, not these anchors. Untick it to send them here.`
+          : c.kind === "character" && n.pics.length && !n.picsOn ? `No picture of ${c.name} goes to this scene, so identity is not locked.`
+            : "Unticked anchors stay out of this scene only. Anchors added later are ticked."),
       some && button({ label: "Tick all", small: true, variant: "ghost", key: `sa-all-${s.id}-${c.id}`, help: "scene.cast.anchorPick",
-        onClick: () => ctx.actions.editScene(s.id, x => { const e = x.cast.find(q => q.id === c.id); if (e) e.skip = []; }, { label: `${c.name}: every anchor in this scene` }) })));
+        onClick: () => ctx.actions.editScene(s.id, x => { const e = x.cast.find(q => q.id === c.id); if (e) e.skip = (e.skip || []).filter(k => k === REFMOD_SKIP); }, { label: `${c.name}: every anchor in this scene` }) })));
 }
 
 // a LoRA the scene gets from Global or a cast member: its file, and its trigger word under it

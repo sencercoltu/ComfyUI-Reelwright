@@ -125,7 +125,10 @@ lives on disk.
       "default_outfit": "o_1",
       "voice": "a_7", "language": "English",
       "voice_desc": "a deep, warm male voice, slow and measured",  // v0.10.0: written at the first line in every pass ("" = nothing)
-      "lora": { "name": "", "strength": 0.8, "trigger": "" } }   // v0.21.0: the identity LoRA's trigger word
+      "lora": { "name": "", "strength": 0.8, "trigger": "" },    // v0.21.0: the identity LoRA's trigger word
+      // v0.22.0: RefMods (models/refmods/<name>.safetensors); members: what the file held when it was picked
+      "refmod": { "name": "characters/mara", "strength": 1.0, "members": [ { "kind": "image", "t": 1, "h": 64, "w": 64 } ] },
+      "voice_refmod": { "name": "", "strength": 1.0, "members": [] } }
   ],
   "camera_presets": [ { "id": "k_1", "name": "Push In", "text": "the camera pushes in" } ],  // v0.8.0: H3's 20 moves (DEFAULT_CAMERA)
   "camera_version": 2,                    // v0.8.0: below 2, the official moves the presets lack are appended once
@@ -301,12 +304,39 @@ the subject line does not carry (own subject definitions, raw prompts), at the s
 task tags (`place_trigger_words`; a raw prompt without sections: after its leading tags). No trigger set: the prompt,
 and so every cache key, is unchanged.
 
+### RefMods (v0.22.0)
+
+A RefMod is a ComfyUI-MiniMaxH3Mod file: a safetensors latent with JSON metadata in the header (`refmod_meta`;
+older files `audio_refmod_meta` or a `.json` beside them): one reference (`latent`, kind image `[1,24,1,H,W]`, video
+`[1,24,T,H,W]`, audio `[1,32,2,T]`) or a bundle (`kind: "bundle"`, `members`, tensors `ref_0…`). `refmods.py` reads the
+headers itself (no tensors; `list_refmods`, `summary`) from the refmods folders (`folder_paths` "refmods" when the pack
+registers it, `models/refmods`, `models/audio_refmods`; names are paths without `.safetensors`, the first folder wins).
+
+`cast.refmod` / `cast.voice_refmod` keep `{name, strength, members}` (`model.norm_refmod`, `model.js normRefmod`), so
+plans and the editor need no disk. `model.look_parts(c, entry)` (the image and video members, none when the scene's
+cast entry skips `REFMOD_SKIP` = `"refmod"` or at strength 0) and `voice_parts(c)` (audio members).
+`scene_people` drops the anchors (`cast_pictures(…, look)`) of a cast member that sends a look RefMod and gives its
+record `look`; `pick_video_anchors` skips it; `prompt.collect_refs` puts its pictures first among its pictures (no
+sheet packing then) and its videos after the continuation clip, and a voice RefMod's audio where the voice sample
+would be; build entries carry `refmod` (`model.refmod_entry`: name, member, kind, t, h, w, strength) and no asset;
+voice entries get `number`. `scene_media_counts` / `sceneBudget` count them: a video `refmod_frames(t)` / 24 s (1, then
+4 per latent, the 1 again every 5th), audio t / 40 s.
+
+`analysis.analyze` adds `refmods.issues`: an error for each scene that sends a RefMod whose file is gone or holds
+other members now (so preflight stops). `cache.pass_key` keys a RefMod entry by `refmods.digest` (the file's sha1),
+member and strength. `render.encode` leaves RefMod entries out of the node's inputs and wraps the CLIP in
+`refmods.PassMods(build, sounds, video_vae)`: its `tokenize` inserts each RefMod's text-encoder item (a picture, or
+frames sampled at 2 fps with timestamps, decoded from the weakened latent with the scene's video VAE; audio: just the
+label) at its place among `MiniMaxH3ReferenceToVideo`'s items (pictures; each video after its own sound; audio), and
+`attach` puts its block (`image`, `video` with `ref_audio_t` 0, `audio`) at the same place in `minimax_refs`.
+Below strength 1 the latent is `s·z + (1−s)·blurred(z)` (8× spatial, or temporal for audio, low-pass).
+
 ## HTTP routes (all JSON unless noted)
 
 | Method | Path | Body / query | Returns |
 |---|---|---|---|
 | GET | `/reelwright/info` | – | `{version, ffmpeg, insightface, insightface_error, h3_nodes, h3_error}`; `insightface_error` (v0.4.1) is why face checks could not load or run, `""` otherwise; v0.6.0: `h3_nodes` is whether `render.py` could import the H3 nodes (`render.h3_available()`), `h3_error` why not |
-| GET | `/reelwright/models` | – | `{diffusion_models[], text_encoders[], vae[], loras[], latent_upscale_models[], samplers[], schedulers[]}` |
+| GET | `/reelwright/models` | – | `{diffusion_models[], text_encoders[], vae[], loras[], latent_upscale_models[], samplers[], schedulers[], refmods[] ({name, kind, members, description}), refmod_folders[]}` |
 | POST | `/reelwright/plan` | `{project}` | `{scenes: {<scene_id>: {passes[], status, key, starred, match, kind, takes[], issues[], prompts[], tags[], tag_maps[], settings, loras[], upstream_take, upstream_changed, manual_star, estimate_seconds, starred_prompts, cached_passes}}, issues[], timeline: {starts:{id:t}, total}, estimate: {seconds, scenes, unknown}}`; the v0.6.0 fields are under "Plan fields"; v0.8.0: `takes[]` carry `drift` and `long` (see Takes) |
 | POST | `/reelwright/upload` | multipart: one `file` part and `slug`, any order | `{asset}` with kind, file, duration, width, height. v0.6.0: streamed in 1 MB chunks to `input/reelwright/.uploads/` off the event loop, checked to decode (PIL for pictures, ffprobe for a video's picture or an audio's sound), then moved into `input/reelwright/<slug>/`; 400 for an unreadable or empty file or several file parts |
 | GET | `/reelwright/takes?slug=` | – | `{scenes: {<id>: {starred, auto_star?, project_id?, takes:[{id, key, created, quality, seconds, frames, face, files:{video, first, last, tail, passes}, …}]}}}`; take fields under "Takes"; per-pass `prompts` are left out (v0.6.0); folders whose name is not an id are skipped |

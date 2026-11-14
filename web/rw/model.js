@@ -640,6 +640,8 @@ function normCast(c, lang) {
   textField(lora, "name", "");
   lora.strength = num(lora.strength, 0.8);
   lora.trigger = triggerText(lora.trigger);
+  c.refmod = normRefmod(c.refmod);
+  c.voice_refmod = normRefmod(c.voice_refmod);
   c.video_anchors = objects(c.video_anchors);
   const used = new Set();
   for (const va of c.video_anchors) {
@@ -1243,9 +1245,54 @@ export function partOwner(c, castById) {
 // plus speakers missing from it, each with its anchor pictures and outfit pictures; autoPack: "auto" sheets pack.
 // As model.scene_people: a part's pictures join its character's (after the character's own,
 // each once); a part whose character is not in the scene is left out (leftOut: [{ part, owner }]).
-// The anchors a scene's cast entry leaves out (model.py entry_skip), as a Set
+// The anchors a scene's cast entry leaves out (model.py entry_skip; REFMOD_SKIP for the look RefMod), as a Set
 export function entrySkip(entry) {
   return new Set(Array.isArray(entry?.skip) ? entry.skip : []);
+}
+
+// ---- RefMods (model.py has the same): saved H3 references from ComfyUI-MiniMaxH3Mod in models/refmods. A cast
+// member's look RefMod goes instead of its anchors (pictures and video anchors; outfit pictures still go) unless the
+// scene unticks it; a voice RefMod goes instead of the voice sample. members: what the file held when it was picked.
+export const REFMOD_SKIP = "refmod";
+const REFMOD_KINDS = ["image", "video", "audio"];
+const REFMOD_AUDIO_RATE = 40, REFMOD_MAX_MEMBERS = 64, REFMOD_NAME_MAX = 240;
+export function refmodName(v) {
+  let n = text(v, "").replace(/\\/g, "/").trim();
+  if (n.toLowerCase().endsWith(".safetensors")) n = n.slice(0, -".safetensors".length);
+  return Array.from(n.replace(/^[/ ]+|[/ ]+$/g, "")).slice(0, REFMOD_NAME_MAX).join("");
+}
+export function normRefmod(v) {
+  v = isObj(v) ? v : {};
+  const out = { name: refmodName(v.name), strength: Math.min(1, Math.max(0, num(v.strength, 1))), members: [] };
+  for (const m of objects(v.members).slice(0, REFMOD_MAX_MEMBERS)) {
+    const kind = REFMOD_KINDS.includes(m.kind) ? m.kind : "", audio = kind === "audio";
+    out.members.push({ kind, t: Math.max(1, Math.trunc(num(m.t, 1))), h: audio ? 0 : Math.max(0, Math.trunc(num(m.h, 0))),
+      w: audio ? 0 : Math.max(0, Math.trunc(num(m.w, 0))) });
+  }
+  return out;
+}
+// [[member index, member]] of RefMod r that go to H3: pictures and videos (visual) or audio
+export function refmodParts(r, visual) {
+  if (!isObj(r) || !r.name || !(num(r.strength, 0) > 0)) return [];
+  const kinds = visual ? ["image", "video"] : ["audio"];
+  return (r.members || []).map((m, i) => [i, m]).filter(([, m]) => isObj(m) && kinds.includes(m.kind));
+}
+export function lookParts(c, entry = null) {
+  return entrySkip(entry).has(REFMOD_SKIP) ? [] : refmodParts(c?.refmod, true);
+}
+export function voiceParts(c) {
+  return refmodParts(c?.voice_refmod, false);
+}
+export function refmodFrames(t) {
+  t = Math.max(0, Math.trunc(t));
+  const ones = Math.floor((t + 4) / 5);
+  return ones + 4 * (t - ones);
+}
+export function refmodSeconds(m) {
+  return m.kind === "video" ? refmodFrames(m.t) / FPS : m.kind === "audio" ? m.t / REFMOD_AUDIO_RATE : 0;
+}
+export function refmodTokens(m) {
+  return m.kind === "audio" ? 2 * m.t : m.t * Math.floor(m.h / 2) * Math.floor(m.w / 2);
 }
 export function scenePeople(project, scene) {
   const assets = new Map(project.assets.map(a => [a.id, a]));
@@ -1259,15 +1306,16 @@ export function scenePeople(project, scene) {
     if (!c) continue;
     const outfit = c.outfits.find(o => o.id === (e.outfit || c.default_outfit));
     const skip = entrySkip(e);
-    const ids = c.anchors.filter(a => assets.get(a)?.kind === "image" && !skip.has(a));
-    if (outfit) ids.push(...outfit.assets.filter(a => assets.get(a)?.kind === "image" && !ids.includes(a)));
     const owner = partOwner(c, cast);
+    const look = owner ? [] : lookParts(c, e);
+    const ids = look.length ? [] : c.anchors.filter(a => assets.get(a)?.kind === "image" && !skip.has(a));
+    if (outfit) ids.push(...outfit.assets.filter(a => assets.get(a)?.kind === "image" && !ids.includes(a)));
     if (owner) {
       if (present.has(owner)) { if (!parts.has(owner)) parts.set(owner, []); parts.get(owner).push({ c, outfit, ids }); }
       else leftOut.push({ part: c, owner: cast.get(owner) });
       continue;
     }
-    people.push({ c, ids, own: ids.slice(), parts: [], entry: e });
+    people.push({ c, ids, own: ids.slice(), parts: [], entry: e, look });
   }
   for (const x of people) {
     for (const part of parts.get(x.c.id) || []) {
@@ -1277,7 +1325,8 @@ export function scenePeople(project, scene) {
   }
   const anchors = new Set(people.flatMap(x => x.ids));
   const refPics = new Set(scene.refs.filter(r => r.role === "reference" && assets.get(r.asset)?.kind === "image").map(r => r.asset));
-  const unpacked = anchors.size + [...refPics].filter(a => !anchors.has(a)).length;
+  const lookPics = people.reduce((n, x) => n + x.look.filter(([, m]) => m.kind === "image").length, 0);
+  const unpacked = anchors.size + lookPics + [...refPics].filter(a => !anchors.has(a)).length;
   const autoPack = unpacked > MAX_REF_IMAGES;
   return { people, autoPack, assets, unpacked, leftOut };
 }
@@ -1348,6 +1397,7 @@ export function poseRefs(project, scene, pass = null, people = null) {
   return out;
 }
 export function castPacks(project, scene, c) {
+  if (scene && lookParts(c, scene.cast?.find(e => e.id === c.id)).length) return false; // its RefMod goes instead
   const n = sceneAnchorIds(project, scene, c).length;
   if (n < 2) return false;
   return c.pack_sheet === "auto" ? (scene ? sceneAutoPacks(project, scene) : false) : !!c.pack_sheet;
@@ -1386,7 +1436,8 @@ export function videoAnchorsOf(c, assets) {
 // people: scenePeople's records ({c}); n: {videos, videoSeconds, audio, audioSeconds, files}, updated
 export function pickVideoAnchors(people, assets, n) {
   const picked = [], left = [];
-  for (const { c, entry } of people) {
+  for (const { c, entry, look } of people) {
+    if (look?.length) continue; // its look RefMod goes instead of its anchors
     const skip = entrySkip(entry);
     for (const [va, a] of videoAnchorsOf(c, assets)) {
       if (skip.has(va.id)) continue;
@@ -1559,13 +1610,20 @@ export function sceneBudget(project, scene, pass = null, continuation = true, vi
   const song = passSoundtrack(project, timing(project).starts[scene.id] ?? 0, pass);
   const speaking = new Set((pass.dialogue || []).map(d => d.speaker));
   const b = { pictures: 0, videos: 0, videoSeconds: 0, audio: 0, audioSeconds: 0, files: 0, song: !!song };
-  const sent = new Set(), sounds = [];
-  for (const { c, ids } of people) {
-    const pack = c.pack_sheet === "auto" ? autoPack : !!(c.pack_sheet ?? true);
+  const sent = new Set(), sounds = [], modSounds = [];
+  for (const { c, ids, look } of people) {
+    const pack = !look.length && (c.pack_sheet === "auto" ? autoPack : !!(c.pack_sheet ?? true));
     b.pictures += ids.length && pack && ids.length > 1 ? 1 : ids.length;
     for (const a of ids) sent.add(a);
-    const v = assets.get(c.voice);
-    if (v && v.kind === "audio" && !song && speaking.has(c.id)) sounds.push(v);
+    for (const [, m] of look) {
+      if (m.kind === "image") b.pictures++;
+      else { b.videos++; b.videoSeconds += refmodSeconds(m); }
+    }
+    if (!song && speaking.has(c.id)) {
+      const voice = voiceParts(c), v = assets.get(c.voice);
+      if (voice.length) modSounds.push(...voice.map(([, m]) => refmodSeconds(m)));
+      else if (v && v.kind === "audio") sounds.push(v);
+    }
   }
   for (const a of posePics) if (!sent.has(a)) { sent.add(a); b.pictures++; }
   const clips = sounds.map(v => ({ key: [v.id, 0, null], seconds: Number(v.duration) || 0 }));
@@ -1586,10 +1644,11 @@ export function sceneBudget(project, scene, pass = null, continuation = true, vi
   }
   sounds.length = 0;
   for (const x of clips) sounds.push(x);
-  b.audio += sounds.length + (song ? 1 : 0);
+  b.audio += sounds.length + modSounds.length + (song ? 1 : 0);
   for (const x of sounds) b.audioSeconds += x.seconds;
+  for (const s of modSounds) b.audioSeconds += s;
   if (song) b.audioSeconds += song.length;
-  b.files = b.pictures + b.videos + sounds.length + (song ? 1 : 0);
+  b.files = b.pictures + b.videos + sounds.length + modSounds.length + (song ? 1 : 0);
   b.continuation = "";
   if (cont === "picture") {
     if (b.pictures + 1 > MAX_REF_IMAGES || b.files + 1 > MAX_REF_FILES) return sceneBudget(project, scene, pass, false, videoAnchors);

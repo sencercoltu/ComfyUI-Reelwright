@@ -44,7 +44,7 @@ except ImportError as _e:  # noqa: N816
     LatentUpscaleModelLoader = MiniMaxH3LatentUpscaleWithModel = None
     UPSCALE_ERROR = "{}: {}".format(type(_e).__name__, _e)
 
-from . import assemble, cache, continuity, jobs, media, merge, spec
+from . import assemble, cache, continuity, jobs, media, merge, refmods, spec
 from .analysis import _take_meta, analyze, continues, drift_metrics, long_settings, rekey, short_upstream_tail
 from .model import project_index, slugify
 from .storage import check_slug, write_json
@@ -616,6 +616,8 @@ class Renderer:
         st = sr["settings"]
         images = {}
         for k, img in enumerate(b["images"]):
+            if img.get("refmod"):  # refmods.PassMods puts it in its place
+                continue
             if img.get("continuation"):
                 images["ref_image_{}".format(k)] = self._continuation_ref(sr, n, img, upstream, prev_pass)[0]
                 continue
@@ -623,6 +625,8 @@ class Renderer:
             images["ref_image_{}".format(k)] = media.make_sheet(paths) if len(paths) > 1 else media.load_image(paths[0])
         videos, video_audios = {}, {}
         for k, v in enumerate(b["videos"]):
+            if v.get("refmod"):
+                continue
             if v.get("continuation"):
                 frames, audio = self._continuation_ref(sr, n, v, upstream, prev_pass)
                 videos["ref_video_{}".format(k)] = frames
@@ -638,15 +642,23 @@ class Renderer:
         audios = {"ref_audio_{}".format(k): media.load_audio(self._song_path(a["song"]), max_seconds=spec.REF_MEDIA_MAX_SECONDS)
                   if a.get("song") else media.load_audio(self._asset_path(a["asset"]), max_seconds=clip_window(a)[1],
                                                          start=clip_window(a)[0])
-                  for k, a in enumerate(b["audios"])}
+                  for k, a in enumerate(b["audios"]) if not a.get("refmod")}
+        clip = self.models.clip(st)
+        mods = None
+        if refmods.sends(b):  # saved H3 references of the cast (look / voice RefMods)
+            sounds = {int(name.rsplit("_", 1)[-1]) for name in video_audios}
+            mods = refmods.PassMods(b, sounds, self.models.vae(st["video_vae"], "vae"))
+            clip = mods.clip(clip)
         out = MiniMaxH3ReferenceToVideo.execute(
-            clip=self.models.clip(st), prompt=b["prompt"], width=st["width"], height=st["height"],
+            clip=clip, prompt=b["prompt"], width=st["width"], height=st["height"],
             length=x["gen_frames"], ref_image_size=st["ref_image_size"],
             vae=self.models.encoder_vae(st, self.long["guide_vae"]),
             audio_vae=self.models.vae(st["audio_vae"], "audio_vae"),
             ref_images=images or None, ref_videos=videos or None,
             ref_video_audios=video_audios or None, ref_audios=audios or None)
         positive, latent = out.result
+        if mods:
+            positive = mods.attach(positive)
         return positive, latent
 
     def _upstream_take(self, scene_index):

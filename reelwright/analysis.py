@@ -9,7 +9,7 @@ import json
 import os
 import statistics
 
-from . import cache, model, spec
+from . import cache, model, refmods, spec
 from . import prompt as prompt_mod
 from .model import normalize_project, project_index, resolve_settings, scene_starts
 from .planner import plan_project
@@ -95,7 +95,7 @@ def _pass_keys(fp, builds, plan, asset_digest, upstream_key, upstream_take, extr
     keys, prev = [], None
     for n, (b, x) in enumerate(zip(builds, plan["passes"])):
         prev = cache.pass_key(fp, b, x, asset_digest, upstream_key, prev, upstream_take,
-                              extras[n] if extras else None)
+                              extras[n] if extras else None, refmod_digest=refmods.digest)
         keys.append(prev)
     return keys
 
@@ -257,6 +257,7 @@ def analyze(project, store, wired=None):
             return "invalid"
 
     issues = _lint(p, plans, builds, asset_exists, ctx)
+    issues += refmods.issues(p, builds)
     errors_by_scene = {}
     for x in issues:
         if x["level"] == "error" and x.get("scene_id"):
