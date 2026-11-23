@@ -11,6 +11,7 @@ import gc
 import io
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -308,8 +309,14 @@ class Models:
         return self.upscalers[name]
 
 
-# One sampling step's latent as a small JPEG data URL for the Render tab
+# One sampling step's latent for the Render tab: every latent frame of the pass as one sprite sheet (a JPEG data URL,
+# frames in rows of `cols`), which the tab plays as a clip, as the sampler's animated previews do. A frame is at most
+# PREVIEW_FRAME_SIDE pixels on its longer side; a pass of more than PREVIEW_MAX_FRAMES latent frames shows that many,
+# evenly picked. A latent frame stands for 4 of H3's 24 frames a second, so the clip plays at 6 frames a second.
 PREVIEW_MAX_SIDE = 480
+PREVIEW_FRAME_SIDE = 320
+PREVIEW_MAX_FRAMES = 96
+PREVIEW_FPS = 6.0
 # The shortest gap between two previews. It used to be one second; H3 steps usually take
 # longer than this, so in practice every sampler step now shows up in the Render tab.
 PREVIEW_MIN_INTERVAL = 0.25
@@ -331,16 +338,14 @@ def stock_previewer(device, latent_format):
     return fn(device, latent_format)
 
 
-def preview_jpeg(previewer, x0, frame=None):
-    """frame: the latent frame of a video latent to show. ComfyUI's previewers show the first one, and in a pass that
-    starts from a frame or clip (a continuation, a first-frame guide) the first frame is fixed from the first step, so
-    the preview barely changed; the render shows the middle of the part the pass makes new."""
-    if getattr(x0, "is_nested", False):  # H3 latents carry video and audio; the first is the video
-        x0 = x0.tensors[0]
-    if frame is not None and getattr(x0, "ndim", 0) == 5 and x0.shape[2] > 1:
-        k = max(0, min(int(frame), int(x0.shape[2]) - 1))
-        x0 = x0[:, :, k:k + 1]
-    out = previewer.decode_latent_to_preview_image("JPEG", x0)
+def _video_of(x0):
+    return x0.tensors[0] if getattr(x0, "is_nested", False) else x0  # H3 latents carry video and audio
+
+
+def preview_jpeg(previewer, x0):
+    """ComfyUI's previewer's picture (the first latent frame), for a latent with no frames to play or a previewer the
+    animated preview cannot drive."""
+    out = previewer.decode_latent_to_preview_image("JPEG", _video_of(x0))
     if not out:
         raise RuntimeError("the previewer ({}) returned no image".format(type(previewer).__name__))
     _, img, _ = out
@@ -352,18 +357,92 @@ def preview_jpeg(previewer, x0, frame=None):
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-# The latent frame in the middle of the part of pass x that H3 makes new: after an overlap
-# with the pass before, or after the cut's start (an H3 latent holds 1 frame, then 4 frames per latent frame)
-def preview_frame(x):
-    try:
-        start = int(x.get("overlap_frames") or 0) if x.get("seam_before") == "overlap" else int(x.get("keep_in_frames") or 0)
-        end = int(x.get("keep_out_frames") or x.get("gen_frames") or 0)
-    except (TypeError, ValueError, AttributeError):
-        return None
-    if end <= start:
-        return None
-    mid = (start + end) // 2
-    return 0 if mid <= 0 else 1 + (mid - 1) // 4
+def preview_sheet(frames, fps=PREVIEW_FPS):
+    """{image, frames, cols, frame_width, frame_height, cell_width, cell_height, fps} of frames ([N, H, W, 3] uint8 on
+    the CPU) as one sprite sheet JPEG. Each frame sits at the top left of a cell padded to a multiple of 8 pixels with
+    its own edge, so JPEG blocks never mix two frames."""
+    import torch
+    from PIL import Image
+    n = int(frames.shape[0])
+    if n > PREVIEW_MAX_FRAMES:
+        frames = frames[torch.linspace(0, n - 1, PREVIEW_MAX_FRAMES).round().long()]
+        fps, n = fps * PREVIEW_MAX_FRAMES / n, PREVIEW_MAX_FRAMES
+    h, w = int(frames.shape[1]), int(frames.shape[2])
+    scale = min(1.0, PREVIEW_FRAME_SIDE / float(max(h, w)))
+    fw, fh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+    cw, ch = -(-fw // 8) * 8, -(-fh // 8) * 8
+    cols = max(1, int(math.ceil(math.sqrt(n))))
+    sheet = Image.new("RGB", (cols * cw, int(math.ceil(n / cols)) * ch))
+    for i in range(n):
+        im = Image.fromarray(frames[i].numpy())
+        if (fw, fh) != (w, h):
+            im = im.resize((fw, fh), Image.BILINEAR)
+        cell = Image.new("RGB", (cw, ch))
+        cell.paste(im, (0, 0))
+        if cw > fw:
+            cell.paste(im.crop((fw - 1, 0, fw, fh)).resize((cw - fw, fh)), (fw, 0))
+        if ch > fh:
+            cell.paste(cell.crop((0, fh - 1, cw, fh)).resize((cw, ch - fh)), (0, fh))
+        sheet.paste(cell, ((i % cols) * cw, (i // cols) * ch))
+    buf = io.BytesIO()
+    sheet.save(buf, "JPEG", quality=78)
+    return {"image": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii"), "frames": n,
+            "cols": cols, "frame_width": fw, "frame_height": fh, "cell_width": cw, "cell_height": ch,
+            "fps": round(float(fps), 3)}
+
+
+class AnimatedPreview:
+    """Every latent frame of a sampling step, as the sampler's animated previews show them. ComfyUI's preview method
+    decides how: TAESD with a video TAE (taeh3 in models/vae_approx) decodes them, else Latent2RGB maps them with the
+    latent format's colour factors; None (previews off) sends nothing. A TAE decode that fails (out of memory) falls
+    back to Latent2RGB for the rest of the sampling."""
+
+    def __init__(self, previewer, latent_format):
+        self.previewer = previewer
+        self.tae = getattr(previewer, "taesd", None) if type(previewer).__name__ == "TAEHVPreviewerImpl" else None
+        factors = getattr(latent_format, "latent_rgb_factors", None)
+        self.rgb = None
+        if factors is not None:
+            self.rgb = (factors, getattr(latent_format, "latent_rgb_factors_bias", None),
+                        getattr(latent_format, "latent_rgb_factors_reshape", None))
+
+    def _latent2rgb(self, v):
+        import torch
+        factors, bias, reshape = self.rgb
+        if reshape is not None:
+            v = reshape(v)
+        x = v[0].movedim(0, -1)  # [T, H, W, C]
+        weight = torch.tensor(factors, dtype=x.dtype, device=x.device).transpose(0, 1)
+        b = torch.tensor(bias, dtype=x.dtype, device=x.device) if bias is not None else None
+        rgb = torch.nn.functional.linear(x, weight, bias=b)
+        return (((rgb + 1.0) / 2.0).clamp(0, 1) * 255).to(device="cpu", dtype=torch.uint8)
+
+    def _decoded(self, v):
+        import torch
+        with torch.no_grad():
+            px = self.tae.decode(v[:1])  # [1, frames, H, W, 3] in 0..1
+            px = px[0] if px.ndim == 5 else px
+            px = px[torch.arange(0, px.shape[0], 4, device=px.device)]  # one per latent frame
+            h, w = int(px.shape[1]), int(px.shape[2])
+            scale = min(1.0, PREVIEW_FRAME_SIDE / float(max(h, w)))
+            if scale < 1.0:
+                px = torch.nn.functional.interpolate(px.movedim(-1, 1), size=(max(1, round(h * scale)), max(1, round(w * scale))),
+                                                     mode="bilinear", align_corners=False).movedim(1, -1)
+            return (px.clamp(0, 1) * 255).to(device="cpu", dtype=torch.uint8)
+
+    def __call__(self, x0):
+        v = _video_of(x0)
+        if getattr(v, "ndim", 0) != 5 or v.shape[2] < 2 or (self.tae is None and self.rgb is None):
+            return {"image": preview_jpeg(self.previewer, x0)}
+        if self.tae is not None:
+            try:
+                return preview_sheet(self._decoded(v))
+            except Exception as e:  # noqa: BLE001 - previews must not stop a render
+                log.warning("Reelwright: the TAE preview failed (%s); Latent2RGB from here on", e)
+                self.tae = None
+                if self.rgb is None:
+                    return {"image": preview_jpeg(self.previewer, x0)}
+        return preview_sheet(self._latent2rgb(v))
 
 
 def _sample(model, positive, latent, seed, settings, on_step):
@@ -376,14 +455,14 @@ def _sample(model, positive, latent, seed, settings, on_step):
     sampler = comfy.samplers.sampler_object(settings["sampler"])
     steps = sigmas.shape[-1] - 1
     # the user's preview method (--preview-method / the frontend setting) still decides how, or whether, to preview
-    previewer = stock_previewer(guider.model_patcher.load_device, guider.model_patcher.model.latent_format)
+    fmt = guider.model_patcher.model.latent_format
+    previewer = stock_previewer(guider.model_patcher.load_device, fmt)
+    animated = AnimatedPreview(previewer, fmt) if previewer else None
     pbar = comfy.utils.ProgressBar(steps)  # ComfyUI's queue progress, without an image
-
-    frame = settings.get("preview_frame")
 
     def callback(step, x0, x, total_steps):
         pbar.update_absolute(step + 1, total_steps, None)
-        on_step(step + 1, total_steps, (lambda: preview_jpeg(previewer, x0, frame)) if previewer else None)
+        on_step(step + 1, total_steps, (lambda: animated(x0)) if animated else None)
 
     samples = guider.sample(noise, latent_image, sampler, sigmas, callback=callback,
                             disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED, seed=seed)
@@ -408,13 +487,14 @@ def _refine(model, positive, latent, seed, settings, steps, denoise, on_step):
     noise = Noise_RandomNoise(seed).generate_noise({"samples": latent_image})
     sigmas = refine_sigmas(model, settings["scheduler"], steps, denoise)
     sampler = comfy.samplers.sampler_object(settings["sampler"])
-    previewer = stock_previewer(guider.model_patcher.load_device, guider.model_patcher.model.latent_format)
+    fmt = guider.model_patcher.model.latent_format
+    previewer = stock_previewer(guider.model_patcher.load_device, fmt)
+    animated = AnimatedPreview(previewer, fmt) if previewer else None
     pbar = comfy.utils.ProgressBar(sigmas.shape[-1] - 1)
-    frame = settings.get("preview_frame")
 
     def callback(step, x0, x, total_steps):
         pbar.update_absolute(step + 1, total_steps, None)
-        on_step(step + 1, total_steps, (lambda: preview_jpeg(previewer, x0, frame)) if previewer else None)
+        on_step(step + 1, total_steps, (lambda: animated(x0)) if animated else None)
 
     samples = guider.sample(noise, latent_image, sampler, sigmas, callback=callback,
                             disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED, seed=seed)
@@ -1445,7 +1525,7 @@ class Renderer:
             if preview is not None and (now - last_preview[0] >= PREVIEW_MIN_INTERVAL or step == total):
                 last_preview[0] = now
                 try:
-                    image = preview()
+                    shown = preview()
                 except Exception as e:  # a preview must never stop a render
                     if not preview_failed[0]:
                         preview_failed[0] = True
@@ -1453,12 +1533,11 @@ class Renderer:
                     else:
                         log.debug("Reelwright preview failed: %s", e)
                     return
-                send("reelwright.preview", {"slug": self.slug, "scene_id": sid, "pass": _n + 1, "passes": n_pass,
-                                            "step": step, "steps": total, "image": image})
+                send("reelwright.preview", dict(shown, slug=self.slug, scene_id=sid, passes=n_pass, step=step,
+                                                steps=total, **{"pass": _n + 1}))
 
         self.phase("sample")
-        samples = _sample(model, positive, latent, seed, dict(st, preview_frame=preview_frame(sr["plan"]["passes"][n])),
-                          on_step)
+        samples = _sample(model, positive, latent, seed, st, on_step)
         del positive, latent
         big = samples
         if hires:
@@ -1495,8 +1574,7 @@ class Renderer:
             on_step(step, total, preview, phase="refine")
 
         self.progress(sid, n + 1, n_pass, "refine", 0, steps)
-        refined = _refine(model, positive, big, seed, dict(st, preview_frame=preview_frame(sr["plan"]["passes"][n])),
-                          steps, float(hires.get("refine_denoise") or 0.35), refine_step)
+        refined = _refine(model, positive, big, seed, st, steps, float(hires.get("refine_denoise") or 0.35), refine_step)
         del positive, big
         return _with_audio_of(refined, samples)
 

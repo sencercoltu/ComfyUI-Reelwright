@@ -593,7 +593,8 @@ def main():
         check(any(t.startswith("from P1: ") and "navy pea coat" in t for t in cast_lines), f"scene cast row: {cast_lines}")
         page.screenshot(path=str(shots / "v034_scene.png"))
 
-        # The latent preview shows only in the Render tab, in a small window, and goes away after the run.
+        # The latent preview shows only in the Render tab, large since v0.23.3 (it was a 200 px window), and goes away
+        # after the run.
         page.evaluate("""() => { const h = window.__host, c = document.createElement('canvas'); c.width = 42; c.height = 24;
           const g = c.getContext('2d'); const gr = g.createLinearGradient(0, 0, 42, 24); gr.addColorStop(0, '#203a5a'); gr.addColorStop(1, '#c8783c'); g.fillStyle = gr; g.fillRect(0, 0, 42, 24);
           h.emit('reelwright.run', { slug: 'harbor_lights', phase: 'start', targets: ['s_02'], reused: [] });
@@ -604,7 +605,7 @@ def main():
         page.click(".rw-tab:has-text('Render')")
         page.wait_for_timeout(400)
         pb = page.evaluate("(() => { const e = document.querySelector('.rw-run-preview img'); if (!e) return null; const r = e.getBoundingClientRect(); return [r.width, r.height, e.naturalWidth]; })()")
-        check(pb is not None and pb[0] <= 220 and pb[2] == 42, f"render preview window: {pb}")
+        check(pb is not None and 400 <= pb[0] <= 640 and pb[2] == 42, f"render preview window: {pb}")
         page.screenshot(path=str(shots / "v035_preview.png"))
         page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [] })")
         page.wait_for_timeout(300)
@@ -1515,6 +1516,7 @@ def main():
         v0230_checks(page, check, saved, shots)
         v0231_checks(page, check, saved, shots)
         v0232_checks(page, check, saved, shots)
+        v0233_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
         v0201_copy_checks(pw, page_url, check)
@@ -7120,6 +7122,66 @@ def v0232_checks(page, check, saved, shots):
     txt = card.inner_text()
     check([m["kind"] for m in r["members"]] == ["image", "image"] and "Sends 2 1024×1184 pictures (2,368 reference tokens) instead of the anchors." in txt
           and card.locator(".rw-note.warn").count() == 0, f"Update takes the pictures: {r} {txt[:300]!r}")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+
+def v0233_checks(page, check, saved, shots):
+    """v0.23.3 (Sencer: "the latent preview on render tab is too small. must be larger. also, the sampler shows every
+    generated frame, but reelwright only shows last frame."): the preview is up to 640 px wide (the whole width when
+    clicked) and plays a sprite sheet of every latent frame of the pass on a canvas, keeping its clock when a new step's
+    sheet arrives."""
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(300)
+    page.evaluate("window.__editor.actions.setTab('render')")
+    page.wait_for_timeout(400)
+    sheet = """(colors) => { const c = document.createElement('canvas'); c.width = 32; c.height = 18; const g = c.getContext('2d');
+      colors.forEach((col, i) => { g.fillStyle = col; g.fillRect((i % 2) * 16, Math.floor(i / 2) * 9, 16, 9); }); return c.toDataURL('image/png'); }"""
+    page.evaluate("""s => { const h = window.__host, make = eval(s);
+      h.emit('reelwright.run', { slug: 'harbor_lights', phase: 'start', targets: ['s_02'], reused: [] });
+      h.emit('reelwright.progress', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: 3, steps: 20, phase: 'sample' });
+      h.emit('reelwright.preview', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: 3, steps: 20,
+        image: make(['#ff0000', '#00ff00', '#0000ff', '#ffff00']), frames: 4, cols: 2, frame_width: 16, frame_height: 9, fps: 6 }); }""", sheet)
+    page.wait_for_timeout(600)
+    fig = page.locator(".rw-run-preview")
+    box = page.evaluate("""(() => { const c = document.querySelector('.rw-run-preview canvas'); if (!c) return null; const r = c.getBoundingClientRect();
+      return { w: r.width, h: r.height, shown: getComputedStyle(c).display, img: getComputedStyle(document.querySelector('.rw-run-preview img')).display,
+               anim: c.closest('figure').classList.contains('anim') }; })()""")
+    check(box is not None and box["anim"] and box["shown"] == "block" and box["img"] == "none" and 560 <= box["w"] <= 640
+          and abs(box["w"] / box["h"] - 16 / 9) < 0.05, f"a sheet plays on a large canvas: {box}")
+    cap = fig.locator("figcaption").inner_text()
+    check("step 3/20" in cap and "4 latent frames" in cap, f"the caption says how many frames: {cap!r}")
+    colors = page.evaluate("""async () => { const c = document.querySelector('.rw-run-preview canvas'), g = c.getContext('2d'), out = [];
+      for (let k = 0; k < 14; k++) { const d = g.getImageData(c.width / 2, c.height / 2, 1, 1).data; out.push([d[0] > 128 ? 1 : 0, d[1] > 128 ? 1 : 0, d[2] > 128 ? 1 : 0].join(''));
+        await new Promise(r => setTimeout(r, 60)); } return out; }""")
+    seen = set(colors)
+    check(len(seen) >= 3 and seen <= {"100", "010", "001", "110"}, f"the frames take turns: {colors}")
+    page.screenshot(path=str(shots / "v0233_preview.png"))
+    # the whole width, and back
+    w0 = fig.bounding_box()["width"]
+    page.locator(".rw-run-preview-frame").click()
+    page.wait_for_timeout(300)
+    w1 = fig.bounding_box()["width"]
+    check("large" in (fig.get_attribute("class") or "") and w1 > w0 + 100, f"a click shows it across the width: {w0} -> {w1}")
+    page.screenshot(path=str(shots / "v0233_preview_large.png"))
+    page.locator(".rw-run-preview-frame").click()
+    page.wait_for_timeout(300)
+    check(abs(fig.bounding_box()["width"] - w0) < 2, "a second click brings it back")
+    # the next step's sheet replaces it, and a single picture (no frames) shows as a picture again
+    page.evaluate("""s => { const make = eval(s); window.__host.emit('reelwright.preview', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1,
+      step: 4, steps: 20, image: make(['#00ffff', '#00ffff', '#00ffff', '#00ffff']), frames: 4, cols: 2, frame_width: 16, frame_height: 9, fps: 6 }); }""", sheet)
+    page.wait_for_timeout(500)
+    px = page.evaluate("""(() => { const c = document.querySelector('.rw-run-preview canvas'); const d = c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data; return [d[0], d[1], d[2]]; })()""")
+    check(px[0] < 80 and px[1] > 180 and px[2] > 180, f"the new sheet plays: {px}")
+    page.evaluate("""() => { const c = document.createElement('canvas'); c.width = 64; c.height = 36; const g = c.getContext('2d'); g.fillStyle = '#884422'; g.fillRect(0, 0, 64, 36);
+      window.__host.emit('reelwright.preview', { slug: 'harbor_lights', scene_id: 's_02', pass: 1, passes: 1, step: 5, steps: 20, image: c.toDataURL('image/jpeg') }); }""")
+    page.wait_for_timeout(500)
+    st = page.evaluate("""(() => { const f = document.querySelector('.rw-run-preview'); return { anim: f.classList.contains('anim'), img: getComputedStyle(f.querySelector('img')).display, w: f.querySelector('img').naturalWidth }; })()""")
+    check(not st["anim"] and st["img"] == "block" and st["w"] == 64, f"a single picture shows as before: {st}")
+    page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [], rendered: [] })")
+    page.wait_for_timeout(400)
+    check(page.locator(".rw-run-preview").count() == 0, "the preview goes when the run ends")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

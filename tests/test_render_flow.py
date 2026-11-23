@@ -227,12 +227,13 @@ def test_latent_preview_events(stubs, harbor, store, roots, monkeypatch):
     def sample_with_preview(model, positive, latent, seed, settings, on_step):
         n = settings["steps"]
         for k in range(1, n + 1):
-            on_step(k, n, lambda k=k: asked.append(k) or "data:image/jpeg;base64,AAAA")
+            on_step(k, n, lambda k=k: asked.append(k) or {"image": "data:image/jpeg;base64,AAAA", "frames": 3, "cols": 2})
         return latent
     monkeypatch.setattr(render, "_sample", sample_with_preview)
     render.Renderer(harbor, store, {}, {"action": "selected", "scenes": ["s_one"]}).run()
     previews = [d for e, d in events if e == "reelwright.preview"]
     assert previews and all(d["scene_id"] == "s_one" and d["image"].startswith("data:image/jpeg") for d in previews)
+    assert previews[0]["frames"] == 3 and previews[0]["cols"] == 2 and previews[0]["pass"] == 1  # the sheet's layout rides along
     assert previews[-1]["step"] == previews[-1]["steps"]          # the last step is always shown
     assert len(asked) < 5                                          # decoded only when sent (at most every 0.25 s)
 
@@ -247,7 +248,7 @@ def test_latent_preview_every_step_when_steps_are_slow(stubs, harbor, store, roo
     def sample_with_preview(model, positive, latent, seed, settings, on_step):
         for k in range(1, 7):
             clock[0] += render.PREVIEW_MIN_INTERVAL + 0.05  # a step a little slower than the preview gap
-            on_step(k, 6, lambda: "data:image/jpeg;base64,AAAA")
+            on_step(k, 6, lambda: {"image": "data:image/jpeg;base64,AAAA"})
         return latent
     monkeypatch.setattr(render, "_sample", sample_with_preview)
     monkeypatch.setattr(render.time, "time", lambda: clock[0])
@@ -297,27 +298,64 @@ def test_preview_jpeg_handles_nested_latents(comfy):
     assert max(img.size) == render.PREVIEW_MAX_SIDE
 
 
-# the
-# preview shows the middle of what a pass makes new, not the first frame a continuation or guide fixes
-def test_preview_shows_the_middle_of_the_new_part(comfy):
+# The preview plays every latent frame of the pass, as the sampler's animated previews do (Sencer: "the latent preview
+# on render tab is too small. must be larger. also, the sampler shows every generated frame, but reelwright only shows
+# last frame."): one sprite sheet per step, Latent2RGB from the latent format's colours or a video TAE's decode.
+def test_the_preview_is_every_latent_frame(comfy):
     render, _ = comfy
+    import base64
+    import io
+
     import torch
     from PIL import Image
-    seen = []
 
+    def sheet(d):
+        return Image.open(io.BytesIO(base64.b64decode(d["image"].split(",", 1)[1])))
+
+    fmt = types.SimpleNamespace(latent_rgb_factors=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]],
+                                latent_rgb_factors_bias=None, latent_rgb_factors_reshape=None)
+    lat = torch.full((1, 4, 10, 6, 8), -1.0)
+    for k in range(10):
+        lat[0, 0, k] = -1.0 + 0.2 * k  # red grows frame by frame
+    nested = types.SimpleNamespace(is_nested=True, tensors=[lat, torch.zeros(1, 2, 5)])
+    d = render.AnimatedPreview(object(), fmt)(nested)
+    assert (d["frames"], d["cols"], d["frame_width"], d["frame_height"], d["fps"]) == (10, 4, 8, 6, 6.0)
+    assert (d["cell_width"], d["cell_height"]) == (8, 8)  # padded to JPEG's 8-pixel blocks
+    img = sheet(d)
+    assert img.size == (32, 24)  # 4 columns, 3 rows
+    reds = [img.getpixel(((k % 4) * 8 + 4, (k // 4) * 8 + 3))[0] for k in range(10)]
+    assert reds == sorted(reds) and reds[0] < 20 and reds[-1] > 200
+
+    # a long pass: at most PREVIEW_MAX_FRAMES frames, played slower so it lasts as long
+    long = torch.zeros(1, 4, 120, 6, 8)
+    d = render.AnimatedPreview(object(), fmt)(long)
+    assert d["frames"] == render.PREVIEW_MAX_FRAMES and d["fps"] == pytest.approx(6.0 * render.PREVIEW_MAX_FRAMES / 120)
+
+    # a video TAE (taeh3, TAESD previews): its decode, one frame per latent frame, at most PREVIEW_FRAME_SIDE
+    class TAEHVPreviewerImpl:
+        def __init__(self, fail=False):
+            self.taesd = self
+            self.fail = fail
+
+        def decode(self, z):
+            if self.fail:
+                raise RuntimeError("out of memory")
+            t = 1 + 4 * (z.shape[2] - 1)
+            return torch.linspace(0, 1, t).view(1, t, 1, 1, 1).expand(1, t, z.shape[3] * 16, z.shape[4] * 16, 3)
+    d = render.AnimatedPreview(TAEHVPreviewerImpl(), fmt)(lat)
+    assert d["frames"] == 10 and max(d["frame_width"], d["frame_height"]) == min(render.PREVIEW_FRAME_SIDE, 128)
+    shades = [sheet(d).getpixel(((k % 4) * d["cell_width"] + 5, (k // 4) * d["cell_height"] + 5))[1] for k in range(10)]
+    assert shades == sorted(shades) and shades[-1] > 240  # frames 0, 4, 8, ... of the decode
+    failing = render.AnimatedPreview(TAEHVPreviewerImpl(fail=True), fmt)
+    assert failing(lat)["frames"] == 10 and failing.tae is None  # Latent2RGB from then on
+
+    # no frame axis to play, or a previewer it cannot drive: ComfyUI's own single picture
     class Previewer:
         def decode_latent_to_preview_image(self, fmt, x0):
-            seen.append(float(x0[0, 0, 0, 0, 0]))
-            return ("JPEG", Image.new("RGB", (64, 36)), 512)
-    lat = torch.arange(10, dtype=torch.float32).view(1, 1, 10, 1, 1).expand(1, 4, 10, 2, 2).clone()
-    render.preview_jpeg(Previewer(), lat)
-    render.preview_jpeg(Previewer(), lat, 6)
-    render.preview_jpeg(Previewer(), lat, 99)
-    assert seen == [0.0, 6.0, 9.0]
-    assert render.preview_frame({"seam_before": "none", "keep_in_frames": 0, "keep_out_frames": 362}) == 46  # frame 181
-    assert render.preview_frame({"seam_before": "overlap", "overlap_frames": 39, "keep_in_frames": 0,
-                                 "keep_out_frames": 226}) == 33  # frame 132 of 226: past the 39 repeated frames
-    assert render.preview_frame({}) is None
+            return ("JPEG", Image.new("RGB", (64, 36), (200, 80, 40)), 512)
+    one = render.AnimatedPreview(Previewer(), types.SimpleNamespace())(lat)
+    assert set(one) == {"image"} and one["image"].startswith("data:image/jpeg;base64,")
+    assert set(render.AnimatedPreview(Previewer(), fmt)(lat[:, :, :1])) == {"image"}
 
 
 # VideoHelperSuite's animated previews wrap latent_preview.get_previewer; Reelwright uses the

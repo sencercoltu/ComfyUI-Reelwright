@@ -1073,7 +1073,8 @@ export function mountEditor(container, host) {
   const previewView = createPreviewView({
     captionFor: pv => {
       const i = store.project.scenes.findIndex(x => x.id === pv.scene_id);
-      return [i >= 0 && String(i + 1).padStart(2, "0"), pv.passes && `pass ${pv.pass}/${pv.passes}`, pv.steps && `${pv.step}/${pv.steps}`].filter(Boolean).join(" · ");
+      return [i >= 0 && String(i + 1).padStart(2, "0"), pv.passes && `pass ${pv.pass}/${pv.passes}`, pv.steps && `step ${pv.step}/${pv.steps}`,
+        pv.frames > 1 && `${pv.frames} latent frames`].filter(Boolean).join(" · ");
     },
     onVisible: () => { if (store.project.ui.tab === "render") store.notify(); }, // the banner needs to make room once
   });

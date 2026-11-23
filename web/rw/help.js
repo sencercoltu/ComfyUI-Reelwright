@@ -544,7 +544,7 @@ tip("render.quality.draft", "Fast preview: scaled resolution, fewer steps and th
 tip("render.quality.final", "Full resolution and steps.");
 tip("render.stop", "Interrupt the current ComfyUI run. Finished scenes stay on disk.");
 tip("render.banner", "What is rendering right now: which scene of the run, its pass and sampling step. The node title shows the same count and the overall percentage.");
-tip("render.preview", "Latent preview of the scene being sampled, updated every sampler step. It shows a frame from the middle of the part this pass generates (the first frames repeat the previous pass or a guide picture, so they barely change). ComfyUI's preview setting decides its quality (Latent2RGB or TAESD) or turns it off. If a preview can't be decoded, the last good one stays.");
+tip("render.preview", "Latent preview of the pass being sampled, updated every sampler step: it plays every latent frame of the pass as a clip (each stands for 4 of the 24 frames a second), as the sampler's animated previews do, and keeps playing while the steps refine it. Click it to show it across the whole width, and again for the normal size. ComfyUI's preview setting decides how the frames are made: TAESD decodes them with a video TAE (taeh3 in models/vae_approx), Auto and Latent2RGB map their colours (soft and small), and None turns the preview off. If a preview can't be decoded, the last good one stays.");
 tip("render.progress.scene", "Progress of the scene being rendered, across all of its passes.");
 tip("render.progress.total", "Progress of the whole run. Scenes reused from disk are not counted.");
 tip("render.refresh", "Reload takes and statuses from disk.");

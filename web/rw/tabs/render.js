@@ -113,8 +113,8 @@ function runBanner(ctx) {
       h("div", { class: "rw-row" }, h("b", { class: "rw-run-head" }, head), h("span", { class: "rw-ellipsis rw-run-detail", title: detail }, detail),
         r?.reused?.length ? h("span", { class: "rw-dim small" }, `· ${r.reused.length} reused`) : null),
       hooked(bar("Scene", scenePart, "rw-bg-pic", "render.progress.scene"), "scene"),
-      r && hooked(bar("Total", r.total, "rw-bg-aud", "render.progress.total"), "total")),
-    preview);
+      r && hooked(bar("Total", r.total, "rw-bg-aud", "render.progress.total"), "total"),
+      preview));
 }
 
 // ---- helpers ---------------------------------------------------------------------------------------------------
