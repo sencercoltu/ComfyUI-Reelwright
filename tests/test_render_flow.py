@@ -1836,7 +1836,7 @@ def test_refmods_reach_the_h3_node(stubs, harbor, store, roots, monkeypatch):
     look = {"kind": "image", "t": 1, "h": 4, "w": 4}
     voice = {"kind": "audio", "t": 80, "h": 0, "w": 0}
     files = {"mara_look": [look], "mara_voice": [voice]}
-    monkeypatch.setattr(refmods, "summary", lambda name: files.get(name))
+    monkeypatch.setattr(refmods, "summary", lambda name, split=True: files.get(name))
     digests = {"mara_look": "d1", "mara_voice": "d2"}
     monkeypatch.setattr(refmods, "digest", lambda name: digests[name])
     monkeypatch.setattr(refmods, "load", lambda name, i, e: torch.ones(1, 24, 1, 4, 4) if e["kind"] == "image"

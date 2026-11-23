@@ -548,7 +548,7 @@ async function route(path, opts = {}) {
   const body = opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : null;
   await new Promise(r => setTimeout(r, 20));
   switch (url.pathname) {
-    case "/reelwright/info": return json({ version: "0.23.1", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
+    case "/reelwright/info": return json({ version: "0.23.2", ffmpeg: "ffmpeg 8.0", insightface: true, insightface_error: "", h3_nodes: true, h3_error: "" });
     case "/reelwright/profiles": return json(profileStore);
     case "/reelwright/profiles/save": {
       if (!body.name) return json({ error: "Give the profile a name" }, 400);
@@ -575,6 +575,10 @@ async function route(path, opts = {}) {
         { name: "characters/mara", kind: "bundle", description: "identity", members: [{ kind: "image", t: 1, h: 64, w: 64 }, { kind: "video", t: 16, h: 32, w: 32 }, { kind: "audio", t: 400, h: 0, w: 0 }] },
         { name: "characters/keeper", kind: "image", description: "", members: [{ kind: "image", t: 1, h: 48, w: 32 }] },
         { name: "voices/keeper", kind: "audio", description: "", members: [{ kind: "audio", t: 240, h: 0, w: 0 }] },
+        { name: "characters/mara_batch", kind: "video", description: "identity", members: [{ kind: "video", t: 2, h: 114, w: 64 }],
+          notes: ["Made from 5 frames of one video input (0.21 s). Photos given to a video slot, or as one batch, become such frames, and H3's video VAE packs the 4 frames after the first into one latent frame, so they blur together. For a person, put each photo in its own image slot of Create H3 RefMod."] },
+        { name: "characters/mara_stack", kind: "video", description: "identity", members: [{ kind: "image", t: 1, h: 74, w: 64 }, { kind: "image", t: 1, h: 74, w: 64 }],
+          packed: [{ kind: "video", t: 2, h: 74, w: 64 }], notes: [] },
       ],
       refmod_folders: ["/root/ComfyUI/models/refmods"],
     });

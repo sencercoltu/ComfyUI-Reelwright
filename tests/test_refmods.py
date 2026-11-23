@@ -313,3 +313,73 @@ def test_load_reads_the_member(tmp_path, monkeypatch):
         refmods.load("walk", 1)
     with pytest.raises(FileNotFoundError):
         refmods.load("nobody", 0)
+
+
+# ---- stacked photos (v0.23.2): Sencer: "are you sure you implemented refmod correctly? i created a refmod identity, used it
+# in cast, but a random character shows." His RefMod was photos that went in as one video (2 latent frames: the photos
+# after the first packed into one); the pack's default stack is one latent frame per photo, now sent as pictures.
+def stack_meta(n, mode="encode", shapes=None):
+    return {"name": "id", "kind": "video", "mode": mode, "source": "stack", "latent_t": n,
+            "source_shape": " +".join(shapes or ["1x16x8"] * n), "tags": ["{} img, 0 vid".format(n)]}
+
+
+def test_a_stack_of_photos_goes_as_pictures(tmp_path, monkeypatch):
+    d = tmp_path / "refmods"
+    write_refmod(str(d / "stack.safetensors"), stack_meta(3), {"latent": [1, 24, 3, 16, 8]})
+    write_refmod(str(d / "batch.safetensors"),  # photos given to a video slot: one video source, 2 latent frames
+                 {"name": "b", "kind": "video", "mode": "encode", "source": "video", "source_shape": "2x114x64",
+                  "tags": ["0 img, 1 vid"]}, {"latent": [1, 24, 2, 114, 64]})
+    write_refmod(str(d / "mixed.safetensors"), stack_meta(17, shapes=["1x16x8", "16x16x8"]), {"latent": [1, 24, 17, 16, 8]})
+    write_refmod(str(d / "many.safetensors"), stack_meta(12, mode="training"), {"latent": [1, 24, 12, 16, 8]})
+    write_refmod(str(d / "kit.safetensors"),  # a bundle whose first member is a stack
+                 {"kind": "bundle", "name": "kit", "members": [stack_meta(2), {"kind": "audio"}]},
+                 {"ref_0": [1, 24, 2, 16, 8], "ref_1": [1, 32, 2, 80]})
+    monkeypatch.setattr(refmods, "roots", lambda: [str(d)])
+    got = {x["name"]: x for x in refmods.list_refmods()}
+    pic = {"kind": "image", "t": 1, "h": 16, "w": 8}
+    assert got["stack"]["members"] == [pic] * 3 and got["stack"]["packed"] == [{"kind": "video", "t": 3, "h": 16, "w": 8}]
+    assert got["stack"]["notes"] == []
+    assert got["kit"]["members"] == [pic, pic, {"kind": "audio", "t": 80, "h": 0, "w": 0}]
+    assert got["batch"]["members"] == [{"kind": "video", "t": 2, "h": 114, "w": 64}] and "packed" not in got["batch"]
+    assert got["batch"]["notes"][0].startswith("Made from 5 frames of one video input (0.21 s)")
+    assert got["mixed"]["members"][0]["kind"] == "video" and "one video" in got["mixed"]["notes"][0]
+    assert got["many"]["members"][0]["kind"] == "video" and got["many"]["notes"][0].startswith("A Compressed Reference")
+    assert refmods.summary("stack") == [pic] * 3 and refmods.summary("stack", split=False) == got["stack"]["packed"]
+    assert [p[1:] for p in refmods.layout(*refmods._read_head(str(d / "kit.safetensors")))] == \
+        [("ref_0", 0), ("ref_0", 1), ("ref_1", 0)]
+
+    # the prompt: one subject shown in both pictures
+    b = build(project(look={"name": "stack", "members": [pic] * 3}, outfit=False, speaks=False))
+    assert section(b["prompt"], "subject_definitions") == \
+        "<Subject 1> is Birten, a man in his 40s, shown in <Picture 1>, <Picture 2>, and <Picture 3>."
+    assert [i["refmod"]["member"] for i in b["images"]] == [0, 1, 2] and not b["videos"]
+
+    # a project that picked it before: Update, said so
+    p = project(look={"name": "stack", "members": got["stack"]["packed"]}, outfit=False, speaks=False)
+    (issue,) = refmods.issues(p, {p["scenes"][0]["id"]: [build(p)]})
+    assert issue["message"] == "01 Scene 1: Birten's RefMod stack holds stacked photos, which Reelwright now sends as " \
+        "separate pictures: press Update under Cast -> Birten -> RefMod"
+
+
+def test_load_slices_a_photo_out_of_a_stack(tmp_path, monkeypatch):
+    torch = pytest.importorskip("torch")
+    st = pytest.importorskip("safetensors.torch")
+    d = tmp_path / "refmods"
+    d.mkdir()
+    z = torch.stack([torch.full((1, 24, 16, 8), float(k)) for k in range(3)], dim=2).to(torch.float16)
+    st.save_file({"latent": z}, str(d / "stack.safetensors"), metadata={"refmod_meta": json.dumps(stack_meta(3))})
+    monkeypatch.setattr(refmods, "roots", lambda: [str(d)])
+    pic = {"kind": "image", "t": 1, "h": 16, "w": 8}
+    for k in range(3):
+        one = refmods.load("stack", k, pic)
+        assert one.shape == (1, 24, 1, 16, 8) and one.dtype == torch.float32 and float(one.mean()) == k
+    with pytest.raises(ValueError, match="changed since it was picked"):
+        refmods.load("stack", 0, {"kind": "video", "t": 3, "h": 16, "w": 8})  # picked before: the one video
+    # to the node: three pictures, each decoded on its own for the text encoder
+    b = {"images": [{"refmod": dict(pic, name="stack", member=k, strength=1.0)} for k in range(3)], "videos": [], "audios": []}
+    mods = refmods.PassMods(b, set(), FakeVAE())
+    items = mods.items([])
+    assert [x["type"] for x in items] == ["image"] * 3 and items[0]["data"].shape == (1, 256, 128, 3)
+    blocks = mods.blocks([])
+    assert [(x["kind"], x["latent_h"], x["latent_w"], float(x["latent"].mean())) for x in blocks] == \
+        [("image", 16, 8, 0.0), ("image", 16, 8, 1.0), ("image", 16, 8, 2.0)]

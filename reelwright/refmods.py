@@ -7,6 +7,11 @@ extra_model_paths.yaml, or the older models/audio_refmods): a VAE latent with JS
 Older files keep the metadata under audio_refmod_meta or in a .json beside the file. Reelwright reads the files
 itself: the pack makes them, rendering needs only the files.
 
+Photos stacked into one RefMod (the pack's default, source "stack": each photo encoded on its own, one latent frame
+each, joined along time) are sent as separate pictures, one per latent frame: that is the latent H3 gets from a
+picture, and H3 takes a person from pictures. As one video H3 would see a fraction of a second whose frames are not a
+clip, and the text encoder a decode of it. A stack of more than 9 photos, or of photos and video, stays one video.
+
 A cast member's look RefMod and voice RefMod (model.py: look_parts, voice_parts) are sent like any reference. At
 render, PassMods joins them to what MiniMaxH3ReferenceToVideo sends, in the order the prompt numbers them: the DiT gets
 the latent (below strength 1 mixed toward a blurred copy, as the pack's Apply node does) and Qwen a picture or frames
@@ -17,6 +22,7 @@ import json
 import logging
 import math
 import os
+import re
 import struct
 import threading
 
@@ -30,6 +36,7 @@ MAX_FILES = 4000          # a refmods folder scanned for the list holds at most 
 MAX_HEADER = 16 << 20     # bytes of a safetensors header
 REFERENCE_FPS = 24        # frames per second of a decoded video RefMod (Qwen sees it at 2 fps)
 BLUR_FACTOR = 8
+STACK_PICTURES_MAX = 9    # a stack of more photos stays one video reference (H3 is trained on up to 9 pictures)
 
 _lock = threading.Lock()
 _headers = {}             # (path, size, mtime_ns) -> header dict
@@ -123,21 +130,70 @@ def _member(kind, shape):
     return {"kind": kind, "t": shape[2], "h": shape[3], "w": shape[4]}
 
 
-def members_of(meta, head):
-    """The references a RefMod file holds, in order ([{"kind", "t", "h", "w"}]), as model.norm_refmod keeps them."""
+def _raw_members(meta):
     raw = meta.get("members") if meta.get("kind") == "bundle" else [meta]
+    return [m if isinstance(m, dict) else {} for m in (raw if isinstance(raw, list) else [])]
+
+
+def stacked_photos(m, t):
+    """Is a video reference of t latent frames photos stacked by the pack (each latent frame a photo encoded on its
+    own: source "stack", every part of source_shape one frame), at most STACK_PICTURES_MAX of them?"""
+    parts = re.findall(r"(\d+)x\d+x\d+", str(m.get("source_shape") or ""))
+    return m.get("source") == "stack" and bool(parts) and all(x == "1" for x in parts) and 1 < t <= STACK_PICTURES_MAX
+
+
+def layout(meta, head, split=True):
+    """[(member, tensor name, first latent frame)]: the references a RefMod file holds, in order, a stack of photos
+    split into its pictures (split=False: as the file holds them)."""
     out = []
-    for i, m in enumerate(raw if isinstance(raw, list) else []):
-        if i >= _model.REFMOD_MAX_MEMBERS:
-            break
-        kind = m.get("kind") if isinstance(m, dict) else ""
+    for i, m in enumerate(_raw_members(meta)):
+        key = _tensor_key(meta, head, i)
+        t = head.get(key)
+        part = _member(m.get("kind", ""), t.get("shape") if isinstance(t, dict) else None)
+        if split and part["kind"] == "video" and stacked_photos(m, part["t"]):
+            out += [(dict(part, kind="image", t=1), key, k) for k in range(part["t"])]
+        else:
+            out.append((part, key, 0))
+    return out[:_model.REFMOD_MAX_MEMBERS]
+
+
+def members_of(meta, head, split=True):
+    """The references a RefMod file holds, in order ([{"kind", "t", "h", "w"}]), as model.norm_refmod keeps them; a
+    stack of photos as its pictures (split=False: as the file holds them)."""
+    return [x for x, _, _ in layout(meta, head, split)]
+
+
+def notes(meta, head):
+    """What to know about a RefMod as a look, from how the pack made it: a Compressed Reference keeps little of a face,
+    and photos that went in as video frames blur together."""
+    out = []
+    for i, m in enumerate(_raw_members(meta)):
         t = head.get(_tensor_key(meta, head, i))
-        out.append(_member(kind, t.get("shape") if isinstance(t, dict) else None))
-    return out
+        part = _member(m.get("kind", ""), t.get("shape") if isinstance(t, dict) else None)
+        if part["kind"] not in ("image", "video"):
+            continue
+        if m.get("mode") in ("training", "pooled"):
+            out.append("A Compressed Reference ({}x{} latent grid): little of a face survives it. For a person, make "
+                       "the RefMod with Full Reference.".format(part["w"], part["h"]))
+        if part["kind"] == "video" and m.get("source") == "video" and part["t"] <= 2:
+            out.append("Made from {} frames of one video input ({:.2f} s). Photos given to a video slot, or as one "
+                       "batch, become such frames, and H3's video VAE packs the 4 frames after the first into one "
+                       "latent frame, so they blur together. For a person, put each photo in its own image slot of "
+                       "Create H3 RefMod.".format(_model.refmod_frames(part["t"]), _model.refmod_frames(part["t"]) / 24.0))
+        if part["kind"] == "video" and m.get("source") == "stack" and not stacked_photos(m, part["t"]):
+            out.append("A stack of more than {} photos, or of photos and video: it goes to H3 as one video, not as "
+                       "pictures.".format(STACK_PICTURES_MAX))
+    return list(dict.fromkeys(out))
 
 
-def _read(path):
+def _read(path, split=True):
     """(meta, members) of a RefMod file, or None when it is not one."""
+    r = _read_head(path)
+    return (r[0], members_of(r[0], r[1], split)) if r else None
+
+
+def _read_head(path):
+    """(meta, header) of a RefMod file, or None when it is not one."""
     try:
         head = _header(path)
     except (OSError, ValueError, UnicodeDecodeError):
@@ -145,7 +201,7 @@ def _read(path):
     meta = _meta(path, head)
     if not meta or meta.get("kind") not in ("image", "video", "audio", "bundle"):
         return None
-    return meta, members_of(meta, head)
+    return meta, head
 
 
 # ---- names ------------------------------------------------------------------------------------------------------------
@@ -174,10 +230,11 @@ def find(name):
         name, ", ".join(roots()) or "no refmods folder"))
 
 
-def summary(name):
-    """The members RefMod `name` holds now, or None when it is missing or no RefMod."""
+def summary(name, split=True):
+    """The members RefMod `name` holds now, or None when it is missing or no RefMod (split=False: a stack of photos as
+    the one video the file holds, as Reelwright read it before v0.23.2)."""
     try:
-        r = _read(find(name))
+        r = _read(find(name), split)
     except (FileNotFoundError, ValueError):
         return None
     return r[1] if r else None
@@ -219,12 +276,17 @@ def list_refmods():
         if name in seen:
             continue
         seen.add(name)  # the first folder that has a name is the one find() uses
-        r = _read(path)
+        r = _read_head(path)
         if not r:
             continue
-        meta, members = r
-        out.append({"name": name, "kind": meta.get("kind"), "members": members,
-                    "description": str(meta.get("description") or meta.get("concept_type") or "")[:200]})
+        meta, head = r
+        members, packed = members_of(meta, head), members_of(meta, head, split=False)
+        entry = {"name": name, "kind": meta.get("kind"), "members": members,
+                 "description": str(meta.get("description") or meta.get("concept_type") or "")[:200],
+                 "notes": notes(meta, head)}
+        if packed != members:  # a stack of photos: the one video it was read as before v0.23.2
+            entry["packed"] = packed
+        out.append(entry)
     out.sort(key=lambda x: x["name"].lower())
     with _lock:
         _listing.update(key=key, value=out)
@@ -232,10 +294,12 @@ def list_refmods():
 
 
 # ---- the checks a plan makes (analysis.analyze) -----------------------------------------------------------------------
-def issues(p, builds, read=None):
+def issues(p, builds, read=None, read_packed=None):
     """Errors for the RefMods the passes send: the file is gone, or no longer holds what it held when it was picked
-    (the prompt numbers its references by what the project keeps). read: name -> members or None (summary)."""
+    (the prompt numbers its references by what the project keeps). read: name -> members or None (summary);
+    read_packed: the same with a stack of photos as one video (a project that picked it before v0.23.2)."""
     read = read or summary
+    read_packed = read_packed or (lambda name: summary(name, split=False))
     cast = {c["id"]: c for c in p["cast"]}
     titles = {s["id"]: "{:02d} {}".format(i + 1, s["title"]) for i, s in enumerate(p["scenes"])}
     out, known, said = [], {}, set()
@@ -258,6 +322,10 @@ def issues(p, builds, read=None):
                 if now is None:
                     msg = "{}: {}'s {} {} is not in models/refmods (Cast -> {})".format(
                         titles.get(sid, sid), c["name"], what, m["name"], c["name"])
+                elif read_packed(m["name"]) == kept:
+                    msg = "{}: {}'s {} {} holds stacked photos, which Reelwright now sends as separate pictures: " \
+                          "press Update under Cast -> {} -> RefMod".format(titles.get(sid, sid), c["name"], what,
+                                                                           m["name"], c["name"])
                 else:
                     msg = "{}: {}'s {} {} has changed since it was picked: press Update under Cast -> {} -> RefMod".format(
                         titles.get(sid, sid), c["name"], what, m["name"], c["name"])
@@ -271,18 +339,20 @@ def load(name, member, expect=None):
     it; a file that no longer holds that raises ValueError."""
     from safetensors import safe_open
     path = find(name)
-    r = _read(path)
+    r = _read_head(path)
     if not r:
         raise ValueError("RefMod {} has no RefMod metadata".format(name))
-    meta, members = r
-    if not 0 <= member < len(members) or not members[member]["kind"]:
+    parts = layout(*r)
+    if not 0 <= member < len(parts) or not parts[member][0]["kind"]:
         raise ValueError("RefMod {} has no reference {} that Reelwright can send".format(name, member + 1))
-    if expect is not None and any(members[member][k] != expect.get(k) for k in ("kind", "t", "h", "w")):
+    m, key, at = parts[member]
+    if expect is not None and any(m[k] != expect.get(k) for k in ("kind", "t", "h", "w")):
         raise ValueError("RefMod {} has changed since it was picked: press Update under Cast -> RefMod".format(name))
-    head = _header(path)
     with safe_open(path, framework="pt", device="cpu") as f:
-        z = f.get_tensor(_tensor_key(meta, head, member)).clone()
-    return z.float()
+        z = f.get_tensor(key)
+    if z.dim() == 5:  # one photo of a stack: its latent frame
+        z = z[:, :, at:at + m["t"]]
+    return z.clone().float()
 
 
 def blurred(z, factor=BLUR_FACTOR):

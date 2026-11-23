@@ -311,6 +311,11 @@ older files `audio_refmod_meta` or a `.json` beside them): one reference (`laten
 `[1,24,T,H,W]`, audio `[1,32,2,T]`) or a bundle (`kind: "bundle"`, `members`, tensors `ref_0…`). `refmods.py` reads the
 headers itself (no tensors; `list_refmods`, `summary`) from the refmods folders (`folder_paths` "refmods" when the pack
 registers it, `models/refmods`, `models/audio_refmods`; names are paths without `.safetensors`, the first folder wins).
+`refmods.layout(meta, head)` lists a file's references as Reelwright sends them: a stack of photos (`source: "stack"`,
+every part of `source_shape` one latent frame, at most 9) as one picture per latent frame, `(member, tensor, first
+frame)`, which `load` slices (v0.23.2). `list_refmods` entries add `notes` (`refmods.notes`: a Compressed Reference,
+photos that went in as frames of one video) and `packed` (a stack as the one video it was read as before), so
+`issues` and the Cast card tell a project that picked a stack before to press Update.
 
 `cast.refmod` / `cast.voice_refmod` keep `{name, strength, members}` (`model.norm_refmod`, `model.js normRefmod`), so
 plans and the editor need no disk. `model.look_parts(c, entry)` (the image and video members, none when the scene's

@@ -1514,6 +1514,7 @@ def main():
         v0220_checks(page, check, saved, shots)
         v0230_checks(page, check, saved, shots)
         v0231_checks(page, check, saved, shots)
+        v0232_checks(page, check, saved, shots)
         browser.close()
         v0173_scrollbar_checks(pw, page_url, check)
         v0201_copy_checks(pw, page_url, check)
@@ -6893,8 +6894,8 @@ def v0220_checks(page, check, saved, shots):
     page.locator("input[data-key='refmod-c_mara-name']").click()
     page.wait_for_timeout(250)
     opts = page.evaluate("() => [...document.querySelectorAll('.rw-combo-list .rw-combo-opt')].map(o => o.textContent)")
-    check(opts == ["none", "characters/mara · 1 picture, 1 video, 1 audio", "characters/keeper · 1 picture"],
-          f"the Look lists RefMods with pictures or videos: {opts}")
+    check(opts[:3] == ["none", "characters/mara · 1 picture, 1 video, 1 audio", "characters/keeper · 1 picture"]
+          and "voices/keeper · 1 audio" not in opts, f"the Look lists RefMods with pictures or videos: {opts}")
     page.keyboard.press("Escape")
     pick("refmod-c_mara-name", "characters/mara")
     r = mara()["refmod"]
@@ -7078,6 +7079,47 @@ def v0231_checks(page, check, saved, shots):
     page.locator(".rw-modal-box.preview button", has_text="Close").click()
     page.wait_for_timeout(300)
     page.evaluate("window.__host.emit('reelwright.run', { slug: 'harbor_lights', phase: 'end', targets: ['s_02'], reused: [], rendered: [] })")
+    page.evaluate("j => window.__editor.load(j)", saved)
+    page.wait_for_timeout(400)
+
+
+
+def v0232_checks(page, check, saved, shots):
+    """v0.23.2 (Sencer: "are you sure you implemented refmod correctly? i created a refmod identity, used it in cast,
+    but a random character shows."): his RefMod was photos that went in as one video input (2 latent frames). The card
+    now says how a file was made when that keeps little of a face, and a stack of photos (the pack's default) goes as
+    separate pictures; a project that picked a stack before is told to press Update."""
+    cur = lambda: page.evaluate("JSON.parse(JSON.stringify(window.__editor.store.project))")
+    mara = lambda: next(c for c in cur()["cast"] if c["id"] == "c_mara")
+    q = json.loads(saved)
+    q["ui"].update(tab="cast")
+    page.evaluate("j => window.__editor.load(j)", json.dumps(q))
+    page.evaluate("() => window.__editor.store.setEph({ selectedCast: 'c_mara' })")
+    page.wait_for_timeout(500)
+    card = page.locator(".rw-card:has(.rw-card-title:has-text('RefMod'))")
+    page.locator("input[data-key='refmod-c_mara-name']").click()
+    page.wait_for_timeout(250)
+    opts = page.evaluate("() => [...document.querySelectorAll('.rw-combo-list .rw-combo-opt')].map(o => o.textContent)")
+    check("characters/mara_stack · 2 pictures" in opts and "characters/mara_batch · 1 video" in opts, f"a stack lists as pictures: {opts}")
+    page.locator(".rw-combo-list .rw-combo-opt", has_text="characters/mara_batch").first.dispatch_event("pointerdown")
+    page.wait_for_timeout(400)
+    note = card.locator(".rw-note.warn[data-help='cast.refmod.made']")
+    check(note.count() == 1 and "Made from 5 frames of one video input" in note.inner_text(), f"photos that went in as video are warned about: {card.inner_text()[:400]!r}")
+    page.screenshot(path=str(shots / "v0232_batch.png"))
+    # a stack picked before v0.23.2 (the one video it was read as): Update, said so
+    page.evaluate("""() => window.__editor.store.update(p => { p.cast.find(c => c.id === 'c_mara').refmod =
+      { name: 'characters/mara_stack', strength: 1, members: [{ kind: 'video', t: 2, h: 74, w: 64 }] }; })""")
+    page.wait_for_timeout(400)
+    txt = card.inner_text()
+    upd = card.locator("button[data-help='cast.refmod.update']")
+    check(upd.count() == 1 and "stacked as one video. Reelwright now sends them as separate pictures" in txt, f"an old stack asks for Update: {txt[:400]!r}")
+    page.screenshot(path=str(shots / "v0232_stack_update.png"))
+    upd.first.click()
+    page.wait_for_timeout(400)
+    r = mara()["refmod"]
+    txt = card.inner_text()
+    check([m["kind"] for m in r["members"]] == ["image", "image"] and "Sends 2 1024×1184 pictures (2,368 reference tokens) instead of the anchors." in txt
+          and card.locator(".rw-note.warn").count() == 0, f"Update takes the pictures: {r} {txt[:300]!r}")
     page.evaluate("j => window.__editor.load(j)", saved)
     page.wait_for_timeout(400)
 

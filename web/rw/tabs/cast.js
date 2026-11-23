@@ -275,7 +275,9 @@ function videoAnchorsCard(ctx, c) {
 // ---- RefMods: saved MiniMax H3 references made with ComfyUI-MiniMaxH3Mod, files in models/refmods (one reference or a
 // bundle). The look RefMod goes instead of the anchors (pictures and video anchors; outfit pictures still go) in every
 // scene that does not untick it; the voice RefMod goes instead of the voice sample when the character speaks. The
-// project keeps what the file held when it was picked (members); Update takes it from the file again.
+// project keeps what the file held when it was picked (members); Update takes it from the file again. The backend
+// lists a stack of photos as its pictures (refmods.py layout; "packed": the one video it was read as before v0.23.2)
+// and says what to know about how a file was made (notes).
 function membersText(members) {
   const n = k => members.filter(m => m.kind === k).length;
   const pics = n("image"), vids = n("video"), auds = n("audio"), bad = n("");
@@ -309,20 +311,30 @@ function refmodCard(ctx, c) {
       state = h("div", { class: "rw-note warn small", help: "cast.refmod.missing" }, icon("warn", 12),
         h("span", null, `${r.name} is not in models/refmods (anymore): scenes that send it cannot render. Put the file back, or pick another.`));
     } else if (file && !sameMembers(file.members, r.members)) {
+      const stack = Array.isArray(file.packed) && sameMembers(file.packed, r.members);
       state = h("div", { class: "rw-note warn small", help: "cast.refmod.update" }, icon("warn", 12),
-        h("span", { class: "grow" }, `The file has changed since it was picked (it holds ${membersText(file.members)} now): scenes that send it cannot render until you update.`),
+        h("span", { class: "grow" }, stack
+          ? `It holds ${membersText(file.members)} stacked as one video. Reelwright now sends them as separate pictures, the way H3 takes a person; scenes that send it cannot render until you update.`
+          : `The file has changed since it was picked (it holds ${membersText(file.members)} now): scenes that send it cannot render until you update.`),
         button({ label: "Update", small: true, key: `${key}-update`, help: "cast.refmod.update", onClick: () => take(which, r.name) }));
     } else if (r.name && !parts.length) {
       state = h("div", { class: "small rw-c-warn", help: "cast.refmod" }, r.strength > 0
         ? `It holds no ${visual ? "picture or video" : "audio"}, so nothing of it is sent.` : "Strength 0: not sent.");
     } else if (parts.length) {
       const tokens = parts.reduce((n, [, m]) => n + refmodTokens(m), 0);
-      const what = parts.map(([, m]) => (m.kind === "image" ? `a ${m.w * 16}×${m.h * 16} picture`
-        : m.kind === "video" ? `a ${refmodFrames(m.t)}-frame video` : `${refmodSeconds(m).toFixed(1)} s of audio`)).join(", ");
+      const groups = [];
+      for (const [, m] of parts) {
+        const d = m.kind === "image" ? `${m.w * 16}×${m.h * 16} picture` : m.kind === "video" ? `${refmodFrames(m.t)}-frame video` : null;
+        const g = d && groups.find(x => x.d === d);
+        if (g) g.n++;
+        else groups.push({ d, n: 1, m });
+      }
+      const what = groups.map(g => (g.d ? (g.n > 1 ? `${g.n} ${g.d}s` : `a ${g.d}`) : `${refmodSeconds(g.m).toFixed(1)} s of audio`)).join(", ");
       state = h("div", { class: "rw-dim small", help: visual ? "cast.refmod" : "cast.voiceRefmod" }, visual
         ? `Sends ${what} (${tokens.toLocaleString("en-US")} reference tokens) instead of the anchors.`
         : `Sends ${what} instead of the Voice sample, in the passes where ${c.name} speaks.`);
     }
+    const told = visual && file && Array.isArray(file.notes) ? file.notes : [];
     return [
       field(visual ? "Look" : "Voice", h("span", { class: "rw-row" },
         select({ options: opts, value: r.name, placeholder: "none", mono: true, width: "340px", key: `${key}-name`, help: visual ? "cast.refmod" : "cast.voiceRefmod",
@@ -331,6 +343,7 @@ function refmodCard(ctx, c) {
           onChange: v => edit(x => { x[which].strength = Math.min(1, Math.max(0, v ?? 1)); }, `${c.name}: RefMod strength`) })),
       { help: visual ? "cast.refmod" : "cast.voiceRefmod" }),
       state,
+      ...told.map(t => h("div", { class: "rw-note warn small", help: "cast.refmod.made" }, icon("warn", 12), h("span", null, t))),
     ];
   };
   return section({
